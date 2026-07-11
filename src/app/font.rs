@@ -42,14 +42,12 @@ pub(crate) fn reapply_font(state: &AppState) {
     let highest = state.buffer.tag_table().size() - 1;
     state.translation_text_tag.set_priority(highest);
     state.authorship_tag.set_priority(highest.saturating_sub(1).max(1));
-    // The gloss/synopsis overlay follows the reader card's font FAMILY and SIZE:
-    // synced here so a work load, a +/- size change, or f/F family cycling keeps
-    // the overlay's body font matching the main card instead of drifting to the
-    // fixed GLOSS_DEFAULT_FONT_FAMILY/SIZE. The journal overlay still follows
-    // size only (its own reading family is a deliberate, unrelated choice — not
-    // in scope here).
+    // The gloss/synopsis and journal overlays follow the reader card's font
+    // FAMILY and SIZE: synced here so a work load, a +/- size change, or f/F
+    // family cycling keeps their body font matching the main card instead of
+    // drifting to the fixed GLOSS_DEFAULT_FONT_FAMILY/SIZE.
     state.gloss_overlay.sync_reader_font(font_family, font_size as i32);
-    state.journal_overlay.sync_reader_font_size(state.config.font_size as i32);
+    state.journal_overlay.sync_reader_font(font_family, font_size as i32);
     log(&format!("FONT: reapply_font size={}pt via TextTag", state.config.font_size));
     update_spacer_heights(state);
 }

@@ -17,7 +17,7 @@ The row inserted has this shape:
 | `work_abbrev` | The author string (e.g. `'Shakespeare'`) |
 | `div1`, `div2` | `-2`, `-2` (sentinel for author band) |
 | `question` | `''` (empty, notes don't have questions) |
-| `answer` | Raw contents of the .md file |
+| `answer` | Contents of the .md file, pipe tables converted to lists (see below) |
 | `claude_model` | `'claude.ai'` |
 | `timestamp` | Current time (`datetime('now')`) |
 
@@ -32,9 +32,49 @@ DB=~/utono/litdb/data/lit.db
 
 # Dedup: warn if an identical (author, answer) note already exists.
 python3 - "$DB" "$AUTHOR" "$MD_PATH" <<'PY'
-import sqlite3, sys
+import re, sqlite3, sys
 db, author, path = sys.argv[1], sys.argv[2], sys.argv[3]
-answer = open(path, encoding="utf-8").read()
+
+# linux-lit's journal note renderer cannot render pipe tables (its mono
+# table style is flattened to the serif reading family, so columns never
+# align). Convert each table to a bulleted list: drop the header +
+# separator rows, and turn every data row into
+#   - **first cell** — remaining cells joined with '. '
+# Fenced code blocks are left untouched. Idempotent (a converted note has
+# no table rows left to match).
+def is_table_row(line):
+  s = line.strip()
+  return s.startswith("|") and s.endswith("|") and s.count("|") >= 2
+
+def is_separator_row(line):
+  return bool(re.fullmatch(r"\|(\s*:?-{3,}:?\s*\|)+", line.strip()))
+
+def split_cells(line):
+  inner = line.strip().strip("|")
+  return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", inner)]
+
+def convert_md_tables(text):
+  out, i, lines, in_fence = [], 0, text.split("\n"), False
+  while i < len(lines):
+    line = lines[i]
+    if line.lstrip().startswith("```"):
+      in_fence = not in_fence
+      out.append(line); i += 1; continue
+    if (not in_fence and is_table_row(line)
+        and i + 1 < len(lines) and is_separator_row(lines[i + 1])):
+      i += 2  # drop header + separator
+      while i < len(lines) and is_table_row(lines[i]):
+        cells = [c for c in split_cells(lines[i]) if c]
+        if len(cells) == 1:
+          out.append(f"- **{cells[0]}**")
+        elif cells:
+          out.append(f"- **{cells[0]}** — " + ". ".join(cells[1:]))
+        i += 1
+    else:
+      out.append(line); i += 1
+  return "\n".join(out)
+
+answer = convert_md_tables(open(path, encoding="utf-8").read())
 c = sqlite3.connect(db)
 
 # Ensure the kind column exists (mirrors linux-lit's ensure_journal_table
@@ -106,7 +146,9 @@ Shakespeare
 sqlite3 ~/utono/litdb/data/lit.db "SELECT DISTINCT author FROM works ORDER BY author;"
 ```
 
-**Deduplication.** The skill warns if an identical note for the same author already exists (same `answer` text) and skips the insert.
+**Deduplication.** The skill warns if an identical note for the same author already exists (same `answer` text, compared AFTER table conversion) and skips the insert.
+
+**Table conversion.** Pipe tables become bold-lead bulleted lists at import time because the journal note renderer cannot align them (the mono table style is flattened to the serif reading family — see the NOTE in `JournalOverlay::apply_font`). The stored `answer` differs from the source .md wherever the .md had tables; re-importing the same file dedups correctly because the comparison uses the converted text.
 
 **Author validation.** The skill checks that at least one work has the given author. If none is found, it prints a warning with a list of valid authors and exits without importing.
 

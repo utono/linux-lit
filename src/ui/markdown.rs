@@ -420,7 +420,9 @@ impl MarkdownTags {
             build
         };
 
-        // Reading serif family — matches the journal/gloss overlay baseline.
+        // Reading serif family — pre-first-work baseline only; the journal
+        // overlay's `sync_reader_font` re-points it at the reader card's
+        // configured family via `set_serif_family`.
         let serif = crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_FAMILY;
         // Monospace family — matches the in-place vim editor edit font.
         let mono_family = crate::ui::EDIT_FONT_FAMILY;
@@ -550,6 +552,19 @@ impl MarkdownTags {
             list_item,
             rule,
             mono,
+        }
+    }
+
+    /// Point the serif reading tags (body + headings) at `family`, so rendered
+    /// markdown follows the reader card's font family instead of the fixed
+    /// registration-time default. Called from the journal overlay's
+    /// `sync_reader_font`. The mono tag is deliberately untouched (see the
+    /// NOTE in `JournalOverlay::apply_font` — the buffer-wide font tag
+    /// flattens it anyway, consistently with pagination's measurement).
+    pub fn set_serif_family(&self, family: &str) {
+        use gtk4::prelude::*;
+        for tag in [&self.body, &self.h1, &self.h2, &self.h3] {
+            tag.set_family(Some(family));
         }
     }
 

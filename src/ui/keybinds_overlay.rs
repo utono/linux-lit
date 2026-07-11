@@ -49,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
 
 const UPPER_ROW: &[KeyDef] = &[
-    key(";", ":", "prev bkmk", ":: toggle speed", &[]),
+    key(";", ":", "prev bkmk", ":: cycle speed", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("S-C-p", "conc word"), ("M-p", "phrase hl")]),
@@ -396,8 +396,8 @@ handle_block_visual_key / gloss_overlay::enter_visual \
 editor, seeded in visual mode: extend with motions, y copies the selection to \
 the system clipboard, :q or double-Esc exits. Nothing is saved. \
 -> segment_vim::open — src/input/actions/segment_vim.rs",
-        "toggle speed" => "Toggle playback speed between 1.0x and 1.3x. \
--> TogglePlaybackSpeed arm (inline) -> MpvCommand::SetSpeed — \
+        "cycle speed" => "Cycle playback speed 1.0x -> 1.3x -> 0.9x. \
+-> TogglePlaybackSpeed arm -> next_playback_speed -> MpvCommand::SetSpeed — \
 src/input/keymap.rs",
         "seek −3.5" => "With sync + karaoke on: restart the highlighted \
 phrase (or, within 1s of its start, step to the previous phrase); turns the \

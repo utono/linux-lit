@@ -783,12 +783,24 @@ impl JournalOverlay {
         self.apply_font();
     }
 
-    /// Follow the reader card's font SIZE (the family stays the overlay's own
-    /// reading family). Mirrors `GlossOverlay::sync_reader_font_size` — the two
-    /// overlays share their size (never drift), so both follow the main card.
-    pub fn sync_reader_font_size(&self, size: i32) {
-        if self.font_size.get() != size {
+    /// Follow the reader card's font FAMILY and SIZE. Mirrors
+    /// `GlossOverlay::sync_reader_font` — the two overlays share the main
+    /// card's font (never drift). Does NOT run while `begin_edit_font` has
+    /// stashed the reading family for the mono edit swap — clobbering
+    /// `font_family` mid-edit would corrupt the stash `end_edit_font`
+    /// restores from (see the gloss overlay's sync for the full rationale).
+    pub fn sync_reader_font(&self, family: &str, size: i32) {
+        if self.pre_edit_family.borrow().is_some() {
+            return;
+        }
+        let family_changed = self.font_family.borrow().as_str() != family;
+        let size_changed = self.font_size.get() != size;
+        if family_changed || size_changed {
+            *self.font_family.borrow_mut() = family.to_string();
             self.font_size.set(size);
+            // Keep rendered-markdown serif tags (note body/headings) on the
+            // same reading family.
+            self.md_tags.set_serif_family(family);
             self.apply_font();
         }
     }
@@ -833,6 +845,12 @@ impl JournalOverlay {
             &font_str,
             "journal-font",
         );
+        // NOTE: the buffer-wide journal-font tag (re-added above, top
+        // priority) flattens md-mono code/table/inline-code runs to the
+        // reading family. That is CONSISTENT with pagination, which measures
+        // every planned block — mono included — in the reading family
+        // (measure_planned_block). Do not re-raise md-mono here without also
+        // making the measurement mono-aware, or measured != rendered.
     }
 
     /// Set the `<hi>` highlight background and re-assert it (so a live theme

@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(km.lookup("2", false, true, false), Some(Action::JumpToPrevChapter));
         assert_eq!(km.lookup("3", false, true, false), Some(Action::JumpToNextChapter));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
-        // Shift+; (the shifted colon glyph) toggles playback speed; `+` toasts
+        // Shift+; (the shifted colon glyph) cycles playback speed; `+` toasts
         // the current act/scene or chapter (swapped in e42fd92).
         assert_eq!(km.lookup("colon", false, true, false), Some(Action::TogglePlaybackSpeed));
         assert_eq!(km.lookup("plus", false, false, false), Some(Action::ShowCurrentChapter));

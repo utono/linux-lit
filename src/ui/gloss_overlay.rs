@@ -197,7 +197,7 @@ pub(crate) const GLOSS_DEFAULT_FONT_FAMILY: &str = "Charter";
 /// so they always render at the same size (never drift). Pre-first-work default
 /// only: `reapply_font` syncs both overlays to the reader card's configured size
 /// on every work load / size change (`sync_reader_font`).
-pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 18;
+pub(crate) const GLOSS_DEFAULT_FONT_SIZE: i32 = 17;
 
 /// Card-matching layout for a PROSE synopsis: render it in the main reading
 /// card's font and left padding instead of the play overlay's Charter-19 +

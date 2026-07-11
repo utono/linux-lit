@@ -694,7 +694,8 @@ impl Theme {
 /// Generate GTK CSS for a theme.
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
     let css = format!(
-        "window {{ background-color: {root}; }} \
+        "window {{ background-color: {root}; \
+           font-family: {font}; font-size: 10pt; }} \
          .tiled {{ background-color: {bg}; }} \
          .page-turn-overlay {{ background-color: {bg}; border-radius: 12px; }} \
          .page-image-overlay {{ background-color: {bg}; border-radius: 12px; }} \

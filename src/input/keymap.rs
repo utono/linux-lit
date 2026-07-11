@@ -3113,10 +3113,10 @@ fn dispatch_action(
         VolumeDown => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0)); }
         TogglePlaybackSpeed => {
             let mut s = state.borrow_mut();
-            let new_speed = if s.playback_speed == 1.0 { 1.3 } else { 1.0 };
+            let new_speed = next_playback_speed(s.playback_speed);
             s.playback_speed = new_speed;
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
-            crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
+            crate::logging::log(&format!("SPEED: cycled to {}x", new_speed));
             let label = format!("Speed: {:.1}x", new_speed);
             // Speed toast sits bottom-center (same place as the act/scene pill);
             // reset margins in case a prior "Sync:"/"Copied" moved the shared
@@ -3490,6 +3490,18 @@ fn dispatch_action(
         }
     }
 
+}
+
+/// Playback-speed cycle for TogglePlaybackSpeed (keyboard and gamepad):
+/// 1.0 → 1.3 → 0.9 → 1.0. Any off-cycle value snaps back to 1.0.
+pub(crate) fn next_playback_speed(current: f64) -> f64 {
+    if current == 1.0 {
+        1.3
+    } else if current == 1.3 {
+        0.9
+    } else {
+        1.0
+    }
 }
 
 /// MPV seek with brief sync suppression. Common pattern for o/e/O/E/Left.

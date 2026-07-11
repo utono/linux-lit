@@ -1,6 +1,6 @@
 # All dev logs incl. per-instance-slot suffixes (-2, -3, ...) and stderr tees
 linux-lit-dev*.log
-linux-lit-release.log
+linux-lit-release*.log
 linux-lit-stderr.log
 target/
 .superpowers/

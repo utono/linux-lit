@@ -165,10 +165,10 @@ fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
         }
         GamepadAction::TogglePlaybackSpeed => {
             let mut s = state.borrow_mut();
-            let new_speed = if s.playback_speed == 1.0 { 1.3 } else { 1.0 };
+            let new_speed = crate::input::keymap::next_playback_speed(s.playback_speed);
             s.playback_speed = new_speed;
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
-            crate::logging::log(&format!("SPEED: toggled to {}x", new_speed));
+            crate::logging::log(&format!("SPEED: cycled to {}x", new_speed));
         }
         GamepadAction::ToggleTranslations => {
             crate::app::translations::toggle_translations(&mut state.borrow_mut());
