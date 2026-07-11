@@ -116,19 +116,45 @@ pub fn enter_visual_mode(state: &mut AppState) {
 /// label) and `pending_ask` set, so a second Ctrl+a or Return opens the
 /// Journal Q&A ask card directly. On a blank/separator line, falls back to a
 /// single-line selection (same as V), still flagged pending-ask.
+/// On DB-join buffers (works with no text_file, where one buffer line renders
+/// one work row and no blank lines exist) the block is the run of lines
+/// sharing the cursor's work row instead.
 pub fn enter_visual_block_mode(state: &mut AppState) {
     let line_count = state.effective_line_count();
     if line_count == 0 {
         return;
     }
     let cursor = state.current_line;
+    let has_text_file = state
+        .current_work
+        .as_ref()
+        .and_then(|w| w.text_file.as_ref())
+        .is_some();
     let bounds = {
         let buffer = &state.buffer;
-        block_bounds(line_count, cursor, |idx| {
+        let is_blank_or_sep = |idx: usize| {
             let text = crate::input::viewport::buffer_line_text(buffer, idx);
             let t = text.trim();
             t.is_empty() || crate::db::line_types::is_separator(t)
-        })
+        };
+        if has_text_file {
+            // .txt-built buffer (plays, prepared prose): paragraphs and
+            // speeches are blank-line-delimited.
+            block_bounds(line_count, cursor, &is_blank_or_sep)
+        } else {
+            // DB-join buffer (no text_file, e.g. Bleak House prose; BCP
+            // sentence splits): there are NO blank lines — each buffer line
+            // renders one work row, so the cursor's paragraph is the run of
+            // buffer lines mapping to the SAME work row (one line for a
+            // prose paragraph; the whole prayer for BCP sentence splits).
+            match state.work_line_for_buffer(cursor) {
+                Some(cursor_row) => block_bounds(line_count, cursor, |idx| {
+                    is_blank_or_sep(idx)
+                        || state.work_line_for_buffer(idx) != Some(cursor_row)
+                }),
+                None => None,
+            }
+        }
     };
     let (start, end) = bounds.unwrap_or((cursor, cursor));
     state.visual_selection = Some(SelectionState {
