@@ -224,8 +224,6 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // Multi-key chord entry (gg → JumpToStart)
         (KeyCombo::plain("g"), Action::PendingG),
         (KeyCombo::plain("G"), Action::JumpToEnd),
-        // `z` steps forward through the vocab popup's words (swapped with `\`).
-        (KeyCombo::plain("z"), Action::VocabPopupNext),
         // Chapter / scene
         // RPD: the 2/3 number-row keys emit bracketleft/braceleft unshifted and
         // 2/3 shifted. Scene jumps sit on BOTH glyphs of each key: `[`/Shift+`[`
@@ -278,8 +276,8 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         // it is intercepted before dispatch in keymap.rs). `a` and `-` are both
         // a PURE pause/resume toggle — no seek (TogglePause).
         (KeyCombo::plain("a"), Action::TogglePause),
-        // '-' is the pause toggle (Tab moved to the chat layout).
-        (KeyCombo::plain("minus"), Action::TogglePause),
+        // '-' cycles the vocab popup (sticky — no auto-hide; Ctrl+- hides).
+        (KeyCombo::plain("minus"), Action::VocabPopupNext),
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
@@ -387,7 +385,7 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("t"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
-        (KeyCombo::ctrl("minus"), Action::OpenRecentPicker),
+        (KeyCombo::ctrl("minus"), Action::HideVocabPopup),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
@@ -442,11 +440,15 @@ mod tests {
     }
 
     #[test]
-    fn tab_toggles_chat_layout_and_minus_toggles_pause() {
+    fn minus_cycles_vocab_and_ctrl_minus_hides_popup() {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
-        assert_eq!(m.get(&KeyCombo::plain("minus")), Some(&Action::TogglePause));
-        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::OpenRecentPicker));
+        assert_eq!(m.get(&KeyCombo::plain("minus")), Some(&Action::VocabPopupNext));
+        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::HideVocabPopup));
+        // z freed; # keeps prev; pause still reachable on a.
+        assert_eq!(m.get(&KeyCombo::plain("z")), None);
+        assert_eq!(m.get(&KeyCombo::plain("numbersign")), Some(&Action::VocabPopupPrev));
+        assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
     }
 
     #[test]
