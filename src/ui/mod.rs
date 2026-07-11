@@ -112,15 +112,22 @@ pub(crate) const OVERLAY_LINE_LEADING: i32 = 2;
 /// overlays both render verse via `gloss_render::populate_verse_buffer`, so both
 /// own these tag names and must stay in sync — hence one shared helper.
 /// Briefly pulse a widget's opacity as a "this is now active" cue (Tab focus
-/// cycling in the chat layout: input box / transcript / main card). One dip
-/// to 0.35 for 140ms, then restore — theme-neutral, no CSS needed.
+/// cycling in the chat layout: input box / transcript / main card). A shallow
+/// dip eased back over ~a third of a second — theme-neutral, no CSS needed.
+/// (The first cut hard-dropped to 0.35 and hard-restored after 140ms; the two
+/// abrupt steps read as a jarring blink when Tab-cycling.)
 pub(crate) fn flash_widget(widget: &gtk4::Widget) {
     use gtk4::prelude::*;
-    let w = widget.clone();
-    w.set_opacity(0.35);
-    gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(140), move || {
-        w.set_opacity(1.0);
+    use libadwaita as adw;
+    use libadwaita::prelude::AnimationExt;
+    widget.set_opacity(0.78);
+    let w_anim = widget.clone();
+    let target = adw::CallbackAnimationTarget::new(move |value| {
+        w_anim.set_opacity(value);
     });
+    let anim = adw::TimedAnimation::new(widget, 0.78, 1.0, 340, target);
+    anim.set_easing(adw::Easing::EaseOutQuad);
+    anim.play();
 }
 
 pub(crate) fn reassert_italic_tags(table: &gtk4::TextTagTable) {

@@ -882,8 +882,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .chat-panel-float {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.25); border-radius: 8px; \
            padding: 12px; }} \
-         .chat-panel-header {{ color: {dim}; font-variant: small-caps; font-size: 13px; }} \
-         .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
+         .chat-panel-header {{ color: alpha({bg}, 0.92); font-variant: small-caps; \
+           font-size: 15px; letter-spacing: 1px; }} \
+         .chat-panel-rule {{ background-color: alpha({bg}, 0.45); min-height: 1px; }} \
+         .chat-panel-float .chat-panel-header {{ color: {dim}; }} \
+         .chat-panel-float .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
          .chat-q {{ color: {fg}; }} \
          .chat-a {{ color: alpha({fg}, 0.72); }} \
          .chat-chip {{ color: {dim}; font-style: italic; \
