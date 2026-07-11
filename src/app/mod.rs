@@ -2153,6 +2153,15 @@ pub fn build_window(
                     }
                     crate::log_fmt!("RESIZE_TICK: deferred layout refresh, sw_h={}", sw_h);
                     s.needs_layout_refresh.set(false);
+                    // Re-apply the chat panel geometry at the now-settled
+                    // column layout: a floating panel positioned earlier (or
+                    // about to be positioned by the deferred regate below)
+                    // reads the column overlays' compute_bounds, which are
+                    // only trustworthy once the two-column block has finished
+                    // centering.
+                    if s.chat_layout_open {
+                        crate::input::actions::chat::size_panel(&s);
+                    }
                     do_reveal = vbox_for_tick.opacity() < 1.0;
                     // Pinned play pagination: once layout is settled, generate+store
                     // the page table if this work/layout doesn't have one (no-op when
@@ -2299,11 +2308,20 @@ pub fn build_window(
                 // `s.window.width()` at the switch hook point can be a
                 // transient, not-yet-settled size. Only consume the flag on a
                 // frame where the width did NOT change — that's the settled
-                // case; a width-changing frame means geometry is still
-                // moving, so wait for a later, quiet tick.
+                // case. The regate itself runs on a short timeout, NOT
+                // synchronously: the float placement positions the panel from
+                // the column overlays' compute_bounds, and those rects only
+                // update after GTK's next layout pass — regating inside this
+                // very frame read mid-centering rects and put the panel ~90px
+                // off its column.
                 if s.chat_regate_pending && !width_changed {
                     s.chat_regate_pending = false;
-                    crate::input::actions::chat::regate_panel(&mut s);
+                    let st = state_for_tick.clone();
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                        if let Ok(mut s) = st.try_borrow_mut() {
+                            crate::input::actions::chat::regate_panel(&mut s);
+                        }
+                    });
                 }
             }
             glib::ControlFlow::Continue
