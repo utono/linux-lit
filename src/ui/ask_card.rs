@@ -254,13 +254,22 @@ impl AskCard {
         }
     }
 
-    /// Read and clear the input's text.
+    /// Read and clear the input's text — including the vim engine's own
+    /// buffer, not just the GTK TextBuffer mirror. Without this, a card that
+    /// stays open after `take_text` (e.g. the chat prompt, which does not
+    /// `close`/`open` between submit and a later `paste_text`) would have the
+    /// GTK buffer cleared but the engine still holding the old text; the next
+    /// `paste_text` inserts into the stale engine buffer and `mirror_vim`
+    /// resurrects the old text alongside the paste (duplicated text). Reset
+    /// the engine the same way `open` seeds a fresh one, then re-mirror so
+    /// the mode line/cursor render consistently.
     pub fn take_text(&self) -> String {
         let buffer = self.input.buffer();
         let text = buffer
             .text(&buffer.start_iter(), &buffer.end_iter(), false)
             .to_string();
-        buffer.set_text("");
+        *self.vim.borrow_mut() = Some(crate::input::vim::VimEngine::new(String::new()));
+        self.mirror_vim();
         text
     }
 }
