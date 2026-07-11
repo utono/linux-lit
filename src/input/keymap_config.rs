@@ -276,8 +276,8 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         // it is intercepted before dispatch in keymap.rs). `a` and `-` are both
         // a PURE pause/resume toggle — no seek (TogglePause).
         (KeyCombo::plain("a"), Action::TogglePause),
-        // '-' cycles the vocab popup (sticky — no auto-hide; Ctrl+- hides).
-        (KeyCombo::plain("minus"), Action::VocabPopupNext),
+        // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters the
+        // vocab-sentence loop / next-vocab jump).
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
@@ -295,9 +295,11 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
         // `\` duplicates Ctrl+g — open/close the gloss overlay (swapped with `z`).
         (KeyCombo::plain("backslash"), Action::OpenConcordancePicker),
-        (KeyCombo::plain("r"), Action::ConcordanceNext),
+        // `r` cycles the vocab popup (sticky — no auto-hide); Ctrl+r hides it.
+        // ConcordanceNext is deliberately unbound (R still steps prev).
+        (KeyCombo::plain("r"), Action::VocabPopupNext),
         (KeyCombo::plain("R"), Action::ConcordancePrev),
-        (KeyCombo::ctrl("r"), Action::JumpToNextVocab),
+        (KeyCombo::ctrl("r"), Action::HideVocabPopup),
         (KeyCombo::ctrl_shift("R"), Action::JumpToPrevVocab),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
@@ -386,7 +388,10 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("t"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
-        (KeyCombo::ctrl("minus"), Action::HideVocabPopup),
+        // Ctrl+- jumps to the next vocab word (enters the vocab-sentence loop
+        // on phrase-data works); moved here from Ctrl+r, which now hides the
+        // vocab popup.
+        (KeyCombo::ctrl("minus"), Action::JumpToNextVocab),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
@@ -441,14 +446,18 @@ mod tests {
     }
 
     #[test]
-    fn minus_cycles_vocab_and_ctrl_minus_hides_popup() {
+    fn r_cycles_vocab_and_ctrl_r_hides_popup() {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
-        assert_eq!(m.get(&KeyCombo::plain("minus")), Some(&Action::VocabPopupNext));
-        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::HideVocabPopup));
-        // z and # freed; pause still reachable on a.
+        assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupNext));
+        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::HideVocabPopup));
+        // Ctrl+- took the next-vocab jump / vocab-sentence loop entry.
+        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
+        // minus, z, and # freed; ConcordanceNext unbound (R still steps prev).
+        assert_eq!(m.get(&KeyCombo::plain("minus")), None);
         assert_eq!(m.get(&KeyCombo::plain("z")), None);
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
+        assert_eq!(m.get(&KeyCombo::plain("R")), Some(&Action::ConcordancePrev));
         assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
     }
 

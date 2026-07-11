@@ -399,8 +399,9 @@ When searching for a keybind in linux-lit, **always check source** — primarily
 Cross-work concordance navigation for searching word occurrences across an author's works.
 
 - **Ctrl+\\** — opens concordance picker with stopword-filtered word list for the current author
-- **r / R** — next/prev concordance hit (cross-work, loads new work in-place). Falls back to "no concordance active" toast if no word selected. Seeks MPV to the hit line's own start time (not sentence start).
-- **Ctrl+r / Ctrl+Shift+R** — next/prev vocab word jump (always, ignores concordance state). On works whose playing media has `phrase_timestamps`, these instead enter the **vocab-sentence loop mode**: the sentence containing the vocab word repeats gaplessly (MPV ab-loop) with a static sentence tint (no karaoke sweep); `n`/`p` step between vocab sentences, `a`/Space pauses, Escape/Ctrl+r exits (fully modal). See `src/input/vocab_loop.rs`.
+- **R** — previous concordance hit (cross-work, loads new work in-place). Falls back to "no concordance active" toast if no word selected. Seeks MPV to the hit line's own start time (not sentence start). ConcordanceNext is deliberately unbound (plain `r` now cycles the vocab popup; rebind via keymap.json if needed).
+- **Ctrl+- / Ctrl+Shift+R** — next/prev vocab word jump (always, ignores concordance state). On works whose playing media has `phrase_timestamps`, these instead enter the **vocab-sentence loop mode**: the sentence containing the vocab word repeats gaplessly (MPV ab-loop) with a static sentence tint (no karaoke sweep); `n`/`p` step between vocab sentences, `a`/Space pauses, Escape/Ctrl+- exits (Ctrl+r kept as a legacy exit; fully modal). See `src/input/vocab_loop.rs`.
+- **r / Ctrl+r** — vocab popup: `r` cycles the popup's words (sticky, no auto-hide; follows the cursor/playback line), `Ctrl+r` fades it out.
 - Word list is cached per author in `AppState.concordance_word_cache`
 - Cross-work jumps open the media picker so the user chooses the audio file
 - Single-media works auto-select without showing the picker

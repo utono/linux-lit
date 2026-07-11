@@ -2793,7 +2793,9 @@ fn handle_vocab_loop_key(
                 .try_send(crate::mpv::MpvCommand::TogglePause);
         }
         "Escape" => crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut()),
-        "r" | "R" if is_ctrl => {
+        // Exit on the loop's own entry key (Ctrl+-, after the rebind that
+        // moved next-vocab off Ctrl+r); Ctrl+r/R kept as a legacy exit.
+        "r" | "R" | "minus" if is_ctrl => {
             crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut())
         }
         _ => {}

@@ -57,7 +57,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("M-g", "gloss from jrnl"), ("C-g", "view gloss")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark"), ("C-M-c", "conc list")]),
-    key("r", "R", "next conc", "R: prev conc", &[("C-r", "next vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
+    key("r", "R", "vocab \u{25b6}", "R: prev conc", &[("C-r", "hide vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit"), ("l", "verse audio: play/stop"), ("L", "verse audio: pick voice")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
@@ -76,7 +76,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
-    key("-", "_", "vocab ▶", "", &[("C--", "hide vocab")]),
+    key("-", "_", "", "", &[("C--", "next vocab")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -379,13 +379,11 @@ the synthesized verse reading and play it. \
 -> pick_source_voice — src/input/actions/gloss.rs",
 
         // ── Vocab ──
-        "next conc" => "Next concordance hit for the active word (cross-work). \
--> concordance::concordance_next — src/input/actions/concordance.rs",
         "prev conc" => "Previous concordance hit for the active word (cross-work). \
 -> concordance::concordance_prev — src/input/actions/concordance.rs",
         "next vocab" => "Jump to the next vocabulary word. On phrase-data works \
 this instead enters the vocab-sentence loop mode (sentence repeats via MPV \
-ab-loop; n/p step, a/Space pause, Esc exits). \
+ab-loop; n/p step, a/Space pause, Esc or Ctrl+- exits). \
 -> concordance::jump_to_next_vocab — src/input/actions/concordance.rs",
         "prev vocab" => "Jump to the previous vocabulary word (backward entry \
 into the vocab-sentence loop mode on phrase-data works — see next vocab). \
