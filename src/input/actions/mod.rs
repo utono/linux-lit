@@ -133,6 +133,10 @@ pub enum Action {
 
     // Visual / selection
     EnterVisualMode,
+    /// Ctrl+a: auto-select the paragraph/speech around the cursor and enter
+    /// visual mode pending a Journal Q&A ask; a second Ctrl+a (or Return)
+    /// opens the "Ask a question about this passage" card directly.
+    AskPassage,
     WordCycleCopy,
     WordCollectCopy,
     /// Open the cursor's segment (prose paragraph / verse line) in a read-only
@@ -295,6 +299,7 @@ impl Action {
 
             // Selection
             Action::EnterVisualMode
+            | Action::AskPassage
             | Action::WordCycleCopy
             | Action::WordCollectCopy
             | Action::OpenSegmentVim => Category::Selection,
@@ -397,6 +402,7 @@ impl Action {
             Action::ConcordanceNext => "ConcordanceNext",
             Action::ConcordancePrev => "ConcordancePrev",
             Action::EnterVisualMode => "EnterVisualMode",
+            Action::AskPassage => "AskPassage",
             Action::WordCycleCopy => "WordCycleCopy",
             Action::WordCollectCopy => "WordCollectCopy",
             Action::OpenSegmentVim => "OpenSegmentVim",

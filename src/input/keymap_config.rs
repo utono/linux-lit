@@ -334,7 +334,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("T"), Action::RootVariantPrev),
         (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
-        (KeyCombo::ctrl("a"), Action::ToggleAuthorship),
+        // Authorship moved off Ctrl+a (now AskPassage). plain("A") is the
+        // shifted `a` (cf. plain("G") normalization above).
+        (KeyCombo::plain("A"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::ctrl_alt("i"), Action::ToggleTranslations),
@@ -352,6 +354,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
 fn selection_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("V"), Action::EnterVisualMode),
+        // Ctrl+a: paragraph/speech ask — pre-selects the block, second Ctrl+a
+        // or Return opens the Journal Q&A ask card.
+        (KeyCombo::ctrl("a"), Action::AskPassage),
         // Copy-only vim view of the cursor's segment: opens in VISUAL mode,
         // visual `y` copies to the system clipboard, nothing is ever saved.
         (KeyCombo::plain("v"), Action::OpenSegmentVim),
@@ -424,7 +429,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
-        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::ToggleAuthorship));
+        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::AskPassage));
+        assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
         assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
         assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::CycleScansion));
@@ -525,7 +531,7 @@ mod tests {
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
         assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
-        assert_eq!(a_ctrl, Some(Action::ToggleAuthorship));
+        assert_eq!(a_ctrl, Some(Action::AskPassage));
         assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
         // plain v (segment vim copy) vs Shift+v (reader visual mode) differ.
         assert_eq!(km.lookup("v", false, false, false), Some(Action::OpenSegmentVim));
