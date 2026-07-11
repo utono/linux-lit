@@ -3065,7 +3065,14 @@ pub fn display_work_at_with_prepared(
     {
         let cw = crate::app::layout::effective_column_width(state);
         let cc = state.column_count();
-        let tr = state.translations_visible;
+        // Translations are unconditionally reset to OFF for every newly
+        // loaded work (see `state.translations_visible = false` below), but
+        // that reset runs after this block — `state.translations_visible`
+        // here still holds the OLD work's flag. Size for the new work's
+        // actual (translations-off) layout, or a switch made with
+        // translations on transiently forces the two-column width on a
+        // single-column work.
+        let tr = false;
         apply_card_sizing(&state.content_hbox.clone(), ww, cw, cc, tr, state.chat_layout_open);
     }
     apply_tiled_mode(state, &vbox, ww);
