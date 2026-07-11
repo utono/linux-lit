@@ -152,6 +152,12 @@ pub enum InputMode {
     /// the cursor line; Enter marks the cursor line as that page's start and
     /// advances to the next page.
     PageCalibration,
+    /// Chat layout: the panel's vim prompt owns keys (Tab cycles to the
+    /// transcript; Ctrl+Tab closes the panel; Ctrl+Enter submits).
+    ChatPrompt,
+    /// Chat layout: the transcript owns keys (j/k exchange cursor, s saves,
+    /// Tab cycles to the reader, Ctrl+Tab closes).
+    ChatTranscript,
 }
 
 /// Which of the two toggleable reader overlays (gloss / journal) was most
@@ -300,6 +306,16 @@ pub struct AppState {
     /// two-column mode. Mirrors `gutter_renderer` on the left `text_view`.
     pub right_gutter_renderer: Option<sourceview5::GutterRendererText>,
     pub content_hbox: gtk4::Box,
+    /// Chat layout (Tab): card pinned right, left chat panel visible.
+    pub chat_layout_open: bool,
+    /// Set by `chat::on_work_switched` when a work switch happened with the
+    /// panel open: the panel's width hold was released immediately (so it
+    /// can't inflate the window), and the real re-gate/resize is deferred
+    /// until the resize tick observes settled (non-changing) geometry —
+    /// reading `s.window.width()` at the work-switch hook point can observe
+    /// a transient in-flight size (e.g. mid-reflow into a two-column work)
+    /// rather than the compositor-settled width.
+    pub chat_regate_pending: bool,
     pub vbox: gtk4::Box,
     pub window: ApplicationWindow,
     pub config: Config,
@@ -589,6 +605,8 @@ pub struct AppState {
     pub title_bar: gtk4::Box,
     pub title_bar_label: gtk4::Label,
     pub title_bar_scene_label: gtk4::Label,
+    pub chat_panel: crate::ui::chat_panel::ChatPanel,
+    pub chat: crate::input::actions::chat::ChatState,
     /// Index of the current sentence group (for prose with text_file).
     pub current_sentence_group: Option<usize>,
     /// Tracks the start line of the current paragraph to detect transitions.
@@ -1581,12 +1599,20 @@ pub fn build_window(
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&authorship_picker.overlay);
 
+    // Left chat panel (Tab chat layout): bare-on-root overlay, not in the
+    // size-bearing widget chain (see feedback_picker_overlay_not_chain).
+    // Hidden until toggle_chat_layout shows it and sizes it via size_panel.
+    let chat_panel = crate::ui::chat_panel::ChatPanel::new();
+    chat_panel.container.set_halign(gtk4::Align::Start);
+    chat_panel.container.set_valign(gtk4::Align::Center);
+
     concordance_bar.container.set_valign(gtk4::Align::End);
     title_bar.set_valign(gtk4::Align::End);
     let outer_overlay = gtk4::Overlay::new();
     outer_overlay.set_child(Some(&vbox));
     outer_overlay.add_overlay(&concordance_bar.container);
     outer_overlay.add_overlay(&title_bar);
+    outer_overlay.add_overlay(&chat_panel.container);
 
     // Suppress startup flicker: hide content until the deferred layout
     // refresh fires (after dwl has tiled the window AND display_work
@@ -1668,6 +1694,8 @@ pub fn build_window(
         right_line_number_renderer: None,
         right_gutter_renderer: None,
         content_hbox: content_hbox.clone(),
+        chat_layout_open: false,
+        chat_regate_pending: false,
         vbox: vbox.clone(),
         window: window.clone(),
         config,
@@ -1832,6 +1860,8 @@ pub fn build_window(
         title_bar,
         title_bar_label,
         title_bar_scene_label,
+        chat_panel,
+        chat: Default::default(),
         current_sentence_group: None,
         current_paragraph_start: None,
         current_sync_scene: None,
@@ -2031,7 +2061,7 @@ pub fn build_window(
                         let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
                     }
                     return glib::ControlFlow::Continue;
                 }
@@ -2048,7 +2078,7 @@ pub fn build_window(
                     let cw = crate::app::layout::effective_column_width(&s);
                     let cc = s.column_count();
                     let tr = s.translations_visible;
-                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                    apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
                     apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     // In two-column mode the left/right text_view widths must
                     // have reflowed to their FINAL two-column geometry before
@@ -2154,7 +2184,10 @@ pub fn build_window(
                         let cw = crate::app::layout::effective_column_width(&s);
                         let cc = s.column_count();
                         let tr = s.translations_visible;
-                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr);
+                        apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_layout_open);
+                        if s.chat_layout_open {
+                            crate::input::actions::chat::size_panel(&s);
+                        }
                         apply_tiled_mode(&mut s, &vbox_for_tick, ww);
                     }
                     if width_changed || height_changed {
@@ -2247,6 +2280,17 @@ pub fn build_window(
                     // sourceview5::View exposes no AT-SPI Text interface, so this
                     // log line is how the harness locates the pane.
                     crate::input::scroll::emit_test_viewport_rect(&s);
+                }
+                // Chat layout: a work switch with the panel open deferred its
+                // re-gate to here (see `chat::on_work_switched`) because
+                // `s.window.width()` at the switch hook point can be a
+                // transient, not-yet-settled size. Only consume the flag on a
+                // frame where the width did NOT change — that's the settled
+                // case; a width-changing frame means geometry is still
+                // moving, so wait for a later, quiet tick.
+                if s.chat_regate_pending && !width_changed {
+                    s.chat_regate_pending = false;
+                    crate::input::actions::chat::regate_panel(&mut s);
                 }
             }
             glib::ControlFlow::Continue
@@ -2991,6 +3035,7 @@ pub fn display_work_at_with_prepared(
     // (`if state.vocab_highlight_visible { apply_vocab_highlighting }`) reads it.
     state.vocab_highlight_visible = work.vocab_highlight;
     state.current_work = Some(work);
+    crate::input::actions::chat::on_work_switched(state);
 
     // Build buffer text (with or without sign column)
     state.line_map = None;
@@ -3005,6 +3050,24 @@ pub fn display_work_at_with_prepared(
     let work_is_prose = crate::db::line_types::is_prose_work(&work_type);
     let vbox = state.vbox.clone();
     let ww = state.window.width();
+    // Update the card's width_request for THIS work's column count/layout
+    // BEFORE apply_tiled_mode below sets the two-column children's widths.
+    // Without this, content_hbox keeps the PREVIOUS work's (possibly
+    // single-column, narrower) width_request while apply_tiled_mode already
+    // requests the new work's two-column widths on its children — GTK's
+    // natural-size measurement then sees children wider than their parent's
+    // request and grows the toplevel window past its true settled width
+    // (observed: BH (1050, 1-col) -> Hamlet (2-col, columns request 1520+)
+    // grew the window from 1920 to 2407 before the deferred resize-tick
+    // refresh caught up). The resize tick's own `apply_card_sizing` call
+    // (layout_refresh branch) still runs afterward and is a no-op once the
+    // width already matches.
+    {
+        let cw = crate::app::layout::effective_column_width(state);
+        let cc = state.column_count();
+        let tr = state.translations_visible;
+        apply_card_sizing(&state.content_hbox.clone(), ww, cw, cc, tr, state.chat_layout_open);
+    }
     apply_tiled_mode(state, &vbox, ww);
     // Non-prose works (plays, poems, epics) use tight 0px global spacing.
     // Prose uses the configured line_spacing. Reset on every load so the

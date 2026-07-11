@@ -878,6 +878,16 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .title-bar {{ background-color: {root}; padding: 4px 12px; }} \
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
+         .chat-panel {{ background-color: transparent; }} \
+         .chat-panel-header {{ color: {dim}; font-variant: small-caps; font-size: 13px; }} \
+         .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
+         .chat-q {{ color: {fg}; }} \
+         .chat-a {{ color: alpha({fg}, 0.72); }} \
+         .chat-chip {{ color: {dim}; font-style: italic; \
+           border-left: 2px solid alpha({fg}, 0.35); padding-left: 8px; }} \
+         .chat-error {{ color: alpha({fg}, 0.55); font-style: italic; }} \
+         .chat-saved {{ color: {dim}; }} \
+         .chat-input {{ border: 1px solid alpha({fg}, 0.30); border-radius: 6px; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .legend-box {{ background-color: {bg}; color: {fg}; \

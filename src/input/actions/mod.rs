@@ -5,6 +5,7 @@
 pub mod authorship;
 pub mod bookmarks;
 pub mod chapters;
+pub mod chat;
 pub(crate) mod claude_bridge;
 pub mod concordance;
 pub mod echoes;
@@ -166,6 +167,8 @@ pub enum Action {
     ToggleColumnLayout,
     TogglePreviousWork,
     ToggleDim,
+    /// Tab: toggle the left chat panel layout (card pins right).
+    ToggleChatLayout,
     ThemeNext,
     ThemePrev,
     RootVariantNext,
@@ -279,6 +282,7 @@ impl Action {
             | Action::ToggleSignColumn
             | Action::ToggleColumnLayout
             | Action::ToggleDim
+            | Action::ToggleChatLayout
             | Action::ThemeNext
             | Action::ThemePrev
             | Action::RootVariantNext
@@ -421,6 +425,7 @@ impl Action {
             Action::ToggleColumnLayout => "ToggleColumnLayout",
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
+            Action::ToggleChatLayout => "ToggleChatLayout",
             Action::ThemeNext => "ThemeNext",
             Action::ThemePrev => "ThemePrev",
             Action::RootVariantNext => "RootVariantNext",

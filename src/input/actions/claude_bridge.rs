@@ -41,3 +41,37 @@ pub(crate) fn run_claude_request(
         }
     });
 }
+
+/// Multi-turn variant of `run_claude_request`: sends the whole conversation
+/// (`turns` = prior user/assistant messages + the new user message, in order)
+/// via `crate::claude::send_chat`. Same contract: show a loading state before
+/// calling; callbacks run on the GTK main loop.
+pub(crate) fn run_claude_chat_request(
+    state_rc: &Rc<RefCell<AppState>>,
+    system_prompt: String,
+    turns: Vec<crate::claude::ChatTurn>,
+    model: String,
+    on_success: impl Fn(&Rc<RefCell<AppState>>, String) + 'static,
+    on_error: impl Fn(&Rc<RefCell<AppState>>, &str) + 'static,
+) {
+    let tokio_handle = state_rc.borrow().tokio_handle.clone();
+    let state_for_result = Rc::clone(state_rc);
+    glib::spawn_future_local(async move {
+        let result = tokio_handle
+            .spawn(async move {
+                crate::claude::send_chat(&system_prompt, &turns, &model).await
+            })
+            .await;
+        match result {
+            Ok(Ok(reply)) => on_success(&state_for_result, reply),
+            Ok(Err(e)) => {
+                crate::logging::log(&format!("CLAUDE: chat API error: {}", e));
+                on_error(&state_for_result, &format!("Error: {}", e));
+            }
+            Err(e) => {
+                crate::logging::log(&format!("CLAUDE: tokio join error: {}", e));
+                on_error(&state_for_result, "Internal error \u{2014} try again.");
+            }
+        }
+    });
+}

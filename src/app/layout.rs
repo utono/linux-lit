@@ -287,7 +287,7 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
     let cw = effective_column_width(state);
     let cc = state.column_count();
     let tr = state.translations_visible;
-    apply_card_sizing(&state.content_hbox, ww, cw, cc, tr);
+    apply_card_sizing(&state.content_hbox, ww, cw, cc, tr, state.chat_layout_open);
     apply_tiled_mode(state, &vbox, ww);
     let two_col = state.column_count() == 2;
     state.right_scrolled_overlay.set_visible(two_col);
@@ -378,12 +378,28 @@ pub(crate) fn apply_card_sizing(
     column_width: u32,
     column_count: u8,
     translations: bool,
+    chat_open: bool,
 ) {
     let ww = window_width.max(0);
     let target = target_card_width(ww, column_width, column_count, translations);
     // Reserve room for margins first; if that overflows, the card itself shrinks.
     let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
+    if chat_open {
+        // Chat layout: pin the card flush right (keep the normal right
+        // margin); ALL remaining slack becomes the left margin, which is the
+        // space the chat panel renders over.
+        let end = (slack / 2).clamp(0, CARD_OUTER_MARGIN).min(slack.max(0));
+        let start = (slack - end).max(0);
+        content_hbox.set_width_request(card_w);
+        content_hbox.set_margin_start(start);
+        content_hbox.set_margin_end(end);
+        crate::log_fmt!(
+            "CARD_SIZING: chat ww={} card_w={} start={} end={}",
+            ww, card_w, start, end
+        );
+        return;
+    }
     let margin = (slack / 2).clamp(0, CARD_OUTER_MARGIN);
     content_hbox.set_width_request(card_w);
     content_hbox.set_margin_start(margin);

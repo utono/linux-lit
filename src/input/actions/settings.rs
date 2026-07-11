@@ -30,7 +30,7 @@ pub(crate) fn apply_settings_change(
             // the 78-char measure and the configured width) sees the new value.
             s.config.column_width = val;
             let cw = crate::app::layout::effective_column_width(&s);
-            crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible);
+            crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible, s.chat_layout_open);
         }
         SettingsChange::TextMargins(val) => {
             let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
@@ -352,7 +352,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
         s.text_view.set_pixels_below_lines((snap_ls as i32).max(0));
     }
     let cc = s.column_count();
-    crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw, cc, s.translations_visible);
+    crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), snap_cw, cc, s.translations_visible, s.chat_layout_open);
     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
     let is_verse = !crate::db::line_types::is_prose_work(work_type);
     let verse_bump = if is_verse { crate::app::layout::verse_left_offset(s.window.width(), snap_cw) } else { 0 };
@@ -476,7 +476,7 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
         s.text_view.set_pixels_below_lines((ls as i32).max(0));
     }
     let cc = s.column_count();
-    crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible);
+    crate::app::layout::apply_card_sizing(&s.content_hbox, s.window.width(), cw, cc, s.translations_visible, s.chat_layout_open);
     let work_type = s.current_work.as_ref().map(|w| w.work_type.as_str()).unwrap_or("");
     let is_verse = !crate::db::line_types::is_prose_work(work_type);
     let verse_bump = if is_verse { crate::app::layout::verse_left_offset(s.window.width(), cw) } else { 0 };
