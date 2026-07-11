@@ -3043,6 +3043,17 @@ pub fn display_work_at_with_prepared(
     state.authorship_line_ids.clear();
     state.authorship_sets.clear();
     state.active_attribution_set_id = None;
+    // Translations are always OFF for a newly loaded work. Reset the flag
+    // HERE — before the card sizing, `apply_tiled_mode`, and the `two_col`
+    // visibility below — because all three read it (directly, and through
+    // `column_count()`, which forces 1 while translations are visible). A
+    // switch made with translations on would otherwise size and lay out the
+    // NEW work against the OLD work's stale flag: a two-column play would get
+    // a single-column width_request (children wider than parent → window
+    // grows), and a single-column work would get the two-column card width.
+    state.translations_visible = false;
+    state.translation_lines = Vec::new();
+    state.translation_section_starts = Vec::new();
     // Left margin + tiled-mode visuals. apply_tiled_mode handles the verse
     // offset for wide windows, the page-label padding, and the root-color
     // masking CSS class for narrow/tiled windows.
@@ -3063,16 +3074,11 @@ pub fn display_work_at_with_prepared(
     // (layout_refresh branch) still runs afterward and is a no-op once the
     // width already matches.
     {
+        // translations_visible was reset above, so cw/cc/tr all describe the
+        // NEW work's real (translations-off) layout here.
         let cw = crate::app::layout::effective_column_width(state);
         let cc = state.column_count();
-        // Translations are unconditionally reset to OFF for every newly
-        // loaded work (see `state.translations_visible = false` below), but
-        // that reset runs after this block — `state.translations_visible`
-        // here still holds the OLD work's flag. Size for the new work's
-        // actual (translations-off) layout, or a switch made with
-        // translations on transiently forces the two-column width on a
-        // single-column work.
-        let tr = false;
+        let tr = state.translations_visible;
         apply_card_sizing(&state.content_hbox.clone(), ww, cw, cc, tr, state.chat_layout_open);
     }
     apply_tiled_mode(state, &vbox, ww);
@@ -3098,9 +3104,8 @@ pub fn display_work_at_with_prepared(
     if !two_col {
         state.right_bottom_clip.set_height_request(0);
     }
-    state.translations_visible = false;
-    state.translation_lines = Vec::new();
-    state.translation_section_starts = Vec::new();
+    // (translations_visible / translation_lines / translation_section_starts
+    // are reset earlier, before the card sizing — see the comment there.)
     state.page_table_gen_attempted.set(false);
     *state.page_table.borrow_mut() = None;
     state.page_table_fp.borrow_mut().clear();
