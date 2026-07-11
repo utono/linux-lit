@@ -24,6 +24,31 @@ impl SelectionState {
     }
 }
 
+/// Inclusive `(start, end)` of the contiguous block of non-boundary lines
+/// containing `cursor`. A "boundary" line (blank line or separator, decided by
+/// the caller's closure) delimits the block: prose paragraphs and play
+/// speeches are both blank-line-delimited in the reader buffer, so this yields
+/// the paragraph (prose) or the speech including its speaker label (plays).
+/// Returns `None` when `cursor` is out of range or is itself a boundary line —
+/// callers fall back to a single-line selection.
+pub(crate) fn block_bounds(
+    line_count: usize,
+    cursor: usize,
+    is_boundary: impl Fn(usize) -> bool,
+) -> Option<(usize, usize)> {
+    if cursor >= line_count || is_boundary(cursor) {
+        return None;
+    }
+    let mut start = cursor;
+    while start > 0 && !is_boundary(start - 1) {
+        start -= 1;
+    }
+    let mut end = cursor;
+    while end + 1 < line_count && !is_boundary(end + 1) {
+        end += 1;
+    }
+    Some((start, end))
+}
 
 /// Apply the selection_tag to all lines in the visual selection range.
 /// Also removes dim_tag from those lines so they appear at full brightness.
@@ -927,5 +952,57 @@ pub fn reload_current_work(state: &mut AppState) {
             }
         }
         Err(e) => crate::logging::log(&format!("VISUAL: open_db failed: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod block_bounds_tests {
+    use super::block_bounds;
+
+    /// Test harness: boundary = blank or separator line, same rule
+    /// enter_visual_block_mode uses.
+    fn bounds(lines: &[&str], cursor: usize) -> Option<(usize, usize)> {
+        let texts: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+        let is_boundary = |idx: usize| {
+            let t = texts[idx].trim();
+            t.is_empty() || crate::db::line_types::is_separator(t)
+        };
+        block_bounds(lines.len(), cursor, is_boundary)
+    }
+
+    #[test]
+    fn paragraph_mid_buffer() {
+        let lines = ["First para.", "", "Second para line 1.", "line 2.", "line 3.", "", "Third."];
+        assert_eq!(bounds(&lines, 3), Some((2, 4)));
+        // Every line of the block maps to the same bounds.
+        assert_eq!(bounds(&lines, 2), Some((2, 4)));
+        assert_eq!(bounds(&lines, 4), Some((2, 4)));
+    }
+
+    #[test]
+    fn speech_includes_speaker_label() {
+        // A play speech: speaker label + verse lines form one contiguous block.
+        let lines = ["", "HAMLET", "To be, or not to be: that is the question:", "Whether 'tis nobler in the mind to suffer", ""];
+        assert_eq!(bounds(&lines, 2), Some((1, 3)));
+    }
+
+    #[test]
+    fn cursor_on_blank_line_is_none() {
+        let lines = ["First.", "", "Second."];
+        assert_eq!(bounds(&lines, 1), None);
+    }
+
+    #[test]
+    fn block_at_buffer_start_and_end() {
+        let lines = ["Line a.", "Line b.", "", "Tail line 1.", "Tail line 2."];
+        assert_eq!(bounds(&lines, 0), Some((0, 1)));
+        assert_eq!(bounds(&lines, 4), Some((3, 4)));
+    }
+
+    #[test]
+    fn cursor_out_of_range_is_none() {
+        let lines = ["Only line."];
+        assert_eq!(bounds(&lines, 5), None);
+        assert_eq!(bounds(&[], 0), None);
     }
 }
