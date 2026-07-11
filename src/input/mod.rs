@@ -12,6 +12,7 @@ pub mod picker_keys;
 pub mod prose_pages;
 pub mod scroll;
 pub mod search;
+pub mod segments;
 pub mod timestamps;
 pub mod viewport;
 pub mod vim;

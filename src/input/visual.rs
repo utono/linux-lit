@@ -55,6 +55,46 @@ pub(crate) fn block_bounds(
     Some((start, end))
 }
 
+/// Structure-aware block bounds at an arbitrary buffer line.
+/// .txt-built buffers (text_file present AND line_map built): paragraphs and
+/// speeches are blank-line/separator-delimited. DB-join buffers (no
+/// text_file, or unreadable text_file fallback): no blank lines exist — the
+/// block is the run of buffer lines mapping to the same work row.
+/// None when `line` is out of range, a boundary line, or (DB-join) unmapped.
+pub(crate) fn block_bounds_at(state: &AppState, line: usize) -> Option<(usize, usize)> {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return None;
+    }
+    let has_text_file = state
+        .current_work
+        .as_ref()
+        .and_then(|w| w.text_file.as_ref())
+        .is_some()
+        && state.line_map.is_some();
+    let buffer = &state.buffer;
+    let is_blank_or_sep = |idx: usize| {
+        let text = crate::input::viewport::buffer_line_text(buffer, idx);
+        let t = text.trim();
+        t.is_empty() || crate::db::line_types::is_separator(t)
+    };
+    if has_text_file {
+        block_bounds(line_count, line, &is_blank_or_sep)
+    } else {
+        match state.work_line_for_buffer(line) {
+            Some(row) => block_bounds(line_count, line, |idx| {
+                is_blank_or_sep(idx) || state.work_line_for_buffer(idx) != Some(row)
+            }),
+            None => None,
+        }
+    }
+}
+
+/// The cursor's paragraph/speech block (see `block_bounds_at`).
+pub(crate) fn cursor_block_bounds(state: &AppState) -> Option<(usize, usize)> {
+    block_bounds_at(state, state.current_line)
+}
+
 /// Apply the selection_tag to all lines in the visual selection range.
 /// Also removes dim_tag from those lines so they appear at full brightness.
 pub fn apply_selection_highlight(state: &AppState) {
@@ -125,43 +165,7 @@ pub fn enter_visual_block_mode(state: &mut AppState) {
         return;
     }
     let cursor = state.current_line;
-    // The blank-line rule needs a .txt-built buffer. text_file alone isn't
-    // proof: if the file was unreadable, display fell back to the DB-join
-    // buffer (line_map None) and the blank-line walk would select the whole
-    // buffer. Every successful text-file/BCP prep sets a line_map, so require
-    // both.
-    let has_text_file = state
-        .current_work
-        .as_ref()
-        .and_then(|w| w.text_file.as_ref())
-        .is_some()
-        && state.line_map.is_some();
-    let bounds = {
-        let buffer = &state.buffer;
-        let is_blank_or_sep = |idx: usize| {
-            let text = crate::input::viewport::buffer_line_text(buffer, idx);
-            let t = text.trim();
-            t.is_empty() || crate::db::line_types::is_separator(t)
-        };
-        if has_text_file {
-            // .txt-built buffer (plays, prepared prose): paragraphs and
-            // speeches are blank-line-delimited.
-            block_bounds(line_count, cursor, &is_blank_or_sep)
-        } else {
-            // DB-join buffer (no text_file, e.g. Bleak House prose; BCP
-            // sentence splits): there are NO blank lines — each buffer line
-            // renders one work row, so the cursor's paragraph is the run of
-            // buffer lines mapping to the SAME work row (one line for a
-            // prose paragraph; the whole prayer for BCP sentence splits).
-            match state.work_line_for_buffer(cursor) {
-                Some(cursor_row) => block_bounds(line_count, cursor, |idx| {
-                    is_blank_or_sep(idx)
-                        || state.work_line_for_buffer(idx) != Some(cursor_row)
-                }),
-                None => None,
-            }
-        }
-    };
+    let bounds = cursor_block_bounds(state);
     let (start, end) = bounds.unwrap_or((cursor, cursor));
     state.visual_selection = Some(SelectionState {
         anchor_line: start,
