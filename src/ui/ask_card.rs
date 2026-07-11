@@ -33,6 +33,9 @@ pub struct AskCard {
     /// engine is the source of truth; the input TextView (editable=false) mirrors
     /// it. `Some` while open. Submit = `:w`/Ctrl+Enter; cancel = double-Esc/`:q`.
     vim: std::cell::RefCell<Option<crate::input::vim::VimEngine>>,
+    /// Insert-mode caret blink timer (GTK won't blink a non-editable view's
+    /// caret natively). `Some` only while the vim engine is in Insert mode.
+    blink: std::cell::RefCell<Option<glib::SourceId>>,
 }
 
 impl AskCard {
@@ -99,6 +102,7 @@ impl AskCard {
             focus: Cell::new(AskFocus::Doc),
             return_focus: return_focus.clone().upcast(),
             vim: std::cell::RefCell::new(None),
+            blink: std::cell::RefCell::new(None),
         }
     }
 
@@ -199,8 +203,14 @@ impl AskCard {
         // Block cursor in NORMAL/VISUAL, native caret in INSERT (vim convention).
         if engine.mode() == crate::input::vim::Mode::Insert {
             crate::ui::clear_block_cursor(&buffer, "ask-vim-block");
-            self.input.set_cursor_visible(true);
+            // GTK only blinks the native caret on EDITABLE focused views, and
+            // this view is deliberately non-editable (the VimEngine owns all
+            // edits) — so blink it ourselves. Re-arming on every mirror also
+            // resets the phase to visible on each keystroke, matching native
+            // caret behavior.
+            self.start_caret_blink();
         } else {
+            self.stop_caret_blink();
             let (fill, fg) = self.cursor_colors.borrow().clone();
             crate::ui::paint_block_cursor(&buffer, "ask-vim-block", &fill, &fg, ci);
             self.input.set_cursor_visible(ci >= n_chars);
@@ -218,6 +228,30 @@ impl AskCard {
         self.hint.set_text(&mode);
     }
 
+    /// Start (or phase-reset) the insert-mode caret blink: caret shown now,
+    /// then toggled every 530ms (~GTK's default blink cadence).
+    fn start_caret_blink(&self) {
+        if let Some(id) = self.blink.borrow_mut().take() {
+            id.remove();
+        }
+        self.input.set_cursor_visible(true);
+        let input = self.input.clone();
+        let visible = std::cell::Cell::new(true);
+        let id = glib::timeout_add_local(std::time::Duration::from_millis(530), move || {
+            visible.set(!visible.get());
+            input.set_cursor_visible(visible.get());
+            glib::ControlFlow::Continue
+        });
+        *self.blink.borrow_mut() = Some(id);
+    }
+
+    /// Stop the insert-mode blink (leaving caret visibility to the caller).
+    fn stop_caret_blink(&self) {
+        if let Some(id) = self.blink.borrow_mut().take() {
+            id.remove();
+        }
+    }
+
     /// Hide, set AskFocus::Doc, drop the highlight, return focus to return_focus.
     pub fn close(&self) {
         self.container.set_visible(false);
@@ -225,6 +259,7 @@ impl AskCard {
         self.container.remove_css_class("card-focused");
         self.container.remove_css_class("card-dimmed");
         *self.vim.borrow_mut() = None;
+        self.stop_caret_blink();
         crate::ui::clear_block_cursor(&self.input.buffer(), "ask-vim-block");
         if self.input.has_focus() {
             let _ = self.return_focus.grab_focus();
