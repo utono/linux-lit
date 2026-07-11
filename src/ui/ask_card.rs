@@ -235,6 +235,16 @@ impl AskCard {
         self.container.is_visible()
     }
 
+    /// Read the input's current text WITHOUT clearing it (unlike `take_text`).
+    /// Used where a caller needs to know "is there a draft" before deciding
+    /// whether to reseed the engine (e.g. `focus_prompt` retitling without
+    /// destroying a typed draft).
+    pub fn peek_text(&self) -> String {
+        let buffer = self.input.buffer();
+        buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string()
+    }
 
     fn set_focus(&self, focus: AskFocus) {
         self.focus.set(focus);

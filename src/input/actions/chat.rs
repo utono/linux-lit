@@ -61,13 +61,29 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
 }
 
 /// Work switch with the panel open: history clears (context would be from
-/// another work), the panel stays open, header refreshes.
+/// another work). The new work's card geometry may no longer leave enough
+/// free space for the panel (works can pin different layouts), so re-gate
+/// exactly like `toggle_chat_layout` does; if there's still room, re-size the
+/// panel to the new geometry before refreshing the header.
 pub(crate) fn on_work_switched(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
     s.chat = Default::default();
     s.chat_panel.render_rows(&[]);
+    let ww = s.window.width().max(0);
+    let (card_w, _) = crate::app::layout::main_card_rect(s);
+    let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
+    if free < CHAT_MIN_PANEL_W {
+        close_chat_layout(s);
+        crate::ui::toast::show_transient(
+            &s.chapter_toast,
+            "No room for chat panel at this layout",
+            3,
+        );
+        return;
+    }
+    size_panel(s);
     set_panel_header(s);
 }
 
@@ -101,15 +117,42 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
 /// Chat layout: the panel's vim prompt gains input focus. Opens the ask-card
 /// input (title/hint/theme colors) and sets the panel header for the current
 /// cursor position.
+///
+/// Title/hint are chosen honestly by mode: while `s.chat.revision_of.is_some()`
+/// every Ctrl+Enter routes to `submit_revision` and UPDATES the saved journal
+/// row, so the input must say "Revise this entry", not "Ask about this
+/// passage" (these strings must match `save_selected_exchange`'s revision
+/// `open_input` call). There is deliberately no separate "exit revision mode"
+/// action in v1 — the documented route is to close and reopen the panel
+/// (Ctrl+Tab, then Tab), which resets `s.chat` (see `close_chat_layout`) and
+/// returns to ask mode.
+///
+/// If the input is already open, reopening it (via `open_input`) would wipe
+/// any typed draft (including an error-restored question) by reseeding the
+/// vim engine. So: only call `open_input` when the input is not already open.
+/// If it's already open and the mode-appropriate title differs from what's
+/// showing, retitle it — but ONLY when the input is empty (a draft always
+/// wins over a title refresh).
 pub(crate) fn focus_prompt(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::ChatPrompt;
-    s.chat_panel.open_input(
-        "Ask about this passage",
-        "Ctrl+Enter send \u{b7} Tab cycle",
-        &s.theme.cursor_bg,
-        &s.theme.cursor_fg,
-    );
+    let (title, hint) = prompt_title_hint(s);
+    if !s.chat_panel.input_is_open() {
+        s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+    } else if s.chat_panel.peek_input_text().trim().is_empty() {
+        // No draft to lose: re-titling via open_input is safe (it also
+        // reseeds the vim engine, but there's nothing in it to destroy).
+        s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+    }
     set_panel_header(s);
+}
+
+/// The honest title/hint pair for the current chat mode (revision vs ask).
+fn prompt_title_hint(s: &AppState) -> (&'static str, &'static str) {
+    if s.chat.revision_of.is_some() {
+        ("Revise this entry", "Ctrl+Enter send \u{b7} s update \u{b7} Tab cycle")
+    } else {
+        ("Ask about this passage", "Ctrl+Enter send \u{b7} Tab cycle")
+    }
 }
 
 /// Chat layout: the transcript pane gains input focus (j/k move the exchange
@@ -139,10 +182,9 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             crate::ui::toast::show_transient(&s.chapter_toast, "Waiting for the previous reply\u{2026}", 2);
             return;
         }
-        let question = s.chat_panel.take_input_text().trim().to_string();
-        if question.is_empty() {
-            return;
-        }
+        // Resolve the passage context BEFORE consuming the input text: a
+        // validation failure (no work / no passage at cursor) must leave the
+        // typed question untouched for retry, not silently clear it.
         let Some(work) = s.current_work.as_ref() else { return };
         let Some(seg) = crate::input::segments::segment_context(&s, 2) else {
             crate::ui::toast::show_transient(&s.chapter_toast, "No passage at the cursor", 2);
@@ -152,6 +194,10 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             crate::ui::toast::show_transient(&s.chapter_toast, "No passage at the cursor", 2);
             return;
         };
+        let question = s.chat_panel.take_input_text().trim().to_string();
+        if question.is_empty() {
+            return;
+        }
         let source_markup =
             crate::input::actions::echoes::build_source_header(&seg.cursor_lines, &gctx.speaker);
         let (genre, unit, _units) = crate::gloss::genre_unit(&work.work_type);
@@ -313,12 +359,8 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
             s.chat.exchanges[idx].saved_id = Some(id);
             s.chat.revision_of = Some(id);
             render_saved_entry(&s, &q, &a);
-            s.chat_panel.open_input(
-                "Revise this entry",
-                "Ctrl+Enter send \u{b7} s update \u{b7} Tab cycle",
-                &s.theme.cursor_bg,
-                &s.theme.cursor_fg,
-            );
+            let (title, hint) = prompt_title_hint(&s);
+            s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
             s.input_mode = crate::app::InputMode::ChatPrompt;
             crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
             crate::logging::log(&format!("CHAT: saved exchange as journal page {}", id));
@@ -445,6 +487,7 @@ pub(crate) mod chat_revision {
                 s.config.claude_model.clone(),
             )
         };
+        let instruction_err = instruction.clone();
         let user_msg =
             crate::input::actions::journal::rewrite_user_message(&context, &q, &a, &instruction);
         let work_type = state_rc
@@ -484,9 +527,12 @@ pub(crate) mod chat_revision {
                 }
                 crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
             },
-            |st, msg| {
-                let s = st.borrow();
+            move |st, msg| {
+                let mut s = st.borrow_mut();
                 crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+                // Restore the failed instruction for retry, mirroring
+                // submit_chat_prompt's error path.
+                s.chat_panel.paste_input_text(&instruction_err);
             },
         );
     }

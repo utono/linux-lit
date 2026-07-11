@@ -128,6 +128,15 @@ impl ChatPanel {
     pub fn take_input_text(&self) -> String {
         self.input.take_text()
     }
+    /// Whether the ask-card input is currently open (visible). Used by
+    /// `focus_prompt` to avoid reopening (and wiping a draft) on refocus.
+    pub fn input_is_open(&self) -> bool {
+        self.input.is_open()
+    }
+    /// Peek the input's current text without clearing it.
+    pub fn peek_input_text(&self) -> String {
+        self.input.peek_text()
+    }
     pub fn feed_input_vim_key(
         &self,
         k: crate::input::vim::VimKey,

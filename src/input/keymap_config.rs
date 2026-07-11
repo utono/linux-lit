@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // "a" plain is TogglePause (same as Tab); Ctrl+a vs Ctrl+Shift+a differ.
+        // "a" plain is TogglePause; Ctrl+a is AskPassage; Ctrl+a vs Ctrl+Shift+a differ.
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
