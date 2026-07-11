@@ -76,7 +76,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
     bare("s", "S", "sync tog"),
-    key("-", "_", "play/pause", "", &[("C--", "recent")]),
+    key("-", "_", "vocab ▶", "", &[("C--", "hide vocab")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -90,7 +90,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "vim copy", "V: visual mode", &[("v", "voice: add/remove"), ("C-v", "voice: cycle")]),
-    bare("z", "Z", "vocab ▶"),
+    bare("z", "Z", ""),
 ];
 
 const SHIFT_KEY: KeyDef = ub("Shift", "");
@@ -296,8 +296,6 @@ prose sentence). Saved to config. \
 -> pickers::open_concordance_list_picker — src/input/actions/pickers.rs",
         "conc works" => "Open the concordance works picker. \
 -> pickers::open_concordance_works_picker — src/input/actions/pickers.rs",
-        "recent" => "Open the recent-works picker. \
--> pickers::open_recent_picker — src/input/actions/pickers.rs",
         "settings" => "Open the settings overlay. \
 -> settings::open_settings — src/input/actions/settings.rs",
         "keybinds" => "Open this keyboard-shortcut overlay. \
@@ -398,10 +396,12 @@ app::remove_vocab_highlighting — src/input/keymap.rs, src/app.rs",
         "auto vocab" => "Toggle the auto vocabulary popup. \
 -> ToggleVocabPopup arm -> app::open_vocab_popup / close_vocab_popup — \
 src/input/keymap.rs, src/app.rs",
-        "vocab ▶" => "Next word in the vocabulary popup. \
+        "vocab ▶" => "Next word in the vocabulary popup (stays up; Ctrl+- hides). \
 -> handle_vocab_popup_key(.., true) — src/input/keymap.rs",
-        "◀ vocab" => "Previous word in the vocabulary popup. \
+        "◀ vocab" => "Previous word in the vocabulary popup (stays up; Ctrl+- hides). \
 -> handle_vocab_popup_key(.., false) — src/input/keymap.rs",
+        "hide vocab" => "Fade the vocabulary popup out (it no longer auto-hides). \
+-> fade_out_vocab_popup — src/input/keymap.rs",
 
         // ── Word copy / visual ──
         "copy word" => "Copy the word under the cursor; repeated presses cycle \
@@ -419,8 +419,8 @@ handle_block_visual_key / gloss_overlay::enter_visual \
 — src/input/keymap.rs, src/ui/gloss_overlay.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Play/pause without seeking (unlike Space; a and - \
-both bind this). -> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
+        "play/pause" => "Play/pause without seeking (unlike Space; bound on a). \
+-> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
         "vim copy" => "Open the cursor's paragraph/line in a copy-only vim \
 editor, seeded in visual mode: extend with motions, y copies the selection to \
 the system clipboard, :q or double-Esc exits. Nothing is saved. \
@@ -636,6 +636,7 @@ fn expand_action(label: &str) -> String {
         "reset font" => "reset font size",
         "vocab ▶" => "next vocab word",
         "◀ vocab" => "previous vocab word",
+        "hide vocab" => "hide vocab popup",
         _ => return label.to_string(),
     };
     format!("{prefix}{full}")
