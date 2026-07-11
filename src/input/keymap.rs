@@ -3117,12 +3117,13 @@ fn dispatch_action(
             }
         }
         VocabPopupNext => {
-            // Same inline logic as the original "backslash" / "numbersign"
-            // arms; the auto-hide timer handling is preserved.
             handle_vocab_popup_key(state, true);
         }
         VocabPopupPrev => {
             handle_vocab_popup_key(state, false);
+        }
+        HideVocabPopup => {
+            fade_out_vocab_popup(state);
         }
         JumpToNextVocab => crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle),
         JumpToPrevVocab => crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle),
@@ -3482,7 +3483,9 @@ fn do_mpv_seek(state: &Rc<RefCell<AppState>>, offset: f64) {
     }
 }
 
-/// Vocab popup key handler with auto-hide timer reset.
+/// Vocab popup key handler. The popup is STICKY: it stays visible until
+/// HideVocabPopup (Ctrl+-) or the H auto-vocab toggle dismisses it — the old
+/// 3-second auto-hide timer is gone by design.
 fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     let popup_visible = state.borrow().vocab_popup.popup.is_visible();
     if popup_visible {
@@ -3494,36 +3497,33 @@ fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     } else {
         crate::app::vocab_popup::open_vocab_popup(&mut state.borrow_mut());
     }
-    let gen = {
-        let s = state.borrow();
-        let next = s.vocab_popup.fade_gen.get() + 1;
-        s.vocab_popup.fade_gen.set(next);
-        next
-    };
-    let state_clone = Rc::clone(state);
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-        let s = state_clone.borrow();
-        if s.vocab_popup.fade_gen.get() != gen {
-            return;
+    // Invalidate any pending fade (defensive; nothing arms one anymore).
+    let s = state.borrow();
+    s.vocab_popup.fade_gen.set(s.vocab_popup.fade_gen.get() + 1);
+}
+
+/// Ctrl+-: fade the vocab popup out (500ms, EaseOutQuad — the same animation
+/// the old auto-hide used). Idempotent: no-op when the popup isn't visible.
+fn fade_out_vocab_popup(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    s.vocab_popup.fade_gen.set(s.vocab_popup.fade_gen.get() + 1);
+    if !s.vocab_popup.popup.is_visible() {
+        return;
+    }
+    let widget = s.vocab_popup.popup.widget().clone();
+    let target = adw::CallbackAnimationTarget::new(move |value| {
+        widget.set_opacity(value as f64);
+        if value <= 0.0 {
+            widget.set_visible(false);
+            widget.set_opacity(1.0);
         }
-        if !s.vocab_popup.popup.is_visible() {
-            return;
-        }
-        let widget = s.vocab_popup.popup.widget().clone();
-        let target = adw::CallbackAnimationTarget::new(move |value| {
-            widget.set_opacity(value as f64);
-            if value <= 0.0 {
-                widget.set_visible(false);
-                widget.set_opacity(1.0);
-            }
-        });
-        let anim = adw::TimedAnimation::new(
-            s.vocab_popup.popup.widget(),
-            1.0, 0.0, 500, target,
-        );
-        anim.set_easing(adw::Easing::EaseOutQuad);
-        anim.play();
     });
+    let anim = adw::TimedAnimation::new(
+        s.vocab_popup.popup.widget(),
+        1.0, 0.0, 500, target,
+    );
+    anim.set_easing(adw::Easing::EaseOutQuad);
+    anim.play();
 }
 
 const CHUNK_PREROLL: f64 = 0.5;

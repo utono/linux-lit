@@ -108,6 +108,7 @@ pub enum Action {
     ToggleVocabPopup,
     VocabPopupNext,
     VocabPopupPrev,
+    HideVocabPopup,
     JumpToNextVocab,
     JumpToPrevVocab,
     ConcordanceNext,
@@ -251,6 +252,7 @@ impl Action {
             Action::ToggleVocabPopup
             | Action::VocabPopupNext
             | Action::VocabPopupPrev
+            | Action::HideVocabPopup
             | Action::JumpToNextVocab
             | Action::JumpToPrevVocab
             | Action::ToggleVocabHighlight
@@ -388,6 +390,7 @@ impl Action {
             Action::ToggleVocabPopup => "ToggleVocabPopup",
             Action::VocabPopupNext => "VocabPopupNext",
             Action::VocabPopupPrev => "VocabPopupPrev",
+            Action::HideVocabPopup => "HideVocabPopup",
             Action::JumpToNextVocab => "JumpToNextVocab",
             Action::JumpToPrevVocab => "JumpToPrevVocab",
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
