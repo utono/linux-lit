@@ -427,10 +427,16 @@ the system clipboard, :q or double-Esc exits. Nothing is saved. \
         "toggle speed" => "Toggle playback speed between 1.0x and 1.3x. \
 -> TogglePlaybackSpeed arm (inline) -> MpvCommand::SetSpeed — \
 src/input/keymap.rs",
-        "seek −3.5" => "Seek MPV back 3.5 seconds. \
--> do_mpv_seek(state, -3.5) — src/input/keymap.rs",
-        "seek +3.5" => "Seek MPV forward 3.5 seconds. \
--> do_mpv_seek(state, 3.5) — src/input/keymap.rs",
+        "seek −3.5" => "With sync + karaoke on: restart the highlighted \
+phrase (or, within 1s of its start, step to the previous phrase); turns the \
+page when the phrase lands off-page. Otherwise seek MPV back 3.5 seconds. \
+-> phrase_step_seek / do_mpv_seek — src/input/phrase_highlight.rs, \
+src/input/keymap.rs",
+        "seek +3.5" => "With sync + karaoke on: seek to the start of the \
+NEXT phrase; turns the page when it lands off-page. Otherwise seek MPV \
+forward 3.5 seconds. \
+-> phrase_step_seek / do_mpv_seek — src/input/phrase_highlight.rs, \
+src/input/keymap.rs",
         "−60" => "Seek MPV back 60 seconds (Shift+o). \
 -> do_mpv_seek(state, -60.0) — src/input/keymap.rs",
         "+60" => "Seek MPV forward 60 seconds (Shift+e). \

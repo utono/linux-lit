@@ -337,6 +337,180 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
     s.active_phrase = Some((bl, span_idx));
 }
 
+/// Seconds past a phrase's start within which `o` steps to the PREVIOUS
+/// phrase instead of restarting the current one (the music-player back-button
+/// hybrid: far into the phrase = replay it; near its start = go back one).
+const PHRASE_RESTART_GRACE: f64 = 1.0;
+
+/// Where an o/e phrase step should land, given the current line's spans.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PhraseStep {
+    /// Seek to this time within the current line's spans.
+    Within(f64),
+    /// Step crosses into the neighboring timestamped line (true = next).
+    CrossLine(bool),
+}
+
+/// Pure step-target selection for the phrase-aware o/e seeks. `idx` is the
+/// currently highlighted span, `pos` the raw playback time. Forward: the next
+/// span, else cross to the next line. Backward (hybrid): restart the current
+/// span when more than `PHRASE_RESTART_GRACE` past its start, else the
+/// previous span, else cross to the previous line.
+pub(crate) fn phrase_step_target(
+    spans: &[PhraseSpan],
+    idx: usize,
+    pos: f64,
+    forward: bool,
+) -> PhraseStep {
+    if forward {
+        if idx + 1 < spans.len() {
+            PhraseStep::Within(spans[idx + 1].start_time)
+        } else {
+            PhraseStep::CrossLine(true)
+        }
+    } else {
+        let cur = spans[idx].start_time;
+        if pos > cur + PHRASE_RESTART_GRACE {
+            PhraseStep::Within(cur)
+        } else if idx > 0 {
+            PhraseStep::Within(spans[idx - 1].start_time)
+        } else {
+            PhraseStep::CrossLine(false)
+        }
+    }
+}
+
+/// Phrase-aware o/e seek: when playback sync + karaoke highlighting are on
+/// (and the line has phrase data), `e` seeks to the start time of the first
+/// word of the NEXT phrase and `o` restarts the current phrase — or, within
+/// `PHRASE_RESTART_GRACE` of its start, steps to the PREVIOUS phrase. Steps
+/// crossing a line boundary move the cursor too, and when the target line is
+/// off the current page the page turns to contain it (the o/e page-turn
+/// to-do). Returns false when any gate fails so the caller falls back to the
+/// raw ±seconds seek.
+pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
+    let mode = active_mode(s);
+    if !mode.is_on() || !s.sync_enabled || s.translations_visible {
+        return false;
+    }
+    let Some(media) = s.media_id else { return false };
+    let pos = s.current_time_pos;
+    let Some(cursor_wi) = s.work_line_for_buffer(s.current_line) else {
+        return false;
+    };
+    let spoken_wi = {
+        let Some(work) = s.current_work.as_ref() else { return false };
+        let lines = &work.lines;
+        resolve_spoken_idx(
+            |i| lines.get(i).and_then(|l| l.timestamp.as_ref()).map(|t| (t.start, t.end)),
+            lines.len(),
+            cursor_wi,
+            pos,
+        )
+    };
+    let Some(spoken_wi) = spoken_wi else { return false };
+    let line_id = match s.current_work.as_ref().and_then(|w| w.lines.get(spoken_wi)) {
+        Some(l) => l.id,
+        None => return false,
+    };
+    // Ensure the cache holds the spoken line's spans (same fill paint uses).
+    let cache_stale = s
+        .phrase_cache
+        .as_ref()
+        .map(|c| c.line_mapping_id != line_id || c.media_id != media)
+        .unwrap_or(true);
+    if cache_stale {
+        let spans = crate::db::queries::open_db()
+            .map(|conn| crate::db::queries::phrase_spans_for_line(&conn, line_id, media))
+            .unwrap_or_default();
+        s.phrase_cache = Some(PhraseCache { line_mapping_id: line_id, media_id: media, spans });
+    }
+    let spans = match s.phrase_cache.as_ref() {
+        Some(c) if !c.spans.is_empty() => c.spans.clone(),
+        // No phrase data on this line/media: raw seek fallback.
+        _ => return false,
+    };
+    let step = match phrase_at_time(&spans, pos) {
+        Some(idx) => phrase_step_target(&spans, idx, pos, forward),
+        // Before the line's first span: forward = that first span;
+        // backward = the previous line's last phrase.
+        None if forward => PhraseStep::Within(spans[0].start_time),
+        None => PhraseStep::CrossLine(false),
+    };
+    let (target_time, target_wi) = match step {
+        PhraseStep::Within(t) => (t, spoken_wi),
+        PhraseStep::CrossLine(fwd) => {
+            let Some(work) = s.current_work.as_ref() else { return false };
+            let neighbor = if fwd {
+                (spoken_wi + 1..work.lines.len())
+                    .find(|&i| work.lines[i].timestamp.is_some())
+            } else {
+                (0..spoken_wi).rev().find(|&i| work.lines[i].timestamp.is_some())
+            };
+            match neighbor {
+                // Document edge: backward restarts the current phrase,
+                // forward is a no-op (but consumed — a raw +3.5s here would
+                // feel like a glitch past the last phrase).
+                None => match (!fwd, phrase_at_time(&spans, pos)) {
+                    (true, Some(i)) => (spans[i].start_time, spoken_wi),
+                    _ => return true,
+                },
+                Some(nwi) => {
+                    let line = &work.lines[nwi];
+                    let line_start = line.timestamp.as_ref().map(|t| t.start);
+                    let nspans = crate::db::queries::open_db()
+                        .map(|conn| {
+                            crate::db::queries::phrase_spans_for_line(&conn, line.id, media)
+                        })
+                        .unwrap_or_default();
+                    let t = if fwd {
+                        nspans.first().map(|sp| sp.start_time).or(line_start)
+                    } else {
+                        nspans.last().map(|sp| sp.start_time).or(line_start)
+                    };
+                    match t {
+                        Some(t) => (t, nwi),
+                        None => return false,
+                    }
+                }
+            }
+        }
+    };
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Seek(target_time));
+    s.suppress_sync_until = Some(
+        std::time::Instant::now() + crate::input::navigation::SYNC_SUPPRESS_SEEK,
+    );
+    // Move the cursor onto the target line; turn the page when it is off the
+    // current spread (update_highlight_and_center routes through
+    // set_page_instant, keeping the e-reader pagination state in sync).
+    if target_wi != spoken_wi || target_wi != cursor_wi {
+        if let Some(tb) = s.buffer_line_for_work(target_wi) {
+            s.current_line = tb;
+            let off_page = tb < s.page_top_line
+                || s
+                    .last_visible_range
+                    .get()
+                    .map_or(false, |vr| tb > vr.last_fit);
+            if off_page {
+                crate::input::highlight::update_highlight_and_center(s);
+            } else {
+                crate::input::highlight::update_highlight(s);
+            }
+        }
+    }
+    if paint_pending_phrase(s, target_time) {
+        s.phrase_paint_hold = s.suppress_sync_until;
+    }
+    crate::log_fmt!(
+        "PHRASE_STEP: {} -> t={:.2} wi={} (pos was {:.2})",
+        if forward { "next" } else { "prev/restart" },
+        target_time,
+        target_wi,
+        pos
+    );
+    true
+}
+
 /// Remove the phrase tint everywhere. Cheap no-op when nothing is applied.
 pub fn clear_phrase_highlight(s: &mut AppState) {
     if s.active_phrase.is_none() {
@@ -499,5 +673,25 @@ mod tests {
         assert_eq!(tint_range(Line, false, text, sp), (0, 20));
         // Line mode, prose: the sentence containing the span.
         assert_eq!(tint_range(Line, true, text, sp), (0, 8));
+    }
+
+    #[test]
+    fn phrase_step_forward_next_span_then_cross_line() {
+        let spans = [span(10.0, 12.0, 0, 1), span(12.0, 15.0, 0, 1)];
+        assert_eq!(phrase_step_target(&spans, 0, 11.0, true), PhraseStep::Within(12.0));
+        assert_eq!(phrase_step_target(&spans, 1, 13.0, true), PhraseStep::CrossLine(true));
+    }
+
+    #[test]
+    fn phrase_step_backward_hybrid_restart_then_prev() {
+        let spans = [span(10.0, 12.0, 0, 1), span(12.0, 15.0, 0, 1)];
+        // Deep into span 1 (>1s past its 12.0 start): restart it.
+        assert_eq!(phrase_step_target(&spans, 1, 14.0, false), PhraseStep::Within(12.0));
+        // Near span 1's start: step back to span 0.
+        assert_eq!(phrase_step_target(&spans, 1, 12.4, false), PhraseStep::Within(10.0));
+        // Near span 0's start: cross to the previous line.
+        assert_eq!(phrase_step_target(&spans, 0, 10.2, false), PhraseStep::CrossLine(false));
+        // Deep into span 0: restart it, no cross.
+        assert_eq!(phrase_step_target(&spans, 0, 11.5, false), PhraseStep::Within(10.0));
     }
 }

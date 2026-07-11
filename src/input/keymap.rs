@@ -3091,8 +3091,19 @@ fn dispatch_action(
         TogglePause => {
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
         }
-        SeekShortBackward => do_mpv_seek(state, -3.5),
-        SeekShortForward => do_mpv_seek(state, 3.5),
+        SeekShortBackward => {
+            // Sync + karaoke on: o steps by PHRASE (restart the current
+            // phrase, or the previous one when near its start); otherwise
+            // the raw ±seconds seek.
+            if !crate::input::phrase_highlight::phrase_step_seek(&mut state.borrow_mut(), false) {
+                do_mpv_seek(state, -3.5)
+            }
+        }
+        SeekShortForward => {
+            if !crate::input::phrase_highlight::phrase_step_seek(&mut state.borrow_mut(), true) {
+                do_mpv_seek(state, 3.5)
+            }
+        }
         SeekLongBackward => do_mpv_seek(state, -60.0),
         SeekLongForward => do_mpv_seek(state, 60.0),
         SeekBackward30 => do_mpv_seek(state, -30.0),
