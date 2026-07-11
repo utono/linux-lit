@@ -451,14 +451,37 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     ]);
 }
 
-/// Size the panel to the freed left space at the card's height.
+/// Size and position the panel for the current placement. Pinned: fill the
+/// freed left space at the card's height. Float: cover the chosen reading
+/// column exactly (live compute_bounds rect, window coords — the overlay
+/// child's margin_start is relative to the window-filling outer overlay).
 pub(crate) fn size_panel(s: &AppState) {
-    let ww = s.window.width().max(0);
     let (card_w, card_h) = crate::app::layout::main_card_rect(s);
-    let end = crate::app::layout::CARD_OUTER_MARGIN;
-    // left outer margin (24) + gap to the card (16)
-    let w = ww - card_w - end - 24 - 16;
-    s.chat_panel.size_to(w, card_h);
+    match s.chat_placement {
+        ChatPlacement::Pinned => {
+            let ww = s.window.width().max(0);
+            let end = crate::app::layout::CARD_OUTER_MARGIN;
+            // left outer margin (24) + gap to the card (16)
+            let w = ww - card_w - end - 24 - 16;
+            s.chat_panel.container.set_margin_start(24);
+            s.chat_panel.container.remove_css_class("chat-panel-float");
+            s.chat_panel.size_to(w, card_h);
+        }
+        ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
+            let col = if s.chat_placement == ChatPlacement::FloatLeft {
+                &s.scrolled_overlay
+            } else {
+                &s.right_scrolled_overlay
+            };
+            let (x, w) = col
+                .compute_bounds(&s.window)
+                .map(|b| (b.x() as i32, b.width() as i32))
+                .unwrap_or((24, crate::app::MIN_TWO_COLUMN_COLUMN_WIDTH));
+            s.chat_panel.container.set_margin_start(x.max(0));
+            s.chat_panel.container.add_css_class("chat-panel-float");
+            s.chat_panel.size_to(w, card_h);
+        }
+    }
 }
 
 pub(crate) fn set_panel_header(s: &AppState) {

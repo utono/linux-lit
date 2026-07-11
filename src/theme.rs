@@ -879,6 +879,9 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .chat-panel {{ background-color: transparent; }} \
+         .chat-panel-float {{ background-color: {bg}; \
+           border: 1px solid alpha({fg}, 0.25); border-radius: 8px; \
+           padding: 12px; }} \
          .chat-panel-header {{ color: {dim}; font-variant: small-caps; font-size: 13px; }} \
          .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
          .chat-q {{ color: {fg}; }} \
