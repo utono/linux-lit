@@ -87,7 +87,17 @@ pub(crate) fn execute_search_with_query(state: &mut AppState, query: &str) {
         seek_and_resume(state);
     } else {
         state.search_bar.update_counter(0, 0);
+        crate::logging::log(&format!("SEARCH: no matches for '{query}'"));
     }
+}
+
+/// Centered toast for a SUBMITTED pattern with no matches anywhere in the
+/// work (the Return-with-[0/0] case; `edge_toast` covers the directional
+/// "no earlier/later occurrence" variants).
+pub(crate) fn no_match_toast(state: &AppState) {
+    let q = state.search_bar.query();
+    let text = format!("No match for \u{201c}{}\u{201d}", display_pattern(&q));
+    crate::ui::toast::show_transient(&state.search_toast, &text, 3);
 }
 
 /// Toggle playback, seeking to the current line's start_time first when

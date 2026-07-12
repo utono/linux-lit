@@ -715,6 +715,18 @@ fn handle_search_key(
             // page logic clobbered the canonical landing, dropping the match to
             // the top of the page).
             crate::input::search::execute_search(&state);
+            // Zero matches: hiding the bar here made a failed search look like
+            // the keypress was ignored. Keep the bar open (its [0/0] counter
+            // stays visible, the query stays editable) and toast the failure;
+            // Escape still cancels.
+            let no_match = {
+                let s = state.borrow();
+                !s.search_bar.query().is_empty() && s.search_matches.is_empty()
+            };
+            if no_match {
+                crate::input::search::no_match_toast(&state.borrow());
+                return true;
+            }
             // Accepting a match commits the jump; drop the saved return pos.
             state.borrow_mut().search_return_pos = None;
             state.borrow().search_bar.hide();
