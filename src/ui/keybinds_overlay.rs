@@ -32,7 +32,7 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 // ── Row definitions ──────────────────────────────────────────────────
 
 const NUMBER_ROW: &[KeyDef] = &[
-    ub("$", "~"),
+    key("$", "~", "", "", &[("C-$", "root variant"), ("S-C-$", "root variant prev")]),
     key("+", "1", "show chapter", "1: copy work info", &[]),
     key("[", "2", "prev scene", "", &[("M-[", "col layout")]),
     key("{", "3", "next scene", "", &[]),
@@ -66,14 +66,14 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
+    key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set"), ("verse", "swaps with Space")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "2-col translation", "U: undo ts", &[("M-u", "scansion")]),
     key("i", "I", "start time", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[]),
-    key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
+    key("t", "T", "", "", &[("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}")]),
     bare("s", "S", "sync tap"),
     key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
@@ -303,7 +303,9 @@ on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
 — src/input/visual.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Action::TogglePause — src/input/keymap.rs",
+        "play/pause" => "Action::TogglePause — src/input/keymap.rs. On \
+poetry/plays `a` and Space SWAP: `a` plays from the cursor line's \
+timestamp, Space is the pause toggle (reader_swaps_play_and_pause).",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",
         "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9) \
@@ -332,7 +334,8 @@ ChordState::PendingBackspace) — src/input/keymap.rs",
         "nudge −0.2" => "Action::NudgeStartBackward — src/input/timestamps.rs",
         "+0.2" => "Action::NudgeStartForward — src/input/timestamps.rs",
         "play from ts" => "Space intercept -> timestamps::play_current_line \
-— src/input/timestamps.rs",
+— src/input/timestamps.rs. On poetry/plays `a` and Space SWAP: Space is \
+the pause toggle, `a` plays from the cursor line (reader_swaps_play_and_pause).",
         "clear AB" => "escape::escape_reader_mode — src/input/actions/escape.rs",
 
         // ── Fonts ──

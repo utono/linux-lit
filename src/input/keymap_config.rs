@@ -265,7 +265,10 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("s"), Action::PlaybackSyncTap),
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
         // it is intercepted before dispatch in keymap.rs). `a` is a PURE
-        // pause/resume toggle — no seek (TogglePause).
+        // pause/resume toggle — no seek (TogglePause). On poetry/plays these
+        // two SWAP: the Reader space/`a` intercepts in keymap.rs
+        // (`reader_swaps_play_and_pause`) make `a` play-from-cursor and Space
+        // the pause toggle, overriding this compiled `a` → TogglePause bind.
         (KeyCombo::plain("a"), Action::TogglePause),
         // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
         // the vocab-sentence loop, InputMode::VocabLoop — no jump fallback).
@@ -336,8 +339,12 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::alt("t"), Action::ThemeNext),
         (KeyCombo::alt_shift("T"), Action::ThemePrev),
-        (KeyCombo::ctrl("t"), Action::RootVariantNext),
-        (KeyCombo::ctrl_shift("T"), Action::RootVariantPrev),
+        // Root-variant cycling lives on the RPD <TLDE> cap (QWERTY `/~ key),
+        // which emits `dollar` unshifted and `asciitilde` shifted. Because $
+        // is level-1 (no shift needed), Ctrl+$ and Ctrl+Shift+$ are distinct
+        // chords — same forward/back split the t cap had.
+        (KeyCombo::ctrl("dollar"), Action::RootVariantNext),
+        (KeyCombo::ctrl_shift("dollar"), Action::RootVariantPrev),
         // u/i plain binds are swapped (2026-07-11): i sets the start time,
         // u opens the two-column translation. Their modifier families stay
         // put (Shift+U undo ts, Alt+u end ts; Ctrl+i image, Alt+i scansion).
@@ -581,10 +588,10 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_t_cycles_root_variant() {
+    fn ctrl_dollar_cycles_root_variant() {
         let km = Keymap::default();
-        assert_eq!(km.lookup("t", true, false, false), Some(Action::RootVariantNext));
-        assert_eq!(km.lookup("T", true, true, false), Some(Action::RootVariantPrev));
+        assert_eq!(km.lookup("dollar", true, false, false), Some(Action::RootVariantNext));
+        assert_eq!(km.lookup("dollar", true, true, false), Some(Action::RootVariantPrev));
         assert_eq!(km.lookup("t", true, false, true), Some(Action::ToggleNavTest));
     }
 

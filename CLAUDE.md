@@ -209,6 +209,19 @@ is not enough.
 - **Layout is Real Programmers Dvorak (RPD)**, defined in `~/utono/rpd`.
   Always check it when adding/changing binds — the GTK key name a physical
   key emits is not obvious (`(` → `parenleft`, `'` → `apostrophe`).
+  - **Authoritative source: the xkb symbols file**
+    `~/utono/rpd/xkb/usr/share/X11/xkb/symbols/real_prog_dvorak`. Each
+    `key <CODE> { [ level1, level2, ... ] }` row lists the keysyms a physical
+    cap emits at each shift level. `<CODE>` is the QWERTY position of that key
+    (`<TLDE>` = the QWERTY `` `/~ `` cap, `<AE04>` = QWERTY `4`, etc.), so a
+    glyph does NOT sit where QWERTY puts it — e.g. `<TLDE>` on RPD emits
+    `dollar` (level 1) / `asciitilde` (level 2).
+  - **A symbol on level 1 is UNSHIFTED** — it needs no Shift, so its Ctrl and
+    Ctrl+Shift chords are distinct (that is why `$` supports both
+    `KeyCombo::ctrl("dollar")` and `KeyCombo::ctrl_shift("dollar")`). A symbol
+    that only exists on level 2 (e.g. shift+minus → `underscore`) can only be a
+    shifted chord. Confirm the level before assuming two directions fit on one
+    cap.
 - **Source of truth is the Rust source** (`keymap_config.rs` + the handlers
   keymap.rs dispatches to). Never the keybinds.db / `keybinds-search` skill,
   and never key names written in prose docs — they drift.
