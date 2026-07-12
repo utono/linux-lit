@@ -616,7 +616,12 @@ pub(crate) fn display_rows_window(
     let bottom_y = top_y + viewport_h;
     let buffer = view.buffer();
     let (line_iter, _) = view.line_at_y((top_y - top_margin).max(0.0) as i32);
-    let start_line = line_iter.line().saturating_sub(1);
+    // `line()` is i32: at line 0, `saturating_sub(1)` yields -1 (i32 saturates
+    // at i32::MIN, not 0) and `iter_at_line(-1)` returns the END iterator, so
+    // the walk started at the document bottom and returned NO rows — page 1 of
+    // every prose work then clipped 0 and the next row's ascenders poked above
+    // the reserve band. Clamp at line 0 instead.
+    let start_line = (line_iter.line() - 1).max(0);
     let mut iter = buffer.iter_at_line(start_line).unwrap_or(line_iter);
     let end = buffer.end_iter();
     for _ in 0..2048 {
