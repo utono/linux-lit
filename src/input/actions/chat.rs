@@ -555,6 +555,34 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
 /// page, and pivot into the revision loop on the new entry (same landing as
 /// `s` save, so Ctrl+Enter refines it further). The entry is filed under the
 /// FIRST exchange's passage — the conversation's origin.
+/// Consolidation reads the conversation transcript, which is otherwise
+/// unbounded; keep the most recent exchanges — enough to cover a real
+/// session, a cap only for marathon outliers. (The chat SEND window is
+/// CHAT_HISTORY_TURNS = 6; consolidate gets double, since merging the
+/// conversation is its whole point.)
+const CONSOLIDATE_MAX_EXCHANGES: usize = 12;
+
+/// The Q/A transcript for the consolidate prompt: the last
+/// `CONSOLIDATE_MAX_EXCHANGES` exchanges, with an explicit omission marker
+/// when older ones are dropped so the model knows it is merging a tail.
+fn consolidate_transcript(exchanges: &[Exchange]) -> String {
+    let skip = exchanges.len().saturating_sub(CONSOLIDATE_MAX_EXCHANGES);
+    let mut transcript = String::new();
+    if skip > 0 {
+        transcript.push_str(&format!(
+            "[\u{2026} {skip} earlier exchanges omitted \u{2026}]\n\n"
+        ));
+    }
+    for e in &exchanges[skip..] {
+        transcript.push_str("Q: ");
+        transcript.push_str(&e.question);
+        transcript.push_str("\nA: ");
+        transcript.push_str(&e.answer);
+        transcript.push_str("\n\n");
+    }
+    transcript
+}
+
 pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
     let (system, user_msg, model, fallback_q, meta) = {
         let s = state_rc.borrow();
@@ -573,14 +601,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         let Some(work) = s.current_work.as_ref() else { return };
         let first = &s.chat.exchanges[0];
         let scene = crate::app::scene_synopsis::synopsis_label(&s, first.div1, first.div2);
-        let mut transcript = String::new();
-        for e in &s.chat.exchanges {
-            transcript.push_str("Q: ");
-            transcript.push_str(&e.question);
-            transcript.push_str("\nA: ");
-            transcript.push_str(&e.answer);
-            transcript.push_str("\n\n");
-        }
+        let transcript = consolidate_transcript(&s.chat.exchanges);
         let user_msg = format!(
             "Work: {} by {}\nThis conversation is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nConversation:\n{}Consolidate this conversation into a single cohesive journal Q&A: one question capturing what the conversation was really asking, one answer synthesizing its insights (drop dead ends, false starts, and meta-chatter). Return the consolidated Q&A in exactly this format:\nQ: <question>\nA: <answer>",
             work.title, work.author, scene, first.source_markup, transcript,
@@ -986,5 +1007,50 @@ mod placement_tests {
         assert!(line_in_right_column(20, Some(20), 40)); // first right line
         assert!(line_in_right_column(40, Some(20), 40)); // last line
         assert!(!line_in_right_column(41, Some(20), 40)); // off-page
+    }
+}
+
+#[cfg(test)]
+mod consolidate_tests {
+    use super::*;
+
+    fn exchange(i: usize) -> Exchange {
+        Exchange {
+            question: format!("Q{i}?"),
+            answer: format!("A{i}."),
+            chip: "1.1".into(),
+            user_msg: String::new(),
+            div1: 1,
+            div2: 1,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id: None,
+        }
+    }
+
+    #[test]
+    fn short_conversation_transcribes_whole_with_no_marker() {
+        let ex: Vec<Exchange> = (1..=5).map(exchange).collect();
+        let t = consolidate_transcript(&ex);
+        assert!(t.contains("Q1?") && t.contains("A5."));
+        assert!(!t.contains("omitted"));
+    }
+
+    #[test]
+    fn long_conversation_keeps_last_12_and_marks_omission() {
+        let ex: Vec<Exchange> = (1..=15).map(exchange).collect();
+        let t = consolidate_transcript(&ex);
+        assert!(t.contains("3 earlier exchanges omitted"));
+        assert!(!t.contains("Q3?"), "oldest exchanges dropped");
+        assert!(t.contains("Q4?") && t.contains("Q15?"), "last 12 kept");
+    }
+
+    #[test]
+    fn exactly_at_cap_has_no_marker() {
+        let ex: Vec<Exchange> = (1..=12).map(exchange).collect();
+        let t = consolidate_transcript(&ex);
+        assert!(!t.contains("omitted"));
+        assert!(t.contains("Q1?") && t.contains("Q12?"));
     }
 }

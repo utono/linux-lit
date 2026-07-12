@@ -721,6 +721,48 @@ pub fn build_inner_monologue_message(
     ctx: &GlossContext,
     scene_lines: &[Line],
 ) -> String {
+    // Budget the scene like the journal scene ask: whole scene up to
+    // SCENE_TEXT_MAX_CHARS, else a ±VERSE_WINDOW_RADIUS-line excerpt around
+    // the highlighted passage. The passage itself is always sent whole in
+    // its own section below, so the excerpt only bounds surrounding context.
+    let full = render_scene_lines(scene_lines);
+    let scene_text = if full.len() <= crate::app::scene_synopsis::SCENE_TEXT_MAX_CHARS {
+        full
+    } else {
+        let anchor = scene_lines
+            .iter()
+            .position(|l| l.citation == ctx.start_citation)
+            .unwrap_or(scene_lines.len() / 2);
+        let (lo, hi) = crate::app::scene_synopsis::window_range(
+            anchor,
+            crate::app::scene_synopsis::VERSE_WINDOW_RADIUS,
+            scene_lines.len(),
+        );
+        let mut out = String::new();
+        if lo > 0 {
+            out.push_str(
+                "[\u{2026} scene continues above \u{2014} excerpt around the highlighted passage \u{2026}]\n",
+            );
+        }
+        out.push_str(render_scene_lines(&scene_lines[lo..=hi]).trim_end());
+        if hi + 1 < scene_lines.len() {
+            out.push_str("\n[\u{2026} scene continues below \u{2026}]");
+        }
+        out
+    };
+
+    format!(
+        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+         --- FULL SCENE ---\n{}\n\
+         --- HIGHLIGHTED PASSAGE ---\n{}",
+        ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
+        scene_text.trim(),
+        ctx.source_text,
+    )
+}
+
+/// Speaker-interleaved scene render used by the inner-monologue message.
+fn render_scene_lines(scene_lines: &[Line]) -> String {
     let mut scene_text = String::new();
     let mut last_speaker: Option<&str> = None;
     for line in scene_lines {
@@ -732,15 +774,7 @@ pub fn build_inner_monologue_message(
         }
         scene_text.push_str(&format!("  {}\n", line.text));
     }
-
-    format!(
-        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
-         --- FULL SCENE ---\n{}\n\
-         --- HIGHLIGHTED PASSAGE ---\n{}",
-        ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
-        scene_text.trim(),
-        ctx.source_text,
-    )
+    scene_text
 }
 
 pub fn build_inner_monologue_add_message(
@@ -1254,5 +1288,83 @@ mod journal_qa_prompt_tests {
         let p = journal_qa_prompt("play");
         assert!(p.contains("play") && p.contains("scene"));
         assert!(!p.contains("{genre}"));
+    }
+}
+
+#[cfg(test)]
+mod scene_budget_tests {
+    use super::*;
+
+    fn line(i: usize, speaker: &str, width: usize) -> Line {
+        Line {
+            id: i as i64,
+            citation: format!("T 1.1.{i}"),
+            text: format!("{:0width$}", i, width = width),
+            normalized: String::new(),
+            speaker: Some(speaker.to_string()),
+            is_dialogue: true,
+            timestamp: None,
+            div1: 1,
+            div2: 1,
+            line_in_div: i as i64,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    fn scene(n: usize, width: usize) -> Vec<Line> {
+        (0..n)
+            .map(|i| line(i, if (i / 4) % 2 == 0 { "FIRST" } else { "SECOND" }, width))
+            .collect()
+    }
+
+    fn ctx(start_citation: &str) -> GlossContext {
+        GlossContext {
+            work_abbrev: "T".into(),
+            work_title: "Test".into(),
+            start_citation: start_citation.into(),
+            end_citation: start_citation.into(),
+            act: 1,
+            scene: 1,
+            speaker: "FIRST".into(),
+            source_text: "THE HIGHLIGHTED PASSAGE TEXT".into(),
+            source_line_numbers: vec![],
+            hash: String::new(),
+            gloss_type: "inner-monologue".into(),
+        }
+    }
+
+    #[test]
+    fn under_budget_scene_renders_whole() {
+        // 100 lines x 40 chars ~ 4.6k chars < budget.
+        let lines = scene(100, 40);
+        let msg = build_inner_monologue_message(&ctx("T 1.1.50"), &lines);
+        assert!(msg.contains(&format!("{:040}", 0)), "first line present");
+        assert!(msg.contains(&format!("{:040}", 99)), "last line present");
+        assert!(!msg.contains("excerpt"), "no markers under budget");
+        assert!(msg.contains("THE HIGHLIGHTED PASSAGE TEXT"));
+    }
+
+    #[test]
+    fn over_budget_scene_windows_around_passage() {
+        // 400 lines x 60 chars ~ 25k chars > budget; passage starts at 200.
+        let lines = scene(400, 60);
+        let msg = build_inner_monologue_message(&ctx("T 1.1.200"), &lines);
+        assert!(msg.contains("scene continues above"));
+        assert!(msg.contains("scene continues below"));
+        assert!(msg.contains(&format!("{:060}", 200)), "anchor line present");
+        assert!(!msg.contains(&format!("{:060}", 0)), "scene opening cut");
+        assert!(!msg.contains(&format!("{:060}", 399)), "scene end cut");
+        assert!(msg.contains("THE HIGHLIGHTED PASSAGE TEXT"), "passage always whole");
+    }
+
+    #[test]
+    fn unknown_citation_falls_back_to_scene_middle() {
+        let lines = scene(400, 60);
+        let msg = build_inner_monologue_message(&ctx("NOPE 9.9.9"), &lines);
+        assert!(msg.contains(&format!("{:060}", 200)), "middle line present");
+        assert!(msg.contains("scene continues above"));
+        assert!(msg.contains("scene continues below"));
     }
 }
