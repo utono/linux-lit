@@ -1011,6 +1011,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .chat-panel-float .chat-panel-header {{ color: {dim}; }} \
          .chat-panel-float .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
          .chat-transcript {{ font-family: {font}; font-size: {chat_size}pt; }} \
+         .chat-transcript label {{ padding-bottom: 3px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
            transition: background-color 320ms ease-out; }} \
