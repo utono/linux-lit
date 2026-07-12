@@ -320,17 +320,21 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         .and_then(|c| str_field(c, "guifg"))
         .unwrap_or_else(|| text_bg.clone());
 
-    // Vocab words in the reading card take the CURRENT root color, so the
-    // tint pairs with the field around the card and follows Ctrl+t's root
-    // variants. The hue is kept; lightness/saturation adjust until the word
-    // clears VOCAB_WORD_MIN_CONTRAST on the card and stays distinct from
-    // the body ink.
+    // Vocab words in the reading card start from the CURRENT root hue (so
+    // the tint pairs with the field around the card and follows Ctrl+t's
+    // root variants) but ride the SAME guard rails as the reader-gloss /
+    // journal-Q&A tint: readable on the card, visibly apart from the live
+    // root (hue OR contrast), and holding a hard luminance gap from the
+    // body ink on light themes. The old derivation had only the card floor
+    // plus the lenient avoid rule (1.4 with a hue escape), which on themes
+    // whose ink shares the root's hue shipped vocab words that read as
+    // plain body text.
     let vocab_fg = ensure_gloss_color_min(
         &root_color,
         &text_bg,
-        None,
-        None,
-        &[&text_fg],
+        Some(&root_color),
+        Some(&text_fg),
+        &[],
         VOCAB_WORD_MIN_CONTRAST,
     );
 
@@ -1413,10 +1417,24 @@ mod tests {
         assert_eq!(v0.cursor_bg, v2.cursor_bg);
         assert_eq!(v0.cursor_fg, v1.cursor_fg);
         assert_eq!(v0.cursor_fg, v2.cursor_fg);
-        // vocab_fg deliberately FOLLOWS the root (root-hued tint), like
-        // scrim_bg — but always readable on the pinned card surface.
+        // vocab_fg starts from the root hue (follows the variant like
+        // scrim_bg) but rides the reader-gloss guard rails: readable on the
+        // pinned card, visibly apart from the live root, and holding a
+        // luminance gap from the body ink (hard floor on light themes).
         for v in [&v0, &v1, &v2] {
-            assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= 4.5);
+            assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= VOCAB_WORD_MIN_CONTRAST);
+            let root_ok = hue_distance(&v.vocab_fg, &v.root_color) >= 40.0
+                || contrast_ratio(&v.vocab_fg, &v.root_color) >= READER_GLOSS_ROOT_MIN_CONTRAST;
+            assert!(root_ok,
+                "variant {}: vocab {} too close to root {}", v.root_variant, v.vocab_fg, v.root_color);
+            let cvi = contrast_ratio(&v.vocab_fg, &v.text_fg);
+            let ink_ok = if v.is_light {
+                cvi >= READER_GLOSS_INK_MIN_CONTRAST
+            } else {
+                hue_distance(&v.vocab_fg, &v.text_fg) >= 40.0 || cvi >= 1.4
+            };
+            assert!(ink_ok,
+                "variant {}: vocab {} reads as body ink {}", v.root_variant, v.vocab_fg, v.text_fg);
         }
         // reader_gloss likewise FOLLOWS the root now: per variant it must
         // clear the card readable floor, sit visibly apart from the root
