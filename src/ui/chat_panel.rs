@@ -42,6 +42,7 @@ impl ChatPanel {
         // .chat-transcript to font_size - 2pt); the row labels inherit it.
         transcript_box.add_css_class("chat-transcript");
         let transcript_scroll = gtk4::ScrolledWindow::new();
+        transcript_scroll.add_css_class("chat-transcript-scroll");
         transcript_scroll.set_child(Some(&transcript_box));
         transcript_scroll.set_vexpand(true);
         transcript_scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
@@ -95,9 +96,16 @@ impl ChatPanel {
         crate::ui::flash_widget(self.input.container().upcast_ref());
     }
 
-    /// Flash the transcript area as the "now active" Tab-cycle cue.
+    /// Flash the transcript area as the "now active" Tab-cycle cue. The
+    /// shared opacity dip is invisible on a bare-on-root (possibly empty)
+    /// transcript, so paint a brief background wash that CSS fades out.
     pub fn flash_transcript(&self) {
         crate::ui::flash_widget(self.transcript_scroll.upcast_ref());
+        let sc = self.transcript_scroll.clone();
+        sc.add_css_class("chat-flash-wash");
+        glib::timeout_add_local_once(std::time::Duration::from_millis(160), move || {
+            sc.remove_css_class("chat-flash-wash");
+        });
     }
 
     pub fn show(&self) {

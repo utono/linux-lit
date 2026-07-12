@@ -937,14 +937,21 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .chat-panel-float .chat-panel-header {{ color: {dim}; }} \
          .chat-panel-float .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
          .chat-transcript {{ font-family: {font}; font-size: {chat_size}pt; }} \
-         .chat-q {{ color: alpha({chat_ink}, 0.95); }} \
-         .chat-a {{ color: alpha({chat_ink}, 0.80); }} \
-         .chat-chip {{ color: alpha({chat_ink}, 0.62); font-style: italic; \
+         .chat-transcript-scroll {{ background-color: transparent; \
+           border-radius: 8px; \
+           transition: background-color 320ms ease-out; }} \
+         .chat-transcript-scroll.chat-flash-wash {{ \
+           background-color: alpha({chat_ink}, 0.10); transition: none; }} \
+         .chat-panel-float .chat-transcript-scroll.chat-flash-wash {{ \
+           background-color: alpha({fg}, 0.10); }} \
+         .chat-q {{ color: alpha({chat_ink}, 0.70); }} \
+         .chat-a {{ color: {chat_ink}; }} \
+         .chat-chip {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; }} \
          .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; }} \
-         .chat-saved {{ color: alpha({chat_ink}, 0.70); }} \
-         .chat-panel-float .chat-q {{ color: {fg}; }} \
-         .chat-panel-float .chat-a {{ color: alpha({fg}, 0.72); }} \
+         .chat-saved {{ color: alpha({chat_ink}, 0.65); }} \
+         .chat-panel-float .chat-q {{ color: {dim}; }} \
+         .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \
            border-left: 2px solid alpha({fg}, 0.35); }} \
          .chat-panel-float .chat-error {{ color: alpha({fg}, 0.55); }} \
