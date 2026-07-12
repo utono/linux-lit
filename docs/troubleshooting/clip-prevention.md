@@ -489,6 +489,21 @@ When a half line clips at the bottom edge of a scrolled surface:
     zero inter-row spacing, so there is no blank budget — any reveal there
     exposes the next row's ink.
 
+11. **TOP edge, right after a WORK SWITCH — first line of the (left) column
+    half-cut, and in two-column mode the left column repeats the right
+    column's opening lines.** Not a clip-box bug at all: a stale
+    `page_top_offset` (the sub-line pixel offset from the PREVIOUS work's
+    prose row-fill grid, e.g. 833px set by a `PAGES_PROSE: resnap off-grid`)
+    survived the switch, and the resize-tick snap
+    (`snap_scroll_to_line_offset(page_top, offset)`) scrolled the view
+    `offset` px past the new work's page top — `offset > 0` skips the
+    whole-line alignment on purpose. The right view is scrolled separately to
+    `cs.split`, hence the overlap tell. Fixed by resetting
+    `state.page_top_offset = 0` in `display_work_at_with_prepared` (all its
+    position-restore paths set `page_top_line` only); prose targets get their
+    offset re-derived by `resnap_prose_to_table`. If it recurs, check for a
+    new path that sets `page_top_line` without the offset.
+
 ## Verifying
 
 Real GTK pixel layout is what matters; the headless `cage` + `grim` flow lays
