@@ -58,6 +58,38 @@ themselves. Multi-instance is supported (per-process slots: own log suffix,
 `i{n}-` MPV sockets, config merge-on-save), but a running instance predates
 any rebuild.
 
+## Parallel Claude Code Sessions (git worktrees)
+
+Two or more concurrent sessions must NEVER share this checkout — each
+session gets its own git worktree on its own branch. Worktrees HOST
+feature branches, they don't replace them: all branching and
+finishing-a-branch conventions still apply. Worktrees live under
+`~/utono/linux-lit-wt/<branch>` (`~/utono` is not a repo, so siblings
+are safe):
+
+```bash
+git worktree add ~/utono/linux-lit-wt/<branch> -b <branch>
+```
+
+- Each worktree builds its own `target/` (first build is from scratch).
+  Never share `CARGO_TARGET_DIR` across worktrees — parallel builds on
+  different branches lock and thrash each other.
+- `CLAUDE-activeContext.md` is gitignored, so a fresh worktree has no
+  `ac`. The canonical `ac` stays in this main checkout; don't create
+  per-worktree copies.
+- Shared mutable state stays shared across worktrees:
+  `~/.config/linux-lit/config-dev.json` and `lit.db` are absolute
+  paths. The instance-slot merge-on-save covers the config; avoid two
+  sessions writing lit.db at the same time.
+- Merge back to master from THIS main checkout (git refuses to check
+  master out in two worktrees), then `git worktree remove` the finished
+  worktree before deleting its branch.
+- Debug logs live in the repo dir, so each worktree logs separately;
+  the instance slots already keep concurrent dev runs apart. The cage
+  cleanup `pkill -f "cage -- ./target/debug/linux-lit"` matches EVERY
+  worktree's debug build — fine (all are throwaway test instances),
+  but it is not scoped to one worktree.
+
 ## Testing
 
 ```bash
