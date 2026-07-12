@@ -2821,61 +2821,6 @@ pub fn land_cursor_on_line(state: &mut AppState, target_line: usize) {
     after_page_change(state, PageChangeReason::Vocab);
 }
 
-/// Jump to the next vocab word occurrence after current position.
-pub fn jump_to_next_vocab(state: &mut AppState) {
-    if state.vocab_matches.is_empty() {
-        return;
-    }
-
-    let next_idx = match state.vocab_match_idx {
-        Some(idx) => {
-            if idx + 1 < state.vocab_matches.len() {
-                idx + 1
-            } else {
-                0
-            }
-        }
-        None => {
-            state.vocab_matches
-                .iter()
-                .position(|m| m.line_index > state.current_line)
-                .unwrap_or(0)
-        }
-    };
-
-    state.vocab_match_idx = Some(next_idx);
-    let target_line = state.vocab_matches[next_idx].line_index;
-    land_cursor_on_line(state, target_line);
-}
-
-
-/// Jump to the previous vocab word occurrence before current position.
-pub fn jump_to_prev_vocab(state: &mut AppState) {
-    if state.vocab_matches.is_empty() {
-        return;
-    }
-
-    let prev_idx = match state.vocab_match_idx {
-        Some(idx) => {
-            if idx > 0 {
-                idx - 1
-            } else {
-                state.vocab_matches.len() - 1
-            }
-        }
-        None => {
-            state.vocab_matches
-                .iter()
-                .rposition(|m| m.line_index < state.current_line)
-                .unwrap_or(state.vocab_matches.len() - 1)
-        }
-    };
-
-    state.vocab_match_idx = Some(prev_idx);
-    let target_line = state.vocab_matches[prev_idx].line_index;
-    land_cursor_on_line(state, target_line);
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

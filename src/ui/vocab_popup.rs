@@ -57,12 +57,14 @@ impl VocabPopup {
             .build();
         footer_label.add_css_class("definition-hint");
 
+        // Anchored lower-right: the popup hugs the window bottom beside the
+        // card (margin_start is set live to clear the card's right edge).
         let container = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
-            .valign(gtk4::Align::Start)
+            .valign(gtk4::Align::End)
             .margin_end(5)
-            .margin_top(24)
+            .margin_bottom(24)
             .build();
         container.add_css_class("vocab-popup");
         container.append(&header_row);

@@ -46,22 +46,22 @@ const NUMBER_ROW: &[KeyDef] = &[
     key("!", "%", "", "", &[("C-!", "font \u{2212}")]),
     key("|", "`", "", "", &[("C-|", "font +")]),
 ];
-const BACKSPACE: KeyDef = bare("\u{232b}", "", "delete ts");
+const BACKSPACE: KeyDef = bare("\u{232b}", "", "ts tap");
 
 const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "prev bkmk", ":: cycle speed", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
-    key(".", ">", "", "", &[("C-.", "bookmarks")]),
-    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("S-C-p", "conc word"), ("M-p", "phrase hl")]),
+    key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
+    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
-    key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark"), ("C-M-c", "conc list")]),
-    key("r", "R", "vocab \u{25b6}", "R: prev conc", &[("C-r", "hide vocab"), ("S-C-r", "prev vocab"), ("M-r", "conc works")]),
+    key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
+    key("r", "R", "vocab tap", "", &[("C-r", "vocab \u{25b6}")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    key("\\", "#", "conc picker", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
+    key("\\", "#", "", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
 
@@ -69,14 +69,14 @@ const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
-    key("u", "U", "start time", "U: undo ts", &[("M-u", "set end time")]),
-    key("i", "I", "2-col translation", "", &[("M-i", "scansion"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
+    key("u", "U", "2-col translation", "U: undo ts", &[("M-u", "scansion")]),
+    key("i", "I", "start time", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
-    key("h", "H", "synopsis", "H: auto vocab", &[("C-h", "synopsis side")]),
+    key("h", "H", "synopsis", "H: auto vocab", &[]),
     key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
     key("n", "N", "next match", "N: prev match", &[]),
-    bare("s", "S", "sync tog"),
-    key("-", "_", "", "", &[("C--", "next vocab")]),
+    bare("s", "S", "sync tap"),
+    key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -90,7 +90,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "vim copy", "V: visual mode", &[]),
-    bare("z", "Z", ""),
+    key("z", "Z", "conc picker", "", &[("C-z", "conc word"), ("M-z", "conc works"), ("S-C-z", "conc list")]),
 ];
 
 const SHIFT_KEY: KeyDef = ub("Shift", "");
@@ -200,336 +200,164 @@ fn find_cap(key_name: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// A longer, sentence-length explanation for a binding, keyed by its short
-/// action label (the same strings used in the row definitions above). Returns
-/// `None` for self-explanatory bindings (cursor moves, seeks, font), whose
-/// short label already says everything; those rows render without a blurb.
-///
-/// Each blurb explains what the binding does, then ends with a code reference
-/// (`-> module::function — file.rs`) pointing at the handler that implements it.
-/// All handlers are reached through `dispatch_action` in
-/// `src/input/keymap.rs`; the reference names the leaf function that does the
-/// work, or `dispatch_action (keymap.rs)` when the logic is inline in the
-/// match arm itself. Keep these to a few sentences — they are word-wrapped
-/// into the detail panel's free width, so there is room, but the panel still
-/// shares the screen with the keycap strip. When a keybind's handler moves,
-/// update the reference here too.
+/// The Rust-idiom description for a binding, keyed by its short action label
+/// (the same strings used in the row definitions above). This is the ONLY
+/// text the two-column detail panel shows next to the key glyph. The format
+/// is minimal: `Action::<Variant> — src/<handler file>` (or the pre-dispatch
+/// mechanism, e.g. `gg chord (Action::PendingG)`, for keys with no Action).
+/// Add an `-> InputMode::X` or a short parenthetical ONLY when the variant
+/// name alone would mislead (e.g. the modal vocab drill). Never document a
+/// sibling chord that has its own row. When a keybind's handler moves,
+/// update the file path here too. A `None` row falls back to its expanded
+/// action label in the panel.
 fn describe(label: &str) -> Option<&'static str> {
-    // Shift-action labels carry a "X: " prefix (e.g. "O: −60", "R: prev vocab")
+    // Shift-action labels carry a "X: " prefix (e.g. "O: −60", "R: drill back")
     // so the keycap can show which physical key + Shift triggers them. Strip a
     // leading single-char prefix of the form "<c>: " before matching so the
     // shift variant shares its base description where the meaning is identical.
     let key = strip_shift_prefix(label);
     let d = match key {
         // ── Page / cursor navigation ──
-        "pg fwd" => "Turn one page forward (aliased on x). \
--> navigation::page_forward — src/input/navigation.rs",
-        "pg back" => "Turn one page backward (aliased on y). \
--> navigation::page_backward — src/input/navigation.rs",
-        "page ↓" => "Page forward one screen (Space). \
--> navigation::page_forward — src/input/navigation.rs",
-        "page ↑" => "Page backward one screen (Shift+Space). \
--> navigation::page_backward — src/input/navigation.rs",
-        "cursor ↓" | "cursor down" => "Cursor down one dialogue line (turns the \
-page at the bottom); seeks audio to the line. \
--> navigation::cursor_next_dialogue — src/input/navigation.rs",
-        "cursor ↑" | "cursor up" => "Cursor up one dialogue line; seeks audio to \
-the line. \
--> navigation::cursor_prev_line — src/input/navigation.rs",
-        "prev dlg" => "Jump to the previous dialogue line. \
--> navigation::jump_to_prev_dialogue — src/input/navigation.rs",
-        "next dlg" => "Jump to the next dialogue line. \
--> navigation::jump_to_next_dialogue — src/input/navigation.rs",
-        "next speaker" => "Jump to the next speaker turn and seek audio to it. \
--> navigation::jump_to_next_speaker — src/input/navigation.rs",
-        "prev speaker" => "Jump to the top of the current speaker turn; from there, \
-the previous turn. Seeks audio. \
--> navigation::jump_to_prev_speaker — src/input/navigation.rs",
-        "go to start" => "Jump to the first line (gg). \
--> navigation::jump_to_start — src/input/navigation.rs",
-        "go to end" => "Jump to the last line (G). \
--> navigation::jump_to_end — src/input/navigation.rs",
-        "pg back btm" => "Page backward, landing the cursor on the new page's \
-bottom line (Shift+Up). \
--> navigation::page_backward_bottom — src/input/navigation.rs",
+        "pg fwd" => "Action::PageForward — src/input/navigation.rs",
+        "pg back" => "Action::PageBackward — src/input/navigation.rs",
+        "cursor ↓" | "cursor down" => "Action::CursorNextDialogue — src/input/navigation.rs",
+        "cursor ↑" | "cursor up" => "Action::CursorPrevLine — src/input/navigation.rs",
+        "prev dlg" => "Action::JumpToPrevDialogue — src/input/navigation.rs",
+        "next dlg" => "Action::JumpToNextDialogue — src/input/navigation.rs",
+        "next speaker" => "Action::JumpToNextSpeaker — src/input/navigation.rs",
+        "prev speaker" => "Action::JumpToPrevSpeaker — src/input/navigation.rs",
+        "go to start" => "gg chord (Action::PendingG) — src/input/navigation.rs",
+        "go to end" => "Action::JumpToEnd — src/input/navigation.rs",
+        "pg back btm" => "Action::PageBackwardBottom — src/input/navigation.rs",
 
         // ── Chapters / scenes ──
-        "prev ch" => "Jump to the previous chapter (prose) or act (play). \
--> navigation::jump_to_prev_chapter — src/input/navigation.rs",
-        "next ch" => "Jump to the next chapter (prose) or act (play). \
--> navigation::jump_to_next_chapter — src/input/navigation.rs",
-        "prev scene" => "Jump to the current scene/chapter's first line; pressed \
-there, the previous one. \
--> navigation::jump_to_prev_section — src/input/navigation.rs",
-        "next scene" => "Jump to the next scene (plays) or chapter (prose). \
--> navigation::jump_to_next_section — src/input/navigation.rs",
+        "prev ch" => "Action::JumpToPrevChapter — src/input/navigation.rs",
+        "next ch" => "Action::JumpToNextChapter — src/input/navigation.rs",
+        "prev scene" => "Action::JumpToPrevScene — src/input/navigation.rs",
+        "next scene" => "Action::JumpToNextScene — src/input/navigation.rs",
 
         // ── Bookmarks ──
-        "bookmark" => "Toggle a bookmark on the current line. \
--> bookmarks::toggle_bookmark — src/input/actions/bookmarks.rs",
-        "prev bkmk" => "Jump to the previous bookmark. \
--> navigation::prev_bookmark — src/input/navigation.rs",
-        "next bkmk" => "Jump to the next bookmark. \
--> navigation::next_bookmark — src/input/navigation.rs",
-        "latest bookmark" => "Jump to the most recently added bookmark (g;). \
--> bookmarks::jump_to_recent_bookmark — src/input/actions/bookmarks.rs",
-        "bookmarks" => "Open the bookmark picker. \
--> pickers::open_bookmark_picker — src/input/actions/pickers.rs",
+        "bookmark" => "Action::ToggleBookmark — src/input/actions/bookmarks.rs",
+        "bkmk tap" => "Action::BookmarkTap (toggle; .. reverts and opens the \
+picker via ChordState::PendingPeriod) — src/input/keymap.rs",
+        "prev bkmk" => "Action::PrevBookmark — src/input/navigation.rs",
+        "next bkmk" => "Action::NextBookmark — src/input/navigation.rs",
+        "latest bookmark" => "g; chord (Action::PendingG) — src/input/actions/bookmarks.rs",
+        "bookmarks" => "Action::OpenBookmarkPicker — src/input/actions/pickers.rs",
 
         // ── Pickers / overlays ──
-        "lib picker" => "Open the library picker to switch works. \
--> pickers::open_library_picker_from_reader — src/input/actions/pickers.rs \
-(opens via app::display_work_at_with_prepared — src/app.rs)",
-        "media picker" => "Open the media picker to choose the synced audio file. \
--> pickers::open_media_picker — src/input/actions/pickers.rs",
-        "conc picker" => "Open the concordance picker (author-wide word list; \
-step hits with r / R). \
--> concordance::open_picker — src/input/actions/concordance.rs",
-        "conc word" => "Open the concordance word picker. \
--> pickers::open_concordance_word_picker — src/input/actions/pickers.rs",
-        "phrase hl" => "Cycle the karaoke narration highlight for this work's \
-class: OFF -> PHRASE (spoken phrase; the default) -> LINE (whole verse line / \
-prose sentence). Saved to config. \
--> TogglePhraseHighlight arm — src/input/keymap.rs \
-(driver: src/input/phrase_highlight.rs)",
-        "conc list" => "Open the concordance occurrence-list picker. \
--> pickers::open_concordance_list_picker — src/input/actions/pickers.rs",
-        "conc works" => "Open the concordance works picker. \
--> pickers::open_concordance_works_picker — src/input/actions/pickers.rs",
-        "settings" => "Open the settings overlay. \
--> settings::open_settings — src/input/actions/settings.rs",
-        "keybinds" => "Open this keyboard-shortcut overlay. \
--> pickers::open_keybinds_overlay / open_keybinds_from_mode — \
-src/input/actions/pickers.rs (drawing: src/ui/keybinds_overlay.rs)",
-        "search" => "Open in-text search, forward. -> OpenSearch arm \
-(inline) -> search::clear_search — src/input/keymap.rs, src/input/search.rs",
-        "search back" => "Open in-text search, backward (?). -> OpenSearchBackward \
-arm (inline) — src/input/keymap.rs, src/input/search.rs",
-        "next match" => "Next search match — or next concordance hit when a \
-concordance is active. \
--> SearchNextMatch arm -> search::reactivate_and_step / concordance::concordance_next_in_work \
-— src/input/keymap.rs",
-        "prev match" => "Previous search match — or previous concordance hit when \
-a concordance is active. \
--> SearchPrevMatch arm -> search::reactivate_and_step / concordance::concordance_prev_in_work \
-— src/input/keymap.rs",
+        "lib picker" => "Action::OpenLibraryPicker — src/input/actions/pickers.rs",
+        "media picker" => "Action::OpenMediaPicker — src/input/actions/pickers.rs",
+        "conc picker" => "Action::OpenConcordancePicker — src/input/actions/concordance.rs",
+        "conc word" => "Action::OpenConcordanceWordPicker — src/input/actions/pickers.rs",
+        "phrase hl" => "Action::TogglePhraseHighlight — src/input/phrase_highlight.rs",
+        "conc list" => "Action::OpenConcordanceListPicker — src/input/actions/pickers.rs",
+        "conc works" => "Action::OpenConcordanceWorksPicker — src/input/actions/pickers.rs",
+        "settings" => "Action::OpenSettingsOverlay — src/input/actions/settings.rs",
+        "keybinds" => "Action::OpenKeybindsOverlay — src/input/actions/pickers.rs",
+        "search" => "Action::OpenSearch — src/input/search.rs",
+        "search back" => "Action::OpenSearchBackward — src/input/search.rs",
+        "next match" => "Action::SearchNextMatch — src/input/search.rs",
+        "prev match" => "Action::SearchPrevMatch — src/input/search.rs",
 
         // ── Gloss / echo system ──
-        "gloss tog" => "Open the gloss overlay for the current passage; its binds \
-are on its Ctrl+/ legend. \
--> gloss::toggle_overlay — src/input/actions/gloss.rs; \
-gloss::synth_all_prose_blocks — src/input/actions/gloss.rs",
-        "gloss pick" => "Open the gloss picker (Alt+t cycles the type filter). \
--> pickers::open_gloss_picker — src/input/actions/pickers.rs (confirm: \
-handle_gloss_picker_key in src/input/keymap.rs)",
-        "journal tog" => "Open or close the Q&A journal for the current scene; \
-its binds are on its Ctrl+/ legend. \
--> journal::toggle_overlay — src/input/actions/journal.rs (overlay keys: \
-handle_journal_key in src/input/keymap.rs)",
-        "last overlay" => "Reopen the last-used gloss/journal overlay; from inside \
-it, close back to the reader. \
--> gloss::toggle_last_overlay — src/input/actions/gloss.rs",
-        "chat layout" => "Toggle the left chat panel layout: the reading card pins \
-to the right at unchanged size and the freed left space becomes a Claude chat \
-panel for journal Q&A. \
--> ToggleChatLayout arm -> chat::toggle_chat_layout — src/input/actions/chat.rs",
-        "jrnl Q&A picker" => "Open Journal Q&A picker. \
--> journal::open_picker_from_reader — src/input/actions/journal.rs",
-        "last gloss" => "Reopen the most recently viewed gloss in this work. \
--> gloss::open_last_gloss — src/input/actions/gloss.rs",
-        "BCP echo turns" => "Pick a speaker turn with cached BCP echoes and reopen \
-them. -> echoes::open_echo_turns_picker(Bcp) \
-— src/input/actions/echoes.rs (confirm: echoes::confirm_echo_turns_pick)",
-        "BCP echoes" => "Show cached BCP echoes for the current speaker turn. \
--> echoes::show_echoes_for_cursor_line(Bcp) — src/input/actions/echoes.rs",
-        "reopen BCP echoes" => "Reopen the last BCP echo results. \
--> echoes::reopen_echoes(Bcp) — src/input/actions/echoes.rs",
-        "Shx echo turns" => "Pick a speaker turn with cached Shakespeare echoes \
-and reopen them. \
--> echoes::open_echo_turns_picker(Shakespeare) — src/input/actions/echoes.rs",
-        "Shx echoes" => "Run a cross-work echo search on the current speaker turn. \
--> echoes::show_echoes_for_cursor_line(Shakespeare) — src/input/actions/echoes.rs",
-        "reopen Shx echoes" => "Reopen the last Shakespeare echo results. \
--> echoes::reopen_echoes(Shakespeare) — src/input/actions/echoes.rs",
+        "gloss tog" => "Action::ToggleGlossOverlay — src/input/actions/gloss.rs",
+        "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
+        "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
+        "last overlay" => "Action::ToggleLastOverlay — src/input/actions/gloss.rs",
+        "chat layout" => "Action::ToggleChatLayout (single Tab opens/cycles \
+focus; Tab-Tab closes via ChordState::PendingTab) — src/input/actions/chat.rs",
+        "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
+        "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
+        "BCP echo turns" => "Action::ShowEchoTurnsBcp — src/input/actions/echoes.rs",
+        "BCP echoes" => "Action::ShowEchoesBcp — src/input/actions/echoes.rs",
+        "reopen BCP echoes" => "Action::ReopenEchoesBcp — src/input/actions/echoes.rs",
+        "Shx echo turns" => "Action::ShowEchoTurnsShx — src/input/actions/echoes.rs",
+        "Shx echoes" => "Action::ShowEchoesShx — src/input/actions/echoes.rs",
+        "reopen Shx echoes" => "Action::ReopenEchoesShx — src/input/actions/echoes.rs",
 
         // ── Vocab ──
-        "prev conc" => "Previous concordance hit for the active word (cross-work). \
--> concordance::concordance_prev — src/input/actions/concordance.rs",
-        "next vocab" => "Jump to the next vocabulary word. On phrase-data works \
-this instead enters the vocab-sentence loop mode (sentence repeats via MPV \
-ab-loop; n/p step, a/Space pause, Esc or Ctrl+- exits). \
--> concordance::jump_to_next_vocab — src/input/actions/concordance.rs",
-        "prev vocab" => "Jump to the previous vocabulary word (backward entry \
-into the vocab-sentence loop mode on phrase-data works — see next vocab). \
--> concordance::jump_to_prev_vocab — src/input/actions/concordance.rs",
-        "vocab hi" => "Toggle vocabulary-word highlighting (saved per work). \
--> ToggleVocabHighlight arm -> app::apply_vocab_highlighting / \
-app::remove_vocab_highlighting — src/input/keymap.rs, src/app.rs",
-        "auto vocab" => "Toggle the auto vocabulary popup. \
--> ToggleVocabPopup arm -> app::open_vocab_popup / close_vocab_popup — \
-src/input/keymap.rs, src/app.rs",
-        "vocab ▶" => "Next word in the vocabulary popup (stays up and follows \
-the cursor/playback line; Ctrl+- hides). \
--> handle_vocab_popup_key(.., true) — src/input/keymap.rs",
-        "hide vocab" => "Fade the vocabulary popup out (it no longer auto-hides). \
--> fade_out_vocab_popup — src/input/keymap.rs",
+        "vocab drill" => "Action::JumpToNextVocab -> InputMode::VocabLoop \
+(n/p step, a/Space pause, Esc/Ctrl+- exit; unavailable -> toast) \
+— src/input/vocab_loop.rs",
+        "drill back" => "Action::JumpToPrevVocab -> InputMode::VocabLoop \
+— src/input/actions/concordance.rs",
+        "vocab hi" => "Action::ToggleVocabHighlight — src/app.rs",
+        "auto vocab" => "Action::ToggleVocabPopup — src/app/vocab_popup.rs",
+        "vocab tap" => "Action::VocabPopupTap (visible: next word; rr: \
+show/hide via ChordState::PendingR) — src/input/keymap.rs",
+        "vocab ▶" => "Action::VocabPopupNext — src/input/keymap.rs",
 
         // ── Word copy / visual ──
-        "copy word" => "Copy the word under the cursor; repeated presses cycle \
-adjacent words. \
--> word_copy::word_cycle_copy — src/input/actions/word_copy.rs",
-        "copy id" => "Copy the current line's line-mapping id (and media id) to \
-the clipboard. \
--> CopyLineMappingId arm (inline) — src/input/keymap.rs",
-        "collect" => "Collect the word under the cursor into the vocabulary list \
-and copy it. -> word_copy::word_collect_copy — src/input/actions/word_copy.rs",
-        "visual mode" => "Enter visual selection mode: y yanks, i shows echoes, \
-Return opens the action popup, Esc/V exits. \
--> visual::enter_visual_mode — src/input/visual.rs; \
-handle_block_visual_key / gloss_overlay::enter_visual \
-— src/input/keymap.rs, src/ui/gloss_overlay.rs",
+        "copy word" => "Action::WordCycleCopy — src/input/actions/word_copy.rs",
+        "copy id" => "Action::CopyLineMappingId — src/input/keymap.rs",
+        "collect" => "Action::WordCollectCopy — src/input/actions/word_copy.rs",
+        "visual mode" => "Action::EnterVisualMode -> InputMode::Visual \
+— src/input/visual.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Play/pause without seeking (unlike Space; bound on a). \
--> TogglePause arm -> MpvCommand::TogglePause — src/input/keymap.rs",
-        "vim copy" => "Open the cursor's paragraph/line in a copy-only vim \
-editor, seeded in visual mode: extend with motions, y copies the selection to \
-the system clipboard, :q or double-Esc exits. Nothing is saved. \
--> segment_vim::open — src/input/actions/segment_vim.rs",
-        "cycle speed" => "Cycle playback speed 1.0x -> 1.3x -> 0.9x. \
--> TogglePlaybackSpeed arm -> next_playback_speed -> MpvCommand::SetSpeed — \
+        "play/pause" => "Action::TogglePause — src/input/keymap.rs",
+        "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
+— src/input/actions/segment_vim.rs",
+        "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9) \
+— src/input/keymap.rs",
+        "seek −3.5" => "Action::SeekShortBackward — src/input/phrase_highlight.rs, \
 src/input/keymap.rs",
-        "seek −3.5" => "With sync + karaoke on: restart the highlighted \
-phrase (or, within 1s of its start, step to the previous phrase); turns the \
-page when the phrase lands off-page. Otherwise seek MPV back 3.5 seconds. \
--> phrase_step_seek / do_mpv_seek — src/input/phrase_highlight.rs, \
+        "seek +3.5" => "Action::SeekShortForward — src/input/phrase_highlight.rs, \
 src/input/keymap.rs",
-        "seek +3.5" => "With sync + karaoke on: seek to the start of the \
-NEXT phrase; turns the page when it lands off-page. Otherwise seek MPV \
-forward 3.5 seconds. \
--> phrase_step_seek / do_mpv_seek — src/input/phrase_highlight.rs, \
-src/input/keymap.rs",
-        "−60" => "Seek MPV back 60 seconds (Shift+o). \
--> do_mpv_seek(state, -60.0) — src/input/keymap.rs",
-        "+60" => "Seek MPV forward 60 seconds (Shift+e). \
--> do_mpv_seek(state, 60.0) — src/input/keymap.rs",
-        "volume +" => "Raise MPV volume by 5. \
--> VolumeUp arm -> MpvCommand::VolumeAdjust(5.0) — src/input/keymap.rs",
-        "volume −" => "Lower MPV volume by 5. \
--> VolumeDown arm -> MpvCommand::VolumeAdjust(-5.0) — src/input/keymap.rs",
-        "sync tog" => "Toggle playback sync (cursor and page follow the audio). \
--> TogglePlaybackSync arm (inline) — src/input/keymap.rs",
+        "−60" => "Action::SeekLongBackward — src/input/keymap.rs",
+        "+60" => "Action::SeekLongForward — src/input/keymap.rs",
+        "volume +" => "Action::VolumeUp — src/input/keymap.rs",
+        "volume −" => "Action::VolumeDown — src/input/keymap.rs",
+        "sync tap" => "Action::PlaybackSyncTap (toast only; ss toggles sync \
+via ChordState::PendingS) — src/input/keymap.rs",
 
         // ── Timestamps ──
-        "start time" | "set start time" => "Set the current line's start timestamp \
-from MPV's position. -> timestamps::set_start_time — src/input/timestamps.rs",
-        "set end time" => "Set the current line's end timestamp from MPV's \
-position. \
--> timestamps::set_end_time — src/input/timestamps.rs",
-        "set track mark" => "Set an audio track mark on the current line (ffmpeg \
-chapter export only; distinct from the structural chapter 'c' toggles). \
--> timestamps::set_chapter — src/input/timestamps.rs",
-        "toggle ch start" => "Prose only: toggle whether the cursor's paragraph \
-begins a structural chapter (distinct from Ctrl+c's audio track mark). \
--> chapters::toggle_chapter_start — src/input/actions/chapters.rs",
-        "show chapter" => "Toast the current act/scene or chapter. \
--> navigation::show_current_chapter — src/input/navigation.rs",
-        "copy work info" => "Copy the work abbrev, the active media file path, \
-and its large-model whisperX transcript JSON (if present) to the clipboard, \
-newline-separated. \
--> CopyWorkInfo arm (inline) — src/input/keymap.rs",
-        "delete ts" => "Delete the current line's timestamp (undoable). \
--> timestamps::delete_timestamp — src/input/timestamps.rs",
-        "undo ts" => "Undo the last timestamp edit. \
--> timestamps::undo_timestamp — src/input/timestamps.rs",
-        "nudge −0.2" => "Nudge the current line's start timestamp 0.2s earlier. \
--> timestamps::nudge_start_backward — src/input/timestamps.rs",
-        "+0.2" => "Nudge the current line's start timestamp 0.2s later (Shift+p). \
--> timestamps::nudge_start_forward — src/input/timestamps.rs",
-        "play from ts" => "Seek to the current line's start timestamp and play \
-(for pause/resume without a seek, use - or a). \
--> timestamps::play_current_line — src/input/timestamps.rs",
-        "clear AB" => "Dismiss a toast, else clear the A–B range / exit sub-modes. \
--> escape::escape_reader_mode — src/input/actions/escape.rs",
+        "start time" | "set start time" => "Action::SetStartTime — src/input/timestamps.rs",
+        "set end time" => "Action::SetEndTime — src/input/timestamps.rs",
+        "set track mark" => "Action::SetChapter — src/input/timestamps.rs",
+        "toggle ch start" => "Action::ToggleChapterStart — src/input/actions/chapters.rs",
+        "show chapter" => "Action::ShowCurrentChapter — src/input/navigation.rs",
+        "copy work info" => "Action::CopyWorkInfo — src/input/keymap.rs",
+        "ts tap" => "Action::DeleteTimestampTap (toast only; 2x deletes via \
+ChordState::PendingBackspace) — src/input/keymap.rs",
+        "undo ts" => "Action::UndoTimestamp — src/input/timestamps.rs",
+        "nudge −0.2" => "Action::NudgeStartBackward — src/input/timestamps.rs",
+        "+0.2" => "Action::NudgeStartForward — src/input/timestamps.rs",
+        "play from ts" => "Space intercept -> timestamps::play_current_line \
+— src/input/timestamps.rs",
+        "clear AB" => "escape::escape_reader_mode — src/input/actions/escape.rs",
 
         // ── Fonts ──
-        "next font" => "Next font in the cycling list. \
--> app::cycle_font(.., true) — src/app.rs",
-        "prev font" => "Previous font in the cycling list (Shift+f). \
--> app::cycle_font(.., false) — src/app.rs",
-        "font +" => "Increase the font size. \
--> app::adjust_font_size(.., 1) — src/app.rs",
-        "font −" => "Decrease the font size. \
--> app::adjust_font_size(.., -1) — src/app.rs",
-        "reset font" => "Reset the font size to the default. \
--> app::reset_font_size — src/app.rs",
-        "font info" => "Toast the current font name and size. \
--> app::show_font_info — src/app.rs",
+        "next font" => "Action::CycleFontForward — src/app.rs",
+        "prev font" => "Action::CycleFontBackward — src/app.rs",
+        "font +" => "Action::AdjustFontSizeUp — src/app.rs",
+        "font −" => "Action::AdjustFontSizeDown — src/app.rs",
+        "reset font" => "Action::ResetFontSize — src/app.rs",
+        "font info" => "Action::ShowFontInfo — src/app.rs",
 
         // ── Display toggles ──
-        "toggle signs" => "Toggle the sign column (left gutter markers). \
--> app::toggle_sign_column — src/app.rs",
-        "chat side" => "Flip the floating chat panel to the other reading \
-column (two-column works; no-op when pinned or closed). \
--> chat::flip_panel_side — src/input/actions/chat.rs",
-        "synopsis" => "Show the synopsis overlay for the current scene; its binds \
-are on its Ctrl+/ legend. \
--> app::show_synopsis_overlay — src/app.rs; \
-gloss::read_current_synopsis_block, gloss::synth_all_synopsis_blocks \
-— src/input/actions/gloss.rs (Ctrl+h toggles \
-the side panel via app::toggle_synopsis).",
-        "synopsis side" => "Toggle the persistent synopsis side panel. \
--> app::toggle_synopsis — src/app.rs",
-        "col layout" => "Toggle one-column / two-column (spread) layout. \
--> navigation::toggle_column_layout — src/input/navigation.rs",
-        "ask passage" => "Auto-select the paragraph (prose) or speech (plays) \
-around the cursor as a visual selection; Ctrl+a again (or Return) opens the \
-Journal Q&A ask card directly — j/k extend the selection first, Escape \
-cancels. -> AskPassage arm -> visual::enter_visual_block_mode — \
-src/input/visual.rs, src/input/keymap.rs",
-        "authorship" => "Toggle authorship formatting (marks lines by attributed \
-author). -> ToggleAuthorship arm -> \
-app::apply_authorship_formatting — src/input/keymap.rs, src/app.rs",
-        "attr set" => "Pick which attribution set to apply. \
--> PickAttributionSet arm — \
-src/input/keymap.rs",
-        "nav test" => "Toggle the in-app navigation test harness (Ctrl+Alt+t, dev \
-only). \
--> ToggleNavTest arm — src/input/keymap.rs",
-        "root variant prev" => "Cycle the ROOT color backward through the same \
-five variants as Ctrl+t (Ctrl+Shift+T). \
--> cycle_root_variant — src/input/actions/settings.rs",
-        "root variant" => "Cycle the ROOT color (the field outside the card) \
-through five same-family variants (Ctrl+t): the designed color, then the \
-four alternates ordered lightest to darkest (dwl.rootcolor_candidates \
-when present else computed, plus two brighter toward-white steps). Card \
-background and reading tints are unchanged; the chosen variant persists \
-per theme. \
--> cycle_root_variant — src/input/actions/settings.rs",
-        "theme next" => "Cycle the reader theme forward (Alt+t). \
--> settings::cycle_theme — src/input/actions/settings.rs",
-        "theme prev" => "Cycle the reader theme backward (Alt+Shift+T). \
--> settings::cycle_theme — src/input/actions/settings.rs",
-        "scansion" => "Cycle the metrical scansion overlay: off -> stress-only -> \
-full. -> input::keymap CycleScansion",
-        "2-col translation" => "Open the two-column translation overlay (Alt+i; \
-distinct from Ctrl+Alt+i's inline column). \
--> app::show_translation_overlay — src/app.rs",
-        "inline translation" => "Toggle the inline translation column \
-(Ctrl+Alt+i). \
--> app::toggle_translations — src/app.rs",
-        "page image" => "Toggle between rendered text and the page-scan image \
-(Ctrl+i). -> app::toggle_image_view — src/app.rs",
-        "calibrate pages" => "Enter page-image calibration (Ctrl+Shift+I): Enter \
-records the line that begins each page scan, Esc saves. \
--> app::enter_page_calibration — src/app.rs",
-        "dim tog" => "Toggle dimming of lines outside the A–B range. \
--> ToggleDim arm (inline) — src/input/keymap.rs",
-        "save+quit" => "Save the reading position, quit MPV, close the window. \
--> SaveAndQuit arm -> app::save_position — src/input/keymap.rs, \
-src/app.rs",
-        "debug log" => "Toggle debug logging. \
--> ToggleDebugLogging arm (inline) — src/input/keymap.rs, src/logging.rs",
+        "toggle signs" => "Action::ToggleSignColumn — src/app.rs",
+        "chat side" => "Action::ChatPanelFlipSide — src/input/actions/chat.rs",
+        "synopsis" => "Action::ShowSynopsisOverlay — src/app.rs",
+        "col layout" => "Action::ToggleColumnLayout — src/input/navigation.rs",
+        "ask passage" => "Action::AskPassage -> InputMode::Visual (Ctrl+a/Return \
+opens the ask card, j/k extend, Esc cancels) — src/input/visual.rs",
+        "authorship" => "Action::ToggleAuthorship — src/app.rs",
+        "attr set" => "Action::PickAttributionSet — src/input/keymap.rs",
+        "nav test" => "Action::ToggleNavTest — src/input/keymap.rs",
+        "root variant prev" => "Action::RootVariantPrev — src/input/actions/settings.rs",
+        "root variant" => "Action::RootVariantNext — src/input/actions/settings.rs",
+        "theme next" => "Action::ThemeNext — src/input/actions/settings.rs",
+        "theme prev" => "Action::ThemePrev — src/input/actions/settings.rs",
+        "scansion" => "Action::CycleScansion — src/input/keymap.rs",
+        "2-col translation" => "Action::ShowTranslationOverlay — src/app.rs",
+        "inline translation" => "Action::ToggleTranslations — src/app.rs",
+        "page image" => "Action::ToggleImageView — src/app.rs",
+        "calibrate pages" => "Action::EnterPageCalibration — src/app.rs",
+        "dim tog" => "Action::ToggleDim — src/input/keymap.rs",
+        "save+quit" => "Action::SaveAndQuit — src/input/keymap.rs",
+        "debug log" => "Action::ToggleDebugLogging — src/input/keymap.rs",
 
         _ => return None,
     };
@@ -538,7 +366,7 @@ src/app.rs",
 
 /// Strip a leading shift-key prefix of the form `"<char>: "` from a shift-action
 /// label so the variant matches its base description (e.g. `"O: −60"` -> `"−60"`,
-/// `"R: prev vocab"` -> `"prev vocab"`). Returns the label unchanged if it has no
+/// `"R: drill back"` -> `"drill back"`). Returns the label unchanged if it has no
 /// such prefix.
 fn strip_shift_prefix(label: &str) -> &str {
     let mut chars = label.char_indices();
@@ -574,8 +402,8 @@ fn expand_action(label: &str) -> String {
         "next bkmk" => "next bookmark",
         "prev dlg" => "previous dialogue",
         "next dlg" => "next dialogue",
-        "prev vocab" => "previous vocab word",
-        "next vocab" => "next vocab word",
+        "vocab drill" => "vocab-sentence drill loop",
+        "drill back" => "vocab-sentence drill, backward",
         "prev match" => "previous match",
         "next match" => "next match",
         "pg fwd" => "page forward",
@@ -592,7 +420,8 @@ fn expand_action(label: &str) -> String {
         "auto vocab" => "toggle auto-vocab popup",
         "toggle signs" => "toggle sign column",
         "chat side" => "flip chat panel column",
-        "sync tog" => "toggle playback sync",
+        "sync tap" => "sync state (ss toggles)",
+        "bkmk tap" => "bookmark (.. opens picker)",
         "dim tog" => "toggle dim",
         "debug log" => "toggle debug log",
         "set track mark" => "set audio track mark",
@@ -603,7 +432,7 @@ fn expand_action(label: &str) -> String {
         "start time" => "set start time",
         "set end time" => "set end time",
         "play from ts" => "play from timestamp",
-        "delete ts" => "delete timestamp",
+        "ts tap" => "timestamp (2x deletes)",
         "copy id" => "copy line id",
         "save+quit" => "save and quit",
         "clear AB" => "clear A-B / exit mode",
@@ -612,7 +441,7 @@ fn expand_action(label: &str) -> String {
         "font −" => "decrease font size",
         "reset font" => "reset font size",
         "vocab ▶" => "next vocab word",
-        "hide vocab" => "hide vocab popup",
+        "vocab tap" => "vocab popup (rr toggles)",
         _ => return label.to_string(),
     };
     format!("{prefix}{full}")
@@ -646,23 +475,6 @@ fn combo_glyph(combo: &str, _fallback: &str) -> String {
     }
     parts.push(key);
     parts.join("+")
-}
-
-/// Split a stored blurb into its prose and its code reference. Blurbs end with
-/// a maintenance reference (`... -> handler — file.rs`) starting at the first
-/// ` -> ` marker. Returns `(prose, Some(reference))`, or `(whole, None)` when
-/// there is no reference.
-fn split_blurb(text: &str) -> (&str, Option<&str>) {
-    match text.find(" -> ") {
-        Some(i) => {
-            let prose = text[..i].trim_end();
-            // Drop the leading "-> " marker from the reference; inner "->"
-            // (e.g. "arm (inline) -> MpvCommand") are left intact.
-            let reference = text[i + 1..].trim_start().trim_start_matches("-> ");
-            (prose, Some(reference))
-        }
-        None => (text, None),
-    }
 }
 
 /// Break `text` into lines that each fit within `max_w` px at the current Cairo
@@ -841,17 +653,12 @@ fn draw_row_screen(
         rows.push((String::new(), "(unbound)".to_string(), (0.596, 0.576, 0.647), None, false));
     }
 
-    // Layout constants for the detail panel. Fonts here are deliberately large
-    // (the panel is the "breakout" the user reads), so the columns and line
-    // height are widened to match.
+    // Layout constants for the detail panel. Two columns only: the key glyph
+    // and the Rust-idiom description (Action::/InputMode::/handler path) —
+    // there is no separate action-label column.
     let pad: f64 = 40.0; // inner padding (left/right/top/bottom breathing room)
     let glyph_x = panel_x + pad; // key-glyph column
-    let act_x = panel_x + pad + 170.0; // action label column
-    // Wrapped blurb column. The gap after the action column must clear the
-    // WIDEST expanded action label (see expand_action) so the two columns never
-    // overlap — e.g. "H: toggle auto-vocab popup" is ~26 monospace chars at
-    // desc_font, ~345px, which overran the old 270px action column.
-    let desc_x = panel_x + pad + 540.0; // wrapped blurb column (gap after action)
+    let desc_x = panel_x + pad + 220.0; // Rust-idiom column (clears "Ctrl+Shift+X")
     let desc_max_w = panel_x + panel_w - pad - desc_x; // free width for blurbs
     let row_pad: f64 = 12.0; // vertical breathing room per binding row
     let desc_line_h: f64 = 30.0; // line height inside a wrapped blurb
@@ -859,22 +666,18 @@ fn draw_row_screen(
     let desc_font: f64 = 22.0; // blurb font size
     let shift_gap: f64 = desc_line_h; // one blank line above the shifted key
 
-    // Pre-pass: wrap each blurb and record per-row height so the panel grows to
-    // fit. Each blurb renders as wrapped prose, then a blank line, then the code
-    // reference (indented) on its own wrapped line(s). Each wrapped line carries
-    // an is_reference flag so the draw pass can indent the reference. Wrapping
-    // must use the same font the blurb is drawn with.
-    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+    // Pre-pass: wrap each description (the FULL describe() text — the code
+    // reference is part of the Rust idiom, not hidden) and record per-row
+    // height so the panel grows to fit. A bound row with no describe() arm
+    // falls back to its expanded action label. Wrapping must use the same
+    // font the blurb is drawn with (monospace — the description is code).
+    cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
     cr.set_font_size(desc_font);
-    let wrapped: Vec<Vec<(String, bool)>> = rows
+    let wrapped: Vec<Vec<String>> = rows
         .iter()
-        .map(|(_, _, _, blurb, _)| match blurb {
-            Some(text) => {
-                // Show only the prose; the code reference (after " -> ") is kept
-                // in source for maintenance but not displayed in the panel.
-                let (prose, _reference) = split_blurb(text);
-                wrap_to_width(cr, prose, desc_max_w).into_iter().map(|l| (l, false)).collect()
-            }
+        .map(|(_, act, _, blurb, _)| match blurb {
+            Some(text) => wrap_to_width(cr, text, desc_max_w),
+            None if !act.is_empty() => wrap_to_width(cr, &expand_action(act), desc_max_w),
             None => Vec::new(),
         })
         .collect();
@@ -901,42 +704,33 @@ fn draw_row_screen(
     cr.set_line_width(1.0);
     let _ = cr.stroke();
 
-    // Binding rows: <key glyph>  <action>  <description>, all at the body size.
-    // First row's baseline sits one body-line below the top padding.
+    // Binding rows: <key glyph>  <Rust-idiom description>, all at the body
+    // size. The glyph takes the binding-type color (pine bare / iris Shift /
+    // gold Ctrl / green Ctrl+Shift / rose Alt) — the color coding the old
+    // action-label column carried. First row's baseline sits one body-line
+    // below the top padding.
     let mut ry = panel_y + pad + desc_font;
-    for (i, (glyph, act, col, _, is_shift)) in rows.iter().enumerate() {
+    for (i, (glyph, _, col, _, is_shift)) in rows.iter().enumerate() {
         // Two blank lines above the shifted key.
         if *is_shift {
             ry += shift_gap;
         }
-        let top = ry; // baseline of the key/action line
+        let top = ry; // baseline of the key line
         // Key glyph (the physical key / combo that triggers this binding).
         cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
         cr.set_font_size(desc_font);
-        cr.set_source_rgb(0.149, 0.251, 0.478);
+        cr.set_source_rgb(col.0, col.1, col.2);
         let _ = cr.move_to(glyph_x, top);
         let _ = cr.show_text(glyph);
-        // Action label.
-        cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-        cr.set_source_rgb(col.0, col.1, col.2);
-        cr.set_font_size(desc_font);
-        let _ = cr.move_to(act_x, top);
-        let _ = cr.show_text(&expand_action(act));
 
-        // Wrapped blurb to the right; code-reference lines are indented and
-        // drawn in a dimmer color so they read as belonging to this binding.
+        // Wrapped Rust-idiom description to the right.
         let lines = &wrapped[i];
         if !lines.is_empty() {
-            cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
+            cr.select_font_face("monospace", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
             cr.set_font_size(desc_font);
-            for (li, (line, is_ref)) in lines.iter().enumerate() {
-                let x = desc_x;
-                if *is_ref {
-                    cr.set_source_rgb(0.553, 0.533, 0.612); // dimmer for references
-                } else {
-                    cr.set_source_rgb(0.376, 0.357, 0.439);
-                }
-                let _ = cr.move_to(x, top + li as f64 * desc_line_h);
+            cr.set_source_rgb(0.376, 0.357, 0.439);
+            for (li, line) in lines.iter().enumerate() {
+                let _ = cr.move_to(desc_x, top + li as f64 * desc_line_h);
                 let _ = cr.show_text(line);
             }
         }

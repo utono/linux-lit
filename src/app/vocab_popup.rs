@@ -6,8 +6,8 @@ use super::AppState;
 /// line, and fade generation counter). Was seven flat `vocab_popup*` fields on
 /// AppState; grouped per the AppState god-struct decomposition (render-tier).
 /// NOTE: the separate vocab-HIGHLIGHT fields (vocab_words, vocab_matches,
-/// vocab_match_idx, vocab_tag, vocab_highlight_visible) are a different
-/// subsystem and stay flat on AppState.
+/// vocab_tag, vocab_highlight_visible) are a different subsystem and stay
+/// flat on AppState.
 pub struct VocabPopupState {
     pub popup: crate::ui::vocab_popup::VocabPopup,
     pub data: Vec<crate::ui::vocab_popup::VocabWordData>,
@@ -60,7 +60,7 @@ pub fn open_vocab_popup(state: &mut AppState) {
             let definition = crate::db::queries::load_vocab_definition(&conn, &w)
                 .map(|(d, _)| d);
             let etymology_markup = crate::db::queries::load_vocab_etymology(&conn, &w)
-                .map(|e| format_etymology(&e, &state.theme.vocab_fg));
+                .map(|e| format_etymology(&e, &crate::theme::vocab_popup_accent(&state.theme)));
             let gloss = match (&work_abbrev, &citation) {
                 (Some(abbrev), Some(cit)) => {
                     crate::db::queries::load_vocab_gloss(&conn, &w, abbrev, cit)
@@ -168,7 +168,7 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
             let definition = crate::db::queries::load_vocab_definition(&conn, &w)
                 .map(|(d, _)| d);
             let etymology_markup = crate::db::queries::load_vocab_etymology(&conn, &w)
-                .map(|e| format_etymology(&e, &state.theme.vocab_fg));
+                .map(|e| format_etymology(&e, &crate::theme::vocab_popup_accent(&state.theme)));
             let gloss = match (&work_abbrev, &citation) {
                 (Some(abbrev), Some(cit)) => {
                     crate::db::queries::load_vocab_gloss(&conn, &w, abbrev, cit)

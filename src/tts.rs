@@ -67,6 +67,39 @@ impl TtsPlayer {
         }
     }
 
+    /// Pause the current clip in place (resumable with `resume`). No-op when
+    /// nothing is loaded.
+    pub fn pause(&self) {
+        if let Some(inner) = &self.inner {
+            if let Some(sink) = inner.sink.borrow().as_ref() {
+                sink.pause();
+            }
+        }
+    }
+
+    /// Resume a clip paused by `pause`. No-op when nothing is loaded.
+    pub fn resume(&self) {
+        if let Some(inner) = &self.inner {
+            if let Some(sink) = inner.sink.borrow().as_ref() {
+                sink.play();
+            }
+        }
+    }
+
+    /// True when a clip is loaded and paused mid-play.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        match &self.inner {
+            Some(inner) => inner
+                .sink
+                .borrow()
+                .as_ref()
+                .map(|s| s.is_paused() && !s.empty())
+                .unwrap_or(false),
+            None => false,
+        }
+    }
+
     /// Stop and drop the current clip. Takes `&self` (not `&mut self`) so it can
     /// be called from `play_file` and from shared `Rc<RefCell<AppState>>` borrows.
     pub fn stop(&self) {

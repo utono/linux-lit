@@ -114,10 +114,11 @@ pub enum InputMode {
     /// the system clipboard; `:q`/double-Esc exit. Save verbs are refused —
     /// nothing is written back to the reading buffer or lit.db.
     SegmentVim,
-    /// Fully modal vocab-sentence drill loop (Ctrl+r when the playing media
-    /// has phrase data): the sentence under review repeats via MPV ab-loop;
-    /// n/p step between vocab sentences, a/Space toggles pause, Escape (or
-    /// Ctrl+r) exits. All other keys are swallowed.
+    /// Fully modal vocab-sentence drill loop (Ctrl+-; requires phrase data
+    /// for the playing media, else the entry toasts the reason): the sentence
+    /// under review repeats via MPV ab-loop; n/p step between vocab
+    /// sentences, a/Space toggles pause, Escape (or Ctrl+-, legacy Ctrl+r)
+    /// exits. All other keys are swallowed.
     VocabLoop,
     SynopsisOverlay,
     SynopsisVisual,
@@ -537,7 +538,6 @@ pub struct AppState {
     pub echo_session: Option<crate::input::actions::echoes::EchoSession>,
     pub vocab_words: std::collections::HashSet<String>,
     pub vocab_matches: Vec<VocabMatch>,
-    pub vocab_match_idx: Option<usize>,
     pub vocab_loop: Option<crate::input::vocab_loop::VocabLoopState>,
     pub vocab_tag: gtk4::TextTag,
     /// Foreground tint applied to source lines covered by a `reader-gloss`
@@ -1831,7 +1831,6 @@ pub fn build_window(
         echo_session: None,
         vocab_words: std::collections::HashSet::new(),
         vocab_matches: Vec::new(),
-        vocab_match_idx: None,
         vocab_loop: None,
         vocab_tag,
         reader_gloss_tag,
@@ -4069,7 +4068,6 @@ pub fn save_position(state: &mut AppState) {
 /// Tokenize buffer lines and find vocab word matches.
 fn build_vocab_matches(state: &mut AppState) {
     state.vocab_matches.clear();
-    state.vocab_match_idx = None;
 
     if state.vocab_words.is_empty() {
         return;

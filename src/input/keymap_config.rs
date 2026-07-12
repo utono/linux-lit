@@ -257,6 +257,9 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("semicolon"), Action::PrevBookmark),
         (KeyCombo::plain("apostrophe"), Action::NextBookmark),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
+        // `.` is overloaded (Action::BookmarkTap): single tap toggles the
+        // bookmark; .. reverts the toggle and opens the picker.
+        (KeyCombo::plain("period"), Action::BookmarkTap),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
         // `2` duplicates `}` (braceright) / `4` — jump to the previous chapter.
@@ -271,13 +274,15 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("s"), Action::TogglePlaybackSync),
+        // `s` is overloaded (Action::PlaybackSyncTap): single tap toasts the
+        // sync state; ss toggles — an accidental press can't kill sync.
+        (KeyCombo::plain("s"), Action::PlaybackSyncTap),
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
-        // it is intercepted before dispatch in keymap.rs). `a` and `-` are both
-        // a PURE pause/resume toggle — no seek (TogglePause).
+        // it is intercepted before dispatch in keymap.rs). `a` is a PURE
+        // pause/resume toggle — no seek (TogglePause).
         (KeyCombo::plain("a"), Action::TogglePause),
-        // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters the
-        // vocab-sentence loop / next-vocab jump).
+        // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
+        // the vocab-sentence loop, InputMode::VocabLoop — no jump fallback).
         (KeyCombo::plain("o"), Action::SeekShortBackward),
         (KeyCombo::plain("e"), Action::SeekShortForward),
         (KeyCombo::plain("O"), Action::SeekLongBackward),
@@ -293,22 +298,27 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
 fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
-        // `\` duplicates Ctrl+g — open/close the gloss overlay (swapped with `z`).
-        (KeyCombo::plain("backslash"), Action::OpenConcordancePicker),
-        // `r` cycles the vocab popup (sticky — no auto-hide); Ctrl+r hides it.
-        // ConcordanceNext is deliberately unbound (R still steps prev).
-        (KeyCombo::plain("r"), Action::VocabPopupNext),
-        (KeyCombo::plain("R"), Action::ConcordancePrev),
-        (KeyCombo::ctrl("r"), Action::HideVocabPopup),
-        (KeyCombo::ctrl_shift("R"), Action::JumpToPrevVocab),
+        // `r` is overloaded (Action::VocabPopupTap): a single tap cycles the
+        // visible popup's words; rr in quick succession toggles visibility
+        // (ChordState::PendingR). Ctrl+r also cycles (opens on the first
+        // press). HideVocabPopup is unbound — rr covers it. ConcordanceNext
+        // AND ConcordancePrev are deliberately unbound (step in-work hits
+        // with n/N while a concordance is active).
+        (KeyCombo::plain("r"), Action::VocabPopupTap),
+        (KeyCombo::ctrl("r"), Action::VocabPopupNext),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
-        (KeyCombo::alt("i"), Action::CycleScansion),
-        // `'` (apostrophe) now steps bookmarks (see nav_bindings); reopening
-        // BCP echoes keeps its Ctrl+Shift+E bind.
-        (KeyCombo::ctrl_shift("P"), Action::OpenConcordanceWordPicker),
-        (KeyCombo::ctrl_alt("c"), Action::OpenConcordanceListPicker),
-        (KeyCombo::alt("r"), Action::OpenConcordanceWorksPicker),
+        // Alt+u/Alt+i are swapped with the plain u/i swap: Alt+u cycles
+        // scansion, Alt+i sets the end timestamp (beside plain i's start).
+        (KeyCombo::alt("u"), Action::CycleScansion),
+        // ALL concordance pickers cluster on z: plain opens the main picker
+        // (was `\`), Ctrl+z the word picker (was Ctrl+Shift+P), Alt+z the
+        // works picker (was Alt+r), Ctrl+Shift+Z the occurrence-list picker
+        // (was Ctrl+Alt+c).
+        (KeyCombo::plain("z"), Action::OpenConcordancePicker),
+        (KeyCombo::ctrl("z"), Action::OpenConcordanceWordPicker),
+        (KeyCombo::alt("z"), Action::OpenConcordanceWorksPicker),
+        (KeyCombo::ctrl_shift("Z"), Action::OpenConcordanceListPicker),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
@@ -333,7 +343,10 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt_shift("T"), Action::ThemePrev),
         (KeyCombo::ctrl("t"), Action::RootVariantNext),
         (KeyCombo::ctrl_shift("T"), Action::RootVariantPrev),
-        (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
+        // u/i plain binds are swapped (2026-07-11): i sets the start time,
+        // u opens the two-column translation. Their modifier families stay
+        // put (Shift+U undo ts, Alt+u end ts; Ctrl+i image, Alt+i scansion).
+        (KeyCombo::plain("u"), Action::ShowTranslationOverlay),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         // Authorship moved off Ctrl+a (now AskPassage). plain("A") is the
         // shifted `a` (cf. plain("G") normalization above).
@@ -347,7 +360,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("w"), Action::ShowEchoesShx),
         (KeyCombo::ctrl("w"), Action::ShowEchoTurnsShx),
         (KeyCombo::ctrl_shift("W"), Action::ReopenEchoesShx),
-        (KeyCombo::ctrl("h"), Action::ToggleSynopsis),
+        // Ctrl+h unbound; ToggleSynopsis (the persistent side panel) remains
+        // available for user keymaps.
         // Ctrl+l: flip a floating chat panel to the other reading column.
         (KeyCombo::ctrl("l"), Action::ChatPanelFlipSide),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
@@ -370,11 +384,13 @@ fn selection_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("u"), Action::SetStartTime),
+        (KeyCombo::plain("i"), Action::SetStartTime),
         (KeyCombo::plain("Right"), Action::SetStartTime),
-        (KeyCombo::alt("u"), Action::SetEndTime),
+        (KeyCombo::alt("i"), Action::SetEndTime),
         (KeyCombo::plain("c"), Action::ToggleChapterStart),
-        (KeyCombo::plain("BackSpace"), Action::DeleteTimestamp),
+        // BackSpace is overloaded (Action::DeleteTimestampTap): single tap
+        // toasts the line's timestamp; a second quick tap deletes it.
+        (KeyCombo::plain("BackSpace"), Action::DeleteTimestampTap),
         (KeyCombo::plain("p"), Action::NudgeStartBackward),
         (KeyCombo::plain("P"), Action::NudgeStartForward),
         (KeyCombo::plain("U"), Action::UndoTimestamp),
@@ -388,10 +404,15 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("t"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
-        // Ctrl+- jumps to the next vocab word (enters the vocab-sentence loop
-        // on phrase-data works); moved here from Ctrl+r, which now hides the
-        // vocab popup.
+        // Both vocab-drill entries live on the minus cap: Ctrl+- forward,
+        // Ctrl+Shift+- backward (InputMode::VocabLoop); when the mode can't
+        // start the reason is toasted — no jump fallback. Shifted minus can
+        // arrive as "underscore" or as "minus"+shift depending on layout
+        // path, so the backward entry binds both (same defensive dual as
+        // slash/question).
         (KeyCombo::ctrl("minus"), Action::JumpToNextVocab),
+        (KeyCombo::ctrl_shift("underscore"), Action::JumpToPrevVocab),
+        (KeyCombo::ctrl_shift("minus"), Action::JumpToPrevVocab),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
@@ -438,8 +459,10 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::AskPassage));
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
-        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
-        assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::CycleScansion));
+        assert_eq!(m.get(&KeyCombo::plain("u")), Some(&Action::ShowTranslationOverlay));
+        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::SetStartTime));
+        assert_eq!(m.get(&KeyCombo::alt("u")), Some(&Action::CycleScansion));
+        assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::SetEndTime));
         assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));
         assert_eq!(m.get(&KeyCombo::ctrl("i")), Some(&Action::ToggleImageView));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("I")), Some(&Action::EnterPageCalibration));
@@ -449,15 +472,23 @@ mod tests {
     fn r_cycles_vocab_and_ctrl_r_hides_popup() {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
-        assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupNext));
-        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::HideVocabPopup));
-        // Ctrl+- took the next-vocab jump / vocab-sentence loop entry.
-        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
-        // minus, z, and # freed; ConcordanceNext unbound (R still steps prev).
+        assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
+        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabPopupNext));
+        // minus, Shift+R, and # freed; ConcordanceNext/Prev unbound (n/N
+        // step in-work hits). Both drill entries sit on the minus cap; the
+        // concordance pickers cluster on z.
         assert_eq!(m.get(&KeyCombo::plain("minus")), None);
-        assert_eq!(m.get(&KeyCombo::plain("z")), None);
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
-        assert_eq!(m.get(&KeyCombo::plain("R")), Some(&Action::ConcordancePrev));
+        assert_eq!(m.get(&KeyCombo::plain("R")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("underscore")), Some(&Action::JumpToPrevVocab));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("minus")), Some(&Action::JumpToPrevVocab));
+        assert_eq!(m.get(&KeyCombo::plain("z")), Some(&Action::OpenConcordancePicker));
+        assert_eq!(m.get(&KeyCombo::ctrl("z")), Some(&Action::OpenConcordanceWordPicker));
+        assert_eq!(m.get(&KeyCombo::alt("z")), Some(&Action::OpenConcordanceWorksPicker));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("Z")), Some(&Action::OpenConcordanceListPicker));
+        assert_eq!(m.get(&KeyCombo::plain("backslash")), None);
         assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
     }
 

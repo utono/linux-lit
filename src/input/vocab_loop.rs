@@ -153,40 +153,47 @@ fn build_vocab_sentences(s: &AppState) -> Vec<VocabSentence> {
 }
 
 /// Enter the loop mode at the first vocab sentence at/after (forward) or
-/// before (backward) the cursor. Returns false when the mode cannot start —
-/// the caller falls back to the plain vocab jump. Requires connected MPV,
-/// an active media id, sync on, and translations hidden (inflated buffer
-/// misaligns char offsets, same gate as the phrase sweep).
-pub fn enter_vocab_loop(state: &Rc<RefCell<AppState>>, forward: bool) -> bool {
+/// before (backward) the cursor. When the mode cannot start, returns the
+/// reason as a toast-ready message — the caller shows it; there is no
+/// fallback to a plain vocab jump. Requires connected MPV, an active media
+/// id, sync on, and translations hidden (inflated buffer misaligns char
+/// offsets, same gate as the phrase sweep).
+pub fn enter_vocab_loop(state: &Rc<RefCell<AppState>>, forward: bool) -> Result<(), &'static str> {
     let mut s = state.borrow_mut();
-    if !s.mpv_connected || !s.sync_enabled || s.translations_visible || s.media_id.is_none() {
-        return false;
+    if s.translations_visible {
+        return Err("vocab drill: close translations first");
+    }
+    if !s.mpv_connected || s.media_id.is_none() {
+        return Err("vocab drill: no media playing");
+    }
+    if !s.sync_enabled {
+        return Err("vocab drill: playback sync is off");
     }
     // Most of the library has no phrase_timestamps at all for the active
-    // media. Gate on that cheaply before grouping matches into sentences and
-    // querying per-line spans, and fall back to the plain jump silently —
-    // no misleading "no vocab sentences" toast on a work that simply has no
-    // phrase data to drill with.
-    let Some(media) = s.media_id else { return false };
+    // media. Gate on that cheaply before grouping matches into sentences
+    // and querying per-line spans.
+    let Some(media) = s.media_id else {
+        return Err("vocab drill: no media playing");
+    };
     let Ok(conn) = crate::db::queries::open_db() else {
-        return false;
+        return Err("vocab drill: database unavailable");
     };
     if !crate::db::queries::media_has_phrase_data(&conn, media) {
-        return false;
+        return Err("vocab drill: no phrase audio for this media");
     }
     let sentences = build_vocab_sentences(&s);
     if sentences.is_empty() {
-        if !s.vocab_matches.is_empty() {
-            crate::input::navigation::show_chapter_toast(&s, "no vocab sentences with audio");
+        if s.vocab_matches.is_empty() {
+            return Err("vocab drill: no vocab words in this work");
         }
-        return false;
+        return Err("vocab drill: no vocab sentences with audio");
     }
     let idx = start_index(&sentences, s.current_line, forward);
     s.vocab_loop = Some(VocabLoopState { sentences, idx });
     s.input_mode = InputMode::VocabLoop;
     crate::logging::log("VOCAB_LOOP: enter");
     activate_current(&mut s);
-    true
+    Ok(())
 }
 
 /// n/p inside the mode: step the index (wrapping) and re-activate.

@@ -282,18 +282,17 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         .and_then(|c| str_field(c, "guifg"))
         .unwrap_or_else(|| text_bg.clone());
 
-    let vocab_orig = highlights
-        .get("VocabWord")
-        .and_then(|c| str_field(c, "guifg"))
-        .unwrap_or_else(|| {
-            if is_light { "#8a6534".to_string() } else { "#d8a657".to_string() }
-        });
-
-    let vocab_fg = if is_light {
-        choose_vocab_fg(&text_fg, &cursor_bg, &vocab_orig)
-    } else {
-        vocab_orig
-    };
+    // Vocab words in the reading card take the CURRENT root color, so the
+    // tint pairs with the field around the card and follows Ctrl+t's root
+    // variants. The hue is kept; lightness/saturation adjust until the word
+    // clears VOCAB_WORD_MIN_CONTRAST on the card and stays distinct from
+    // the body ink.
+    let vocab_fg = ensure_gloss_color_min(
+        &root_color,
+        &text_bg,
+        &[&text_fg],
+        VOCAB_WORD_MIN_CONTRAST,
+    );
 
     let mut theme = Theme {
         name: name.to_string(),
@@ -336,7 +335,8 @@ fn default_theme() -> Theme {
         sign_fg: blend_colors("#d4be98", "#282828", 0.45),
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
-        vocab_fg: "#d8a657".to_string(),
+        // Root-hued like loaded themes (guarded for contrast on the card).
+        vocab_fg: ensure_gloss_color_min("#1a1a2e", "#282828", &["#d4be98"], VOCAB_WORD_MIN_CONTRAST),
         reader_gloss: ensure_gloss_color_min("#d4be98", "#282828", &["#d4be98"], READER_GLOSS_MIN_CONTRAST),
         reader_gloss_cursor: ensure_gloss_color_min(
             &complement_hex("#d4be98"),
@@ -421,6 +421,80 @@ fn contrast_on(bg_hex: &str) -> &'static str {
         "#1a1a1a" // dark text on a light wallpaper
     } else {
         "#f0f0f0" // light text on a dark wallpaper
+    }
+}
+
+/// Minimum WCAG contrast for the vocab popup's main text against the root
+/// it sits on (AAA); the dim tier (header/counter/hint) gets the AA floor.
+const VOCAB_POPUP_MIN_CONTRAST: f64 = 7.0;
+const VOCAB_POPUP_DIM_MIN_CONTRAST: f64 = 4.5;
+/// Minimum contrast for the root-hued vocab-word tint on the reading card.
+const VOCAB_WORD_MIN_CONTRAST: f64 = 4.5;
+
+/// Ink for the vocab popup, which floats directly on the window root: pick
+/// whichever of the theme's text/card colors reads better against the CURRENT
+/// root color. Root variants (Ctrl+t) regenerate the CSS with the variant as
+/// `root_color`, so the popup stays legible on light, mid, and dark variants
+/// alike. Mid-tone roots can defeat BOTH theme colors (e.g. #6f9fb3 holds the
+/// dark sepia ink to ~4:1 and cream to ~2.7:1) — below the floor, fall back
+/// to whichever of pure black/white maximizes the ratio (softer near-black
+/// tops out below the AAA floor on mid roots).
+fn vocab_popup_ink(theme: &Theme) -> String {
+    let root = &theme.root_color;
+    let best = if contrast_ratio(&theme.text_fg, root) >= contrast_ratio(&theme.text_bg, root) {
+        &theme.text_fg
+    } else {
+        &theme.text_bg
+    };
+    if contrast_ratio(best, root) >= VOCAB_POPUP_MIN_CONTRAST {
+        return best.clone();
+    }
+    // Perceptual pick, not ratio-max: on darker-than-mid roots white reads
+    // better even where black scores the higher WCAG ratio (tuned on real
+    // variants: #5c8da1, lum .24 → white; #6f9fb3, lum .31 → black).
+    if relative_luminance(root) < 0.28 {
+        "#ffffff".to_string()
+    } else {
+        "#000000".to_string()
+    }
+}
+
+/// Accent for the vocab popup's etymology morphemes: the vocab tint
+/// re-guarded against the ROOT (the popup's background) — the in-card
+/// `vocab_fg` is root-hued and guarded only against the card, so used
+/// directly it can sit invisibly close to the root itself.
+pub(crate) fn vocab_popup_accent(theme: &Theme) -> String {
+    ensure_gloss_color_min(
+        &theme.vocab_fg,
+        &theme.root_color,
+        &[],
+        VOCAB_WORD_MIN_CONTRAST,
+    )
+}
+
+/// The vocab popup's rendered main text color for `theme`'s CURRENT root —
+/// the same value `generate_css` writes for `.vocab-popup .definition-*`.
+/// Also used by Ctrl+t's clipboard copy of the (root, popup fg) pair.
+pub(crate) fn vocab_popup_fg(theme: &Theme) -> String {
+    vocab_popup_tier(
+        &vocab_popup_ink(theme),
+        &theme.root_color,
+        0.85,
+        VOCAB_POPUP_MIN_CONTRAST,
+    )
+}
+
+/// One tint tier of the popup ink: soften toward the root by `alpha`, but
+/// never below `min` contrast — step the blend back toward the pure ink
+/// until the floor is met (pure ink at worst).
+fn vocab_popup_tier(ink: &str, root: &str, alpha: f64, min: f64) -> String {
+    let mut a = alpha;
+    loop {
+        let candidate = blend_colors(ink, root, a);
+        if contrast_ratio(&candidate, root) >= min || a >= 1.0 {
+            return candidate;
+        }
+        a = (a + 0.15).min(1.0);
     }
 }
 
@@ -524,38 +598,12 @@ fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64 {
     if la > lb { la / lb } else { lb / la }
 }
 
-/// Choose a vocab foreground color that is visually distinct from text_fg.
-/// Picks the best candidate from vocab_orig and cursor_bg, or derives one
-/// by rotating text_fg hue by 150 degrees.
-fn choose_vocab_fg(text_fg: &str, cursor_bg: &str, vocab_orig: &str) -> String {
-    let min_distance = 50.0;
-    let vocab_dist = hue_distance(text_fg, vocab_orig);
-    let cursor_dist = hue_distance(text_fg, cursor_bg);
-
-    // Pick whichever candidate has more hue distance
-    if vocab_dist >= cursor_dist && vocab_dist > min_distance {
-        return vocab_orig.to_string();
-    }
-    if cursor_dist > min_distance {
-        return cursor_bg.to_string();
-    }
-
-    // Neither is distinct enough — derive by rotating text_fg hue
-    let (r, g, b) = hex_to_rgb(text_fg);
-    let (h, s, l) = rgb_to_hsl(r, g, b);
-    let new_h = (h + 150.0 / 360.0) % 1.0;
-    let new_s = s.max(0.45);
-    let new_l = l.clamp(0.30, 0.45);
-    let (r2, g2, b2) = hsl_to_rgb(new_h, new_s, new_l);
-    rgb_to_hex(r2, g2, b2)
-}
-
 /// Return a color at `base_hex`'s hue that is legible on `bg_hex` (WCAG contrast
 /// ≥ 3.0) and visually distinct (hue distance ≥ 40° OR contrast ≥ 1.4) from each
 /// color in `avoid`. If `base_hex` already qualifies it is returned unchanged, so
 /// themes that already look right do not move. Otherwise lightness is pushed away
 /// from the background and saturation raised at the same hue; as a last resort the
-/// hue is rotated 150° (the `choose_vocab_fg` strategy) and S/L clamped. Used to
+/// hue is rotated 150° and S/L clamped. Used to
 /// derive both reader-gloss tints so they never wash out or blend into body text.
 /// Resolve a gloss-tint color with a caller-chosen minimum contrast floor vs the
 /// background. The reader-gloss tint uses a higher floor (READER_GLOSS_MIN_
@@ -592,7 +640,7 @@ fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_cont
     // not enough: the cursor tint's base is the COMPLEMENT of reader_gloss, so
     // +150° from it lands only 30° from reader_gloss's hue — on an all-warm
     // palette (kindle-sepia) that shipped a non-distinct pair. +150° stays the
-    // first try (matches choose_vocab_fg; existing themes keep their colors),
+    // first try (existing themes keep their colors),
     // then widening alternates. Falls back to the highest-contrast-vs-bg
     // candidate if (theoretically) no rotation satisfies the full guard.
     let s2 = s.max(0.50);
@@ -856,7 +904,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .ask-card.card-dimmed {{ opacity: 0.55; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \
            border-radius: 12px; padding: 20px 24px; }} \
-         .vocab-popup {{ background-color: {root}; color: {bg}; \
+         .vocab-popup {{ background-color: {root}; color: {vocab_popup_fg}; \
            padding: 16px 20px; border-radius: 12px; }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
@@ -927,9 +975,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         toast_fg = contrast_on(&theme.root_color),
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
-        vocab_popup_fg = blend_colors(&theme.text_bg, &theme.root_color, 0.60),
-        vocab_popup_dim = blend_colors(&theme.text_bg, &theme.root_color, 0.45),
-        vocab_popup_border = blend_colors(&theme.text_bg, &theme.root_color, 0.25),
+        vocab_popup_fg = vocab_popup_fg(theme),
+        vocab_popup_dim = vocab_popup_tier(
+            &vocab_popup_ink(theme), &theme.root_color, 0.55, VOCAB_POPUP_DIM_MIN_CONTRAST),
+        vocab_popup_border = blend_colors(&vocab_popup_ink(theme), &theme.root_color, 0.30),
         focus_ring = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.4),
         picker_selection_bg = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.5),
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
@@ -977,6 +1026,41 @@ mod tests {
         // a mid case is between
         let c = contrast_ratio("#c4788a", "#faf4ed");
         assert!(c > 2.5 && c < 3.5, "rose on cream ~3.0, got {c}");
+    }
+
+    #[test]
+    fn vocab_popup_ink_contrasts_with_root_variants() {
+        // Dark root: the default theme's light text_fg wins over its dark
+        // text_bg, and stays legible.
+        let mut theme = default_theme();
+        assert_eq!(vocab_popup_ink(&theme), theme.text_fg);
+        assert!(contrast_ratio(&vocab_popup_ink(&theme), &theme.root_color) >= 4.5);
+        // Mid-tone light root (the blue-gray variant that washed the popup
+        // out): the theme's dark ink only reaches ~5.9:1, below the AAA
+        // floor, so the ink falls back to pure black.
+        theme.root_color = "#9fbecd".to_string();
+        theme.text_bg = "#fdf6e3".to_string();
+        theme.text_fg = "#3a3532".to_string();
+        assert_eq!(vocab_popup_ink(&theme), "#000000");
+        assert!(contrast_ratio(&vocab_popup_ink(&theme), &theme.root_color) >= 7.0);
+        // Near-black root variant of the same theme: cream card color wins.
+        theme.root_color = "#14141c".to_string();
+        assert_eq!(vocab_popup_ink(&theme), theme.text_bg);
+        assert!(contrast_ratio(&vocab_popup_ink(&theme), &theme.root_color) >= 4.5);
+        // Mid-tone root (screenshot 2026-07-11): BOTH theme colors are weak
+        // (dark ink ~4:1, cream ~2.7:1) — the ink must fall back to the
+        // maximizing pure black, and every tier must clear its floor.
+        theme.root_color = "#6f9fb3".to_string();
+        assert_eq!(vocab_popup_ink(&theme), "#000000");
+        let ink = vocab_popup_ink(&theme);
+        let fg = vocab_popup_tier(&ink, &theme.root_color, 0.85, VOCAB_POPUP_MIN_CONTRAST);
+        let dim = vocab_popup_tier(&ink, &theme.root_color, 0.55, VOCAB_POPUP_DIM_MIN_CONTRAST);
+        assert!(contrast_ratio(&fg, &theme.root_color) >= VOCAB_POPUP_MIN_CONTRAST);
+        assert!(contrast_ratio(&dim, &theme.root_color) >= VOCAB_POPUP_DIM_MIN_CONTRAST);
+        // Darker-than-mid root: the perceptual pick prefers white even
+        // though black scores the higher WCAG ratio there.
+        theme.root_color = "#5c8da1".to_string();
+        assert_eq!(vocab_popup_ink(&theme), "#ffffff");
     }
 
     #[test]
@@ -1219,8 +1303,11 @@ mod tests {
         assert_eq!(v0.cursor_bg, v2.cursor_bg);
         assert_eq!(v0.cursor_fg, v1.cursor_fg);
         assert_eq!(v0.cursor_fg, v2.cursor_fg);
-        assert_eq!(v0.vocab_fg, v1.vocab_fg);
-        assert_eq!(v0.vocab_fg, v2.vocab_fg);
+        // vocab_fg deliberately FOLLOWS the root (root-hued tint), like
+        // scrim_bg — but always readable on the pinned card surface.
+        for v in [&v0, &v1, &v2] {
+            assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= 4.5);
+        }
         assert_eq!(v0.reader_gloss, v1.reader_gloss);
         assert_eq!(v0.reader_gloss, v2.reader_gloss);
         assert_eq!(v0.overlay_panel_bg, v1.overlay_panel_bg);
@@ -1297,8 +1384,10 @@ mod tests {
         assert_eq!(v0.cursor_fg, v2.cursor_fg);
         assert_eq!(v0.cursor_bg, v1.cursor_bg);
         assert_eq!(v0.cursor_bg, v2.cursor_bg);
-        assert_eq!(v0.vocab_fg, v1.vocab_fg);
-        assert_eq!(v0.vocab_fg, v2.vocab_fg);
+        // vocab_fg follows the root variant; only its card contrast is pinned.
+        for v in [&v0, &v1, &v2] {
+            assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= 4.5);
+        }
     }
 }
 

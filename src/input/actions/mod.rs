@@ -59,6 +59,9 @@ pub enum Action {
 
     // Bookmarks
     ToggleBookmark,
+    /// Overloaded `.`: single tap toggles the bookmark; a second quick tap
+    /// reverts the toggle and opens the picker (ChordState::PendingPeriod).
+    BookmarkTap,
     /// Toggle whether the cursor's paragraph begins a chapter (prose only).
     ToggleChapterStart,
     NextBookmark,
@@ -83,6 +86,10 @@ pub enum Action {
 
     // MPV / media
     TogglePlaybackSync,
+    /// Overloaded `s`: single tap only toasts the sync state; ss in quick
+    /// succession toggles it (ChordState::PendingS) — guards against an
+    /// accidental press silently killing sync.
+    PlaybackSyncTap,
     /// Seek to the cursor line's start timestamp, THEN toggle pause. Used by the
     /// gamepad button and the translation overlay; the reader card uses
     /// `PlayCurrentLine` (always-resume) and `TogglePause` (no-seek toggle).
@@ -106,6 +113,10 @@ pub enum Action {
 
     // Vocab / glossing
     ToggleVocabPopup,
+    /// Overloaded `r`: while the popup is visible a single tap cycles the
+    /// segment's words; a second tap within the chord window toggles
+    /// visibility (rr — see ChordState::PendingR in keymap.rs).
+    VocabPopupTap,
     VocabPopupNext,
     VocabPopupPrev,
     HideVocabPopup,
@@ -188,6 +199,9 @@ pub enum Action {
     SetEndTime,
     SetChapter,
     DeleteTimestamp,
+    /// Overloaded BackSpace: single tap only toasts the line's timestamp; a
+    /// second quick tap deletes it (ChordState::PendingBackspace).
+    DeleteTimestampTap,
     NudgeStartBackward,
     NudgeStartForward,
     UndoTimestamp,
@@ -230,6 +244,7 @@ impl Action {
             | Action::JumpToNextScene
             | Action::JumpToPrevScene
             | Action::ToggleBookmark
+            | Action::BookmarkTap
             | Action::ToggleChapterStart
             | Action::NextBookmark
             | Action::PrevBookmark
@@ -238,6 +253,7 @@ impl Action {
 
             // Media
             Action::TogglePlaybackSync
+            | Action::PlaybackSyncTap
             | Action::TogglePlaybackFromTimestamp
             | Action::TogglePause
             | Action::SeekShortBackward
@@ -252,6 +268,7 @@ impl Action {
 
             // Vocab
             Action::ToggleVocabPopup
+            | Action::VocabPopupTap
             | Action::VocabPopupNext
             | Action::VocabPopupPrev
             | Action::HideVocabPopup
@@ -318,6 +335,7 @@ impl Action {
             | Action::SetEndTime
             | Action::SetChapter
             | Action::DeleteTimestamp
+            | Action::DeleteTimestampTap
             | Action::NudgeStartBackward
             | Action::NudgeStartForward
             | Action::UndoTimestamp
@@ -362,6 +380,7 @@ impl Action {
             Action::JumpToNextScene => "JumpToNextScene",
             Action::JumpToPrevScene => "JumpToPrevScene",
             Action::ToggleBookmark => "ToggleBookmark",
+            Action::BookmarkTap => "BookmarkTap",
             Action::ToggleChapterStart => "ToggleChapterStart",
             Action::NextBookmark => "NextBookmark",
             Action::PrevBookmark => "PrevBookmark",
@@ -379,6 +398,7 @@ impl Action {
             Action::OpenSearch => "OpenSearch",
             Action::OpenSearchBackward => "OpenSearchBackward",
             Action::TogglePlaybackSync => "TogglePlaybackSync",
+            Action::PlaybackSyncTap => "PlaybackSyncTap",
             Action::TogglePlaybackFromTimestamp => "TogglePlaybackFromTimestamp",
             Action::TogglePause => "TogglePause",
             Action::SeekShortBackward => "SeekShortBackward",
@@ -391,6 +411,7 @@ impl Action {
             Action::TogglePlaybackSpeed => "TogglePlaybackSpeed",
             Action::TogglePhraseHighlight => "TogglePhraseHighlight",
             Action::ToggleVocabPopup => "ToggleVocabPopup",
+            Action::VocabPopupTap => "VocabPopupTap",
             Action::VocabPopupNext => "VocabPopupNext",
             Action::VocabPopupPrev => "VocabPopupPrev",
             Action::HideVocabPopup => "HideVocabPopup",
@@ -447,6 +468,7 @@ impl Action {
             Action::SetEndTime => "SetEndTime",
             Action::SetChapter => "SetChapter",
             Action::DeleteTimestamp => "DeleteTimestamp",
+            Action::DeleteTimestampTap => "DeleteTimestampTap",
             Action::NudgeStartBackward => "NudgeStartBackward",
             Action::NudgeStartForward => "NudgeStartForward",
             Action::UndoTimestamp => "UndoTimestamp",

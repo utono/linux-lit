@@ -2272,7 +2272,7 @@ pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     play_journal_block(state_rc, index);
 }
 
-/// `a` in the journal Q&A overlay: ALWAYS begin playback of the cursor's
+/// `s` in the journal Q&A overlay: ALWAYS begin playback of the cursor's
 /// paragraph from its start (no pause-toggle). Stops any current audio first,
 /// then plays the paragraph's TTS. Mirrors `begin_current_synopsis_block`.
 pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
@@ -2282,6 +2282,60 @@ pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
         None => return,
     };
     play_journal_block(state_rc, index);
+}
+
+/// The cursor journal block's CACHED TTS MP3, if one exists on disk (selected
+/// voice first, then the Alice paywall-fallback voice). Never synthesizes.
+fn find_cached_journal_block_audio(
+    state_rc: &Rc<RefCell<AppState>>,
+    index: i32,
+) -> Option<std::path::PathBuf> {
+    let entry_id = {
+        let s = state_rc.borrow();
+        s.journal.pages.get(s.journal.page_index).map(|p| p.id)?
+    };
+    let (vid, _) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+    let conn = crate::db::queries::open_db().ok()?;
+    for vid_try in [vid, crate::elevenlabs::ALICE_VOICE_ID] {
+        if let Ok(Some(path)) =
+            crate::db::queries::find_journal_audio(&conn, entry_id, index as i64, vid_try)
+        {
+            let p = std::path::PathBuf::from(&path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// `a` in the journal Q&A overlay: toggle play/pause of the block's TTS.
+/// A playing clip pauses in place; a paused clip resumes; nothing loaded ->
+/// start the cursor block ONLY if its TTS MP3 is already cached (no
+/// synthesis — Space owns that). Toasts when the block has no cached audio.
+pub(crate) fn toggle_pause_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
+    {
+        let s = state_rc.borrow();
+        if s.tts.is_paused() {
+            s.tts.resume();
+            return;
+        }
+        if s.tts.is_playing() {
+            s.tts.pause();
+            return;
+        }
+    }
+    let index = match state_rc.borrow().journal_overlay.current_block_index() {
+        Some(i) => i as i32,
+        None => return,
+    };
+    match find_cached_journal_block_audio(state_rc, index) {
+        Some(path) => {
+            stop_all_gloss_audio(state_rc);
+            state_rc.borrow().tts.play_file(&path);
+        }
+        None => show_tts_toast(state_rc, "No TTS audio for this block (Space synthesizes)"),
+    }
 }
 
 /// Play a Source block's synthesized (ElevenLabs) MP3 in the gloss's active /

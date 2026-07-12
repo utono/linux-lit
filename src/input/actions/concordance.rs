@@ -139,32 +139,30 @@ pub(crate) fn handle_word_selection(
     });
 }
 
-/// Jump to the next vocab match. When the playing media has phrase data and
-/// at least one vocab sentence resolves, Ctrl+r enters the vocab-sentence
-/// loop mode instead; otherwise the plain jump (unchanged behavior).
+/// Ctrl+-: enter the vocab-sentence loop mode at the next vocab sentence.
+/// When the mode cannot start (no phrase audio, sync off, ...) the reason is
+/// toasted — there is deliberately NO fallback to a plain vocab jump.
 pub(crate) fn jump_to_next_vocab(
     state: &Rc<RefCell<AppState>>,
     _tokio_handle: &tokio::runtime::Handle,
 ) {
-    if crate::input::vocab_loop::enter_vocab_loop(state, true) {
-        return;
+    if let Err(reason) = crate::input::vocab_loop::enter_vocab_loop(state, true) {
+        navigation::show_chapter_toast(&state.borrow(), reason);
     }
-    navigation::jump_to_next_vocab(&mut state.borrow_mut());
 }
 
-/// Jump to the previous vocab match, or enter the vocab-sentence loop mode
-/// backward (see jump_to_next_vocab).
+/// Backward entry into the vocab-sentence loop mode (see jump_to_next_vocab).
 pub(crate) fn jump_to_prev_vocab(
     state: &Rc<RefCell<AppState>>,
     _tokio_handle: &tokio::runtime::Handle,
 ) {
-    if crate::input::vocab_loop::enter_vocab_loop(state, false) {
-        return;
+    if let Err(reason) = crate::input::vocab_loop::enter_vocab_loop(state, false) {
+        navigation::show_chapter_toast(&state.borrow(), reason);
     }
-    navigation::jump_to_prev_vocab(&mut state.borrow_mut());
 }
 
-/// r: advance to next concordance hit. Shows toast if no concordance active.
+/// Advance to the next concordance hit (Action::ConcordanceNext — unbound by
+/// default, kept for user keymaps). Shows toast if no concordance active.
 pub(crate) fn concordance_next(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
@@ -204,7 +202,8 @@ pub(crate) fn concordance_next(
     }
 }
 
-/// R: retreat to previous concordance hit. Shows toast if no concordance active.
+/// Retreat to the previous concordance hit (Action::ConcordancePrev — unbound
+/// by default, kept for user keymaps). Shows toast if no concordance active.
 pub(crate) fn concordance_prev(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,

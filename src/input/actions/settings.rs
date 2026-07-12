@@ -556,6 +556,16 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
                &format!("Root [{}/{}]", next + 1, crate::theme::ROOT_VARIANT_COUNT),
                &s.theme.root_color])
         .spawn();
+    // Copy the assigned root color and the vocab popup's rendered text color
+    // to the system clipboard (labeled, newline-separated), so a pairing the
+    // user likes can be pasted straight into a theme/dwl config.
+    let copied = format!(
+        "root {}\nvocab-fg {}",
+        s.theme.root_color,
+        crate::theme::vocab_popup_fg(&s.theme)
+    );
+    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::logging::log(&format!("THEME: root variant {next} — copied \"{}\"", copied.replace('\n', " / ")));
 }
 
 #[cfg(test)]

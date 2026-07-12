@@ -13,6 +13,23 @@ pub enum ChordState {
     #[default]
     None,
     PendingG,
+    /// First tap of the overloaded `r`: a second `r` within the chord window
+    /// toggles the vocab popup's visibility (show when hidden, hide when
+    /// visible). See Action::VocabPopupTap.
+    PendingR,
+    /// First tap of the overloaded `.`: a second `.` reverts the bookmark
+    /// toggle and opens the picker. See Action::BookmarkTap.
+    PendingPeriod,
+    /// First tap of the overloaded `s`: a second `s` toggles playback sync
+    /// (the single tap only toasts). See Action::PlaybackSyncTap.
+    PendingS,
+    /// First tap of the overloaded BackSpace: a second one deletes the
+    /// line's timestamp (the single tap only toasts). See
+    /// Action::DeleteTimestampTap.
+    PendingBackspace,
+    /// First Tab while the chat/journal panel is open: a second Tab within
+    /// the chord window closes the panel (single Tab opens/cycles focus).
+    PendingTab,
 }
 
 #[derive(Default)]
@@ -55,6 +72,33 @@ pub fn handle_key(
         let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         state.borrow().window.close();
         return true;
+    }
+
+    // Tab-Tab (quick succession) closes the open chat/journal panel from any
+    // of its focus states (Reader / ChatPrompt / ChatTranscript); the single
+    // Tab keeps its per-focus meaning (open panel / cycle focus) and merely
+    // arms the chord. Scoped to those modes so overlay Tab (TTS etc.) is
+    // untouched. See ChordState::PendingTab.
+    if (key_name == "Tab" || key_name == "ISO_Left_Tab") && !is_ctrl && !is_alt {
+        let in_chat_cycle = {
+            let s = state.borrow();
+            s.chat_layout_open
+                && matches!(
+                    s.input_mode,
+                    crate::app::InputMode::Reader
+                        | crate::app::InputMode::ChatPrompt
+                        | crate::app::InputMode::ChatTranscript
+                )
+        };
+        if in_chat_cycle {
+            if key_state.borrow().chord == ChordState::PendingTab {
+                key_state.borrow_mut().chord = ChordState::None;
+                crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
+                return true;
+            }
+            KeyState::start_chord(key_state, ChordState::PendingTab);
+            // fall through: the first tap still opens/cycles as before
+        }
     }
 
     // Journal vim-edit mode owns ALL keys (including space, which Insert mode must
@@ -187,6 +231,57 @@ pub fn handle_key(
         } else if key_name == "semicolon" {
             // g; — jump to most recently created bookmark
             crate::input::actions::bookmarks::jump_to_recent_bookmark(state, tokio_handle);
+            return true;
+        }
+    }
+
+    // rr sequence check: a second quick `r` toggles the vocab popup's
+    // visibility — show when hidden, hide when visible (the first tap
+    // already cycled a word when it was visible; see Action::VocabPopupTap).
+    // Any other key clears the pending tap and dispatches normally.
+    if key_state.borrow().chord == ChordState::PendingR {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "r" && !is_ctrl && !is_shift && !is_alt {
+            let mut s = state.borrow_mut();
+            if s.vocab_popup.popup.is_visible() {
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+            } else {
+                s.vocab_popup.auto = true;
+                crate::app::vocab_popup::open_vocab_popup(&mut s);
+            }
+            return true;
+        }
+    }
+
+    // .. sequence check: the first `.` toggled the bookmark
+    // (Action::BookmarkTap); the second quick `.` reverts that toggle (net
+    // zero) and opens the bookmark picker instead.
+    if key_state.borrow().chord == ChordState::PendingPeriod {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "period" && !is_ctrl && !is_shift && !is_alt {
+            crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle);
+            crate::input::actions::pickers::open_bookmark_picker(state, tokio_handle);
+            return true;
+        }
+    }
+
+    // ss sequence check: the single `s` only toasted the sync state
+    // (Action::PlaybackSyncTap); the second quick `s` performs the toggle.
+    if key_state.borrow().chord == ChordState::PendingS {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "s" && !is_ctrl && !is_shift && !is_alt {
+            toggle_playback_sync(&mut state.borrow_mut());
+            return true;
+        }
+    }
+
+    // BackSpace-BackSpace sequence check: the single tap only toasted the
+    // timestamp (Action::DeleteTimestampTap); the second quick tap deletes.
+    if key_state.borrow().chord == ChordState::PendingBackspace {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "BackSpace" && !is_ctrl && !is_shift && !is_alt {
+            crate::input::timestamps::delete_timestamp(&mut state.borrow_mut());
             return true;
         }
     }
@@ -1377,9 +1472,15 @@ fn handle_journal_key(
             crate::input::actions::gloss::read_current_journal_block(state);
             true
         }
-        // `a`: always (re)start the cursor paragraph's TTS from the beginning
-        // (no pause-toggle), mirroring the gloss/synopsis `a`.
+        // `a`: toggle play/pause of the cursor block's TTS (starts it only
+        // when a cached MP3 exists; never synthesizes).
         "a" => {
+            crate::input::actions::gloss::toggle_pause_current_journal_block(state);
+            true
+        }
+        // `s`: always (re)start the cursor paragraph's TTS from the beginning
+        // (no pause-toggle), mirroring the gloss/synopsis `a`.
+        "s" => {
             crate::input::actions::gloss::begin_current_journal_block(state);
             true
         }
@@ -2793,9 +2894,10 @@ fn handle_vocab_loop_key(
                 .try_send(crate::mpv::MpvCommand::TogglePause);
         }
         "Escape" => crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut()),
-        // Exit on the loop's own entry key (Ctrl+-, after the rebind that
-        // moved next-vocab off Ctrl+r); Ctrl+r/R kept as a legacy exit.
-        "r" | "R" | "minus" if is_ctrl => {
+        // Exit on the loop's own entry keys (Ctrl+- forward, Ctrl+Shift+-
+        // backward — shifted minus may arrive as "underscore"); Ctrl+r/R
+        // kept as a legacy exit.
+        "r" | "R" | "minus" | "underscore" if is_ctrl => {
             crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut())
         }
         _ => {}
@@ -3052,6 +3154,13 @@ fn dispatch_action(
 
         // Bookmarks
         ToggleBookmark => crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle),
+        BookmarkTap => {
+            // Overloaded `.`: single tap toggles the bookmark and arms the
+            // .. chord; the second quick tap reverts the toggle and opens
+            // the picker (PendingPeriod check in handle_key_inner).
+            crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle);
+            KeyState::start_chord(key_state, ChordState::PendingPeriod);
+        }
         ToggleChapterStart => crate::input::actions::chapters::toggle_chapter_start(state, tokio_handle),
         NextBookmark => navigation::next_bookmark(&mut state.borrow_mut()),
         PrevBookmark => navigation::prev_bookmark(&mut state.borrow_mut()),
@@ -3085,6 +3194,17 @@ fn dispatch_action(
 
         // MPV / media
         TogglePlaybackSync => toggle_playback_sync(&mut state.borrow_mut()),
+        PlaybackSyncTap => {
+            // Overloaded s: the single tap only TOASTS the sync state (an
+            // accidental press must not silently kill sync); ss toggles
+            // (PendingS check in handle_key_inner).
+            {
+                let s = state.borrow();
+                let msg = if s.sync_enabled { "Sync: on (ss toggles)" } else { "Sync: off (ss toggles)" };
+                navigation::show_chapter_toast(&s, msg);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingS);
+        }
         TogglePlaybackFromTimestamp => {
             crate::input::search::toggle_playback_from_timestamp(&mut state.borrow_mut())
         }
@@ -3136,6 +3256,16 @@ fn dispatch_action(
             } else {
                 crate::app::vocab_popup::close_vocab_popup(&mut s);
             }
+        }
+        VocabPopupTap => {
+            // Overloaded r: a single tap cycles the segment's words while
+            // the popup is visible (same as Ctrl+r) and arms the rr chord;
+            // the second quick tap toggles visibility (the PendingR check in
+            // handle_key_inner consumes it before dispatch).
+            if state.borrow().vocab_popup.popup.is_visible() {
+                handle_vocab_popup_key(state, true);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
         }
         VocabPopupNext => {
             handle_vocab_popup_key(state, true);
@@ -3328,6 +3458,26 @@ fn dispatch_action(
         SetEndTime => { crate::input::timestamps::set_end_time(&mut state.borrow_mut()); }
         SetChapter => { crate::input::timestamps::set_chapter(&mut state.borrow_mut()); }
         DeleteTimestamp => { crate::input::timestamps::delete_timestamp(&mut state.borrow_mut()); }
+        DeleteTimestampTap => {
+            // Overloaded BackSpace: the single tap only previews the line's
+            // timestamp; the second quick tap deletes it (PendingBackspace
+            // check in handle_key_inner).
+            {
+                let s = state.borrow();
+                let ts = s.current_work.as_ref().and_then(|w| {
+                    s.work_line_for_buffer(s.current_line)
+                        .and_then(|wi| w.lines.get(wi))
+                        .and_then(|l| l.timestamp.as_ref())
+                        .map(|t| t.start)
+                });
+                let msg = match ts {
+                    Some(t) => format!("ts {:.2}s (BackSpace again deletes)", t),
+                    None => "no timestamp on this line".to_string(),
+                };
+                navigation::show_chapter_toast(&s, &msg);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingBackspace);
+        }
         NudgeStartBackward => { crate::input::timestamps::nudge_start_backward(&mut state.borrow_mut()); }
         NudgeStartForward => { crate::input::timestamps::nudge_start_forward(&mut state.borrow_mut()); }
         UndoTimestamp => { crate::input::timestamps::undo_timestamp(&mut state.borrow_mut()); }
@@ -3519,11 +3669,12 @@ fn do_mpv_seek(state: &Rc<RefCell<AppState>>, offset: f64) {
     }
 }
 
-/// Vocab popup key handler. The popup is STICKY and FOLLOWS the cursor and
-/// playback line (same `vocab_popup.auto` follow hook Shift+H uses — see
+/// Vocab popup key handler (Ctrl+r cycles the segment's vocab words). The
+/// popup is STICKY and FOLLOWS the cursor and playback line (same
+/// `vocab_popup.auto` follow hook the r/Shift+H visibility toggles use — see
 /// `update_highlight` in src/input/highlight.rs): it stays up, tracking the
-/// current line, until HideVocabPopup (Ctrl+-) or the H auto-vocab toggle
-/// dismisses it. The old 3-second auto-hide timer is gone by design.
+/// current line, until a visibility toggle dismisses it. The old 3-second
+/// auto-hide timer is gone by design.
 fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     let popup_visible = state.borrow().vocab_popup.popup.is_visible();
     if popup_visible {
@@ -3543,10 +3694,11 @@ fn handle_vocab_popup_key(state: &Rc<RefCell<AppState>>, forward: bool) {
     s.vocab_popup.fade_gen.set(s.vocab_popup.fade_gen.get() + 1);
 }
 
-/// Ctrl+-: fade the vocab popup out (500ms, EaseOutQuad — the same animation
-/// the old auto-hide used). Idempotent: no-op when the popup isn't visible.
-/// Also clears the follow flag — leaving `auto` set would let the highlight
-/// hook reopen the popup on the very next cursor move.
+/// Action::HideVocabPopup (unbound by default; kept for user keymaps): fade
+/// the vocab popup out (500ms, EaseOutQuad — the same animation the old
+/// auto-hide used). Idempotent: no-op when the popup isn't visible. Also
+/// clears the follow flag — leaving `auto` set would let the highlight hook
+/// reopen the popup on the very next cursor move.
 fn fade_out_vocab_popup(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.vocab_popup.auto = false;

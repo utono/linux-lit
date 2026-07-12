@@ -21,7 +21,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("TTS", &[
         ("Space / Tab", "read cursor block (TTS)"),
-        ("a", "restart cursor block TTS"),
+        ("a", "play / pause (cached TTS only)"),
+        ("s", "restart cursor block TTS"),
     ]),
     ("Editing", &[
         ("r", "ask a new question"),
