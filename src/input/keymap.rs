@@ -1809,18 +1809,10 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         s.input_mode = crate::app::InputMode::Reader;
         return true;
     }
-    // Ctrl+j: go to the journal for the current line's scene. Close the
-    // translation overlay to the reader (the overlay drives the real cursor, so
-    // it's on the current line), then open the journal on that Scene band
-    // (author-corpus fallback if empty). Ctrl+j is consistently "go to the
-    // journal" across the overlays. Checked before the plain-`j` dialogue-step.
+    // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the only
+    // overlay-to-overlay navigation). Still checked before the plain-`j`
+    // dialogue-step so Ctrl+j can't step the cursor.
     if key_name == "j" && is_ctrl {
-        {
-            let mut s = state.borrow_mut();
-            s.translation_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
-        }
-        crate::input::actions::journal::open_journal_scene(state);
         return true;
     }
     match key_name {
@@ -1967,15 +1959,11 @@ fn handle_synopsis_overlay_key(
         return true;
     }
 
-    // Ctrl+g: return to the reader (same as Escape here). Handled before the
-    // gg-chord check so a held Ctrl can't be swallowed as the second `g` of a
-    // pending gg. Ctrl+g is consistently "back to reading" across the
-    // gloss/synopsis/echoes overlays.
+    // Ctrl+g: Escape-only close policy — consumed no-op (was: close, same
+    // as Escape). Still clears a pending gg chord so a held Ctrl isn't
+    // swallowed as the second g.
     if key_name == "g" && is_ctrl {
         key_state.borrow_mut().chord = ChordState::None;
-        let mut s = state.borrow_mut();
-        s.gloss_overlay.hide();
-        crate::app::return_to_reader_mode(&mut s);
         return true;
     }
 
@@ -1999,12 +1987,9 @@ fn handle_synopsis_overlay_key(
     // ---- Synopsis-focused (or ask card closed) navigation -----------------
 
     match key_name {
-        "h" => {
-            let mut s = state.borrow_mut();
-            s.gloss_overlay.hide();
-            crate::app::return_to_reader_mode(&mut s);
-            true
-        }
+        // h: Escape-only close policy — consumed no-op (was: close; h still
+        // OPENS the synopsis from the reader).
+        "h" => true,
         // `\`: advance the segment-overlay cycle → wrap to the journal Q&A
         // stop for the lap's entry segment.
         "backslash" if !is_ctrl && !is_alt => {
@@ -2018,24 +2003,9 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::gloss::begin_current_synopsis_block(state);
             true
         }
-        // r: create a journal Q&A filed under the scene/chapter the synopsis is
-        // currently showing (synopsis_overlay_scene, which Ctrl+n/p may have moved
-        // away from the cursor's scene). Close the synopsis overlay and return to
-        // reader mode first, then open the journal scene ask. (Moved from A to r,
-        // matching the gloss + journal overlays; the synopsis overlay now only
-        // EDITS the synopsis in place via E, with U to undo.)
-        "r" => {
-            let (div1, div2) = state.borrow().synopsis_overlay_scene;
-            {
-                let mut s = state.borrow_mut();
-                s.tts.stop();
-                s.gloss_overlay.hide();
-                crate::app::return_to_reader_mode(&mut s);
-            }
-            crate::input::actions::journal::begin_scene_ask(state, div1, div2);
-            crate::logging::log("JOURNAL-FROM-SYNOPSIS: opened scene ask from synopsis overlay");
-            true
-        }
+        // r: dropped (cross-create: scene ask card; asking happens from the
+        // reader). Consumed no-op.
+        "r" => true,
         "e" => {
             crate::input::actions::synopsis::begin_edit(state);
             true
@@ -2071,20 +2041,9 @@ fn handle_synopsis_overlay_key(
             );
             true
         }
-        // Ctrl+j: go to the journal for this synopsis's scene. Close the synopsis
-        // to the reader (leaving the cursor on this chapter/scene), then open the
-        // journal on that Scene band (author-corpus fallback if empty). Ctrl+j is
-        // consistently "go to the journal" across the overlays. Must be BEFORE the
-        // plain-`j` block-cursor arm below.
-        "j" if is_ctrl => {
-            {
-                let mut s = state.borrow_mut();
-                s.gloss_overlay.hide();
-                crate::app::return_to_reader_mode(&mut s);
-            }
-            crate::input::actions::journal::open_journal_scene(state);
-            true
-        }
+        // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the only
+        // overlay-to-overlay navigation). Consumed no-op.
+        "j" if is_ctrl => true,
         // (Font-size adjust removed: overlays are locked to GLOSS_DEFAULT_FONT_SIZE.)
         "n" if is_ctrl => {
             crate::app::scene_synopsis::cycle_synopsis(state, 1);
@@ -2560,24 +2519,12 @@ fn handle_echoes_overlay_key(
     // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's VolumeUp/Down.
     if is_ctrl {
         match key_name {
-            // Ctrl+g: return to the reader (same as Escape here). Ctrl+g is
-            // consistently "back to reading" across the gloss/synopsis/echoes
-            // overlays. Reached only with no pending gg chord (the chord check
-            // above consumes a Ctrl+g completing a gg), which is the intended
-            // "lone Ctrl+g returns to reader" case.
-            "g" => {
-                crate::input::actions::echoes::close_echoes_to_reader(state);
-                return true;
-            }
-            // Ctrl+j: go to the journal for the turn's passage. Close the echoes
-            // overlay to the reader (cursor is on the turn's source line), then
-            // open the journal on that Scene band (author-corpus fallback if
-            // empty). Ctrl+j is consistently "go to the journal" across overlays.
-            "j" => {
-                crate::input::actions::echoes::close_echoes_to_reader(state);
-                crate::input::actions::journal::open_journal_scene(state);
-                return true;
-            }
+            // Ctrl+g: Escape-only close policy — consumed no-op (was: close,
+            // same as Escape).
+            "g" => return true,
+            // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the
+            // only overlay-to-overlay navigation). Consumed no-op.
+            "j" => return true,
             "Up" => {
                 let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
                 return true;

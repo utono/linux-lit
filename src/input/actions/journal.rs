@@ -389,7 +389,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // page (Ctrl+n/p, picker); when it still shows the page the overlay
         // opened on from the reader, restore the exact saved reading position —
         // a peek-and-Escape must not re-frame the page the reader left.
-        // Covers Ctrl+Tab, Ctrl+j, and Escape (all route through here).
+        // Covers Escape (routes through here).
         // Take return_pos/entry_page_id regardless so they don't leak into the
         // next open.
         let entry = s.journal.entry_page_id.take();
@@ -666,31 +666,6 @@ pub(crate) fn begin_passage_ask(
     render_current(&mut s);
     s.journal_overlay.open_ask_card(
         "Ask a question about this passage",
-        "Ctrl+Enter submit",
-        &s.theme.cursor_bg,
-        &s.theme.cursor_fg,
-    );
-}
-
-/// Set up the journal overlay for a SCENE (chapter) Q&A and open the ask card.
-///
-/// Called from the synopsis overlay's `A` key: the synopsis always displays one
-/// scene/chapter, so its journal hand-off files the Q&A under that scene's band.
-/// Mirrors `begin_passage_ask` but for a Scene band (no `pending_passage`,
-/// since there is no passage source markup — the Q&A is scoped to the whole
-/// scene/chapter). The caller has already closed the synopsis overlay and set
-/// reader mode. The journal labels the band "scene" or "chapter" per work type.
-pub(crate) fn begin_scene_ask(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64) {
-    let mut s = state.borrow_mut();
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
-    s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
-    s.journal.prompt_mode = JournalPromptMode::Ask;
-    s.journal_band = JournalBand::Scene(div1, div2);
-    s.journal.page_index = 0;
-    s.input_mode = crate::app::InputMode::JournalOverlay;
-    render_current(&mut s);
-    s.journal_overlay.open_ask_card(
-        "Ask a question about this scene",
         "Ctrl+Enter submit",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
