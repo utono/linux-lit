@@ -3,6 +3,10 @@
 //! journal entry and render in the popup. Pure prompt-assembly helpers here
 //! are unit-tested; the stateful handlers mirror journal::ask_claude.
 
+use crate::app::AppState;
+use std::cell::RefCell;
+use std::rc::Rc;
+
 /// Max other-work occurrence lines fed to the prompt.
 pub(crate) const CORPUS_HITS_CAP: usize = 10;
 
@@ -101,6 +105,173 @@ pub(crate) fn vocab_user_message(
          CORPUS OCCURRENCES \u{2014} lines containing the word elsewhere in {author}'s works:\n{corpus_block}\n\n\
          Reader's request:\nDiscuss the use of \u{201c}{word}\u{201d} in this segment, and how {author} uses the word elsewhere in the corpus.",
     )
+}
+
+/// R in the main card: vocab journal Q&A for the popup's current word.
+/// Silent no-op unless the popup is visible AND the popup's current word
+/// sits on the cursor line. Stored answers render without a new API call.
+pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
+    let gathered = {
+        let s = state_rc.borrow();
+        if !s.vocab_popup.popup.is_visible() || s.vocab_popup.data.is_empty() {
+            None
+        } else {
+            let word = s.vocab_popup.data[s.vocab_popup.index].word.clone();
+            let on_line = s
+                .vocab_matches
+                .iter()
+                .any(|m| m.line_index == s.current_line && m.word == word);
+            let seg = crate::input::segments::segment_context(&s, 0);
+            match (s.current_work.as_ref(), seg) {
+                (Some(w), Some(seg)) if on_line && !seg.cursor_lines.is_empty() => Some((
+                    word,
+                    w.title.clone(),
+                    w.author.clone(),
+                    w.canonical_abbrev.clone(),
+                    w.work_type.clone(),
+                    seg.div1,
+                    seg.div2,
+                    seg.cursor_lines.first().map(|l| l.citation.clone()).unwrap_or_default(),
+                    seg.cursor_lines.last().map(|l| l.citation.clone()).unwrap_or_default(),
+                    seg.segments.get(seg.cursor_index).cloned().unwrap_or_default(),
+                    s.config.claude_model.clone(),
+                )),
+                _ => None,
+            }
+        }
+    };
+    let Some((word, title, author, canonical, work_type, div1, div2, start_cit, end_cit, segment, model)) =
+        gathered
+    else {
+        return;
+    };
+    let question = vocab_question(&word, &author);
+
+    // Reuse: a stored vocab Q&A for this word + segment renders immediately.
+    if let Ok(conn) = crate::db::queries::open_db() {
+        if let Ok(Some(page)) =
+            crate::db::journal::find_vocab_page(&conn, &canonical, div1, div2, &word)
+        {
+            let mut s = state_rc.borrow_mut();
+            s.vocab_popup.journal = Some(crate::app::vocab_popup::JournalDisplay::Answer {
+                word: word.clone(),
+                question: page.question.clone(),
+                answer: page.answer.clone(),
+                model: page.claude_model.clone(),
+            });
+            s.vocab_popup.view = crate::ui::vocab_popup::VocabView::Journal;
+            crate::app::vocab_popup::show_vocab_popup(&s);
+            crate::logging::log(&format!("VOCAB QA: stored answer for '{word}'"));
+            return;
+        }
+    }
+
+    // Fresh ask: corpus evidence, pending render, request.
+    let corpus_block = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::concordance::find_word_occurrences(&conn, &word, &author).ok())
+        .map(|hits| vocab_corpus_block(&hits, &canonical, &word, CORPUS_HITS_CAP))
+        .unwrap_or_else(|| "(none found)".to_string());
+
+    let (genre, unit, _units) = crate::gloss::genre_unit(&work_type);
+    let unit_label = {
+        let mut c = unit.chars();
+        match c.next() {
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            None => String::new(),
+        }
+    };
+    let user_msg = vocab_user_message(
+        genre,
+        &title,
+        &author,
+        &unit_label,
+        &crate::app::scene_synopsis::scene_label(div1, div2),
+        &word,
+        &segment,
+        &corpus_block,
+    );
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.vocab_popup.journal = Some(crate::app::vocab_popup::JournalDisplay::Pending {
+            word: word.clone(),
+            question: question.clone(),
+        });
+        s.vocab_popup.view = crate::ui::vocab_popup::VocabView::Journal;
+        crate::app::vocab_popup::show_vocab_popup(&s);
+    }
+    crate::logging::log(&format!("VOCAB QA: asking about '{word}' in {canonical} {div1}.{div2}"));
+
+    let model_for_db = model.clone();
+    let word_ok = word.clone();
+    let question_ok = question.clone();
+    let word_err = word;
+    let question_err = question;
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        crate::gloss::vocab_journal_prompt(&work_type),
+        user_msg,
+        model,
+        move |st, answer| {
+            // Insert FIRST — a paid answer must survive any UI race.
+            match crate::db::queries::open_db_rw() {
+                Ok(conn) => {
+                    if let Err(e) = crate::db::journal::save_vocab_page(
+                        &conn, &canonical, div1, div2, &start_cit, &end_cit,
+                        &segment, &word_ok, &question_ok, &answer, &model_for_db,
+                    ) {
+                        crate::logging::log(&format!("VOCAB QA: db write failed: {e}"));
+                    }
+                }
+                Err(e) => crate::logging::log(&format!("VOCAB QA: db open failed: {e}")),
+            }
+            let mut s = st.borrow_mut();
+            if journal_pending_for(&s, &word_ok) {
+                s.vocab_popup.journal = Some(crate::app::vocab_popup::JournalDisplay::Answer {
+                    word: word_ok.clone(),
+                    question: question_ok.clone(),
+                    answer,
+                    model: model_for_db.clone(),
+                });
+                crate::app::vocab_popup::show_vocab_popup(&s);
+            }
+        },
+        move |st, msg| {
+            let mut s = st.borrow_mut();
+            if journal_pending_for(&s, &word_err) {
+                s.vocab_popup.journal = Some(crate::app::vocab_popup::JournalDisplay::Error {
+                    word: word_err.clone(),
+                    question: question_err.clone(),
+                    message: msg.to_string(),
+                });
+                crate::app::vocab_popup::show_vocab_popup(&s);
+            }
+        },
+    );
+}
+
+/// Async guard: true while the popup is visible with a PENDING Journal
+/// display for `word`. Cursor moves, word cycles, and view toggles all
+/// clear `journal`, so a stale reply repaints nothing (the DB insert has
+/// already happened).
+fn journal_pending_for(s: &AppState, word: &str) -> bool {
+    use crate::app::vocab_popup::JournalDisplay;
+    s.vocab_popup.popup.is_visible()
+        && matches!(
+            s.vocab_popup.journal.as_ref(),
+            Some(JournalDisplay::Pending { word: w, .. }) if w == word
+        )
+}
+
+/// Ctrl+n / Ctrl+p: page the popup's Journal answer. No-op outside the
+/// Journal view (the keys stay inert in normal reading).
+pub(crate) fn vocab_journal_page(state_rc: &Rc<RefCell<AppState>>, dir: i32) {
+    let s = state_rc.borrow();
+    if s.vocab_popup.view != crate::ui::vocab_popup::VocabView::Journal {
+        return;
+    }
+    s.vocab_popup.popup.journal_page(dir);
 }
 
 #[cfg(test)]

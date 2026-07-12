@@ -3276,6 +3276,9 @@ fn dispatch_action(
         HideVocabPopup => {
             fade_out_vocab_popup(state);
         }
+        VocabJournalAsk => crate::input::actions::vocab_journal::vocab_journal_ask(state),
+        VocabJournalPageNext => crate::input::actions::vocab_journal::vocab_journal_page(state, 1),
+        VocabJournalPagePrev => crate::input::actions::vocab_journal::vocab_journal_page(state, -1),
         JumpToNextVocab => crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle),
         JumpToPrevVocab => crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle),
         ConcordanceNext => crate::input::actions::concordance::concordance_next(state, tokio_handle),
