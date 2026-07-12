@@ -370,6 +370,42 @@ pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s); // restore the band the user was in
 }
 
+/// Open the term input box (with distinct-tag suggestions) from inside the
+/// overlay (the `f` key). The user types a term freely; existing tags are
+/// suggested beneath. `set_suggestions` must run BEFORE `show()` (show clears
+/// the entry + grabs focus but does not populate suggestions).
+pub(crate) fn open_term_input(state: &Rc<RefCell<AppState>>) {
+    let terms = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_distinct_terms(&conn).ok())
+        .unwrap_or_default();
+    let mut s = state.borrow_mut();
+    s.journal_term_input.set_suggestions(terms);
+    s.journal_term_input.show();
+    s.input_mode = InputMode::JournalTermInput;
+}
+
+/// Confirm the entered term: hide the box, return to the overlay, then activate
+/// the filter (lands on match 1). The term is the typed text (else the
+/// highlighted suggestion); a freely-typed term reaches the FTS fallback even
+/// with zero tags. Borrows are scoped so they are dropped before
+/// `activate_filter` (which re-borrows `state` mutably) runs — otherwise a
+/// RefCell double-borrow would panic at runtime.
+pub(crate) fn confirm_term_input(state: &Rc<RefCell<AppState>>) {
+    let term = {
+        let s = state.borrow();
+        s.journal_term_input.query_term()
+    };
+    {
+        let s = state.borrow();
+        s.journal_term_input.hide();
+    }
+    state.borrow_mut().input_mode = InputMode::JournalOverlay;
+    if let Some(term) = term {
+        activate_filter(state, &term);
+    }
+}
+
 /// From the journal source_text markup (`<speaker>…</speaker>\n<verse>text…`),
 /// return the first bare CONTENT line (inside a `<verse>`/`<stage>` tag), tags
 /// stripped and trimmed. Empty if there is no content line. Used only by the

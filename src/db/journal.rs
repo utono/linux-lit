@@ -299,6 +299,14 @@ fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Er
     Ok(TermMatch { page, work_abbrev })
 }
 
+/// Distinct journal-tag terms, sorted ascending. Feeds the term-browse input's
+/// suggestion list (the `f` key inside the journal overlay).
+pub fn find_distinct_terms(conn: &Connection) -> Result<Vec<String>, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT DISTINCT term FROM journal_tags ORDER BY term ASC")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 pub fn save_passage_page(
     conn: &Connection,
     work_abbrev: &str,
@@ -775,6 +783,26 @@ mod tests {
         ).unwrap();
         let hits2 = find_pages_by_term(&conn, "Fee Simple").unwrap(); // case-insensitive
         assert_eq!(hits2.iter().map(|m| m.page.id).collect::<Vec<_>>(), vec![7]);
+    }
+
+    #[test]
+    fn distinct_terms_sorted() {
+        let conn = mem();
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (1,'Rom',1,1,'q','a','scene')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO journal_tags (entry_id, term) VALUES (1,'freehold'),(1,'fee simple')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            find_distinct_terms(&conn).unwrap(),
+            vec!["fee simple".to_string(), "freehold".to_string()]
+        );
     }
 
     #[test]

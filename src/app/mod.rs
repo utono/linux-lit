@@ -126,6 +126,7 @@ pub enum InputMode {
     GlossPicker,
     JournalPicker,
     JournalMovePicker,
+    JournalTermInput,
     EchoPicker,
     EchoTurnsPicker,
     EchoesOverlay,
@@ -470,6 +471,7 @@ pub struct AppState {
     pub journal_overlay: crate::ui::journal_overlay::JournalOverlay,
     pub journal_picker: JournalQaPicker,
     pub journal_move_picker: JournalMovePicker,
+    pub journal_term_input: crate::ui::journal_term_input::JournalTermInput,
     pub journal_band: JournalBand,
     pub journal: crate::input::actions::journal::JournalState,
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
@@ -1406,9 +1408,14 @@ pub fn build_window(
     journal_move_picker.attach(&journal_picker.overlay);
     journal_move_picker.overlay.set_vexpand(true);
 
-    // Translation overlay wraps the journal move picker overlay
+    // Journal term-browse input overlays the journal move picker
+    let journal_term_input = crate::ui::journal_term_input::JournalTermInput::new();
+    journal_term_input.attach(&journal_move_picker.overlay);
+    journal_term_input.overlay.set_vexpand(true);
+
+    // Translation overlay wraps the journal term input overlay
     let translation_overlay = crate::ui::translation_overlay::TranslationOverlay::new();
-    translation_overlay.attach(&journal_move_picker.overlay);
+    translation_overlay.attach(&journal_term_input.overlay);
     translation_overlay.overlay.set_vexpand(true);
 
     // Gloss picker wraps the translation overlay
@@ -1790,6 +1797,7 @@ pub fn build_window(
         journal_overlay,
         journal_picker,
         journal_move_picker,
+        journal_term_input,
         journal_band: JournalBand::Scene(0, 0),
         journal: crate::input::actions::journal::JournalState {
             pages: Vec::new(),
@@ -2401,6 +2409,16 @@ pub fn build_window(
         s.journal_move_picker.search_entry().connect_changed(move |entry| {
             let filter = entry.text().to_string();
             state_for_journal_move_filter.borrow().journal_move_picker.populate_list(&filter);
+        });
+    }
+
+    // Connect journal term-input search entry filter (live tag suggestions)
+    let state_for_journal_term_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.journal_term_input.search_entry().connect_changed(move |entry| {
+            let filter = entry.text().to_string();
+            state_for_journal_term_filter.borrow().journal_term_input.populate_list(&filter);
         });
     }
 
