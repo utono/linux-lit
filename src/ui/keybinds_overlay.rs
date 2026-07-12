@@ -264,7 +264,9 @@ picker via ChordState::PendingPeriod) — src/input/keymap.rs",
         "gloss tog" => "Action::ToggleGlossOverlay — src/input/actions/gloss.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
         "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
-        "last overlay" => "Action::ToggleLastOverlay — src/input/actions/gloss.rs",
+        "last overlay" => "Action::ToggleLastOverlay (reader only: reopens \
+the last-closed gloss/journal overlay; overlays close via Escape) \
+— src/input/actions/gloss.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (journal Q&A → gloss \
 → synopsis, wraps; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
         "chat layout" => "Action::ToggleChatLayout (Tab opens/cycles focus; \

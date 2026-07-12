@@ -138,9 +138,9 @@ pub enum Action {
     ToggleVocabHighlight,
     ToggleGlossOverlay,
     ToggleJournalOverlay,
-    /// Flip the reader against whichever of the gloss/journal overlays was last
-    /// open: closes an open gloss/journal overlay, or reopens the last one from
-    /// the reader (fresh from the cursor). No-op with a toast if none remembered.
+    /// Reader-only: reopen whichever of the gloss/journal overlays was last
+    /// open (fresh from the cursor). No-op with a toast if none remembered.
+    /// Overlays themselves close via Escape only.
     ToggleLastOverlay,
     /// Plain `\`: cycle the per-segment overlays — journal Q&A → gloss →
     /// synopsis → journal (wraps). From the reader it opens the journal stop;

@@ -1294,13 +1294,9 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_to_author_band(state);
                 return true;
             }
-            // Alt+g: create a reader-gloss for the current journal passage
-            // page's source text. Toasts "Not a passage page" if the current
-            // page has no source text (work/scene band or empty).
-            "g" => {
-                crate::input::actions::journal::action_gloss_from_journal_passage(state);
-                return true;
-            }
+            // Alt+g: dropped (cross-create: reader-gloss from the journal
+            // passage). Consumed so Alt+g can't start a gg chord below.
+            "g" => return true,
             _ => {}
         }
     }
@@ -1315,36 +1311,24 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
-            // Ctrl+j: close the journal and return to the reader (you're already
-            // AT the journal). Ctrl+j means "go to the journal" everywhere; from
-            // inside the journal that resolves to "toggle it closed", mirroring
-            // the reader's Ctrl+j toggle. To reach the gloss from here, use Ctrl+g
-            // (view_gloss_from_journal, below).
-            "j" => {
-                crate::input::actions::journal::close_overlay(state);
-                return true;
-            }
-            // Ctrl+Tab: flip back to the reader (ToggleLastOverlay). From the
-            // reader it reopens this overlay; here it closes it (recording
-            // last_overlay = Journal via return_to_reader_mode).
-            "Tab" | "ISO_Left_Tab" => {
-                crate::input::actions::gloss::toggle_last_overlay(state);
-                return true;
-            }
+            // Ctrl+j: Escape-only close policy — consumed no-op (was: close
+            // the journal). Consumed so Ctrl+j can't fall through to the
+            // plain j block-nav arm.
+            "j" => return true,
+            // Ctrl+Tab: dropped inside overlays (reader-side Ctrl+Tab still
+            // reopens the last overlay). Consumed so it can't fall through
+            // to the plain Tab TTS arm.
+            "Tab" | "ISO_Left_Tab" => return true,
             // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
             // Arrives as key_name "J" (shifted), distinct from Ctrl+j.
             "J" => {
                 crate::input::actions::journal::open_move_picker(state);
                 return true;
             }
-            // Ctrl+g: view the gloss for the current journal passage page.
-            // Requires the current page to be a passage page (has source_text
-            // + start_citation). Toasts "Not a passage page" if not, or "No
-            // gloss for this passage" if no gloss is found.
-            "g" => {
-                crate::input::actions::journal::view_gloss_from_journal(state);
-                return true;
-            }
+            // Ctrl+g: dropped (cross-jump to the gloss view — the \ cycle is
+            // the only overlay-to-overlay navigation). Consumed so it can't
+            // start a gg chord below.
+            "g" => return true,
             // Ctrl+/ opens the JOURNAL-specific keybind legend (its full keybind
             // set), returning to the journal overlay on close.
             "slash" => {
@@ -1608,31 +1592,16 @@ fn handle_gloss_key(
                 );
                 return true;
             }
-            // Ctrl+j: cross-jump to the journal — view the journal passage pages
-            // for the current gloss's passage (Passage band if a page exists,
-            // else the author-corpus band, else a toast). This is the gloss→journal
-            // half of the flip; the journal overlay's Ctrl+j/Ctrl+g both jump the
-            // other way (view the gloss).
-            "j" => {
-                crate::input::actions::journal::view_journal_from_gloss(state);
-                return true;
-            }
-            // Ctrl+g: return to the reader (same as Escape here — lands on the
-            // glossed passage's source line). Ctrl+g is consistently "back to
-            // reading" across the gloss/synopsis/echoes overlays; the gloss→journal
-            // jump lives on Ctrl+j (above). Handling it in the is_ctrl block also
-            // keeps a held Ctrl from starting the plain-`g` gg chord below.
-            "g" => {
-                crate::input::actions::gloss::close_gloss_to_reader(state);
-                return true;
-            }
-            // Ctrl+Tab: flip back to the reader (ToggleLastOverlay). From the
-            // reader it reopens this overlay; here it closes it (recording
-            // last_overlay = Gloss via return_to_reader_mode).
-            "Tab" | "ISO_Left_Tab" => {
-                crate::input::actions::gloss::toggle_last_overlay(state);
-                return true;
-            }
+            // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the
+            // only overlay-to-overlay navigation). Consumed no-op.
+            "j" => return true,
+            // Ctrl+g: Escape-only close policy — consumed no-op (was: close
+            // same as Escape). Consumed so it can't start a gg chord below.
+            "g" => return true,
+            // Ctrl+Tab: dropped inside overlays (reader-side Ctrl+Tab still
+            // reopens the last overlay). Consumed so it can't fall through
+            // to the plain Tab TTS arm.
+            "Tab" | "ISO_Left_Tab" => return true,
             // Ctrl+/ opens the GLOSS-specific keybind legend (its full keybind
             // set), returning to the gloss overlay on close.
             "slash" => {
@@ -1771,10 +1740,10 @@ fn handle_gloss_key(
             crate::input::actions::overlay_cycle::cycle_from_gloss(state);
             true
         }
-        // Escape/n close the overlay by jumping the cursor to the glossed
+        // Escape closes the overlay by jumping the cursor to the glossed
         // passage's source on close, NOT like toggle_overlay's
         // return-to-origin.
-        "Escape" | "n" => {
+        "Escape" => {
             // Close to the reader, landing on the glossed passage's source line
             // (recomputes the reader-gloss tint so a just-created gloss colors
             // without a reload; falls back to the pre-open page). Shared with
@@ -1782,6 +1751,9 @@ fn handle_gloss_key(
             crate::input::actions::gloss::close_gloss_to_reader(state);
             true
         }
+        // n: Escape-only close policy — was Escape's close alias; consumed
+        // no-op so it can't leak past the handler.
+        "n" => true,
         // Shift+V enters visual block-selection mode (j/k extend, gg/G ends,
         // y yank, Esc/V exit), mirroring the synopsis overlay. The old voice
         // cycle moved to Ctrl+V (handled in the is_ctrl block above).
@@ -1794,80 +1766,9 @@ fn handle_gloss_key(
             }
             true
         }
-        // r: create a journal Q&A page for the gloss's current source passage.
-        // Reads gloss_context for citations/speaker, resolves the line range from
-        // current_work, and builds <speaker>/<verse>/<stage> markup via
-        // build_source_header — the same markup the journal overlay feeds to
-        // populate_verse_buffer. Plain ctx.source_text is NOT used as source_text
-        // (it lacks verse/stage tags and renders without formatting). (Moved from
-        // A to r; the source-TTS play/stop that was on r moved to l/L. The gloss
-        // overlay now only EDITS the current gloss (E) or deletes it (D) — it no
-        // longer adds a second gloss to the passage.)
-        "r" => {
-            // Collect what we need from gloss_context before dropping the borrow.
-            // Build the <speaker>/<verse>/<stage> markup here while we still hold
-            // the borrow that gives access to ctx and current_work.
-            let passage_args = {
-                let s = state.borrow();
-                s.gloss_context.as_ref().and_then(|ctx| {
-                    let work = s.current_work.as_ref()?;
-
-                    let selected_lines: Vec<crate::db::models::Line> =
-                        match (crate::app::parse_citation(&ctx.start_citation), crate::app::parse_citation(&ctx.end_citation)) {
-                            (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
-                                .lines
-                                .iter()
-                                .filter(|l| {
-                                    l.div1 == sd1
-                                        && l.div2 == sd2
-                                        && l.line_in_div >= s_lid
-                                        && l.line_in_div <= e_lid
-                                })
-                                .cloned()
-                                .collect(),
-                            _ => work
-                                .lines
-                                .iter()
-                                .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
-                                .cloned()
-                                .collect(),
-                        };
-
-                    // Build <speaker>/<verse>/<stage> markup — same as the visual
-                    // selection path in visual.rs and action_gloss_from_journal_passage.
-                    let markup = crate::input::actions::echoes::build_source_header(
-                        &selected_lines,
-                        &ctx.speaker,
-                    );
-
-                    Some((
-                        ctx.act,
-                        ctx.scene,
-                        ctx.start_citation.clone(),
-                        ctx.end_citation.clone(),
-                        markup,
-                    ))
-                })
-            };
-            if let Some((div1, div2, start, end, source_text)) = passage_args {
-                // Close the gloss overlay first, restoring reader position,
-                // then open the journal passage ask.
-                {
-                    let mut s = state.borrow_mut();
-                    s.tts.stop();
-                    s.gloss_overlay.hide();
-                    // Restore the saved position so journal return_pos is coherent.
-                    let pos = s.gloss_return_pos.take();
-                    crate::app::restore_saved_position(&mut s, pos);
-                    s.input_mode = crate::app::InputMode::Reader;
-                }
-                crate::input::actions::journal::begin_passage_ask(
-                    state, div1, div2, start, end, source_text,
-                );
-                crate::logging::log("JOURNAL-FROM-GLOSS: opened passage ask from gloss overlay");
-            }
-            true
-        }
+        // r: dropped (cross-create: journal ask card for the gloss passage;
+        // asking happens from the reader). Consumed no-op.
+        "r" => true,
         "v" => {
             crate::input::actions::settings::open_voice_picker(
                 state,

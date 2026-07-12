@@ -2631,27 +2631,11 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Open the gloss overlay for the cursor line (reader Ctrl+g /
+/// `Action::ToggleGlossOverlay`, and the Ctrl+Tab reopen). Open-only since
+/// the Escape-only close policy: the overlay closes via Escape
+/// (`close_gloss_to_reader`), never by re-pressing the toggle.
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
-    if state.borrow().input_mode == crate::app::InputMode::GlossOverlay {
-        let mut s = state.borrow_mut();
-        s.tts.stop();
-        s.gloss_overlay.hide();
-        // A gloss may have just been created/edited; return to reader mode and
-        // refresh the main-card tint so newly-glossed lines color without a reload.
-        crate::app::return_to_reader_mode(&mut s);
-        // Land on the passage's source start (matching close_gloss_to_reader, so
-        // reader-Ctrl+g and Ctrl+Tab behave like the in-overlay Ctrl+g/Escape).
-        // Fall back to the saved return page only when the source can't be
-        // resolved in the current work. Take gloss_return_pos regardless so it
-        // doesn't leak into the next open.
-        let jumped = jump_to_gloss_source_start(&mut s);
-        let pos = s.gloss_return_pos.take();
-        if !jumped {
-            crate::app::restore_saved_position_resnap(&mut s, pos);
-        }
-        return;
-    }
-
     open_gloss_at_cursor(state);
 }
 
@@ -2748,32 +2732,24 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None);
 }
 
-/// Flip the reader against whichever toggleable overlay (gloss/journal) was
-/// last open (`AppState.last_overlay`, recorded at every close via
-/// `return_to_reader_mode`). From an open gloss/journal overlay this closes it;
-/// from the reader it reopens the last one (fresh from the cursor, via that
-/// overlay's own `toggle_overlay`); with nothing remembered it toasts. Bound to
-/// Ctrl+Tab (`ToggleLastOverlay`).
+/// Reopen whichever toggleable overlay (gloss/journal) was last open
+/// (`AppState.last_overlay`, recorded at every close via
+/// `return_to_reader_mode`). Reader-only: overlays close via Escape alone,
+/// so this no longer doubles as an in-overlay close. Toasts when nothing is
+/// remembered. Bound to Ctrl+Tab (`ToggleLastOverlay`).
 pub(crate) fn toggle_last_overlay(state: &Rc<RefCell<AppState>>) {
     use crate::app::{InputMode, LastOverlay};
     let (mode, last) = {
         let s = state.borrow();
         (s.input_mode, s.last_overlay)
     };
-    match mode {
-        // In an open overlay: its own toggle closes it (and records last_overlay).
-        InputMode::GlossOverlay => toggle_overlay(state),
-        InputMode::JournalOverlay => crate::input::actions::journal::toggle_overlay(state),
-        // In the reader: reopen whichever we last had up.
-        InputMode::Reader => match last {
-            Some(LastOverlay::Gloss) => toggle_overlay(state),
-            Some(LastOverlay::Journal) => {
-                crate::input::actions::journal::toggle_overlay(state)
-            }
-            None => show_tts_toast(state, "No overlay to reopen"),
-        },
-        // Some other overlay is up (synopsis, pickers, …): leave it alone.
-        _ => {}
+    if mode != InputMode::Reader {
+        return;
+    }
+    match last {
+        Some(LastOverlay::Gloss) => toggle_overlay(state),
+        Some(LastOverlay::Journal) => crate::input::actions::journal::toggle_overlay(state),
+        None => show_tts_toast(state, "No overlay to reopen"),
     }
 }
 
