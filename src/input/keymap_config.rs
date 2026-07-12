@@ -300,17 +300,16 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
         // `r` is overloaded (Action::VocabPopupTap): a single tap cycles the
         // visible popup's words; rr in quick succession toggles visibility
-        // (ChordState::PendingR). Ctrl+r also cycles (opens on the first
-        // press). HideVocabPopup is unbound — rr covers it. ConcordanceNext
+        // (ChordState::PendingR). HideVocabPopup is unbound — rr covers it.
+        // VocabPopupNext is unbound (tap covers the cycle). ConcordanceNext
         // AND ConcordancePrev are deliberately unbound (step in-work hits
         // with n/N while a concordance is active).
         (KeyCombo::plain("r"), Action::VocabPopupTap),
-        (KeyCombo::ctrl("r"), Action::VocabPopupNext),
-        // R: vocab journal Q&A — ask about the popup's current word (gated
-        // on popup visible + a vocab word on the cursor line). Ctrl+n/p
-        // page the popup's Journal answer; the pickers/overlays keep their
-        // own modal Ctrl+n/p (handled before reader dispatch).
-        (KeyCombo::plain("R"), Action::VocabJournalAsk),
+        // Ctrl+r: vocab journal Q&A — ask about the popup's current word
+        // (gated on popup visible + a vocab word on the cursor line; was R).
+        // Ctrl+n/p page the popup's Journal answer; the pickers/overlays
+        // keep their own modal Ctrl+n/p (handled before reader dispatch).
+        (KeyCombo::ctrl("r"), Action::VocabJournalAsk),
         (KeyCombo::ctrl("n"), Action::VocabJournalPageNext),
         (KeyCombo::ctrl("p"), Action::VocabJournalPagePrev),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
@@ -476,16 +475,16 @@ mod tests {
     }
 
     #[test]
-    fn r_cycles_vocab_and_ctrl_r_hides_popup() {
+    fn r_cycles_vocab_and_ctrl_r_asks_journal() {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
-        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabPopupNext));
-        // minus and # freed; R = vocab journal Q&A; Ctrl+n/p page its
-        // answer.
+        // minus and # freed; Ctrl+r = vocab journal Q&A (was R, now unbound;
+        // VocabPopupNext dropped from Ctrl+r); Ctrl+n/p page its answer.
         assert_eq!(m.get(&KeyCombo::plain("minus")), None);
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
-        assert_eq!(m.get(&KeyCombo::plain("R")), Some(&Action::VocabJournalAsk));
+        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabJournalAsk));
+        assert_eq!(m.get(&KeyCombo::plain("R")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("n")), Some(&Action::VocabJournalPageNext));
         assert_eq!(m.get(&KeyCombo::ctrl("p")), Some(&Action::VocabJournalPagePrev));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), None);
