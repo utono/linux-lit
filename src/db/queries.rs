@@ -3714,8 +3714,12 @@ mod tests {
     #[test]
     fn test_load_work_hamlet() {
         let conn = open_db().unwrap();
-        let work = load_work(&conn, "Ham").unwrap();
-        assert_eq!(work.title, "Hamlet");
+        // Ham-Arkangel, not bare Ham: the timestamps assertion needs an
+        // edition that owns line_timestamps rows, and after the per-edition
+        // split the bare Ham abbrev has none (they live on Ham-Argo,
+        // Ham-Arkangel, Ham-BBCClassic, Ham-Naxos).
+        let work = load_work(&conn, "Ham-Arkangel").unwrap();
+        assert_eq!(work.title, "Hamlet (Arkangel)");
         assert_eq!(work.work_type, "play");
         assert!(work.lines.len() > 4000, "Hamlet should have 4000+ lines");
         // With sub_line ordering, line[0] is now the opening stage direction

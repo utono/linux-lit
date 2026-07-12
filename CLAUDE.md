@@ -65,9 +65,6 @@ cargo test
 cargo clippy
 ```
 
-Pre-existing known failure: `db::queries::tests::test_load_work_hamlet`
-(asserts live lit.db state).
-
 ## Headless Verification (agent self-check)
 
 Agents verify GUI changes WITHOUT touching the live session by running the
