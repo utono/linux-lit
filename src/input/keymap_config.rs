@@ -330,6 +330,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::alt("j"), Action::OpenJournalPicker),
         (KeyCombo::ctrl("Tab"), Action::ToggleLastOverlay),
+        // `\` cycles the segment overlays: journal Q&A → gloss → synopsis
+        // (wraps; advance arms live in the overlay modal handlers).
+        (KeyCombo::plain("backslash"), Action::CycleSegmentOverlays),
         (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]
 }
@@ -495,7 +498,11 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("z")), Some(&Action::OpenConcordanceWordPicker));
         assert_eq!(m.get(&KeyCombo::alt("z")), Some(&Action::OpenConcordanceWorksPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("Z")), Some(&Action::OpenConcordanceListPicker));
-        assert_eq!(m.get(&KeyCombo::plain("backslash")), None);
+        // `\` cycles the segment overlays (journal Q&A → gloss → synopsis).
+        assert_eq!(
+            m.get(&KeyCombo::plain("backslash")),
+            Some(&Action::CycleSegmentOverlays)
+        );
         assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
     }
 

@@ -12,6 +12,7 @@ pub mod echoes;
 pub mod escape;
 pub mod gloss;
 pub mod journal;
+pub mod overlay_cycle;
 pub mod pickers;
 pub mod segment_vim;
 pub mod settings;
@@ -141,6 +142,11 @@ pub enum Action {
     /// open: closes an open gloss/journal overlay, or reopens the last one from
     /// the reader (fresh from the cursor). No-op with a toast if none remembered.
     ToggleLastOverlay,
+    /// Plain `\`: cycle the per-segment overlays — journal Q&A → gloss →
+    /// synopsis → journal (wraps). From the reader it opens the journal stop;
+    /// inside each overlay `\` advances (handled in the overlay modal
+    /// handlers, not this reader action). See input/actions/overlay_cycle.rs.
+    CycleSegmentOverlays,
     /// Open the journal Q&A picker directly from the reading card (Alt+j),
     /// without first opening the journal overlay. Confirming a pick reveals the
     /// overlay on that Q&A; Escape returns to the reader.
@@ -291,6 +297,7 @@ impl Action {
             | Action::ToggleGlossOverlay
             | Action::ToggleJournalOverlay
             | Action::ToggleLastOverlay
+            | Action::CycleSegmentOverlays
             | Action::OpenJournalPicker
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
@@ -437,6 +444,7 @@ impl Action {
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::ToggleJournalOverlay => "ToggleJournalOverlay",
             Action::ToggleLastOverlay => "ToggleLastOverlay",
+            Action::CycleSegmentOverlays => "CycleSegmentOverlays",
             Action::OpenJournalPicker => "OpenJournalPicker",
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",

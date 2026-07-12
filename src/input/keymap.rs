@@ -3319,6 +3319,7 @@ fn dispatch_action(
                 crate::input::actions::gloss::toggle_last_overlay(state)
             }
         }
+        CycleSegmentOverlays => crate::input::actions::overlay_cycle::cycle_from_reader(state),
         OpenJournalPicker => crate::input::actions::journal::open_picker_from_reader(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),
