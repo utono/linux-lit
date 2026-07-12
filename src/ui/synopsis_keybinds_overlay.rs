@@ -38,8 +38,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         (":q / Esc / :q!", "quit (warns if unsaved) · force"),
     ]),
     ("Journal", &[
-        ("r", "new journal Q&A for scene"),
-        ("Ctrl+j", "go to journal for scene"),
         ("Alt+g", "work glosses"),
     ]),
     ("View", &[
@@ -47,7 +45,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+,", "settings"),
         ("Ctrl+↑ / Ctrl+↓", "volume"),
         ("\\", "cycle: → journal Q&A (same segment)"),
-        ("h / Esc / Ctrl+g", "close"),
+        ("Esc", "close"),
         ("Ctrl+Shift+L", "save & quit app"),
         ("Ctrl+/", "close this legend"),
     ]),

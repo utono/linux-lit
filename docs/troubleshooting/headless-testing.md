@@ -555,7 +555,7 @@ grim /tmp/after.png
 
 ### Reaching a specific OVERLAY state via the in-app pickers
 
-For testing an **overlay keybind** (e.g. what Ctrl+g does inside the gloss
+For testing an **overlay keybind** (e.g. what Escape does inside the gloss
 overlay), you don't need to navigate the reader to the exact line — drive the
 pickers to jump straight to the artifact:
 

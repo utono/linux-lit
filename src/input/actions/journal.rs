@@ -29,13 +29,6 @@ fn titlecase_first(s: &str) -> String {
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
 
-/// Toast strings shown when a passage-scoped journal action is invoked off a
-/// passage row (audit #70). Hoisted so the message text stays identical across
-/// every guard site.
-const TOAST_NOT_A_PASSAGE_PAGE: &str = "Not a passage page";
-const TOAST_NO_GLOSS_FOR_PASSAGE: &str = "No gloss for this passage";
-const TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE: &str = "No journal page for this passage";
-
 /// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
 /// markup (as built by `build_source_header`), for the Q&A picker to show
 /// instead of the question. Returns the inner text of the first `<verse>` or
@@ -396,7 +389,7 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // page (Ctrl+n/p, picker); when it still shows the page the overlay
         // opened on from the reader, restore the exact saved reading position —
         // a peek-and-Escape must not re-frame the page the reader left.
-        // Covers Ctrl+Tab, Ctrl+j, and Escape (all route through here).
+        // Covers Escape (routes through here).
         // Take return_pos/entry_page_id regardless so they don't leak into the
         // next open.
         let entry = s.journal.entry_page_id.take();
@@ -423,9 +416,9 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// letting the reader jump to any existing Q&A rather than landing on a blank
 /// band. Assumes reader mode / no conflicting overlay is showing; saves
 /// `return_pos` from the current cursor. Shared by the reader Ctrl+j
-/// (`toggle_overlay`'s open half) and the synopsis/echoes/ translation overlays'
-/// Ctrl+j, which each return to the reader first (so the cursor is on the line
-/// whose scene the journal should open on) and then call this.
+/// (`toggle_overlay`'s open half) and the `\` overlay cycle
+/// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
+/// is on the line whose scene the journal should open on) and then call this.
 pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     let (d1, d2, scene_empty) = {
         let s = state.borrow();
@@ -640,32 +633,11 @@ pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s);
 }
 
-/// The current work's author string IFF the author has at least one corpus
-/// (`scope='author'`) journal page — the destination for the Ctrl+j "nothing for
-/// this passage/scene" fallback. Returns `None` when there is no work, no author
-/// string, or the author corpus is empty (so callers keep their prior behavior
-/// rather than open a blank author band).
-fn author_band_with_pages(s: &AppState) -> Option<String> {
-    let author = s.current_work.as_ref().map(|w| w.author.clone())?;
-    if author.is_empty() {
-        return None;
-    }
-    let pages = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| crate::db::journal::find_author_pages(&conn, &author).ok())
-        .unwrap_or_default();
-    if pages.is_empty() {
-        None
-    } else {
-        Some(author)
-    }
-}
-
 /// Set up the journal overlay for a passage Q&A and open the ask card.
 ///
-/// Called both from `action_journal_qa` (visual selection path) and from the
-/// gloss overlay's `J` key (gloss-context path). The caller has already
-/// exited visual mode / closed any conflicting overlay and set `return_pos`.
+/// Called from the visual-selection path (`src/input/visual.rs`). The caller
+/// has already exited visual mode / closed any conflicting overlay and set
+/// `return_pos`.
 ///
 /// - Sets `journal.pending_passage` with the `<speaker>/<verse>` markup.
 /// - Sets `journal_band` to `Passage { div1, div2, start, end }`.
@@ -694,31 +666,6 @@ pub(crate) fn begin_passage_ask(
     render_current(&mut s);
     s.journal_overlay.open_ask_card(
         "Ask a question about this passage",
-        "Ctrl+Enter submit",
-        &s.theme.cursor_bg,
-        &s.theme.cursor_fg,
-    );
-}
-
-/// Set up the journal overlay for a SCENE (chapter) Q&A and open the ask card.
-///
-/// Called from the synopsis overlay's `A` key: the synopsis always displays one
-/// scene/chapter, so its journal hand-off files the Q&A under that scene's band.
-/// Mirrors `begin_passage_ask` but for a Scene band (no `pending_passage`,
-/// since there is no passage source markup — the Q&A is scoped to the whole
-/// scene/chapter). The caller has already closed the synopsis overlay and set
-/// reader mode. The journal labels the band "scene" or "chapter" per work type.
-pub(crate) fn begin_scene_ask(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64) {
-    let mut s = state.borrow_mut();
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
-    s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
-    s.journal.prompt_mode = JournalPromptMode::Ask;
-    s.journal_band = JournalBand::Scene(div1, div2);
-    s.journal.page_index = 0;
-    s.input_mode = crate::app::InputMode::JournalOverlay;
-    render_current(&mut s);
-    s.journal_overlay.open_ask_card(
-        "Ask a question about this scene",
         "Ctrl+Enter submit",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
@@ -1554,356 +1501,6 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
         .spawn();
     crate::ui::toast::show_transient(&s.chapter_toast, &format!("Copied id {}", id), 2);
     crate::logging::log(&format!("JOURNAL: copied id {}", id));
-}
-
-/// Alt+g in the journal overlay: create a reader-gloss for the current passage
-/// page's source text.
-///
-/// Requires the current page to be a passage page (JournalBand::Passage with a
-/// stored source_text). If the current page is not a passage page, shows a toast
-/// and returns. Otherwise looks up the work lines for the citation range, builds
-/// a GlossContext, and triggers the reader-gloss creation flow (same as
-/// action_reader_gloss from a visual selection: cache-hit shows the gloss
-/// immediately; cache-miss calls Claude and saves).
-pub(crate) fn action_gloss_from_journal_passage(state: &Rc<RefCell<AppState>>) {
-    // Phase 1: check we are on a passage page and gather what we need.
-    let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
-        let s = state.borrow();
-
-        // The current PAGE must be a passage page: it carries source_text plus a
-        // start/end citation. (Read from the row, not the band — a passage page
-        // now lives inside its Scene band alongside scene Q&As.)
-        let (div1, div2, start_cit, end_cit) = match s.journal.pages.get(s.journal.page_index) {
-            Some(p) => match (p.source_text.as_ref(), p.start_citation.clone(), p.end_citation.clone()) {
-                (Some(_), Some(start), Some(end)) => (p.div1, p.div2, start, end),
-                _ => {
-                    crate::ui::toast::show_transient(&s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2);
-                    return;
-                }
-            },
-            None => {
-                crate::ui::toast::show_transient(&s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2);
-                return;
-            }
-        };
-
-        // Look up the actual work lines for the citation range so we can build a
-        // proper GlossContext (with plain-text source_text and line numbers).
-        let work = match s.current_work.as_ref() {
-            Some(w) => w,
-            None => return,
-        };
-
-        let start_triple = crate::app::parse_citation(&start_cit);
-        let end_triple = crate::app::parse_citation(&end_cit);
-
-        // Filter the work lines to those in [start_citation, end_citation].
-        // Match primarily on (div1, div2, line_in_div) tuples; fall back to
-        // the full set of lines in the passage's (div1, div2) if parsing fails.
-        let selected_lines: Vec<crate::db::models::Line> = match (start_triple, end_triple) {
-            (Some((sd1, sd2, s_lid)), Some((ed1, ed2, e_lid))) => {
-                work.lines
-                    .iter()
-                    .filter(|l| {
-                        let t = (l.div1, l.div2, l.line_in_div);
-                        t >= (sd1, sd2, s_lid) && t <= (ed1, ed2, e_lid)
-                    })
-                    .cloned()
-                    .collect()
-            }
-            _ => {
-                // Citation parse failed; collect all lines in (div1, div2).
-                work.lines
-                    .iter()
-                    .filter(|l| l.div1 == div1 && l.div2 == div2)
-                    .cloned()
-                    .collect()
-            }
-        };
-
-        if selected_lines.is_empty() {
-            crate::ui::toast::show_transient(&s.chapter_toast, "Could not locate passage lines", 2);
-            return;
-        }
-
-        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
-            Some(c) => c,
-            None => return,
-        };
-
-        let all_glosses: Vec<crate::db::queries::SavedGloss> = match crate::db::queries::open_db() {
-            Ok(conn) => crate::db::queries::find_glosses_by_start(
-                &conn, &ctx.work_abbrev, &ctx.start_citation,
-                &["teacher-generic", "inner-monologue", "reader-gloss"],
-            ).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-
-        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
-
-        (ctx, s.config.claude_model.clone(), s.tokio_handle.clone(), all_glosses, passage_doc)
-    };
-
-    // Phase 2: transition from journal overlay to gloss overlay.
-    {
-        let mut s = state.borrow_mut();
-        // Close the journal overlay and restore reader mode so the gloss overlay
-        // opens cleanly (gloss overlay saves/restores its own return position).
-        s.journal_overlay.hide();
-        s.input_mode = crate::app::InputMode::Reader;
-        let pos = s.journal.return_pos.take();
-        crate::app::restore_saved_position(&mut s, pos);
-    }
-
-    // Phase 3: cache hit — show existing gloss immediately.
-    let own_idx = all_glosses.iter().position(|g| g.gloss_type == "reader-gloss");
-    if let Some(idx) = own_idx {
-        let mut s = state.borrow_mut();
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
-        s.gloss_original_text = Some(ctx.source_text.clone());
-        let pairs = ctx.source_line_pairs();
-        let gloss_text = &all_glosses[idx].gloss_text;
-        let (card_width, card_height) = crate::app::layout::overlay_card_size(&s);
-        s.gloss_overlay.show_gloss_with_color(
-            &ctx.source_text, gloss_text, card_width, card_height,
-            Some(&s.theme.root_color), &pairs,
-        );
-        s.gloss_overlay.set_position(idx, all_glosses.len());
-        s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
-        s.gloss_list = all_glosses;
-        s.gloss_index = idx;
-        s.gloss_context = Some(ctx);
-        s.record_last_gloss("reader-gloss");
-        s.input_mode = crate::app::InputMode::GlossOverlay;
-        crate::logging::log("GLOSS-FROM-JOURNAL: showing cached reader-gloss");
-        return;
-    }
-
-    // Phase 4: cache miss — show loading card and call Claude.
-    {
-        let mut s = state.borrow_mut();
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
-        s.gloss_original_text = Some(ctx.source_text.clone());
-        let (cw, h) = crate::app::layout::overlay_card_size(&s);
-        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
-        s.input_mode = crate::app::InputMode::GlossOverlay;
-    }
-
-    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
-    let state_for_result = std::rc::Rc::clone(state);
-
-    gtk4::glib::spawn_future_local(async move {
-        let model_for_db = model.clone();
-        let result = tokio_handle
-            .spawn(async move {
-                crate::gloss::call_claude_with_prompt(
-                    &crate::gloss::READER_GLOSS_PROMPT, &user_msg, &model,
-                ).await
-            })
-            .await;
-
-        match result {
-            Ok(Ok(gloss_text)) => {
-                let mut s = state_for_result.borrow_mut();
-                crate::input::actions::gloss::persist_render_install_gloss(
-                    &mut s, ctx, &gloss_text, "reader-gloss", &model_for_db,
-                    "GLOSS-FROM-JOURNAL: generated and saved new reader-gloss",
-                );
-            }
-            Ok(Err(e)) => {
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show(&format!("Error: {}", e), "");
-                crate::logging::log(&format!("GLOSS-FROM-JOURNAL: API error: {}", e));
-            }
-            Err(e) => {
-                let s = state_for_result.borrow();
-                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
-                crate::logging::log(&format!("GLOSS-FROM-JOURNAL: tokio join error: {}", e));
-            }
-        }
-    });
-}
-
-/// View the gloss overlay for the passage cited by the current journal page
-/// (Ctrl+g in the journal overlay). The current page must be a passage page
-/// (JournalBand::Passage with source_text). If so, parses start_citation and
-/// calls find_glosses_by_start; on a hit, closes the journal overlay and opens
-/// the gloss overlay on that passage. Toasts on failure or non-passage page.
-pub(crate) fn view_gloss_from_journal(state: &Rc<RefCell<AppState>>) {
-    // Phase 1: gather what we need while holding the borrow.
-    let (work_abbrev, start_cit) = {
-        let s = state.borrow();
-
-        // Must be on a passage-band page with source_text.
-        let start_cit = match s.journal.pages.get(s.journal.page_index) {
-            Some(p) if p.source_text.is_some() => {
-                match &p.start_citation {
-                    Some(c) => c.clone(),
-                    None => {
-                        crate::ui::toast::show_transient(
-                            &s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2,
-                        );
-                        return;
-                    }
-                }
-            }
-            _ => {
-                crate::ui::toast::show_transient(
-                    &s.chapter_toast, TOAST_NOT_A_PASSAGE_PAGE, 2,
-                );
-                return;
-            }
-        };
-
-        // Glosses are STORED under the canonical base abbrev, so look them up
-        // the same way — every gloss path uses `Work.canonical_abbrev` or a
-        // variant edition misses its own gloss and toasts "No gloss for this
-        // passage" (the recurring lookup-mismatch bug class; see
-        // project_gloss_lookup_normalize_abbrev).
-        let work_abbrev = match s.current_work.as_ref() {
-            Some(w) => w.canonical_abbrev.clone(),
-            None => return,
-        };
-
-        (work_abbrev, start_cit)
-    };
-
-    const TYPES: &[&str] = &["reader-gloss", "teacher-generic", "inner-monologue"];
-
-    // Phase 2: look up the gloss list and the full passage metadata.
-    let (all_glosses, passage) = {
-        let conn = match crate::db::queries::open_db() {
-            Ok(c) => c,
-            Err(_) => {
-                let s = state.borrow();
-                crate::ui::toast::show_transient(
-                    &s.chapter_toast, TOAST_NO_GLOSS_FOR_PASSAGE, 3,
-                );
-                return;
-            }
-        };
-
-        let all_glosses = crate::db::queries::find_glosses_by_start(
-            &conn, &work_abbrev, &start_cit, TYPES,
-        )
-        .unwrap_or_default();
-
-        if all_glosses.is_empty() {
-            let s = state.borrow();
-            crate::ui::toast::show_transient(
-                &s.chapter_toast, TOAST_NO_GLOSS_FOR_PASSAGE, 3,
-            );
-            return;
-        }
-
-        let passage = match crate::db::queries::find_glossed_passage_by_start(
-            &conn, &work_abbrev, &start_cit, TYPES,
-        )
-        .unwrap_or(None)
-        {
-            Some(p) => p,
-            None => {
-                let s = state.borrow();
-                crate::ui::toast::show_transient(
-                    &s.chapter_toast, TOAST_NO_GLOSS_FOR_PASSAGE, 3,
-                );
-                return;
-            }
-        };
-
-        (all_glosses, passage)
-    };
-
-    // Phase 3: close the journal overlay and restore reader position.
-    {
-        let mut s = state.borrow_mut();
-        s.journal_overlay.hide();
-        s.input_mode = crate::app::InputMode::Reader;
-        let pos = s.journal.return_pos.take();
-        crate::app::restore_saved_position(&mut s, pos);
-        // Save gloss return position so Escape in the gloss overlay returns here.
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
-    }
-
-    // Phase 4: open the gloss overlay on the passage.
-    crate::input::actions::gloss::open_gloss_overlay(
-        &mut state.borrow_mut(),
-        vec![passage.clone()],
-        0,
-        passage,
-        all_glosses,
-        false,
-        Some("reader-gloss"),
-    );
-    crate::logging::log("VIEW-GLOSS-FROM-JOURNAL: opened gloss overlay from journal passage page");
-}
-
-/// View the journal passage pages for the gloss currently shown in the gloss
-/// overlay (Ctrl+j in the gloss overlay). Reads gloss_context citations and
-/// calls find_passage_pages; if pages exist, closes the gloss overlay and opens
-/// the journal overlay in the Passage band on the first page. When the passage
-/// has no journal page, falls back to the author corpus band (if the author has
-/// corpus notes); toasts only when neither a passage page nor an author corpus
-/// exists.
-pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
-    // Phase 1: decide the target band. Prefer the glossed passage's own band when
-    // it has journal pages; otherwise fall back to the author corpus band (when it
-    // has content) so Ctrl+j always opens journal content rather than toasting.
-    // Only toast when there is neither a passage page nor an author corpus.
-    let band = {
-        let s = state.borrow();
-        let ctx_citations = s.gloss_context.as_ref().map(|c| {
-            (c.start_citation.clone(), c.end_citation.clone(), c.act, c.scene)
-        });
-        let work_abbrev = current_work_abbrev(&s);
-
-        // Passage band, if this passage has journal pages.
-        let passage_band = ctx_citations.and_then(|(start_cit, end_cit, div1, div2)| {
-            let pages = crate::db::queries::open_db()
-                .ok()
-                .and_then(|conn| {
-                    crate::db::journal::find_passage_pages(&conn, &work_abbrev, &start_cit, &end_cit).ok()
-                })
-                .unwrap_or_default();
-            if pages.is_empty() {
-                None
-            } else {
-                Some(JournalBand::Passage { div1, div2, start: start_cit, end: end_cit })
-            }
-        });
-
-        match passage_band.or_else(|| author_band_with_pages(&s).map(JournalBand::Author)) {
-            Some(b) => b,
-            None => {
-                crate::ui::toast::show_transient(
-                    &s.chapter_toast, TOAST_NO_JOURNAL_PAGE_FOR_PASSAGE, 3,
-                );
-                return;
-            }
-        }
-    };
-
-    // Phase 2: close the gloss overlay and open the journal overlay on `band`.
-    {
-        let mut s = state.borrow_mut();
-        s.tts.stop();
-        s.gloss_overlay.hide();
-        // Restore the saved position so journal return_pos is coherent.
-        let pos = s.gloss_return_pos.take();
-        crate::app::restore_saved_position(&mut s, pos);
-        s.input_mode = crate::app::InputMode::Reader;
-    }
-
-    {
-        let mut s = state.borrow_mut();
-        s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
-        s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
-        s.journal_band = band;
-        s.journal.page_index = 0;
-        s.input_mode = InputMode::JournalOverlay;
-        render_current(&mut s);
-    }
-    crate::logging::log("VIEW-JOURNAL-FROM-GLOSS: opened journal band from gloss overlay");
 }
 
 #[cfg(test)]

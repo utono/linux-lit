@@ -4322,17 +4322,6 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
     }
 }
 
-/// Bare 3-line position restore: set `current_line` and `page_top_line` from
-/// `pos` if `Some`. Used by handoff paths that immediately open another overlay
-/// (no resnap/highlight needed — the incoming overlay open handles layout).
-pub(crate) fn restore_saved_position(s: &mut AppState, pos: Option<(usize, usize, i32)>) {
-    if let Some((line, top, off)) = pos {
-        s.current_line = line;
-        s.page_top_line = top;
-        s.page_top_offset = off;
-    }
-}
-
 /// Position restore + resnap + highlight: restores `current_line`/`page_top_line`
 /// from `pos` then calls `resnap_page` and `update_highlight` to re-tile the
 /// canonical spread. Used by the "final close" paths that return the user to the

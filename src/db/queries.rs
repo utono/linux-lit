@@ -2232,44 +2232,6 @@ pub fn find_glossed_passages(
     rows.collect()
 }
 
-/// Return the single passage (and its metadata) whose start_citation matches,
-/// for any of the given gloss types. Used by the journal→gloss view toggle to
-/// look up the GlossedPassage for a journal page's start_citation.
-pub fn find_glossed_passage_by_start(
-    conn: &Connection,
-    work_abbrev: &str,
-    start_citation: &str,
-    gloss_types: &[&str],
-) -> Result<Option<GlossedPassage>, rusqlite::Error> {
-    if gloss_types.is_empty() {
-        return Ok(None);
-    }
-    let placeholders: Vec<String> = (0..gloss_types.len())
-        .map(|i| format!("?{}", i + 3))
-        .collect();
-    let sql = format!(
-        "SELECT DISTINCT p.id, p.work_abbrev, p.start_citation, p.end_citation, \
-                p.div1, p.div2, p.character, p.source_text \
-         FROM passages p \
-         JOIN glosses g ON g.passage_id = p.id \
-         WHERE p.work_abbrev = ?1 AND p.start_citation = ?2 \
-           AND g.gloss_type IN ({}) \
-         LIMIT 1",
-        placeholders.join(", "),
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    params.push(Box::new(work_abbrev.to_string()));
-    params.push(Box::new(start_citation.to_string()));
-    for gt in gloss_types {
-        params.push(Box::new(gt.to_string()));
-    }
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|p| p.as_ref()).collect();
-    let mut rows = stmt.query_map(param_refs.as_slice(), row_to_glossed_passage)?;
-    rows.next().transpose()
-}
-
 pub fn save_gloss(
     conn: &Connection,
     hash: &str,
