@@ -2878,6 +2878,13 @@ pub fn display_work_at_with_prepared(
     // Task 9: a scheduled prose page crossing is tied to the OLD work's grid and
     // media; drop it so it can't fire against the freshly loaded work.
     state.pending_prose_cross = None;
+    // The sub-line pixel offset belongs to the OLD work's prose row-fill grid.
+    // Every position derived below sets page_top_line only, so a stale nonzero
+    // offset makes the resize-tick snap scroll the (left) view `offset` px past
+    // the new work's page top — a half-cut first line, and in two-column mode a
+    // left column that duplicates the right column's opening lines. The prose
+    // resnap re-derives the offset for a prose target from its own table.
+    state.page_top_offset = 0;
     // A vocab-sentence loop never survives a work switch (its buffer lines,
     // media id, and ab-loop all belong to the old work).
     crate::input::vocab_loop::exit_vocab_loop(state);
