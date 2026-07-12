@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use super::{AppState, InputMode, SidebarMode};
 use crate::app::layout::overlay_card_size;
-use crate::app::vocab_popup::{open_vocab_popup, close_vocab_popup, update_vocab_popup_margin};
+use crate::app::vocab_popup::{open_vocab_popup, close_vocab_popup, position_vocab_popup};
 use crate::logging::log;
 
 /// Scene-key sentinel for the whole-work synopsis (not a real (div1,div2)
@@ -342,7 +342,7 @@ pub fn show_synopsis(state: &mut AppState) {
         let scene_label = synopsis_label(state, div1, div2);
         state.vocab_popup.popup.update_synopsis(&scene_label, synopsis);
         state.vocab_popup.popup.show();
-        update_vocab_popup_margin(state);
+        position_vocab_popup(state);
         state.sidebar_mode = SidebarMode::Synopsis;
         state.synopsis_visible = true;
     }

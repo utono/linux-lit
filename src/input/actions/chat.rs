@@ -111,8 +111,9 @@ pub(crate) fn line_in_right_column(line: usize, split: Option<usize>, end: usize
 
 /// Which column holds the cursor on the CURRENT spread. Table mode reads the
 /// stored spread (authoritative); live mode falls back to column_split. Both
-/// are (div1,div2)-derived boundaries — never text inference.
-fn cursor_in_right_column(s: &AppState) -> bool {
+/// are (div1,div2)-derived boundaries — never text inference. Shared with the
+/// vocab popup's float placement (`app::vocab_popup::position_vocab_popup`).
+pub(crate) fn cursor_in_right_column(s: &AppState) -> bool {
     let line = s.current_line;
     if let Some(table) = crate::input::page_table::active_page_table(s) {
         if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top_line) {
