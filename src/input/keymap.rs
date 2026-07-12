@@ -1470,6 +1470,12 @@ fn handle_journal_key(
             crate::input::actions::journal::copy_current_id(state);
             true
         }
+        // `\`: advance the segment-overlay cycle → gloss for the lap's entry
+        // segment (Ctrl+\ = work-wide picker, handled above; Alt+\ excluded).
+        "backslash" if !is_ctrl && !is_alt => {
+            crate::input::actions::overlay_cycle::cycle_from_journal(state);
+            true
+        }
         "Escape" => {
             crate::input::actions::journal::close_overlay(state);
             true
@@ -1744,6 +1750,13 @@ fn handle_gloss_key(
         // input is focused, so this only fires in normal overlay navigation.
         "space" | "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::gloss::read_current_block(state);
+            true
+        }
+        // `\`: advance the segment-overlay cycle → synopsis for the lap's
+        // entry segment (restores the pre-open page, unlike Escape's
+        // jump-to-source close).
+        "backslash" if !is_ctrl && !is_alt => {
+            crate::input::actions::overlay_cycle::cycle_from_gloss(state);
             true
         }
         // Escape/n close the overlay by jumping the cursor to the glossed
@@ -2077,6 +2090,12 @@ fn handle_synopsis_overlay_key(
             let mut s = state.borrow_mut();
             s.gloss_overlay.hide();
             crate::app::return_to_reader_mode(&mut s);
+            true
+        }
+        // `\`: advance the segment-overlay cycle → wrap to the journal Q&A
+        // stop for the lap's entry segment.
+        "backslash" if !is_ctrl && !is_alt => {
+            crate::input::actions::overlay_cycle::cycle_from_synopsis(state);
             true
         }
         // `a`: always (re)start the cursor paragraph's TTS from the start,

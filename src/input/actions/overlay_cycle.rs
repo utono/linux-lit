@@ -18,3 +18,50 @@ use crate::app::AppState;
 pub(crate) fn cycle_from_reader(state: &Rc<RefCell<AppState>>) {
     crate::input::actions::journal::open_journal_scene(state);
 }
+
+/// Journal-overlay `\`: close restoring the anchor, then open the gloss stop
+/// for the anchor line.
+pub(crate) fn cycle_from_journal(state: &Rc<RefCell<AppState>>) {
+    {
+        let mut s = state.borrow_mut();
+        s.journal_overlay.hide();
+        // Recolor BEFORE restore's update_highlight, matching
+        // journal::toggle_overlay's close half.
+        crate::app::return_to_reader_mode(&mut s);
+        // Take entry_page_id/return_pos so they don't leak into the next
+        // open, but ALWAYS restore the saved position — never
+        // jump_to_journal_source_start — so the lap stays on its entry
+        // segment even after Ctrl+n/p traversal.
+        s.journal.entry_page_id.take();
+        let pos = s.journal.return_pos.take();
+        crate::app::restore_saved_position_resnap(&mut s, pos);
+    }
+    crate::input::actions::gloss::open_gloss_at_cursor(state);
+}
+
+/// Gloss-overlay `\`: close restoring the anchor, then open the synopsis stop.
+pub(crate) fn cycle_from_gloss(state: &Rc<RefCell<AppState>>) {
+    {
+        let mut s = state.borrow_mut();
+        s.tts.stop();
+        s.gloss_overlay.hide();
+        s.gloss_opened_from_picker = false;
+        crate::app::return_to_reader_mode(&mut s);
+        // Restore, never jump_to_gloss_source_start — see module doc.
+        let pos = s.gloss_return_pos.take();
+        crate::app::restore_saved_position_resnap(&mut s, pos);
+    }
+    crate::app::scene_synopsis::show_synopsis_overlay(state);
+}
+
+/// Synopsis-overlay `\`: wrap back to the journal Q&A stop. The synopsis
+/// never moves the reader cursor, so its close (hide + return to reader,
+/// mirroring its `h`/Escape arms) already leaves the anchor current.
+pub(crate) fn cycle_from_synopsis(state: &Rc<RefCell<AppState>>) {
+    {
+        let mut s = state.borrow_mut();
+        s.gloss_overlay.hide();
+        crate::app::return_to_reader_mode(&mut s);
+    }
+    crate::input::actions::journal::open_journal_scene(state);
+}
