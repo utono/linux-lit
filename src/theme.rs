@@ -22,15 +22,42 @@ const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
 const READER_GLOSS_ROOT_MIN_CONTRAST: f64 = 1.8;
 
 /// Minimum luminance contrast of the tint against the BODY INK (text_fg)
-/// on LIGHT themes. There the ink is near-black, where hue is imperceptible
-/// — a hue escape would let a "distinct" tint render as just more body text
-/// (the failure mode: the root floor pushed the tint deep enough to sit
-/// next to the ink). Only a luminance gap separates a tint from near-black
-/// ink. Dark themes keep the hue-OR-contrast rule instead: their ink is a
-/// mid-light cream and their accents live in the mid range where hue still
-/// reads, and a hard luminance floor there squeezes every tint to an
-/// undifferentiable near-white (everforest-dark-soft).
+/// on LIGHT themes. There the ink is usually near-black, where hue is
+/// imperceptible — a hue escape would let a "distinct" tint render as just
+/// more body text (the failure mode: the root floor pushed the tint deep
+/// enough to sit next to the ink). Only a luminance gap separates a tint
+/// from near-black ink. Dark themes keep the hue-OR-contrast rule instead:
+/// their ink is a mid-light cream and their accents live in the mid range
+/// where hue still reads, and a hard luminance floor there squeezes every
+/// tint to an undifferentiable near-white (everforest-dark-soft).
+///
+/// When the light theme's ink is instead a HUE-PERCEPTIBLE color (a
+/// mid-luminance saturated ink — zenbones/zenwritten teal #286486,
+/// tokyonight-day blue, papercolor-light blue), this floor alone is not
+/// enough: a same-hue tint that clears it on the dark side just reads as
+/// bolder body text (a #1b4150 vocab word next to #286486 dialogue). For
+/// those inks the tint must ALSO sit ≥ 40° away in hue — which is exactly
+/// what makes the derived wine/maroon pop against teal ink while the
+/// luminance floor still guarantees it is not the ink's own weight.
 const READER_GLOSS_INK_MIN_CONTRAST: f64 = 1.5;
+
+/// Thresholds above which an ink's HUE reads on screen (vs a near-black or
+/// muted ink where only luminance registers). Tuned on the theme corpus:
+/// zenbones/zenwritten #286486 (lum .11, sat .54), tokyonight-day #3760bf
+/// and papercolor-light #005f87 qualify; near-black inks (modus, github),
+/// muted browns (gruvbox-material #654735, sat .31) and dark plums (dayfox,
+/// lum .035) stay on the pure-luminance rule.
+const INK_HUE_PERCEPTIBLE_MIN_LUM: f64 = 0.05;
+const INK_HUE_PERCEPTIBLE_MIN_SAT: f64 = 0.40;
+
+/// True when `hex` is bright and saturated enough that its hue is readable
+/// as a COLOR (see INK_HUE_PERCEPTIBLE_*). Used to pick the ink-distinctness
+/// rule for tints on light reading surfaces.
+fn hue_perceptible(hex: &str) -> bool {
+    let (r, g, b) = hex_to_rgb(hex);
+    let (_, s, _) = rgb_to_hsl(r, g, b);
+    relative_luminance(hex) >= INK_HUE_PERCEPTIBLE_MIN_LUM && s >= INK_HUE_PERCEPTIBLE_MIN_SAT
+}
 
 /// Number of root-color variants every theme has (index 0 = designed root).
 /// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
@@ -676,12 +703,16 @@ fn ensure_gloss_color_min(
                 hue_distance(c, r) >= 40.0
                     || contrast_ratio(c, r) >= READER_GLOSS_ROOT_MIN_CONTRAST
             })
-            // Ink: on a light bg the ink is near-black (hue-blind), so only
-            // a luminance gap counts; on a dark bg the ink is mid-light and
-            // hue still reads (see READER_GLOSS_INK_MIN_CONTRAST).
+            // Ink: on a light bg the ink is usually near-black (hue-blind),
+            // so a luminance gap is required; when the ink is itself a
+            // hue-perceptible color (zenbones teal), a same-hue darker tint
+            // still reads as bold body text, so a 40° hue gap is required
+            // too. On a dark bg the ink is mid-light and hue still reads
+            // (see READER_GLOSS_INK_MIN_CONTRAST).
             && ink_hex.map_or(true, |i| {
                 if bg_is_light {
                     contrast_ratio(c, i) >= READER_GLOSS_INK_MIN_CONTRAST
+                        && (!hue_perceptible(i) || hue_distance(c, i) >= 40.0)
                 } else {
                     hue_distance(c, i) >= 40.0 || contrast_ratio(c, i) >= 1.4
                 }
@@ -1395,6 +1426,45 @@ mod tests {
         assert_eq!(roots[3], darken_color("#08526b", 0.7));
     }
 
+    // zenbones-light shape: the ink (#286486) is a mid-luminance saturated
+    // teal — hue-perceptible — and every root variant shares its hue. The
+    // pure-luminance ink floor let variants 1-4 ship a same-hue darker teal
+    // vocab tint that read as bold body text; with the hue requirement all
+    // five variants must rotate to a clearly different hue (the wine/maroon
+    // family the designed root already derived to).
+    const COLORFUL_INK_JSON: &str = r##"{ "meta": {"display": "Z", "type": "light"},
+        "dwl": {"rootcolor": "#08526b", "focuscolor": "#944927",
+                "rootcolor_candidates": ["#41819b", "#286983", "#08526b"]},
+        "kitty": {"background": "#f0edec", "active_tab_foreground": "#286486"} }"##;
+
+    #[test]
+    fn colorful_ink_vocab_tint_is_hue_distinct_on_every_variant() {
+        let json: serde_json::Value = serde_json::from_str(COLORFUL_INK_JSON).unwrap();
+        assert!(hue_perceptible("#286486"), "fixture ink must be hue-perceptible");
+        for variant in 0..ROOT_VARIANT_COUNT {
+            let v = resolve_theme_variant("z", &json, variant);
+            assert!(
+                hue_distance(&v.vocab_fg, &v.text_fg) >= 40.0,
+                "variant {variant}: vocab {} shares the teal ink hue ({})",
+                v.vocab_fg, v.text_fg
+            );
+            assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= VOCAB_WORD_MIN_CONTRAST);
+            assert!(
+                contrast_ratio(&v.vocab_fg, &v.text_fg) >= READER_GLOSS_INK_MIN_CONTRAST,
+                "variant {variant}: vocab {} sits at the ink's own weight", v.vocab_fg
+            );
+        }
+    }
+
+    #[test]
+    fn muted_ink_keeps_luminance_only_rule() {
+        // CANDIDATES_JSON's sepia ink (#5d4232, sat ~.30) must stay below the
+        // hue-perceptible gate so the corpus of muted/near-black light themes
+        // keeps its shipped tints.
+        assert!(!hue_perceptible("#5d4232"));
+        assert!(!hue_perceptible("#000000"));
+    }
+
     #[test]
     fn card_surface_never_varies() {
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
@@ -1430,6 +1500,8 @@ mod tests {
             let cvi = contrast_ratio(&v.vocab_fg, &v.text_fg);
             let ink_ok = if v.is_light {
                 cvi >= READER_GLOSS_INK_MIN_CONTRAST
+                    && (!hue_perceptible(&v.text_fg)
+                        || hue_distance(&v.vocab_fg, &v.text_fg) >= 40.0)
             } else {
                 hue_distance(&v.vocab_fg, &v.text_fg) >= 40.0 || cvi >= 1.4
             };

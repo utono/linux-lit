@@ -566,6 +566,52 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
     );
     let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
     crate::logging::log(&format!("THEME: root variant {next} — copied \"{}\"", copied.replace('\n', " / ")));
+    // Also capture the screen showing the new variant (same grim flow as
+    // dwl's Super+| screenshot.sh: ~/Screenshots/screenshot-<ts>.png) and
+    // re-copy the payload with the PNG's full path appended, so a pairing
+    // the user likes pastes as colors AND screenshot in one go. Runs off
+    // the main thread after a short sleep so the new root has painted
+    // before grim captures it; if grim fails the clipboard keeps the
+    // colors-only payload above.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let ts = std::process::Command::new("date")
+            .arg("+%Y-%m-%d_%H-%M-%S")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        if ts.is_empty() || home.is_empty() {
+            crate::logging::log("THEME: screenshot skipped — no timestamp/HOME");
+            return;
+        }
+        let dir = format!("{home}/Screenshots");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = format!("{dir}/screenshot-{ts}.png");
+        let ok = std::process::Command::new("grim")
+            .arg(&file)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if ok {
+            let _ = std::process::Command::new("wl-copy")
+                .arg(format!("{copied}\n{file}"))
+                .status();
+            crate::logging::log(&format!("THEME: screenshot {file} — copied colors + path"));
+            // Keep the 20 newest screenshot-*.png — the same prune policy as
+            // dwl's screenshot.sh, so both producers honor one cap. `rm -f`
+            // (not the script's `rm --`) because overlapping Ctrl+t presses
+            // run this concurrently and may race to delete the same file.
+            let _ = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("ls -1t \"$HOME\"/Screenshots/screenshot-[0-9]*.png 2>/dev/null \
+                      | tail -n +21 | xargs -r rm -f --")
+                .status();
+        } else {
+            crate::logging::log("THEME: grim failed — clipboard keeps colors only");
+        }
+    });
 }
 
 #[cfg(test)]
