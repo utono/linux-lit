@@ -1070,7 +1070,15 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .chat-panel-float .chat-error {{ color: alpha({fg}, 0.55); }} \
          .chat-panel-float .chat-saved {{ color: {dim}; }} \
          .chat-input {{ background-color: {bg}; \
-           border: 1px solid alpha({fg}, 0.30); border-radius: 6px; }} \
+           border: 1px solid alpha({fg}, 0.30); border-radius: 6px; \
+           transition: border-color 320ms ease-out, \
+                       background-color 320ms ease-out, \
+                       box-shadow 320ms ease-out; }} \
+         .chat-input.chat-flash-active {{ \
+           border: 2px solid {cursor_bg}; \
+           background-color: alpha({cursor_bg}, 0.12); \
+           box-shadow: 0 0 0 2px alpha({cursor_bg}, 0.30); \
+           transition: none; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
            padding: 16px; border-radius: 8px; }} \
          .legend-box {{ background-color: {bg}; color: {fg}; \

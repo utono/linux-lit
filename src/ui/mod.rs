@@ -120,12 +120,12 @@ pub(crate) fn flash_widget(widget: &gtk4::Widget) {
     use gtk4::prelude::*;
     use libadwaita as adw;
     use libadwaita::prelude::AnimationExt;
-    widget.set_opacity(0.78);
+    widget.set_opacity(0.60);
     let w_anim = widget.clone();
     let target = adw::CallbackAnimationTarget::new(move |value| {
         w_anim.set_opacity(value);
     });
-    let anim = adw::TimedAnimation::new(widget, 0.78, 1.0, 340, target);
+    let anim = adw::TimedAnimation::new(widget, 0.60, 1.0, 340, target);
     anim.set_easing(adw::Easing::EaseOutQuad);
     anim.play();
 }

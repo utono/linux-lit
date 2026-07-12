@@ -14,7 +14,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     ("TTS", &[
-        ("Space / Tab", "play / stop cursor block TTS"),
+        ("Space", "play / stop cursor block TTS"),
         ("a", "restart cursor block TTS"),
         ("Shift+Space", "synthesize all paragraphs"),
     ]),

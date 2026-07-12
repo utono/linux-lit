@@ -53,6 +53,10 @@ impl ChatPanel {
         // how journal_overlay hands its page view as return_focus.
         let input = crate::ui::ask_card::AskCard::new(0, &transcript_scroll);
         input.container().add_css_class("chat-input");
+        // Give the ask-input a taller default field than the shared 160px
+        // AskCard floor — the chat panel has vertical room and a cramped input
+        // is awkward to type multi-line questions into.
+        input.set_input_height(420);
 
         container.append(&header_scene);
         container.append(&rule);
@@ -91,9 +95,18 @@ impl ChatPanel {
         self.container.set_height_request(-1);
     }
 
-    /// Flash the input box as the "now active" Tab-cycle cue.
+    /// Flash the input box as the "now active" Tab-cycle cue. The shared
+    /// opacity dip alone is easy to miss on the input card, so also paint a
+    /// brief cursor-colored border/glow wash that CSS fades out (mirroring
+    /// `flash_transcript`).
     pub fn flash_input(&self) {
-        crate::ui::flash_widget(self.input.container().upcast_ref());
+        let card = self.input.container();
+        crate::ui::flash_widget(card.upcast_ref());
+        card.add_css_class("chat-flash-active");
+        let card = card.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(240), move || {
+            card.remove_css_class("chat-flash-active");
+        });
     }
 
     /// Flash the transcript area as the "now active" Tab-cycle cue. The

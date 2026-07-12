@@ -9,14 +9,14 @@ pub struct EchoKeybindsOverlay {
 
 /// (key, action) rows shown in the legend. Matches handle_echoes_overlay_key.
 const BINDS: &[(&str, &str)] = &[
-    ("a", "play echo"),
+    ("a", "play source turn (AB-loop)"),
+    ("Space", "play selected echo"),
     ("A", "add echo"),
     ("n / p", "next / prev echo"),
     ("↑ / ↓", "reorder (curate)"),
     ("g g / G", "first / last echo"),
     ("j / k", "scroll list"),
     (";", "show chapter"),
-    ("Tab", "play source turn"),
     ("Enter", "open echo's work"),
     ("c", "copy echo"),
     ("s", "toggle curate"),

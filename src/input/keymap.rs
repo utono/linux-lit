@@ -1330,6 +1330,14 @@ fn handle_journal_key(
             // the only overlay-to-overlay navigation). Consumed so it can't
             // start a gg chord below.
             "g" => return true,
+            // Ctrl+s: always (re)start the cursor paragraph's TTS from the
+            // beginning (cache hit plays the stored MP3, miss synthesizes via
+            // ElevenLabs). Moved off plain `s` so synthesis requires the Ctrl
+            // modifier.
+            "s" => {
+                crate::input::actions::gloss::begin_current_journal_block(state);
+                return true;
+            }
             // Ctrl+/ opens the JOURNAL-specific keybind legend (its full keybind
             // set), returning to the journal overlay on close.
             "slash" => {
@@ -1445,9 +1453,10 @@ fn handle_journal_key(
             }
             true
         }
-        // Space/Tab: play/stop the cursor paragraph's TTS (cache hit plays the
-        // stored MP3, miss synthesizes via ElevenLabs). ISO_Left_Tab is Shift+Tab.
-        "space" | "Tab" | "ISO_Left_Tab" => {
+        // Space: play/stop the cursor paragraph's TTS (cache hit plays the
+        // stored MP3, miss synthesizes via ElevenLabs). Tab/ISO_Left_Tab no
+        // longer synthesize — dropped by request.
+        "space" => {
             crate::input::actions::gloss::read_current_journal_block(state);
             true
         }
@@ -1457,12 +1466,9 @@ fn handle_journal_key(
             crate::input::actions::gloss::toggle_pause_current_journal_block(state);
             true
         }
-        // `s`: always (re)start the cursor paragraph's TTS from the beginning
-        // (no pause-toggle), mirroring the gloss/synopsis `a`.
-        "s" => {
-            crate::input::actions::gloss::begin_current_journal_block(state);
-            true
-        }
+        // `s`: dropped — TTS (re)start moved to Ctrl+s (handled in the is_ctrl
+        // block above) so plain `s` no longer synthesizes. Consumed no-op.
+        "s" => true,
         "c" => {
             crate::input::actions::journal::copy_current_id(state);
             true
@@ -1727,10 +1733,10 @@ fn handle_gloss_key(
             }
             true
         }
-        // Tab mirrors Space: read the cursor block aloud (ISO_Left_Tab is
-        // Shift+Tab). The ask-card Tab guard above takes precedence when the
-        // input is focused, so this only fires in normal overlay navigation.
-        "space" | "Tab" | "ISO_Left_Tab" => {
+        // Space reads the cursor block aloud (cache hit plays, miss
+        // synthesizes). Tab/ISO_Left_Tab no longer synthesize — dropped by
+        // request. The Ctrl+Tab guard above already consumes the chord.
+        "space" => {
             crate::input::actions::gloss::read_current_block(state);
             true
         }
@@ -1834,20 +1840,18 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         // the new page so the highlight + MPV sync follow.
         "x" => { overlay_page_turn(state, true); true }
         "y" => { overlay_page_turn(state, false); true }
-        // Playback (same as the main card): Tab plays from the current line, a
-        // toggles play/pause (pure pause/resume, no seek). Neither moves the
-        // cursor, so no re-highlight. Space mirrors Tab (play from current line).
-        "Tab" | "ISO_Left_Tab" | "space" => {
+        // Playback (same as the main card): `a` and Space play from the current
+        // line (no cursor move, so no re-highlight). Tab is dropped by request —
+        // `a` now owns MPV media playback.
+        "a" | "space" => {
             let mut s = state.borrow_mut();
             if !crate::input::timestamps::play_current_line(&mut s) {
                 show_no_timestamp_toast(&s);
             }
             true
         }
-        "a" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-            true
-        }
+        // Tab/ISO_Left_Tab: dropped — consumed no-op so they don't leak.
+        "Tab" | "ISO_Left_Tab" => true,
         // Toggle playback sync (same as the main card): identical state +
         // toast. When enabled, MPV events drive the overlay highlight too.
         "s" => {
@@ -2106,8 +2110,9 @@ fn handle_synopsis_overlay_key(
         }
         // Plain Space: play/stop the cursor paragraph's TTS (Shift+Space, the
         // batch-synth, is handled by the guard above before this match).
-        // Tab mirrors Space (ISO_Left_Tab is Shift+Tab).
-        "space" | "Tab" | "ISO_Left_Tab" => {
+        // Tab/ISO_Left_Tab no longer synthesize — dropped by request (the
+        // Tab consumed-no-op guard near the top already swallows them).
+        "space" => {
             crate::input::actions::gloss::read_current_synopsis_block(state);
             true
         }
@@ -2526,8 +2531,8 @@ fn handle_echoes_overlay_key(
             // only overlay-to-overlay navigation). Consumed no-op.
             "j" => return true,
             // Ctrl+Tab: dropped inside overlays (reader-side Ctrl+Tab still
-            // reopens the last overlay). Consumed so it can't fall through
-            // to the plain Tab play arm.
+            // reopens the last overlay). Consumed no-op (plain Tab is also a
+            // dropped no-op now).
             "Tab" | "ISO_Left_Tab" => return true,
             "Up" => {
                 let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
@@ -2563,11 +2568,16 @@ fn handle_echoes_overlay_key(
             crate::input::actions::echoes::copy_selected_echo(state);
             true
         }
-        "Tab" => {
+        // `a`: AB-loop the SOURCE turn's recorded media (moved off Tab, which
+        // is dropped by request).
+        "a" => {
             crate::input::actions::echoes::play_source_turn(state);
             true
         }
-        "a" | "space" => {
+        // Tab/ISO_Left_Tab: dropped — consumed no-op so they don't leak.
+        "Tab" | "ISO_Left_Tab" => true,
+        // Space: play the SELECTED echo's recorded media.
+        "space" => {
             crate::input::actions::echoes::play_selected_echo(state, tokio_handle);
             true
         }
