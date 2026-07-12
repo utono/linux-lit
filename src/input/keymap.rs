@@ -1381,6 +1381,28 @@ fn handle_journal_key(
         }
     }
 
+    // While a term filter is active the overlay shows a read-only cross-work
+    // entry via show_page; s.journal.pages/page_index still point at the origin
+    // band, so the mutating and block-nav arms below would act on the WRONG
+    // (origin) entry — risking edits/deletes on the wrong lit.db row. Swallow
+    // them with a hint. `f` (re-search), `Escape` (clears the filter), and the
+    // Ctrl+n/p stepping (handled in the is_ctrl block above via nav_page's
+    // filter branch) stay live; `s` is a consumed no-op below.
+    if state.borrow().journal.filter.is_some()
+        && matches!(
+            key_name,
+            "r" | "R" | "e" | "u" | "D" | "c" | "V" | "g" | "G"
+                | "j" | "q" | "k" | "comma" | "x" | "y" | "space" | "a" | "backslash"
+        )
+    {
+        crate::ui::toast::show_transient(
+            &state.borrow().chapter_toast,
+            "Clear the term filter (Esc) to edit or navigate entries",
+            3,
+        );
+        return true;
+    }
+
     match key_name {
         // `r` opens the ask card to create a new Q&A in the current band,
         // matching the gloss + synopsis overlays where `r` opens a journal Q&A.

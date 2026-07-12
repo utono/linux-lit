@@ -518,6 +518,12 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         if !jumped {
             crate::app::restore_saved_position_resnap(&mut s, pos);
         }
+        // Reset any active term filter so it never leaks into the next overlay
+        // session: on the two-stage Esc the filter is already None here, but a
+        // close that skips the first Esc (or a future close route) could leave
+        // it Some, which would make the next open's first Ctrl+n/p walk the
+        // stale match list and the first Esc "clear" a filter never set.
+        s.journal.filter = None;
         return;
     }
 
@@ -562,6 +568,11 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     }
 
     let mut s = state.borrow_mut();
+    // Defensive: never inherit a term filter from a prior session. toggle_overlay's
+    // close branch already clears it, but the `\` overlay cycle (cycle_from_journal)
+    // is a close route that bypasses toggle_overlay — resetting at every open covers
+    // it regardless of how the previous session ended.
+    s.journal.filter = None;
     s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     s.journal_band = JournalBand::Scene(d1, d2);
     s.journal.page_index = 0;
