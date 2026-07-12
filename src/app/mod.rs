@@ -1549,7 +1549,6 @@ pub fn build_window(
     chapter_toast.set_margin_bottom(32);
     chapter_toast.add_css_class("chapter-toast");
     chapter_toast.set_visible(false);
-    authorship_picker.overlay.add_overlay(&chapter_toast);
 
     let speed_toast = gtk4::Label::new(None);
     speed_toast.set_valign(gtk4::Align::End);
@@ -1558,7 +1557,6 @@ pub fn build_window(
     speed_toast.set_margin_start(24);
     speed_toast.add_css_class("chapter-toast");
     speed_toast.set_visible(false);
-    authorship_picker.overlay.add_overlay(&speed_toast);
 
     // Search boundary toast: centered horizontally, sitting in the thin strip
     // BELOW the card (the card has a 24px bottom margin, so a small-font label
@@ -1570,7 +1568,6 @@ pub fn build_window(
     search_toast.set_margin_bottom(5);
     search_toast.add_css_class("search-toast");
     search_toast.set_visible(false);
-    authorship_picker.overlay.add_overlay(&search_toast);
 
     // Concordance status bar
     let concordance_bar = crate::ui::concordance_bar::ConcordanceBar::new();
@@ -1625,6 +1622,14 @@ pub fn build_window(
     outer_overlay.add_overlay(&concordance_bar.container);
     outer_overlay.add_overlay(&title_bar);
     outer_overlay.add_overlay(&chat_panel.container);
+    // Transient toasts sit on the OUTER overlay, added AFTER the chat panel, so
+    // they render on top of the floating chat panel rather than behind it (the
+    // chat panel is left-aligned + center-valigned and would otherwise obscure
+    // the bottom-left speed_toast and clip the bottom-center chapter/search
+    // toasts). Pinning (valign/halign/margins) is set at their creation above.
+    outer_overlay.add_overlay(&chapter_toast);
+    outer_overlay.add_overlay(&speed_toast);
+    outer_overlay.add_overlay(&search_toast);
 
     // Suppress startup flicker: hide content until the deferred layout
     // refresh fires (after dwl has tiled the window AND display_work

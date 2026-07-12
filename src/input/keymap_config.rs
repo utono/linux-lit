@@ -229,18 +229,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // 2/3 shifted. Scene jumps sit on BOTH glyphs of each key: `[`/Shift+`[`
         // jump to the current scene's first line (thereafter the previous
         // scene); `{`/Shift+`{` jump to the next scene's first line.
-        // RPD: `(`/`4` share the AE04 key (unshifted symbol, shifted digit) and
-        // `&`/`5` share AE05. The unshifted symbol steps BOOKMARKS; the shifted
-        // digit takes the chapter jump the symbol used to have.
-        (KeyCombo::plain("parenleft"), Action::PrevBookmark),
-        (KeyCombo::plain("ampersand"), Action::NextBookmark),
-        (KeyCombo::plain("4"), Action::JumpToPrevChapter),
-        (KeyCombo::shift("4"), Action::JumpToPrevChapter),
-        (KeyCombo::plain("5"), Action::JumpToNextChapter),
-        (KeyCombo::shift("5"), Action::JumpToNextChapter),
-        // `}` (braceright on RPD) duplicates `4` — jump to the previous chapter.
+        // Chapter jumps live solely on `}`/`]` (braceright/bracketright on RPD).
+        // The former number-row duplicates (`4`/`5`, `2`/`3`, shifted forms) and
+        // the AE04/AE05 symbol binds (`(`/`&`) were dropped as redundant; bookmarks
+        // moved fully to the `;`/`'` home-region pair below.
         (KeyCombo::plain("braceright"), Action::JumpToPrevChapter),
-        // `]` (bracketright on RPD) duplicates `5` — jump to the next chapter.
         (KeyCombo::plain("bracketright"), Action::JumpToNextChapter),
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
@@ -251,9 +244,8 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // instead.
         (KeyCombo::shift("colon"), Action::TogglePlaybackSpeed),
         (KeyCombo::shift("semicolon"), Action::TogglePlaybackSpeed),
-        // Bookmarks (`(`/`&` on the AE04/AE05 keys; `;`/`'` are home-region
-        // aliases — `;` displaced ShowCurrentChapter, which keeps `C` and
-        // gains Shift+`;`)
+        // Bookmarks live on the `;`/`'` home-region pair (`;` displaced
+        // ShowCurrentChapter, which keeps `C` and gains Shift+`;`).
         (KeyCombo::plain("semicolon"), Action::PrevBookmark),
         (KeyCombo::plain("apostrophe"), Action::NextBookmark),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
@@ -262,12 +254,6 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("period"), Action::BookmarkTap),
         (KeyCombo::ctrl("c"), Action::SetChapter),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
-        // `2` duplicates `}` (braceright) / `4` — jump to the previous chapter.
-        (KeyCombo::plain("2"), Action::JumpToPrevChapter),
-        (KeyCombo::shift("2"), Action::JumpToPrevChapter),
-        // `3` duplicates `]` (bracketright) / `5` — jump to the next chapter.
-        (KeyCombo::plain("3"), Action::JumpToNextChapter),
-        (KeyCombo::shift("3"), Action::JumpToNextChapter),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
 }
@@ -563,8 +549,19 @@ mod tests {
             km.lookup("bracketleft", false, false, false),
             Some(Action::JumpToPrevScene),
         );
-        assert_eq!(km.lookup("2", false, true, false), Some(Action::JumpToPrevChapter));
-        assert_eq!(km.lookup("3", false, true, false), Some(Action::JumpToNextChapter));
+        // Chapter jumps now live SOLELY on `}`/`]` (braceright/bracketright);
+        // the number-row (`2`/`3`/`4`/`5`) and `(`/`&` duplicates were dropped.
+        assert_eq!(km.lookup("braceright", false, false, false), Some(Action::JumpToPrevChapter));
+        assert_eq!(km.lookup("bracketright", false, false, false), Some(Action::JumpToNextChapter));
+        assert_eq!(km.lookup("2", false, true, false), None);
+        assert_eq!(km.lookup("3", false, true, false), None);
+        assert_eq!(km.lookup("4", false, false, false), None);
+        assert_eq!(km.lookup("5", false, false, false), None);
+        assert_eq!(km.lookup("parenleft", false, false, false), None);
+        assert_eq!(km.lookup("ampersand", false, false, false), None);
+        // Bookmarks remain on the `;`/`'` pair.
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::PrevBookmark));
+        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::NextBookmark));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` toasts
         // the current act/scene or chapter (swapped in e42fd92).
