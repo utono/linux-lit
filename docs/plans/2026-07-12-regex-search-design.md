@@ -20,8 +20,9 @@ the pattern fails to compile ("always regex, literal fallback" — chosen
 over strict-regex and opt-in-prefix alternatives). Because search runs
 on every keystroke, half-typed patterns like `jack(` are momentarily
 invalid; the fallback keeps incremental search identical to today's
-behavior in that window and for literal queries containing regex
-metacharacters (`what?`, `[Enter.`).
+behavior in that window and for queries that are not valid regexes
+(`[Enter.`). Note: queries that DO compile are regexes — `what?`
+matches "wha"/"what" (optional `t`), not the literal string `what?`.
 
 ## Matching pipeline
 
