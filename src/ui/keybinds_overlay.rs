@@ -73,8 +73,8 @@ const HOME_ROW: &[KeyDef] = &[
     key("i", "I", "start time", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[]),
-    key("t", "T", "", "", &[("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
-    key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}")]),
+    key("t", "T", "", "", &[("C-t", "theme next"), ("S-C-T", "theme prev")]),
+    key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}"), ("C-M-n", "nav test")]),
     bare("s", "S", "sync tap"),
     key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];

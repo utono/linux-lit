@@ -42,6 +42,7 @@ impl KeyCombo {
     pub fn ctrl_alt(key: &str) -> Self {
         Self { key: key.to_string(), ctrl: true, shift: false, alt: true }
     }
+    #[allow(dead_code)] // completes the modifier-combo constructor family
     pub fn alt_shift(key: &str) -> Self {
         Self { key: key.to_string(), ctrl: false, shift: true, alt: true }
     }
@@ -337,8 +338,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // Tab toggles the chat layout; TogglePreviousWork is unbound (Ctrl+minus recent picker covers it).
         (KeyCombo::plain("Tab"), Action::ToggleChatLayout),
         (KeyCombo::alt("d"), Action::ToggleDim),
-        (KeyCombo::alt("t"), Action::ThemeNext),
-        (KeyCombo::alt_shift("T"), Action::ThemePrev),
+        (KeyCombo::ctrl("t"), Action::ThemeNext),
+        (KeyCombo::ctrl_shift("T"), Action::ThemePrev),
         // Root-variant cycling lives on the RPD <TLDE> cap (QWERTY `/~ key),
         // which emits `dollar` unshifted and `asciitilde` shifted. Because $
         // is level-1 (no shift needed), Ctrl+$ and Ctrl+Shift+$ are distinct
@@ -403,7 +404,8 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
         (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
-        (KeyCombo::ctrl_alt("t"), Action::ToggleNavTest),
+        // Moved off Ctrl+Alt+t (2026-07-12); Ctrl+t/Ctrl+Shift+t are theme cycling.
+        (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
         // Both vocab-drill entries live on the minus cap: Ctrl+- forward,
@@ -581,10 +583,11 @@ mod tests {
     }
 
     #[test]
-    fn alt_t_cycles_theme() {
+    fn ctrl_t_cycles_theme() {
         let km = Keymap::default();
-        assert_eq!(km.lookup("t", false, false, true), Some(Action::ThemeNext));
-        assert_eq!(km.lookup("T", false, true, true), Some(Action::ThemePrev));
+        // Ctrl+t = next theme, Ctrl+Shift+t = prev theme (moved off Alt 2026-07-12).
+        assert_eq!(km.lookup("t", true, false, false), Some(Action::ThemeNext));
+        assert_eq!(km.lookup("T", true, true, false), Some(Action::ThemePrev));
     }
 
     #[test]
@@ -592,7 +595,7 @@ mod tests {
         let km = Keymap::default();
         assert_eq!(km.lookup("dollar", true, false, false), Some(Action::RootVariantNext));
         assert_eq!(km.lookup("dollar", true, true, false), Some(Action::RootVariantPrev));
-        assert_eq!(km.lookup("t", true, false, true), Some(Action::ToggleNavTest));
+        assert_eq!(km.lookup("n", true, false, true), Some(Action::ToggleNavTest));
     }
 
     #[test]
