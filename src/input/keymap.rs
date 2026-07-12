@@ -122,14 +122,41 @@ pub fn handle_key(
             return false; // type a literal space in the text field
         }
         if !gloss_open && mode == crate::app::InputMode::Reader {
-            let mut s = state.borrow_mut();
-            if !crate::input::timestamps::play_current_line(&mut s) {
-                show_no_timestamp_toast(&s);
+            // Prose: space plays from the cursor line's start time; `a` is the
+            // pure pause/resume toggle. Poetry/plays SWAP the two, so on those
+            // works space is the pause toggle and `a` plays from the cursor
+            // line (the `a` swap is handled in the Reader `a` intercept below).
+            if reader_swaps_play_and_pause(state) {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            } else {
+                let mut s = state.borrow_mut();
+                if !crate::input::timestamps::play_current_line(&mut s) {
+                    show_no_timestamp_toast(&s);
+                }
             }
             return true;
         }
         // Non-editable, non-Reader, non-gloss (e.g. an overlay): fall through
         // to mode dispatch so the overlay's own space arm runs.
+    }
+
+    // Reader `a`: mirror of the space swap above. On prose, `a` is the pure
+    // pause/resume toggle (handled by the TogglePause table bind → dispatch).
+    // On poetry/plays, `a` instead plays from the cursor line's start time
+    // (space takes the pause toggle). Intercepted here, before table dispatch,
+    // so the swapped meaning wins over the compiled `a` → TogglePause bind.
+    if key_name == "a"
+        && !is_ctrl
+        && !is_shift
+        && !is_alt
+        && state.borrow().input_mode == crate::app::InputMode::Reader
+        && reader_swaps_play_and_pause(state)
+    {
+        let mut s = state.borrow_mut();
+        if !crate::input::timestamps::play_current_line(&mut s) {
+            show_no_timestamp_toast(&s);
+        }
+        return true;
     }
 
     // Mode dispatch — delegate to per-mode handler functions
@@ -1888,6 +1915,17 @@ fn toggle_playback_sync(s: &mut AppState) {
 /// Used when a play attempt is a no-op because the line has no timestamp.
 fn show_no_timestamp_toast(s: &AppState) {
     crate::ui::toast::show_transient(&s.chapter_toast, "No timestamp on this line", 3);
+}
+
+/// Whether the current work swaps the main-card `a` / Space media binds.
+/// Prose keeps the default (Space plays from the cursor line, `a` pause-toggles);
+/// poetry/plays (any non-prose work type) swap them so `a` plays from the cursor
+/// line and Space pause-toggles. False when no work is loaded.
+fn reader_swaps_play_and_pause(state: &Rc<RefCell<AppState>>) -> bool {
+    let s = state.borrow();
+    s.current_work
+        .as_ref()
+        .is_some_and(|w| !crate::db::line_types::is_prose_work(&w.work_type))
 }
 
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
