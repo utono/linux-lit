@@ -50,6 +50,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+\\", "pick a Q&A"),
         ("Alt+g", "gloss this passage"),
         ("Ctrl+g", "view gloss for passage"),
+        ("\\", "cycle: → gloss (same segment)"),
     ]),
     ("Close", &[
         ("Esc / Ctrl+j", "close → reader"),

@@ -61,7 +61,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
-    key("\\", "#", "", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
+    key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
 
@@ -265,6 +265,8 @@ picker via ChordState::PendingPeriod) — src/input/keymap.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
         "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
         "last overlay" => "Action::ToggleLastOverlay — src/input/actions/gloss.rs",
+        "cycle overlays" => "Action::CycleSegmentOverlays (journal Q&A → gloss \
+→ synopsis, wraps; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
         "chat layout" => "Action::ToggleChatLayout (Tab opens/cycles focus; \
 Ctrl+Tab closes) — src/input/actions/chat.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
