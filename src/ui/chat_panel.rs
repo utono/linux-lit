@@ -194,6 +194,11 @@ impl ChatPanel {
     pub fn take_input_text(&self) -> String {
         self.input.take_text()
     }
+    /// Hide the ask-card input (answer arrived / Esc in Normal mode). `a` on
+    /// the transcript (via `focus_prompt`) reopens it.
+    pub fn close_input(&self) {
+        self.input.close();
+    }
     /// Whether the ask-card input is currently open (visible). Used by
     /// `focus_prompt` to avoid reopening (and wiping a draft) on refocus.
     pub fn input_is_open(&self) -> bool {

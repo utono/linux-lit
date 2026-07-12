@@ -193,9 +193,15 @@ pub(crate) fn regate_panel(s: &mut AppState) {
 pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.chat_layout_open {
-        // Panel already open: Tab (from reader focus) cycles INTO the prompt;
-        // closing is Ctrl+Tab's job (ToggleLastOverlay shadow).
-        focus_prompt(&mut s);
+        // Panel already open: Tab (from reader focus) cycles INTO the panel —
+        // the prompt when its input is showing, else the transcript (a
+        // retired input stays hidden until `a` re-shows it); closing is
+        // Ctrl+Tab's job (ToggleLastOverlay shadow).
+        if s.chat_panel.input_is_open() {
+            focus_prompt(&mut s);
+        } else {
+            focus_transcript(&mut s);
+        }
         return;
     }
     if s.column_count() == 2 {
@@ -421,6 +427,11 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             });
             s.chat.cursor = s.chat.exchanges.len() - 1;
             render_transcript(&s);
+            // Answer visible: retire the input until asked for again (`a` on
+            // the transcript reopens it) and hand focus to the transcript so
+            // j/k/s work immediately.
+            s.chat_panel.close_input();
+            focus_transcript(&mut s);
         },
         move |st, msg| {
             let mut s = st.borrow_mut();

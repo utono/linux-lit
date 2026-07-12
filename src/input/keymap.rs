@@ -1139,7 +1139,13 @@ fn handle_chat_prompt_key(
         state,
         |st, k| st.borrow().chat_panel.feed_input_vim_key(k),
         crate::input::actions::chat::submit_chat_prompt,
-        |_st| {}, // Escape closes nothing in the chat prompt (vim Normal only)
+        // Esc in Normal mode (or :q) hides the input; `a` on the transcript
+        // reopens it via focus_prompt.
+        |st| {
+            let mut s = st.borrow_mut();
+            s.chat_panel.close_input();
+            crate::input::actions::chat::focus_transcript(&mut s);
+        },
         |st, t| st.borrow().chat_panel.paste_input_text(t),
     ) {
         AskIntercept::Consumed => true,
@@ -1148,7 +1154,8 @@ fn handle_chat_prompt_key(
 }
 
 /// Chat transcript focus: j/k move the exchange cursor, s saves the selected
-/// exchange (Task 7), Tab cycles to the reader, Ctrl+Tab closes.
+/// exchange, `a` re-shows the retired ask input, Tab cycles to the reader,
+/// Ctrl+Tab closes.
 fn handle_chat_transcript_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
@@ -1173,6 +1180,11 @@ fn handle_chat_transcript_key(
         }
         "s" => {
             crate::input::actions::chat::save_selected_exchange(state);
+            true
+        }
+        "a" => {
+            // Ask: re-show the retired input and focus it.
+            crate::input::actions::chat::focus_prompt(&mut state.borrow_mut());
             true
         }
         "l" if is_ctrl => {
