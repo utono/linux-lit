@@ -16,6 +16,7 @@ pub mod pickers;
 pub mod segment_vim;
 pub mod settings;
 pub mod synopsis;
+pub(crate) mod vocab_journal;
 pub mod word_copy;
 
 // Action enum identifying every reader-mode behavior. F2 maps KeyCombo →
