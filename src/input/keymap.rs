@@ -174,6 +174,7 @@ pub fn handle_key(
             | crate::app::InputMode::AuthorshipPicker
             | crate::app::InputMode::JournalPicker
             | crate::app::InputMode::JournalMovePicker
+            | crate::app::InputMode::JournalTermInput
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VocabLoop => handle_vocab_loop_key(state, key_name, is_ctrl),
@@ -433,6 +434,7 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::JournalMovePicker => { s.journal_move_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
+                InputMode::JournalTermInput => { s.journal_term_input.hide(); s.input_mode = InputMode::JournalOverlay; }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {
                     if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
@@ -569,6 +571,10 @@ fn handle_picker_key(
                 }
                 InputMode::JournalMovePicker => {
                     crate::input::actions::journal::confirm_move_picker(state);
+                    true
+                }
+                InputMode::JournalTermInput => {
+                    crate::input::actions::journal::confirm_term_input(state);
                     true
                 }
                 InputMode::EchoLinePicker => {
@@ -1375,6 +1381,28 @@ fn handle_journal_key(
         }
     }
 
+    // While a term filter is active the overlay shows a read-only cross-work
+    // entry via show_page; s.journal.pages/page_index still point at the origin
+    // band, so the mutating and block-nav arms below would act on the WRONG
+    // (origin) entry — risking edits/deletes on the wrong lit.db row. Swallow
+    // them with a hint. `f` (re-search), `Escape` (clears the filter), and the
+    // Ctrl+n/p stepping (handled in the is_ctrl block above via nav_page's
+    // filter branch) stay live; `s` is a consumed no-op below.
+    if state.borrow().journal.filter.is_some()
+        && matches!(
+            key_name,
+            "r" | "R" | "e" | "u" | "D" | "c" | "V" | "g" | "G"
+                | "j" | "q" | "k" | "comma" | "x" | "y" | "space" | "a" | "backslash"
+        )
+    {
+        crate::ui::toast::show_transient(
+            &state.borrow().chapter_toast,
+            "Clear the term filter (Esc) to edit or navigate entries",
+            3,
+        );
+        return true;
+    }
+
     match key_name {
         // `r` opens the ask card to create a new Q&A in the current band,
         // matching the gloss + synopsis overlays where `r` opens a journal Q&A.
@@ -1506,8 +1534,20 @@ fn handle_journal_key(
             crate::input::actions::overlay_cycle::cycle_from_journal(state);
             true
         }
+        // `f`: open the term-browse input (cross-work journal filter by tag/term).
+        // Suggests existing distinct tags; Enter searches the typed/selected term.
+        "f" => {
+            crate::input::actions::journal::open_term_input(state);
+            true
+        }
+        // First Escape clears an active term filter (staying in the overlay on
+        // the pre-filter position); a second Escape (no filter) closes.
         "Escape" => {
-            crate::input::actions::journal::close_overlay(state);
+            if state.borrow().journal.filter.is_some() {
+                crate::input::actions::journal::clear_filter(state);
+            } else {
+                crate::input::actions::journal::close_overlay(state);
+            }
             true
         }
         _ => false,

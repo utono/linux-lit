@@ -65,6 +65,16 @@ pub struct PendingPassage {
     pub band: JournalBand,
 }
 
+/// Active term-browse filter: the term, the ordered cross-work match list, and
+/// the current position within it. When set, `nav_page` walks these matches
+/// instead of the current work's `find_all_pages_ordered`.
+#[derive(Debug, Clone, Default)]
+pub struct JournalFilter {
+    pub term: String,
+    pub matches: Vec<crate::db::journal::TermMatch>,
+    pub pos: usize,
+}
+
 /// Grouped state for the journal feature (band pages + viewer index + the
 /// return-to-reader position + the add/edit prompt mode). Was four flat
 /// `journal_*` fields on AppState; grouped per the AppState god-struct
@@ -94,6 +104,10 @@ pub struct JournalState {
     /// other page (Ctrl+n/p, picker) re-enables the source jump. `None` for
     /// opens that are themselves navigation (picker confirm, add flows).
     pub entry_page_id: Option<i64>,
+    /// Active cross-work term-browse filter (see `JournalFilter`). When set,
+    /// `nav_page` walks the filtered match list instead of the current work's
+    /// `find_all_pages_ordered`. `None` outside term-browse.
+    pub filter: Option<JournalFilter>,
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
@@ -292,6 +306,106 @@ pub(crate) fn render_current(s: &mut AppState) {
     crate::input::actions::gloss::recolor_journal_cached_blocks(s);
 }
 
+/// Render the filter's current match in the overlay WITHOUT switching
+/// `journal_band` / `current_work`. Drives `show_page` directly with the
+/// fetched entry (bypasses the band-driven `render_current` so an entry from
+/// another work displays in place). Footer reads
+/// "<abbrev> <div1>.<div2> · match N of M". No-op if there is no active filter
+/// or the position is out of range.
+pub(crate) fn render_filtered_match(s: &mut AppState) {
+    let Some(filter) = s.journal.filter.as_ref() else {
+        return;
+    };
+    let Some(m) = filter.matches.get(filter.pos) else {
+        return;
+    };
+    let p = m.page.clone();
+    let work_abbrev = m.work_abbrev.clone();
+    let footer_left = format!(
+        "{} {}.{} \u{00b7} match {} of {}",
+        work_abbrev,
+        p.div1,
+        p.div2,
+        filter.pos + 1,
+        filter.matches.len()
+    );
+    let (cw, h) = crate::app::layout::overlay_card_size(s);
+    // Filtered view shows one entry at a time: page_index 0 of page_count 1.
+    s.journal_overlay
+        .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, cw, h);
+}
+
+/// Activate a term filter: fetch matches, store filter state, render the
+/// first match. Returns `false` (with a toast) if nothing matches.
+pub(crate) fn activate_filter(state: &Rc<RefCell<AppState>>, term: &str) -> bool {
+    let matches = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_pages_by_term(&conn, term).ok())
+        .unwrap_or_default();
+    let mut s = state.borrow_mut();
+    if matches.is_empty() {
+        crate::ui::toast::show_transient(
+            &s.chapter_toast,
+            &format!("No entries mention \u{201c}{}\u{201d}", term),
+            3,
+        );
+        return false;
+    }
+    s.journal.filter = Some(JournalFilter {
+        term: term.to_string(),
+        matches,
+        pos: 0,
+    });
+    render_filtered_match(&mut s);
+    true
+}
+
+/// Clear the active filter and return to the normal band view.
+pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.journal.filter.is_none() {
+        return;
+    }
+    s.journal.filter = None;
+    render_current(&mut s); // restore the band the user was in
+}
+
+/// Open the term input box (with distinct-tag suggestions) from inside the
+/// overlay (the `f` key). The user types a term freely; existing tags are
+/// suggested beneath. `set_suggestions` must run BEFORE `show()` (show clears
+/// the entry + grabs focus but does not populate suggestions).
+pub(crate) fn open_term_input(state: &Rc<RefCell<AppState>>) {
+    let terms = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_distinct_terms(&conn).ok())
+        .unwrap_or_default();
+    let mut s = state.borrow_mut();
+    s.journal_term_input.set_suggestions(terms);
+    s.journal_term_input.show();
+    s.input_mode = InputMode::JournalTermInput;
+}
+
+/// Confirm the entered term: hide the box, return to the overlay, then activate
+/// the filter (lands on match 1). The term is the typed text (else the
+/// highlighted suggestion); a freely-typed term reaches the FTS fallback even
+/// with zero tags. Borrows are scoped so they are dropped before
+/// `activate_filter` (which re-borrows `state` mutably) runs — otherwise a
+/// RefCell double-borrow would panic at runtime.
+pub(crate) fn confirm_term_input(state: &Rc<RefCell<AppState>>) {
+    let term = {
+        let s = state.borrow();
+        s.journal_term_input.query_term()
+    };
+    {
+        let s = state.borrow();
+        s.journal_term_input.hide();
+    }
+    state.borrow_mut().input_mode = InputMode::JournalOverlay;
+    if let Some(term) = term {
+        activate_filter(state, &term);
+    }
+}
+
 /// From the journal source_text markup (`<speaker>…</speaker>\n<verse>text…`),
 /// return the first bare CONTENT line (inside a `<verse>`/`<stage>` tag), tags
 /// stripped and trimmed. Empty if there is no content line. Used only by the
@@ -404,6 +518,12 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         if !jumped {
             crate::app::restore_saved_position_resnap(&mut s, pos);
         }
+        // Reset any active term filter so it never leaks into the next overlay
+        // session: on the two-stage Esc the filter is already None here, but a
+        // close that skips the first Esc (or a future close route) could leave
+        // it Some, which would make the next open's first Ctrl+n/p walk the
+        // stale match list and the first Esc "clear" a filter never set.
+        s.journal.filter = None;
         return;
     }
 
@@ -448,6 +568,11 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     }
 
     let mut s = state.borrow_mut();
+    // Defensive: never inherit a term filter from a prior session. toggle_overlay's
+    // close branch already clears it, but the `\` overlay cycle (cycle_from_journal)
+    // is a close route that bypasses toggle_overlay — resetting at every open covers
+    // it regardless of how the previous session ended.
+    s.journal.filter = None;
     s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     s.journal_band = JournalBand::Scene(d1, d2);
     s.journal.page_index = 0;
@@ -516,6 +641,20 @@ fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
 /// Q&A of the next band; `Ctrl+p` symmetrically. Clamped at the work's first /
 /// last Q&A (no wrap). Was previously a within-band clamp.
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
+    // Filtered subset walk: step within the term matches, render read-only,
+    // and skip the unfiltered work-wide logic entirely.
+    {
+        let mut s = state.borrow_mut();
+        if let Some(filter) = s.journal.filter.as_mut() {
+            let len = filter.matches.len();
+            if let Some(next) = flat_step(filter.pos, delta, len) {
+                filter.pos = next;
+                render_filtered_match(&mut s);
+            }
+            return;
+        }
+    }
+
     let mut s = state.borrow_mut();
     let Some(cur_id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
         return;
@@ -1558,6 +1697,22 @@ mod tests {
         // Single-page work: never moves.
         assert_eq!(super::flat_step(0, 1, 1), None);
         assert_eq!(super::flat_step(0, -1, 1), None);
+    }
+
+    /// Guard test (not fail-first — see task-2-report.md): locks the
+    /// clamp-no-wrap semantics of the existing `flat_step` that the term-browse
+    /// filter's `nav_page` branch relies on to walk a match subset. Already
+    /// covered by `flat_step_clamps_and_steps`; this documents the specific
+    /// 3-match subset shape the filter uses.
+    #[test]
+    fn filter_walk_uses_flat_step_over_match_list() {
+        // A 3-match subset: stepping forward from 0 -> 1 -> 2 -> clamps (None at end).
+        assert_eq!(flat_step(0, 1, 3), Some(1));
+        assert_eq!(flat_step(1, 1, 3), Some(2));
+        assert_eq!(flat_step(2, 1, 3), None); // at last match, no wrap
+        assert_eq!(flat_step(0, -1, 3), None); // at first match, no wrap
+        // empty subset never steps
+        assert_eq!(flat_step(0, 1, 0), None);
     }
 
     #[test]
