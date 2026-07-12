@@ -36,10 +36,9 @@ pub(crate) fn execute_search_with_query(state: &mut AppState, query: &str) {
         None => return,
     };
 
-    // Smart-case: if query has uppercase, match case-sensitively;
-    // otherwise match case-insensitively.
+    // Query is a regex, smart-cased; invalid patterns degrade to literal.
     // Always search in line.text to keep byte offsets consistent with the buffer.
-    let case_sensitive = query.chars().any(|c| c.is_uppercase());
+    let re = build_matcher(query);
 
     // Collect into a local vec to avoid simultaneous immutable+mutable borrow of state.
     let mut new_matches: Vec<SearchMatch> = Vec::new();
@@ -48,12 +47,12 @@ pub(crate) fn execute_search_with_query(state: &mut AppState, query: &str) {
         // Text file mode: search the buffer text directly
         let text = state.buffer.text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
         for (line_idx, line_text) in text.as_str().lines().enumerate() {
-            collect_line(line_text, &query, case_sensitive, line_idx, &mut new_matches);
+            collect_line(line_text, &re, line_idx, &mut new_matches);
         }
     } else {
         // Original: search work.lines
         for (line_idx, line) in work.lines.iter().enumerate() {
-            collect_line(&line.text, &query, case_sensitive, line_idx, &mut new_matches);
+            collect_line(&line.text, &re, line_idx, &mut new_matches);
         }
     }
 
@@ -302,7 +301,7 @@ fn collect_matches(state_rc: &Rc<RefCell<AppState>>) {
         Some(w) => w,
         None => return,
     };
-    let case_sensitive = query.chars().any(|c| c.is_uppercase());
+    let re = build_matcher(&query);
     let mut new_matches: Vec<SearchMatch> = Vec::new();
 
     if state.line_map.is_some() {
@@ -310,11 +309,11 @@ fn collect_matches(state_rc: &Rc<RefCell<AppState>>) {
             .buffer
             .text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
         for (line_idx, line_text) in text.as_str().lines().enumerate() {
-            collect_line(line_text, &query, case_sensitive, line_idx, &mut new_matches);
+            collect_line(line_text, &re, line_idx, &mut new_matches);
         }
     } else {
         for (line_idx, line) in work.lines.iter().enumerate() {
-            collect_line(&line.text, &query, case_sensitive, line_idx, &mut new_matches);
+            collect_line(&line.text, &re, line_idx, &mut new_matches);
         }
     }
 
@@ -358,32 +357,20 @@ fn build_matcher(query: &str) -> regex::Regex {
         })
 }
 
-/// Push every occurrence of `query` in `line_text` onto `out`, smart-cased.
+/// Push every non-empty regex match of `re` in `line_text` onto `out`.
+/// Byte offsets index the original line text (they drive buffer highlights).
+/// Zero-width matches (e.g. `a*` mid-typing) are skipped.
 fn collect_line(
     line_text: &str,
-    query: &str,
-    case_sensitive: bool,
+    re: &regex::Regex,
     line_idx: usize,
     out: &mut Vec<SearchMatch>,
 ) {
-    if case_sensitive {
-        let mut search_start = 0;
-        while let Some(pos) = line_text[search_start..].find(query) {
-            let byte_start = search_start + pos;
-            let byte_end = byte_start + query.len();
-            out.push(SearchMatch { line_index: line_idx, byte_start, byte_end });
-            search_start = byte_end;
+    for m in re.find_iter(line_text) {
+        if m.start() == m.end() {
+            continue;
         }
-    } else {
-        let text_lower = line_text.to_lowercase();
-        let query_lower = query.to_lowercase();
-        let mut search_start = 0;
-        while let Some(pos) = text_lower[search_start..].find(&query_lower) {
-            let byte_start = search_start + pos;
-            let byte_end = byte_start + query_lower.len();
-            out.push(SearchMatch { line_index: line_idx, byte_start, byte_end });
-            search_start = byte_end;
-        }
+        out.push(SearchMatch { line_index: line_idx, byte_start: m.start(), byte_end: m.end() });
     }
 }
 
@@ -644,6 +631,43 @@ mod tests {
         // Unclosed class falls back too
         let re = build_matcher("cade[");
         assert!(re.is_match("cade[ bracket"));
+    }
+
+    fn collect(line: &str, query: &str) -> Vec<(usize, usize)> {
+        let re = build_matcher(query);
+        let mut out: Vec<crate::app::SearchMatch> = Vec::new();
+        collect_line(line, &re, 0, &mut out);
+        out.iter().map(|m| (m.byte_start, m.byte_end)).collect()
+    }
+
+    #[test]
+    fn collect_line_finds_all_occurrences() {
+        assert_eq!(collect("cade and Cade and CADE", "cade"), vec![(0, 4), (9, 13), (18, 22)]);
+    }
+
+    #[test]
+    fn collect_line_offsets_index_original_text_non_ascii() {
+        // 'İ' (2 bytes) lowercases to "i̇" (3 bytes): the old lowercase-then-find
+        // path shifted offsets on lines like this. Offsets must slice the
+        // ORIGINAL text.
+        let line = "İstanbul cade here";
+        let got = collect(line, "cade");
+        assert_eq!(got.len(), 1);
+        let (s, e) = got[0];
+        assert_eq!(&line[s..e], "cade");
+    }
+
+    #[test]
+    fn collect_line_skips_zero_width_matches() {
+        // `a*` matches empty at every position while typing; none may land
+        assert!(collect("bbb", "a*").is_empty());
+        // but real (non-empty) hits of the same pattern still match
+        assert_eq!(collect("baab", "a*"), vec![(1, 3)]);
+    }
+
+    #[test]
+    fn collect_line_regex_class_matches() {
+        assert_eq!(collect("Jack Cade", r"jack\Wcade"), vec![(0, 9)]);
     }
 
     #[test]
