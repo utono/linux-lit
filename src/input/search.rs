@@ -325,6 +325,39 @@ fn collect_matches(state_rc: &Rc<RefCell<AppState>>) {
         .update_counter(0, state.search_matches.len());
 }
 
+/// Smart-case probe: true if the query contains an uppercase letter that is
+/// not part of a `\X` escape (so `\W`, `\S` etc. stay case-insensitive).
+fn has_unescaped_uppercase(query: &str) -> bool {
+    let mut escaped = false;
+    for c in query.chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c.is_uppercase() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Compile the search query as a regex, smart-cased. An invalid pattern
+/// (half-typed `jack(`, unclosed `cade[`) silently falls back to an escaped
+/// literal with identical substring semantics — incremental search must
+/// never error mid-keystroke.
+fn build_matcher(query: &str) -> regex::Regex {
+    let insensitive = !has_unescaped_uppercase(query);
+    regex::RegexBuilder::new(query)
+        .case_insensitive(insensitive)
+        .build()
+        .unwrap_or_else(|_| {
+            regex::RegexBuilder::new(&regex::escape(query))
+                .case_insensitive(insensitive)
+                .build()
+                .expect("escaped literal always compiles")
+        })
+}
+
 /// Push every occurrence of `query` in `line_text` onto `out`, smart-cased.
 fn collect_line(
     line_text: &str,
@@ -557,4 +590,67 @@ fn remove_current_highlight(state: &AppState) {
     let mut match_end = line_start;
     match_end.forward_chars(char_end);
     state.buffer.remove_tag(&state.search_current_tag, &match_start, &match_end);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smart_case_lowercase_query_is_insensitive() {
+        assert!(!has_unescaped_uppercase("jack cade"));
+        let re = build_matcher("jack cade");
+        assert!(re.is_match("Jack Cade"));
+        assert!(re.is_match("JACK CADE"));
+    }
+
+    #[test]
+    fn smart_case_uppercase_query_is_sensitive() {
+        assert!(has_unescaped_uppercase("Jack"));
+        let re = build_matcher("Jack");
+        assert!(re.is_match("Jack Cade"));
+        assert!(!re.is_match("jack cade"));
+    }
+
+    #[test]
+    fn escaped_uppercase_does_not_trigger_case_sensitivity() {
+        // \W is a regex class, not an uppercase literal
+        assert!(!has_unescaped_uppercase(r"jack\Wcade"));
+        let re = build_matcher(r"jack\Wcade");
+        assert!(re.is_match("Jack Cade"));
+    }
+
+    #[test]
+    fn inline_flag_overrides_smart_case() {
+        // uppercase in query, but (?i) forces insensitivity
+        let re = build_matcher("(?i)Jack");
+        assert!(re.is_match("jack cade"));
+    }
+
+    #[test]
+    fn regex_alternation_matches() {
+        let re = build_matcher("jack|john");
+        assert!(re.is_match("John Holland"));
+        assert!(re.is_match("Jack Cade"));
+        assert!(!re.is_match("Dick the butcher"));
+    }
+
+    #[test]
+    fn invalid_pattern_falls_back_to_literal() {
+        // Half-typed regex: unclosed group
+        let re = build_matcher("jack(");
+        assert!(re.is_match("this jack( literal"));
+        assert!(!re.is_match("jack"));
+        // Unclosed class falls back too
+        let re = build_matcher("cade[");
+        assert!(re.is_match("cade[ bracket"));
+    }
+
+    #[test]
+    fn valid_metachar_queries_are_regexes_not_literals() {
+        // `what?` COMPILES as a regex (optional `t`) — no fallback occurs,
+        // so it matches "wha"/"what", by design of always-regex mode.
+        let re = build_matcher("what?");
+        assert!(re.is_match("whale"));
+    }
 }
