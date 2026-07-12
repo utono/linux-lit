@@ -24,8 +24,7 @@ const BINDS: &[(&str, &str)] = &[
     ("D", "delete all echoes for turn"),
     ("R", "refresh echoes"),
     ("Ctrl+↑ / Ctrl+↓", "volume"),
-    ("Ctrl+j", "go to journal for turn"),
-    ("Esc / Ctrl+g", "close echoes → reader"),
+    ("Esc", "close echoes → reader"),
     ("Ctrl+/ / Esc", "close this legend"),
 ];
 

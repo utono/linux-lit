@@ -2618,8 +2618,8 @@ fn handle_echoes_overlay_key(
             true
         }
         "Escape" => {
-            // Shared with Ctrl+g (via close_echoes_to_reader): close the echoes
-            // overlay, clear the echo session + any turn AB-loop, return to reader.
+            // Escape: close the echoes overlay, clear the echo session + any turn
+            // AB-loop, return to reader.
             crate::input::actions::echoes::close_echoes_to_reader(state);
             true
         }
