@@ -15,12 +15,22 @@ const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
 /// card" (washy next to every root-colored surface). This floor forces a
 /// clearly darker/lighter cousin of the hue and, because it is checked
 /// against the LIVE root, the tint re-derives on every Ctrl+t root-variant
-/// step like vocab_fg does. 1.8 is the "visibly different color" threshold
-/// (the off/cursor pair uses 1.4): high enough that the tint never reads as
-/// the root itself, low enough to stay satisfiable when the root and card
-/// sit on opposite ends of the luminance range (dark root + cream card
-/// squeezes the tint into a narrow window between the two floors).
+/// step like vocab_fg does. The rule is hue-OR-contrast: the root is a mid-
+/// luminance saturated surface, so a hue 40°+ away reads as a different
+/// color even at equal luminance; only a same-hue tint must buy its
+/// distinctness with this luminance ratio.
 const READER_GLOSS_ROOT_MIN_CONTRAST: f64 = 1.8;
+
+/// Minimum luminance contrast of the tint against the BODY INK (text_fg)
+/// on LIGHT themes. There the ink is near-black, where hue is imperceptible
+/// — a hue escape would let a "distinct" tint render as just more body text
+/// (the failure mode: the root floor pushed the tint deep enough to sit
+/// next to the ink). Only a luminance gap separates a tint from near-black
+/// ink. Dark themes keep the hue-OR-contrast rule instead: their ink is a
+/// mid-light cream and their accents live in the mid range where hue still
+/// reads, and a hard luminance floor there squeezes every tint to an
+/// undifferentiable near-white (everforest-dark-soft).
+const READER_GLOSS_INK_MIN_CONTRAST: f64 = 1.5;
 
 /// Number of root-color variants every theme has (index 0 = designed root).
 /// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
@@ -271,18 +281,22 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // root color (this variant's), so a focuscolor that IS the root accent
     // can't ship as-is — the tint becomes a clearly darker/lighter cousin of
     // the hue and re-derives on every root-variant step.
+    // text_fg rides the dedicated ink floor (contrast-only), NOT the avoid
+    // list — the avoid rule's hue escape let a near-ink-dark tint pass as
+    // "distinct" when it read as plain body text.
     let reader_gloss = {
         let base = str_field(lit, "reader_gloss").unwrap_or_else(|| focus_color.clone());
         ensure_gloss_color_min(
-            &base, &text_bg, Some(&root_color), &[&text_fg], READER_GLOSS_MIN_CONTRAST,
+            &base, &text_bg, Some(&root_color), Some(&text_fg), &[],
+            READER_GLOSS_MIN_CONTRAST,
         )
     };
     let reader_gloss_cursor = {
         let base = str_field(lit, "reader_gloss_cursor")
             .unwrap_or_else(|| complement_hex(&reader_gloss));
         ensure_gloss_color_min(
-            &base, &text_bg, Some(&root_color),
-            &[&text_fg, &reader_gloss],
+            &base, &text_bg, Some(&root_color), Some(&text_fg),
+            &[&reader_gloss],
             READER_GLOSS_MIN_CONTRAST,
         )
     };
@@ -314,6 +328,7 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     let vocab_fg = ensure_gloss_color_min(
         &root_color,
         &text_bg,
+        None,
         None,
         &[&text_fg],
         VOCAB_WORD_MIN_CONTRAST,
@@ -361,13 +376,14 @@ fn default_theme() -> Theme {
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
         // Root-hued like loaded themes (guarded for contrast on the card).
-        vocab_fg: ensure_gloss_color_min("#1a1a2e", "#282828", None, &["#d4be98"], VOCAB_WORD_MIN_CONTRAST),
-        reader_gloss: ensure_gloss_color_min("#d4be98", "#282828", Some("#1a1a2e"), &["#d4be98"], READER_GLOSS_MIN_CONTRAST),
+        vocab_fg: ensure_gloss_color_min("#1a1a2e", "#282828", None, None, &["#d4be98"], VOCAB_WORD_MIN_CONTRAST),
+        reader_gloss: ensure_gloss_color_min("#d4be98", "#282828", Some("#1a1a2e"), Some("#d4be98"), &[], READER_GLOSS_MIN_CONTRAST),
         reader_gloss_cursor: ensure_gloss_color_min(
             &complement_hex("#d4be98"),
             "#282828",
             Some("#1a1a2e"),
-            &["#d4be98"],
+            Some("#d4be98"),
+            &[],
             READER_GLOSS_MIN_CONTRAST,
         ),
         overlay_panel_bg: String::new(),
@@ -493,6 +509,7 @@ pub(crate) fn vocab_popup_accent(theme: &Theme) -> String {
     ensure_gloss_color_min(
         &theme.vocab_fg,
         &theme.root_color,
+        None,
         None,
         &[],
         VOCAB_WORD_MIN_CONTRAST,
@@ -642,13 +659,29 @@ fn ensure_gloss_color_min(
     base_hex: &str,
     bg_hex: &str,
     root_hex: Option<&str>,
+    ink_hex: Option<&str>,
     avoid: &[&str],
     min_contrast: f64,
 ) -> String {
+    let bg_is_light = contrast_ratio(bg_hex, "#000000") > contrast_ratio(bg_hex, "#ffffff");
     let ok = |c: &str| {
         contrast_ratio(c, bg_hex) >= min_contrast
-            && root_hex
-                .map_or(true, |r| contrast_ratio(c, r) >= READER_GLOSS_ROOT_MIN_CONTRAST)
+            // Root: hue-OR-contrast — the root is a mid-luminance saturated
+            // surface, so a far-away hue reads as a different color.
+            && root_hex.map_or(true, |r| {
+                hue_distance(c, r) >= 40.0
+                    || contrast_ratio(c, r) >= READER_GLOSS_ROOT_MIN_CONTRAST
+            })
+            // Ink: on a light bg the ink is near-black (hue-blind), so only
+            // a luminance gap counts; on a dark bg the ink is mid-light and
+            // hue still reads (see READER_GLOSS_INK_MIN_CONTRAST).
+            && ink_hex.map_or(true, |i| {
+                if bg_is_light {
+                    contrast_ratio(c, i) >= READER_GLOSS_INK_MIN_CONTRAST
+                } else {
+                    hue_distance(c, i) >= 40.0 || contrast_ratio(c, i) >= 1.4
+                }
+            })
             && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
     };
     if ok(base_hex) {
@@ -656,7 +689,6 @@ fn ensure_gloss_color_min(
     }
     let (br, bg_, bb) = hex_to_rgb(base_hex);
     let (h, s, _l) = rgb_to_hsl(br, bg_, bb);
-    let bg_is_light = contrast_ratio(bg_hex, "#000000") > contrast_ratio(bg_hex, "#ffffff");
     // Push lightness toward the side with headroom against the bg; raise S.
     // The deeper rungs exist for the root floor: a mid-lightness root needs
     // the tint pushed well past the card-bg floor before it clears both.
@@ -1123,7 +1155,7 @@ mod tests {
     fn ensure_keeps_already_good_color() {
         // rose-pine-dawn focuscolor on cream, avoiding slate body text: passes
         // the plain 3.0 UI floor, so returned unchanged there.
-        let c = ensure_gloss_color_min("#c4788a", "#faf4ed", None, &["#575279"], 3.0);
+        let c = ensure_gloss_color_min("#c4788a", "#faf4ed", None, None, &["#575279"], 3.0);
         assert_eq!(c, "#c4788a", "a color that already passes the 3.0 floor must be returned unchanged");
     }
 
@@ -1134,7 +1166,7 @@ mod tests {
         // (higher contrast) while keeping it distinct from the slate body text.
         let bg = "#faf4ed";
         let before = contrast_ratio("#c4788a", bg);
-        let c = ensure_gloss_color_min("#c4788a", bg, None, &["#575279"], READER_GLOSS_MIN_CONTRAST);
+        let c = ensure_gloss_color_min("#c4788a", bg, None, None, &["#575279"], READER_GLOSS_MIN_CONTRAST);
         let after = contrast_ratio(&c, bg);
         assert!(after >= READER_GLOSS_MIN_CONTRAST,
             "reader-gloss tint {c} must clear the readable floor, got {after:.2}");
@@ -1146,14 +1178,14 @@ mod tests {
     #[test]
     fn ensure_fixes_dim_color_on_light_bg() {
         // dayfox: a muted purple focuscolor on a near-white bg is too dim.
-        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", None, &["#3d2b5a"], 3.0);
+        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", None, None, &["#3d2b5a"], 3.0);
         assert!(contrast_ratio(&c, "#f6f2ee") >= 3.0,
             "fixed color must contrast with bg, got {} ({c})", contrast_ratio(&c, "#f6f2ee"));
     }
 
     #[test]
     fn ensure_result_is_distinct_from_avoid() {
-        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", None, &["#3d2b5a"], 3.0);
+        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", None, None, &["#3d2b5a"], 3.0);
         let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
         assert!(distinct, "result {c} must be distinct from the avoid color");
     }
@@ -1219,12 +1251,22 @@ mod tests {
             let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
                 || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
             assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
-            // Root-contrast floor: the tint must never sit at the root's own
-            // hue+lightness (dwl focuscolor ≈ root accent shipped as-is).
-            let cvr_off = contrast_ratio(&t.reader_gloss, &t.root_color);
-            let cvr_cur = contrast_ratio(&t.reader_gloss_cursor, &t.root_color);
-            assert!(cvr_off >= READER_GLOSS_ROOT_MIN_CONTRAST, "{}: off tint {} too close to root {} ({cvr_off:.2})", t.name, t.reader_gloss, t.root_color);
-            assert!(cvr_cur >= READER_GLOSS_ROOT_MIN_CONTRAST, "{}: cursor tint {} too close to root {} ({cvr_cur:.2})", t.name, t.reader_gloss_cursor, t.root_color);
+            // Root distinctness (hue OR contrast) + ink rule (light themes:
+            // luminance gap, near-black ink is hue-blind; dark themes:
+            // hue-OR-contrast, their ink is mid-light).
+            for (label, tint) in [("off", &t.reader_gloss), ("cursor", &t.reader_gloss_cursor)] {
+                let root_ok = hue_distance(tint, &t.root_color) >= 40.0
+                    || contrast_ratio(tint, &t.root_color) >= READER_GLOSS_ROOT_MIN_CONTRAST;
+                assert!(root_ok, "{}: {label} tint {tint} too close to root {}", t.name, t.root_color);
+                let cvi = contrast_ratio(tint, &t.text_fg);
+                let ink_ok = if t.is_light {
+                    cvi >= READER_GLOSS_INK_MIN_CONTRAST
+                } else {
+                    hue_distance(tint, &t.text_fg) >= 40.0 || cvi >= 1.4
+                };
+                assert!(ink_ok,
+                    "{}: {label} tint {tint} reads as body ink {} ({cvi:.2})", t.name, t.text_fg);
+            }
         }
     }
 
@@ -1371,17 +1413,25 @@ mod tests {
             assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= 4.5);
         }
         // reader_gloss likewise FOLLOWS the root now: per variant it must
-        // clear the card readable floor AND the root-contrast floor (so the
-        // tint can never sit at the root's own hue+lightness).
+        // clear the card readable floor, sit visibly apart from the root
+        // (hue OR contrast), and hold a luminance gap from the body ink.
         for v in [&v0, &v1, &v2] {
             assert!(
                 contrast_ratio(&v.reader_gloss, &v.text_bg) >= READER_GLOSS_MIN_CONTRAST,
                 "variant {}: tint {} dim on card {}", v.root_variant, v.reader_gloss, v.text_bg
             );
-            assert!(
-                contrast_ratio(&v.reader_gloss, &v.root_color) >= READER_GLOSS_ROOT_MIN_CONTRAST,
-                "variant {}: tint {} too close to root {}", v.root_variant, v.reader_gloss, v.root_color
-            );
+            let root_ok = hue_distance(&v.reader_gloss, &v.root_color) >= 40.0
+                || contrast_ratio(&v.reader_gloss, &v.root_color) >= READER_GLOSS_ROOT_MIN_CONTRAST;
+            assert!(root_ok,
+                "variant {}: tint {} too close to root {}", v.root_variant, v.reader_gloss, v.root_color);
+            let cvi = contrast_ratio(&v.reader_gloss, &v.text_fg);
+            let ink_ok = if v.is_light {
+                cvi >= READER_GLOSS_INK_MIN_CONTRAST
+            } else {
+                hue_distance(&v.reader_gloss, &v.text_fg) >= 40.0 || cvi >= 1.4
+            };
+            assert!(ink_ok,
+                "variant {}: tint {} reads as body ink {}", v.root_variant, v.reader_gloss, v.text_fg);
         }
         assert_eq!(v0.overlay_panel_bg, v1.overlay_panel_bg);
         assert_eq!(v0.overlay_panel_bg, v2.overlay_panel_bg);
