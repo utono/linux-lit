@@ -8,6 +8,20 @@ use std::path::PathBuf;
 /// glossed lines read clearly while staying a distinct tint (body text is ~6.7).
 const READER_GLOSS_MIN_CONTRAST: f64 = 4.5;
 
+/// Minimum contrast of the reader-gloss/journal-Q&A tint against the CURRENT
+/// ROOT color. The tint's base hue is the dwl focuscolor — usually the root
+/// accent — so a value that merely clears the card-bg floor can sit exactly AT
+/// the root hue and lightness, reading as "the root color leaked onto the
+/// card" (washy next to every root-colored surface). This floor forces a
+/// clearly darker/lighter cousin of the hue and, because it is checked
+/// against the LIVE root, the tint re-derives on every Ctrl+t root-variant
+/// step like vocab_fg does. 1.8 is the "visibly different color" threshold
+/// (the off/cursor pair uses 1.4): high enough that the tint never reads as
+/// the root itself, low enough to stay satisfiable when the root and card
+/// sit on opposite ends of the luminance range (dark root + cream card
+/// squeezes the tint into a narrow window between the two floors).
+const READER_GLOSS_ROOT_MIN_CONTRAST: f64 = 1.8;
+
 /// Number of root-color variants every theme has (index 0 = designed root).
 /// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
 pub const ROOT_VARIANT_COUNT: u8 = 5;
@@ -253,14 +267,24 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // is still darkened to a readable variant of its hue rather than shipping a
     // hard-to-read gloss. Explicit values only differ from the derived ones by
     // choosing the base hue.
+    // Both tints also clear READER_GLOSS_ROOT_MIN_CONTRAST against the LIVE
+    // root color (this variant's), so a focuscolor that IS the root accent
+    // can't ship as-is — the tint becomes a clearly darker/lighter cousin of
+    // the hue and re-derives on every root-variant step.
     let reader_gloss = {
         let base = str_field(lit, "reader_gloss").unwrap_or_else(|| focus_color.clone());
-        ensure_gloss_color_min(&base, &text_bg, &[&text_fg], READER_GLOSS_MIN_CONTRAST)
+        ensure_gloss_color_min(
+            &base, &text_bg, Some(&root_color), &[&text_fg], READER_GLOSS_MIN_CONTRAST,
+        )
     };
     let reader_gloss_cursor = {
         let base = str_field(lit, "reader_gloss_cursor")
             .unwrap_or_else(|| complement_hex(&reader_gloss));
-        ensure_gloss_color_min(&base, &text_bg, &[&text_fg, &reader_gloss], READER_GLOSS_MIN_CONTRAST)
+        ensure_gloss_color_min(
+            &base, &text_bg, Some(&root_color),
+            &[&text_fg, &reader_gloss],
+            READER_GLOSS_MIN_CONTRAST,
+        )
     };
 
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
@@ -290,6 +314,7 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     let vocab_fg = ensure_gloss_color_min(
         &root_color,
         &text_bg,
+        None,
         &[&text_fg],
         VOCAB_WORD_MIN_CONTRAST,
     );
@@ -336,11 +361,12 @@ fn default_theme() -> Theme {
         cursor_bg: "#d4be98".to_string(),
         cursor_fg: "#282828".to_string(),
         // Root-hued like loaded themes (guarded for contrast on the card).
-        vocab_fg: ensure_gloss_color_min("#1a1a2e", "#282828", &["#d4be98"], VOCAB_WORD_MIN_CONTRAST),
-        reader_gloss: ensure_gloss_color_min("#d4be98", "#282828", &["#d4be98"], READER_GLOSS_MIN_CONTRAST),
+        vocab_fg: ensure_gloss_color_min("#1a1a2e", "#282828", None, &["#d4be98"], VOCAB_WORD_MIN_CONTRAST),
+        reader_gloss: ensure_gloss_color_min("#d4be98", "#282828", Some("#1a1a2e"), &["#d4be98"], READER_GLOSS_MIN_CONTRAST),
         reader_gloss_cursor: ensure_gloss_color_min(
             &complement_hex("#d4be98"),
             "#282828",
+            Some("#1a1a2e"),
             &["#d4be98"],
             READER_GLOSS_MIN_CONTRAST,
         ),
@@ -467,6 +493,7 @@ pub(crate) fn vocab_popup_accent(theme: &Theme) -> String {
     ensure_gloss_color_min(
         &theme.vocab_fg,
         &theme.root_color,
+        None,
         &[],
         VOCAB_WORD_MIN_CONTRAST,
     )
@@ -611,9 +638,17 @@ fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64 {
 /// rather than a washed-out near-3.0 pastel that's hard to read on the cream
 /// reading surface. `min_contrast = 3.0` is the plain UI floor (used by tests /
 /// any future non-body-text caller).
-fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_contrast: f64) -> String {
+fn ensure_gloss_color_min(
+    base_hex: &str,
+    bg_hex: &str,
+    root_hex: Option<&str>,
+    avoid: &[&str],
+    min_contrast: f64,
+) -> String {
     let ok = |c: &str| {
         contrast_ratio(c, bg_hex) >= min_contrast
+            && root_hex
+                .map_or(true, |r| contrast_ratio(c, r) >= READER_GLOSS_ROOT_MIN_CONTRAST)
             && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
     };
     if ok(base_hex) {
@@ -623,11 +658,16 @@ fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_cont
     let (h, s, _l) = rgb_to_hsl(br, bg_, bb);
     let bg_is_light = contrast_ratio(bg_hex, "#000000") > contrast_ratio(bg_hex, "#ffffff");
     // Push lightness toward the side with headroom against the bg; raise S.
+    // The deeper rungs exist for the root floor: a mid-lightness root needs
+    // the tint pushed well past the card-bg floor before it clears both.
     let s2 = s.max(0.50);
     for &l in if bg_is_light {
-        &[0.42_f64, 0.36, 0.30, 0.24][..]   // darker, for a light bg
+        // darker, for a light bg — fine-grained so the narrow window between
+        // the card floor and the root floor (dark root + light card) is hit
+        &[0.42_f64, 0.39, 0.36, 0.33, 0.30, 0.27, 0.24, 0.21, 0.18, 0.15, 0.12][..]
     } else {
-        &[0.62_f64, 0.68, 0.74, 0.80][..]   // lighter, for a dark bg
+        // lighter, for a dark bg
+        &[0.62_f64, 0.65, 0.68, 0.71, 0.74, 0.77, 0.80, 0.83, 0.86, 0.89, 0.92][..]
     } {
         let (r, g, b) = hsl_to_rgb(h, s2, l);
         let cand = rgb_to_hex(r, g, b);
@@ -645,9 +685,9 @@ fn ensure_gloss_color_min(base_hex: &str, bg_hex: &str, avoid: &[&str], min_cont
     // candidate if (theoretically) no rotation satisfies the full guard.
     let s2 = s.max(0.50);
     let rungs: &[f64] = if bg_is_light {
-        &[0.36, 0.30, 0.24, 0.42, 0.18]
+        &[0.36, 0.30, 0.24, 0.42, 0.18, 0.12]
     } else {
-        &[0.70, 0.76, 0.64, 0.82, 0.58]
+        &[0.70, 0.76, 0.64, 0.82, 0.58, 0.88]
     };
     let mut best = rgb_to_hex(0.0, 0.0, 0.0);
     let mut best_c = -1.0;
@@ -1083,7 +1123,7 @@ mod tests {
     fn ensure_keeps_already_good_color() {
         // rose-pine-dawn focuscolor on cream, avoiding slate body text: passes
         // the plain 3.0 UI floor, so returned unchanged there.
-        let c = ensure_gloss_color_min("#c4788a", "#faf4ed", &["#575279"], 3.0);
+        let c = ensure_gloss_color_min("#c4788a", "#faf4ed", None, &["#575279"], 3.0);
         assert_eq!(c, "#c4788a", "a color that already passes the 3.0 floor must be returned unchanged");
     }
 
@@ -1094,7 +1134,7 @@ mod tests {
         // (higher contrast) while keeping it distinct from the slate body text.
         let bg = "#faf4ed";
         let before = contrast_ratio("#c4788a", bg);
-        let c = ensure_gloss_color_min("#c4788a", bg, &["#575279"], READER_GLOSS_MIN_CONTRAST);
+        let c = ensure_gloss_color_min("#c4788a", bg, None, &["#575279"], READER_GLOSS_MIN_CONTRAST);
         let after = contrast_ratio(&c, bg);
         assert!(after >= READER_GLOSS_MIN_CONTRAST,
             "reader-gloss tint {c} must clear the readable floor, got {after:.2}");
@@ -1106,14 +1146,14 @@ mod tests {
     #[test]
     fn ensure_fixes_dim_color_on_light_bg() {
         // dayfox: a muted purple focuscolor on a near-white bg is too dim.
-        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", &["#3d2b5a"], 3.0);
+        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", None, &["#3d2b5a"], 3.0);
         assert!(contrast_ratio(&c, "#f6f2ee") >= 3.0,
             "fixed color must contrast with bg, got {} ({c})", contrast_ratio(&c, "#f6f2ee"));
     }
 
     #[test]
     fn ensure_result_is_distinct_from_avoid() {
-        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", &["#3d2b5a"], 3.0);
+        let c = ensure_gloss_color_min("#7b6b99", "#f6f2ee", None, &["#3d2b5a"], 3.0);
         let distinct = hue_distance(&c, "#3d2b5a") >= 40.0 || contrast_ratio(&c, "#3d2b5a") >= 1.4;
         assert!(distinct, "result {c} must be distinct from the avoid color");
     }
@@ -1179,6 +1219,12 @@ mod tests {
             let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
                 || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
             assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
+            // Root-contrast floor: the tint must never sit at the root's own
+            // hue+lightness (dwl focuscolor ≈ root accent shipped as-is).
+            let cvr_off = contrast_ratio(&t.reader_gloss, &t.root_color);
+            let cvr_cur = contrast_ratio(&t.reader_gloss_cursor, &t.root_color);
+            assert!(cvr_off >= READER_GLOSS_ROOT_MIN_CONTRAST, "{}: off tint {} too close to root {} ({cvr_off:.2})", t.name, t.reader_gloss, t.root_color);
+            assert!(cvr_cur >= READER_GLOSS_ROOT_MIN_CONTRAST, "{}: cursor tint {} too close to root {} ({cvr_cur:.2})", t.name, t.reader_gloss_cursor, t.root_color);
         }
     }
 
@@ -1324,8 +1370,19 @@ mod tests {
         for v in [&v0, &v1, &v2] {
             assert!(contrast_ratio(&v.vocab_fg, &v.text_bg) >= 4.5);
         }
-        assert_eq!(v0.reader_gloss, v1.reader_gloss);
-        assert_eq!(v0.reader_gloss, v2.reader_gloss);
+        // reader_gloss likewise FOLLOWS the root now: per variant it must
+        // clear the card readable floor AND the root-contrast floor (so the
+        // tint can never sit at the root's own hue+lightness).
+        for v in [&v0, &v1, &v2] {
+            assert!(
+                contrast_ratio(&v.reader_gloss, &v.text_bg) >= READER_GLOSS_MIN_CONTRAST,
+                "variant {}: tint {} dim on card {}", v.root_variant, v.reader_gloss, v.text_bg
+            );
+            assert!(
+                contrast_ratio(&v.reader_gloss, &v.root_color) >= READER_GLOSS_ROOT_MIN_CONTRAST,
+                "variant {}: tint {} too close to root {}", v.root_variant, v.reader_gloss, v.root_color
+            );
+        }
         assert_eq!(v0.overlay_panel_bg, v1.overlay_panel_bg);
         assert_eq!(v0.overlay_panel_bg, v2.overlay_panel_bg);
         // scrim_bg DIFFERS between v0 and v1 — it follows root.
