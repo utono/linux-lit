@@ -15,6 +15,14 @@ pub struct JournalPage {
     pub kind: String,
 }
 
+/// A journal page plus the work it belongs to — used by cross-work term browse
+/// (the term query spans all works, so the abbrev is not a fixed parameter).
+#[derive(Debug, Clone)]
+pub struct TermMatch {
+    pub page: JournalPage,
+    pub work_abbrev: String,
+}
+
 /// The SELECT column list every `find_*` query uses, in the order
 /// `map_journal_page_row` reads. Kept as one const so the column list and the
 /// row mapper cannot drift apart.
@@ -82,7 +90,37 @@ pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     if !column_exists(conn, "journal_entries", "word")? {
         conn.execute_batch("ALTER TABLE journal_entries ADD COLUMN word TEXT;")?;
     }
+    ensure_journal_tags(conn)?;
     Ok(())
+}
+
+pub fn ensure_journal_tags(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS journal_tags (
+            entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+            term   TEXT NOT NULL,
+            source TEXT,
+            PRIMARY KEY (entry_id, term)
+        );
+        CREATE INDEX IF NOT EXISTS idx_journal_tags_term ON journal_tags(term);
+        CREATE VIRTUAL TABLE IF NOT EXISTS journal_fts USING fts5(
+            question, answer, content='journal_entries', content_rowid='id'
+        );
+        CREATE TRIGGER IF NOT EXISTS journal_entries_ai AFTER INSERT ON journal_entries BEGIN
+            INSERT INTO journal_fts(rowid, question, answer)
+            VALUES (new.id, new.question, new.answer);
+        END;
+        CREATE TRIGGER IF NOT EXISTS journal_entries_ad AFTER DELETE ON journal_entries BEGIN
+            INSERT INTO journal_fts(journal_fts, rowid, question, answer)
+            VALUES ('delete', old.id, old.question, old.answer);
+        END;
+        CREATE TRIGGER IF NOT EXISTS journal_entries_au AFTER UPDATE ON journal_entries BEGIN
+            INSERT INTO journal_fts(journal_fts, rowid, question, answer)
+            VALUES ('delete', old.id, old.question, old.answer);
+            INSERT INTO journal_fts(rowid, question, answer)
+            VALUES (new.id, new.question, new.answer);
+        END;",
+    )
 }
 
 pub fn save_journal_page(
@@ -206,6 +244,59 @@ pub fn find_all_pages_ordered(
     ))?;
     let rows = stmt.query_map([work_abbrev], map_journal_page_row)?;
     rows.collect()
+}
+
+pub fn find_pages_by_term(
+    conn: &Connection,
+    term: &str,
+) -> Result<Vec<TermMatch>, rusqlite::Error> {
+    let term_norm = term.trim().to_lowercase();
+    if term_norm.is_empty() {
+        return Ok(Vec::new());
+    }
+    let order = "ORDER BY (scope = 'work') DESC, div1 ASC, div2 ASC, timestamp ASC, id ASC";
+
+    // 1) tags-first (case-insensitive exact term)
+    let tag_sql = format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS}, work_abbrev \
+         FROM journal_entries \
+         WHERE id IN (SELECT entry_id FROM journal_tags WHERE LOWER(term) = ?1) \
+         {order}"
+    );
+    let mut out = Vec::new();
+    {
+        let mut stmt = conn.prepare(&tag_sql)?;
+        let rows = stmt.query_map([&term_norm], map_term_match_row)?;
+        for r in rows {
+            out.push(r?);
+        }
+    }
+    if !out.is_empty() {
+        return Ok(out);
+    }
+
+    // 2) FTS5 fallback (phrase-quoted so multi-word terms match as a phrase)
+    let fts_sql = format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS}, work_abbrev \
+         FROM journal_entries \
+         WHERE id IN (SELECT rowid FROM journal_fts WHERE journal_fts MATCH ?1) \
+         {order}"
+    );
+    let phrase = format!("\"{}\"", term_norm.replace('"', ""));
+    let mut stmt = conn.prepare(&fts_sql)?;
+    let rows = stmt.query_map([&phrase], map_term_match_row)?;
+    let mut out2 = Vec::new();
+    for r in rows {
+        out2.push(r?);
+    }
+    Ok(out2)
+}
+
+fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Error> {
+    let page = map_journal_page_row(row)?;
+    // work_abbrev is the column AFTER the JOURNAL_PAGE_COLUMNS list (index 11).
+    let work_abbrev: String = row.get(11)?;
+    Ok(TermMatch { page, work_abbrev })
 }
 
 pub fn save_passage_page(
@@ -653,6 +744,51 @@ mod tests {
             .exists([])
             .unwrap();
         assert!(has, "word column should exist after ensure_journal_table");
+    }
+
+    #[test]
+    fn term_query_tags_first_then_fts_fallback_across_works() {
+        let conn = mem();
+        // two works; the "fee simple" phrase lives only in an answer on Rom
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (20, 'Rom', 3, 1, 'q', 'A fee simple, in Elizabethan law, is absolute ownership.', 'scene')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (7, '2H6', 1, 1, 'q', 'Nothing about property law here.', 'scene')",
+            [],
+        ).unwrap();
+
+        // No tags yet -> FTS fallback finds the Rom entry, and carries its work_abbrev.
+        let hits = find_pages_by_term(&conn, "fee simple").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].page.id, 20);
+        assert_eq!(hits[0].work_abbrev, "Rom");
+
+        // Now tag the 2H6 entry with the term -> tags-first path takes precedence
+        // and returns the tagged entry (not the FTS match).
+        conn.execute(
+            "INSERT INTO journal_tags (entry_id, term, source) VALUES (7, 'fee simple', 'backfill')",
+            [],
+        ).unwrap();
+        let hits2 = find_pages_by_term(&conn, "Fee Simple").unwrap(); // case-insensitive
+        assert_eq!(hits2.iter().map(|m| m.page.id).collect::<Vec<_>>(), vec![7]);
+    }
+
+    #[test]
+    fn ensure_journal_tags_is_idempotent() {
+        let conn = mem();
+        ensure_journal_tags(&conn).unwrap(); // second call must not error
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('journal_tags','journal_fts')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 2);
     }
 
     #[test]
