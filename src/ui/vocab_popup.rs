@@ -14,6 +14,9 @@ pub struct VocabWordData {
 pub enum VocabView {
     Definition,
     Gloss,
+    /// The vocab journal Q&A (R): paged answer above a pinned
+    /// word+definition block. Rendered by `update_journal`, not `update`.
+    Journal,
 }
 
 pub struct VocabPopup {
@@ -22,6 +25,11 @@ pub struct VocabPopup {
     header_label: Label,
     counter_label: Label,
     footer_label: Label,
+    /// The Journal answer's scroll region while that view is showing —
+    /// Ctrl+n/p page it. None in Definition/Gloss views.
+    journal_scroll: std::cell::RefCell<Option<gtk4::ScrolledWindow>>,
+    /// Footer text without the page suffix ("saved · <model>").
+    journal_footer_base: std::cell::RefCell<String>,
 }
 
 impl VocabPopup {
@@ -78,6 +86,8 @@ impl VocabPopup {
             header_label,
             counter_label,
             footer_label,
+            journal_scroll: std::cell::RefCell::new(None),
+            journal_footer_base: std::cell::RefCell::new(String::new()),
         }
     }
 
@@ -118,6 +128,8 @@ impl VocabPopup {
         view: VocabView,
         _work_abbrev: &str,
     ) {
+        *self.journal_scroll.borrow_mut() = None;
+
         // Clear content
         while let Some(child) = self.content_box.first_child() {
             self.content_box.remove(&child);
@@ -195,6 +207,9 @@ impl VocabPopup {
                     self.content_box.append(&no_gloss);
                 }
             }
+            // Journal renders via update_journal; reaching here means the
+            // caller forgot to route — show nothing rather than stale data.
+            VocabView::Journal => {}
         }
 
         self.footer_label.set_visible(false);
@@ -229,4 +244,182 @@ impl VocabPopup {
 
         self.footer_label.set_visible(false);
     }
+}
+
+/// Body content for the Journal view.
+#[derive(Clone, Copy)]
+pub enum JournalBody<'a> {
+    Pending { model: &'a str },
+    Answer { text: &'a str },
+    Error { message: &'a str },
+}
+
+impl VocabPopup {
+    /// Render the Journal Q&A view: JOURNAL Q&A header, dim question line,
+    /// the paged answer body (capped at `max_body_height`), then the pinned
+    /// word + definition block that stays visible on every page. Footer
+    /// ("saved · model — page N / M") appears only for a saved Answer.
+    pub fn update_journal(
+        &self,
+        data: &VocabWordData,
+        index: usize,
+        total: usize,
+        question: &str,
+        body: JournalBody,
+        saved_model: Option<&str>,
+        max_body_height: i32,
+    ) {
+        while let Some(child) = self.content_box.first_child() {
+            self.content_box.remove(&child);
+        }
+        *self.journal_scroll.borrow_mut() = None;
+
+        self.header_label.set_visible(false);
+        if total > 1 {
+            self.counter_label.set_text(&format!("{} / {}", index + 1, total));
+            self.counter_label.set_visible(true);
+        } else {
+            self.counter_label.set_visible(false);
+        }
+
+        let qa_header = Label::builder()
+            .label("JOURNAL Q&A")
+            .halign(gtk4::Align::Start)
+            .margin_bottom(4)
+            .build();
+        qa_header.add_css_class("definition-header");
+        self.content_box.append(&qa_header);
+
+        let q_label = Label::builder()
+            .halign(gtk4::Align::Start)
+            .wrap(true)
+            .wrap_mode(gtk4::pango::WrapMode::WordChar)
+            .margin_bottom(8)
+            .build();
+        q_label.add_css_class("definition-etymology");
+        q_label.set_text(&format!("Q \u{b7} {question}"));
+        self.content_box.append(&q_label);
+
+        match body {
+            JournalBody::Pending { model } => {
+                let pending = Label::builder().halign(gtk4::Align::Start).build();
+                pending.add_css_class("definition-etymology");
+                pending.set_text(&format!("asking {model}\u{2026}"));
+                self.content_box.append(&pending);
+            }
+            JournalBody::Error { message } => {
+                let err = Label::builder()
+                    .halign(gtk4::Align::Start)
+                    .wrap(true)
+                    .wrap_mode(gtk4::pango::WrapMode::WordChar)
+                    .build();
+                err.add_css_class("definition-etymology");
+                err.set_text(message);
+                self.content_box.append(&err);
+            }
+            JournalBody::Answer { text } => {
+                let answer = Label::builder()
+                    .halign(gtk4::Align::Start)
+                    .valign(gtk4::Align::Start)
+                    .wrap(true)
+                    .wrap_mode(gtk4::pango::WrapMode::WordChar)
+                    .build();
+                answer.add_css_class("definition-text");
+                answer.set_text(text);
+                // External vscroll policy: no visible scrollbar; Ctrl+n/p
+                // drive the adjustment in whole viewport-height pages.
+                let scroll = gtk4::ScrolledWindow::builder()
+                    .hscrollbar_policy(gtk4::PolicyType::Never)
+                    .vscrollbar_policy(gtk4::PolicyType::External)
+                    .propagate_natural_height(true)
+                    .max_content_height(max_body_height)
+                    .child(&answer)
+                    .build();
+                self.content_box.append(&scroll);
+                *self.journal_scroll.borrow_mut() = Some(scroll);
+            }
+        }
+
+        // Pinned block: the word + its definition, fixed below the paged
+        // body — visible on every page (spec: never scrolls away).
+        let pin = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(4)
+            .build();
+        pin.add_css_class("journal-pin");
+        let word_label = Label::builder().halign(gtk4::Align::Start).build();
+        word_label.add_css_class("definition-word");
+        word_label.set_text(&data.word);
+        pin.append(&word_label);
+        if let Some(ref def) = data.definition {
+            let def_label = Label::builder()
+                .halign(gtk4::Align::Start)
+                .wrap(true)
+                .wrap_mode(gtk4::pango::WrapMode::Word)
+                .build();
+            def_label.add_css_class("definition-etymology");
+            def_label.set_text(def);
+            pin.append(&def_label);
+        }
+        self.content_box.append(&pin);
+
+        // Footer only once an answer is saved (spec: hidden while pending).
+        if let (JournalBody::Answer { .. }, Some(model)) = (body, saved_model) {
+            let base = format!("saved \u{b7} {model}");
+            *self.journal_footer_base.borrow_mut() = base.clone();
+            self.footer_label.set_visible(true);
+            self.footer_label.set_text(&base);
+            // Page count needs a viewport allocation, which is not in place
+            // by the time an idle would fire (page_size()==0 → page 1's
+            // indicator would be missing). Refresh from the adjustment's own
+            // `changed` signal instead: it fires once the ScrolledWindow is
+            // allocated. The adjustment is created fresh per render, so no
+            // disconnect bookkeeping is needed.
+            if let Some(scroll) = self.journal_scroll.borrow().clone() {
+                let footer = self.footer_label.clone();
+                scroll.vadjustment().connect_changed(move |adj| {
+                    refresh_journal_footer(adj, &footer, &base);
+                });
+            }
+        } else {
+            self.journal_footer_base.borrow_mut().clear();
+            self.footer_label.set_visible(false);
+        }
+    }
+
+    /// Page the Journal answer by `dir` viewport-heights. Returns true when
+    /// a page turn happened (Journal view with overflowing content only).
+    pub fn journal_page(&self, dir: i32) -> bool {
+        let scroll = match self.journal_scroll.borrow().clone() {
+            Some(s) => s,
+            None => return false,
+        };
+        let adj = scroll.vadjustment();
+        let page = adj.page_size();
+        if page <= 0.0 || adj.upper() <= page + 1.0 {
+            return false;
+        }
+        let max = (adj.upper() - page).max(0.0);
+        let new = (adj.value() + f64::from(dir) * page).clamp(0.0, max);
+        if (new - adj.value()).abs() < 1.0 {
+            return false;
+        }
+        adj.set_value(new);
+        refresh_journal_footer(&scroll.vadjustment(), &self.footer_label, &self.journal_footer_base.borrow());
+        true
+    }
+}
+
+/// Rewrite the Journal footer with the page position ("saved · m — page
+/// 2 / 3 · C-n ▸"). Free function so the post-layout idle can call it with
+/// cloned widgets (VocabPopup itself is not reference-counted).
+fn refresh_journal_footer(adj: &gtk4::Adjustment, footer: &Label, base: &str) {
+    let page = adj.page_size();
+    if page <= 0.0 || adj.upper() <= page + 1.0 {
+        footer.set_text(base);
+        return;
+    }
+    let pages = (adj.upper() / page).ceil() as usize;
+    let cur = ((adj.value() / page).round() as usize + 1).min(pages.max(1));
+    footer.set_text(&format!("{base} \u{2014} page {cur} / {pages} \u{b7} C-n \u{25b8}"));
 }

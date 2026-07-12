@@ -16,6 +16,7 @@ pub mod pickers;
 pub mod segment_vim;
 pub mod settings;
 pub mod synopsis;
+pub(crate) mod vocab_journal;
 pub mod word_copy;
 
 // Action enum identifying every reader-mode behavior. F2 maps KeyCombo →
@@ -120,6 +121,15 @@ pub enum Action {
     VocabPopupNext,
     VocabPopupPrev,
     HideVocabPopup,
+    /// Ask Claude about the vocab popup's current word in the cursor
+    /// segment and across the author's corpus; stores a kind='vocab'
+    /// journal Q&A and renders it in the popup (R — gated on popup visible
+    /// + a vocab word on the cursor line; silent no-op otherwise).
+    VocabJournalAsk,
+    /// Page the popup's Journal answer forward / backward (Ctrl+n /
+    /// Ctrl+p; no-op outside the Journal view or when it fits one page).
+    VocabJournalPageNext,
+    VocabJournalPagePrev,
     JumpToNextVocab,
     JumpToPrevVocab,
     ConcordanceNext,
@@ -272,6 +282,9 @@ impl Action {
             | Action::VocabPopupNext
             | Action::VocabPopupPrev
             | Action::HideVocabPopup
+            | Action::VocabJournalAsk
+            | Action::VocabJournalPageNext
+            | Action::VocabJournalPagePrev
             | Action::JumpToNextVocab
             | Action::JumpToPrevVocab
             | Action::ToggleVocabHighlight
@@ -415,6 +428,9 @@ impl Action {
             Action::VocabPopupNext => "VocabPopupNext",
             Action::VocabPopupPrev => "VocabPopupPrev",
             Action::HideVocabPopup => "HideVocabPopup",
+            Action::VocabJournalAsk => "VocabJournalAsk",
+            Action::VocabJournalPageNext => "VocabJournalPageNext",
+            Action::VocabJournalPagePrev => "VocabJournalPagePrev",
             Action::JumpToNextVocab => "JumpToNextVocab",
             Action::JumpToPrevVocab => "JumpToPrevVocab",
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",

@@ -306,6 +306,13 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // with n/N while a concordance is active).
         (KeyCombo::plain("r"), Action::VocabPopupTap),
         (KeyCombo::ctrl("r"), Action::VocabPopupNext),
+        // R: vocab journal Q&A — ask about the popup's current word (gated
+        // on popup visible + a vocab word on the cursor line). Ctrl+n/p
+        // page the popup's Journal answer; the pickers/overlays keep their
+        // own modal Ctrl+n/p (handled before reader dispatch).
+        (KeyCombo::plain("R"), Action::VocabJournalAsk),
+        (KeyCombo::ctrl("n"), Action::VocabJournalPageNext),
+        (KeyCombo::ctrl("p"), Action::VocabJournalPagePrev),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
         // Alt+u/Alt+i are swapped with the plain u/i swap: Alt+u cycles
@@ -474,12 +481,13 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
         assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabPopupNext));
-        // minus, Shift+R, and # freed; ConcordanceNext/Prev unbound (n/N
-        // step in-work hits). Both drill entries sit on the minus cap; the
-        // concordance pickers cluster on z.
+        // minus and # freed; R = vocab journal Q&A; Ctrl+n/p page its
+        // answer.
         assert_eq!(m.get(&KeyCombo::plain("minus")), None);
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
-        assert_eq!(m.get(&KeyCombo::plain("R")), None);
+        assert_eq!(m.get(&KeyCombo::plain("R")), Some(&Action::VocabJournalAsk));
+        assert_eq!(m.get(&KeyCombo::ctrl("n")), Some(&Action::VocabJournalPageNext));
+        assert_eq!(m.get(&KeyCombo::ctrl("p")), Some(&Action::VocabJournalPagePrev));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("underscore")), Some(&Action::JumpToPrevVocab));

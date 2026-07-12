@@ -986,6 +986,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .vocab-popup .definition-gloss {{ opacity: 0.7; font-size: 12px; color: {vocab_popup_fg}; }} \
          .vocab-popup .definition-hint {{ font-size: 11px; color: {vocab_popup_dim}; \
            border-top: 1px solid {vocab_popup_border}; padding-top: 8px; margin-top: 12px; }} \
+         .vocab-popup .journal-pin {{ border-top: 1px solid {vocab_popup_border}; \
+           padding-top: 10px; margin-top: 12px; }} \
          .concordance-picker {{ background-color: {bg}; color: {fg}; \
            padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
          .concordance-picker entry {{ margin-bottom: 8px; }} \

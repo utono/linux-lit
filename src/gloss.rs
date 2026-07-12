@@ -195,6 +195,26 @@ Write for a thoughtful reader: clear, specific, and concrete. No markdown, no bu
         .replace("{unit}", unit)
 }
 
+/// System prompt for the vocab journal Q&A (R in the main card with the
+/// vocab popup open). DB template `journal.vocab` or the compiled fallback;
+/// genre vocabulary substituted like `journal_qa_prompt`. The 10–15 sentence
+/// target sizes answers for the popup panel (overflow pages via Ctrl+n/p).
+pub fn vocab_journal_prompt(work_type: &str) -> String {
+    const FALLBACK: &str = "\
+You are a literary interlocutor helping a reader who is studying vocabulary while working through a {genre}. The reader's cursor is on a segment of the {genre} that contains a vocabulary word, and they want to understand how the word works — here and across the author's other works.
+
+Discuss, in this order: first, what the word means in this segment and what work it does there — register, tone, image, characterization, irony; second, how the author uses the word elsewhere, using the lines supplied under CORPUS OCCURRENCES as your primary evidence, grouping observations by work and noting shifts in sense or register between uses; third, anything about the word itself that helps a reader building vocabulary, such as etymology or an older sense, but only when it genuinely illuminates the usage.
+
+Ground every claim in the supplied segment and occurrence lines. You may quote briefly from the supplied lines when discussing them. If CORPUS OCCURRENCES says none were found, say plainly that the word appears only here in the available corpus and focus on this segment's usage.
+
+Write 10 to 15 sentences of flowing prose. Keep paragraphs short — two to four sentences — and separate paragraphs with a blank line. No markdown, no bullet lists, no numbered lists, no headers. Do not use the = sign; write paraphrases as prose.";
+    let (genre, unit, units) = genre_unit(work_type);
+    template_or("journal.vocab", FALLBACK)
+        .replace("{genre}", genre)
+        .replace("{units}", units)
+        .replace("{unit}", unit)
+}
+
 pub static INNER_MONOLOGUE_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
 You are a director using the actioning technique to discover the inner \

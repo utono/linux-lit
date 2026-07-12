@@ -16,6 +16,17 @@ pub struct VocabPopupState {
     pub auto: bool,
     pub line: Option<usize>,
     pub fade_gen: std::rc::Rc<std::cell::Cell<u64>>,
+    pub journal: Option<JournalDisplay>,
+}
+
+/// What the popup's Journal view is showing. Carries the word so the async
+/// reply can verify the popup still shows the word it asked about — any
+/// cursor move, word cycle, or view toggle clears this, and a stale reply
+/// must not repaint it (the DB insert still happens regardless).
+pub enum JournalDisplay {
+    Pending { word: String, question: String },
+    Answer { word: String, question: String, answer: String, model: String },
+    Error { word: String, question: String, message: String },
 }
 
 /// Load vocab data for all words on the current line into state, show popup with first word.
@@ -73,6 +84,7 @@ pub fn open_vocab_popup(state: &mut AppState) {
 
     state.vocab_popup.index = 0;
     state.vocab_popup.view = VocabView::Definition;
+    state.vocab_popup.journal = None;
     state.vocab_popup.line = Some(current_line);
 
     update_vocab_popup_margin(state);
@@ -110,6 +122,39 @@ pub fn show_vocab_popup(state: &AppState) {
     }
     let idx = state.vocab_popup.index;
     let total = state.vocab_popup.data.len();
+    if state.vocab_popup.view == crate::ui::vocab_popup::VocabView::Journal {
+        if let Some(ref j) = state.vocab_popup.journal {
+            use crate::ui::vocab_popup::JournalBody;
+            let (question, body, model) = match j {
+                JournalDisplay::Pending { question, .. } => (
+                    question.as_str(),
+                    JournalBody::Pending { model: &state.config.claude_model },
+                    None,
+                ),
+                JournalDisplay::Answer { question, answer, model, .. } => (
+                    question.as_str(),
+                    JournalBody::Answer { text: answer },
+                    Some(model.as_str()),
+                ),
+                JournalDisplay::Error { question, message, .. } => (
+                    question.as_str(),
+                    JournalBody::Error { message },
+                    None,
+                ),
+            };
+            state.vocab_popup.popup.update_journal(
+                &state.vocab_popup.data[idx],
+                idx,
+                total,
+                question,
+                body,
+                model,
+                journal_body_max_height(state),
+            );
+            state.vocab_popup.popup.show();
+            return;
+        }
+    }
     let work_abbrev = state.current_work.as_ref()
         .map(|w| w.abbrev.as_str())
         .unwrap_or("");
@@ -121,6 +166,18 @@ pub fn show_vocab_popup(state: &AppState) {
         work_abbrev,
     );
     state.vocab_popup.popup.show();
+}
+
+/// Height cap for the Journal answer body: half the window, floor 200px —
+/// leaves room for the popup's fixed chrome (headers, pinned word +
+/// definition, footer) at any geometry. Overflow pages via Ctrl+n/p.
+fn journal_body_max_height(state: &AppState) -> i32 {
+    let h = state
+        .text_view
+        .root()
+        .map(|r| r.height())
+        .unwrap_or(720);
+    (h / 2).max(200)
 }
 
 /// Refresh the vocab popup for the current line during playback sync.
@@ -157,6 +214,8 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
 
     if words.is_empty() {
         state.vocab_popup.data.clear();
+        state.vocab_popup.view = VocabView::Definition;
+        state.vocab_popup.journal = None;
         state.vocab_popup.popup.hide();
         state.vocab_popup.line = Some(current_line);
         return;
@@ -181,8 +240,19 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
 
     state.vocab_popup.index = 0;
     state.vocab_popup.view = VocabView::Definition;
+    state.vocab_popup.journal = None;
     state.vocab_popup.line = Some(current_line);
     show_vocab_popup(state);
+}
+
+/// Cycling words or toggling views leaves the Journal display — it belongs
+/// to one word only.
+fn exit_journal_view(state: &mut AppState) {
+    use crate::ui::vocab_popup::VocabView;
+    if state.vocab_popup.view == VocabView::Journal {
+        state.vocab_popup.view = VocabView::Definition;
+    }
+    state.vocab_popup.journal = None;
 }
 
 /// Cycle to the next vocab word in the popup.
@@ -190,6 +260,7 @@ pub fn vocab_popup_next(state: &mut AppState) {
     if state.vocab_popup.data.is_empty() {
         return;
     }
+    exit_journal_view(state);
     state.vocab_popup.index = (state.vocab_popup.index + 1) % state.vocab_popup.data.len();
     show_vocab_popup(state);
 }
@@ -198,6 +269,7 @@ pub fn vocab_popup_prev(state: &mut AppState) {
     if state.vocab_popup.data.is_empty() {
         return;
     }
+    exit_journal_view(state);
     if state.vocab_popup.index == 0 {
         state.vocab_popup.index = state.vocab_popup.data.len() - 1;
     } else {
@@ -206,13 +278,16 @@ pub fn vocab_popup_prev(state: &mut AppState) {
     show_vocab_popup(state);
 }
 
-/// Toggle between definition and gloss view.
+/// Toggle between definition and gloss view (Journal drops back to
+/// Definition).
 pub fn vocab_popup_toggle_view(state: &mut AppState) {
     use crate::ui::vocab_popup::VocabView;
     state.vocab_popup.view = match state.vocab_popup.view {
         VocabView::Definition => VocabView::Gloss,
         VocabView::Gloss => VocabView::Definition,
+        VocabView::Journal => VocabView::Definition,
     };
+    state.vocab_popup.journal = None;
     show_vocab_popup(state);
 }
 

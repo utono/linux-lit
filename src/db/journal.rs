@@ -79,6 +79,9 @@ pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
             "ALTER TABLE journal_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'qa';",
         )?;
     }
+    if !column_exists(conn, "journal_entries", "word")? {
+        conn.execute_batch("ALTER TABLE journal_entries ADD COLUMN word TEXT;")?;
+    }
     Ok(())
 }
 
@@ -248,6 +251,58 @@ pub fn find_passage_pages(
         map_journal_page_row,
     )?;
     rows.collect()
+}
+
+/// Insert a vocab-word journal Q&A: passage scope anchored to the cursor
+/// segment, `kind='vocab'`, with the word stored for exact reuse lookup.
+pub fn save_vocab_page(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    start_citation: &str,
+    end_citation: &str,
+    source_text: &str,
+    word: &str,
+    question: &str,
+    answer: &str,
+    claude_model: &str,
+) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO journal_entries
+            (work_abbrev, div1, div2, question, answer, claude_model, scope,
+             start_citation, end_citation, source_text, kind, word, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'passage', ?7, ?8, ?9, 'vocab', ?10,
+                 datetime('now'))",
+        rusqlite::params![
+            work_abbrev, div1, div2, question, answer, claude_model,
+            start_citation, end_citation, source_text, word
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// The most recent vocab Q&A for `word` in the segment's `(div1, div2)`, or
+/// None. Pressing R with a hit renders the stored answer — no duplicate ask.
+pub fn find_vocab_page(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    word: &str,
+) -> Result<Option<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS} \
+         FROM journal_entries \
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 \
+           AND kind = 'vocab' AND word = ?4 \
+         ORDER BY timestamp DESC, id DESC LIMIT 1",
+    ))?;
+    let mut rows = stmt.query_map(
+        rusqlite::params![work_abbrev, div1, div2, word],
+        map_journal_page_row,
+    )?;
+    rows.next().transpose()
 }
 
 /// Distinct `(start_citation, end_citation)` ranges of every passage-scope
@@ -586,5 +641,56 @@ mod tests {
             .query_row("SELECT div1 FROM journal_entries WHERE id=?1", [id], |r| r.get(0))
             .unwrap();
         assert_eq!(n, -2);
+    }
+
+    #[test]
+    fn vocab_word_column_migrates_idempotently() {
+        let conn = mem();
+        ensure_journal_table(&conn).unwrap(); // second call must not error
+        let has: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('journal_entries') WHERE name='word'")
+            .unwrap()
+            .exists([])
+            .unwrap();
+        assert!(has, "word column should exist after ensure_journal_table");
+    }
+
+    #[test]
+    fn vocab_page_roundtrip_and_reuse_lookup() {
+        let conn = mem();
+        let id = save_vocab_page(
+            &conn, "Cym", 3, 2, "Cym.3.2.77", "Cym.3.2.80",
+            "A riding suit no costlier than would fit\nA franklin's huswife.",
+            "franklin", "\u{201c}franklin\u{201d} in this segment, and across Shakespeare",
+            "Imogen prices her disguise\u{2026}", "claude-opus-4-8",
+        ).unwrap();
+        assert!(id > 0);
+
+        // Exact reuse hit.
+        let page = find_vocab_page(&conn, "Cym", 3, 2, "franklin").unwrap().unwrap();
+        assert_eq!(page.id, id);
+        assert_eq!(page.kind, "vocab");
+        assert_eq!(page.source_text.as_deref().unwrap(), "A riding suit no costlier than would fit\nA franklin's huswife.");
+
+        // Different word, different segment, different work: all miss.
+        assert!(find_vocab_page(&conn, "Cym", 3, 2, "huswife").unwrap().is_none());
+        assert!(find_vocab_page(&conn, "Cym", 3, 3, "franklin").unwrap().is_none());
+        assert!(find_vocab_page(&conn, "Ham", 3, 2, "franklin").unwrap().is_none());
+
+        // Most recent wins (same-second timestamps tie-break on id DESC).
+        let id2 = save_vocab_page(
+            &conn, "Cym", 3, 2, "Cym.3.2.77", "Cym.3.2.80", "src",
+            "franklin", "Q2?", "Second answer.", "m",
+        ).unwrap();
+        assert_eq!(find_vocab_page(&conn, "Cym", 3, 2, "franklin").unwrap().unwrap().id, id2);
+
+        // Vocab rows ride the passage scope into the scene band render.
+        let band = find_scene_band_pages(&conn, "Cym", 3, 2).unwrap();
+        assert_eq!(band.len(), 2);
+        assert!(band.iter().all(|p| p.kind == "vocab"));
+
+        // A plain passage Q&A (kind='qa') must never satisfy the vocab lookup.
+        save_passage_page(&conn, "Cym", 3, 4, "Cym.3.4.1", "Cym.3.4.2", "s", "Q?", "A.", "m").unwrap();
+        assert!(find_vocab_page(&conn, "Cym", 3, 4, "franklin").unwrap().is_none());
     }
 }

@@ -1847,6 +1847,7 @@ pub fn build_window(
             auto: false,
             line: None,
             fade_gen: Rc::new(Cell::new(0)),
+            journal: None,
         },
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),
