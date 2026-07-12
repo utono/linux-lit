@@ -158,65 +158,22 @@ pub fn divs_at_buffer_line(state: &AppState, buffer_line: usize) -> (i64, i64) {
     (0, 0)
 }
 
-/// Assemble the verbatim text of one scene `(div1, div2)` for the current work,
-/// with speaker attributions, in reading order. Empty string if no current work
-/// or no matching lines.
-pub fn scene_text_for(state: &AppState, div1: i64, div2: i64) -> String {
-    let work = match state.current_work.as_ref() {
-        Some(w) => w,
-        None => return String::new(),
-    };
+/// Budget for a non-prose scene ask: scenes at or under this render whole
+/// (~90% of the Shakespeare corpus); longer scenes fall back to the anchored
+/// excerpt so a single ask never ships a 6k+-token scene. ≈3k tokens.
+pub(crate) const SCENE_TEXT_MAX_CHARS: usize = 12_000;
+
+/// Excerpt radius (lines each side of the anchor) for over-budget scenes:
+/// up to 161 play lines ≈ 2.5k tokens.
+pub(crate) const VERSE_WINDOW_RADIUS: usize = 80;
+
+/// Render `work.lines[idxs]` with the speaker-interleave rule shared by every
+/// scene-text builder: the speaker name on its own line whenever it changes,
+/// preceded by a blank separator line.
+fn render_speaker_interleaved(work: &crate::db::models::Work, idxs: &[usize]) -> String {
     let mut out = String::new();
     let mut last_speaker: Option<&str> = None;
-    for line in work.lines.iter().filter(|l| l.div1 == div1 && l.div2 == div2) {
-        match line.speaker.as_deref() {
-            Some(sp) if last_speaker != Some(sp) => {
-                if !out.is_empty() {
-                    out.push('\n');
-                }
-                out.push_str(sp);
-                out.push('\n');
-                last_speaker = Some(sp);
-            }
-            _ => {}
-        }
-        out.push_str(&line.text);
-        out.push('\n');
-    }
-    out
-}
-
-/// Pure prose-window renderer: collects the work-line indices for the given
-/// division, finds `anchor_work_line`'s position within it (fallback 0), slices
-/// ±`radius` via `window_range`, and renders the selected paragraphs with the
-/// same speaker-interleave logic as `scene_text_for`.
-pub(crate) fn prose_window_text(
-    work: &crate::db::models::Work,
-    div1: i64,
-    div2: i64,
-    anchor_work_line: usize,
-    radius: usize,
-) -> String {
-    let idxs: Vec<usize> = work
-        .lines
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| l.div1 == div1 && l.div2 == div2)
-        .map(|(i, _)| i)
-        .collect();
-    if idxs.is_empty() {
-        return String::new();
-    }
-    // Anchor's position WITHIN this division. If `anchor_work_line` isn't in the
-    // division (e.g. the band's div differs from the reader's cursor div, or the
-    // reader had no saved position), fall back to the division's first paragraph
-    // — the window is then the division opening ±radius.
-    let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
-    let (lo, hi) = window_range(anchor_pos, radius, idxs.len());
-
-    let mut out = String::new();
-    let mut last_speaker: Option<&str> = None;
-    for &wi in &idxs[lo..=hi] {
+    for &wi in idxs {
         let line = &work.lines[wi];
         match line.speaker.as_deref() {
             Some(sp) if last_speaker != Some(sp) => {
@@ -235,10 +192,79 @@ pub(crate) fn prose_window_text(
     out
 }
 
-/// Like `scene_text_for`, but for PROSE works returns only the paragraphs around
-/// `anchor_work_line` (±`radius`, clamped to the division). Non-prose works
-/// (plays) return the full `scene_text_for` — a real scene is small and the
-/// whole scene is the intended context. Up to `2*radius + 1` paragraphs.
+/// Work-line indices of one division, in reading order.
+fn division_indices(work: &crate::db::models::Work, div1: i64, div2: i64) -> Vec<usize> {
+    work.lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.div1 == div1 && l.div2 == div2)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Pure prose-window renderer: collects the work-line indices for the given
+/// division, finds `anchor_work_line`'s position within it (fallback 0), slices
+/// ±`radius` via `window_range`, and renders the selected paragraphs with the
+/// same speaker-interleave logic as `scene_text_for`.
+pub(crate) fn prose_window_text(
+    work: &crate::db::models::Work,
+    div1: i64,
+    div2: i64,
+    anchor_work_line: usize,
+    radius: usize,
+) -> String {
+    let idxs = division_indices(work, div1, div2);
+    if idxs.is_empty() {
+        return String::new();
+    }
+    // Anchor's position WITHIN this division. If `anchor_work_line` isn't in the
+    // division (e.g. the band's div differs from the reader's cursor div, or the
+    // reader had no saved position), fall back to the division's first paragraph
+    // — the window is then the division opening ±radius.
+    let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
+    let (lo, hi) = window_range(anchor_pos, radius, idxs.len());
+    render_speaker_interleaved(work, &idxs[lo..=hi])
+}
+
+/// Non-prose scene text for a journal ask, budgeted: the WHOLE scene when it
+/// fits `SCENE_TEXT_MAX_CHARS`, else an anchored excerpt of
+/// ±`VERSE_WINDOW_RADIUS` lines around `anchor_work_line` (fallback: the scene
+/// opening) with explicit markers on whichever ends were cut, so the model
+/// never mistakes the excerpt for the whole scene.
+pub(crate) fn play_scene_text_lean(
+    work: &crate::db::models::Work,
+    div1: i64,
+    div2: i64,
+    anchor_work_line: usize,
+) -> String {
+    let idxs = division_indices(work, div1, div2);
+    if idxs.is_empty() {
+        return String::new();
+    }
+    let full = render_speaker_interleaved(work, &idxs);
+    if full.len() <= SCENE_TEXT_MAX_CHARS {
+        return full;
+    }
+    let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
+    let (lo, hi) = window_range(anchor_pos, VERSE_WINDOW_RADIUS, idxs.len());
+    let mut out = String::new();
+    if lo > 0 {
+        out.push_str(
+            "[\u{2026} scene continues above \u{2014} this is an excerpt around the reader's position \u{2026}]\n\n",
+        );
+    }
+    out.push_str(&render_speaker_interleaved(work, &idxs[lo..=hi]));
+    if hi + 1 < idxs.len() {
+        out.push_str("\n[\u{2026} scene continues below \u{2026}]\n");
+    }
+    out
+}
+
+/// Like `scene_text_for`, but sized for a Claude ask. PROSE works return only
+/// the paragraphs around `anchor_work_line` (±`radius`, clamped to the
+/// division). Non-prose works (plays) return the whole scene when it fits
+/// `SCENE_TEXT_MAX_CHARS`, else the `play_scene_text_lean` anchored excerpt —
+/// the tail of long scenes (up to ~10k tokens) is what this bounds.
 pub fn scene_text_windowed(
     state: &AppState,
     div1: i64,
@@ -251,7 +277,7 @@ pub fn scene_text_windowed(
         None => return String::new(),
     };
     if !crate::db::line_types::is_prose_work(&work.work_type) {
-        return scene_text_for(state, div1, div2);
+        return play_scene_text_lean(work, div1, div2, anchor_work_line);
     }
     prose_window_text(work, div1, div2, anchor_work_line, radius)
 }
@@ -592,6 +618,124 @@ mod window_tests {
 }
 
 #[cfg(test)]
+mod lean_scene_tests {
+    use super::{play_scene_text_lean, SCENE_TEXT_MAX_CHARS, VERSE_WINDOW_RADIUS};
+    use crate::db::models::{Line, Work};
+
+    fn line(id: i64, speaker: Option<&str>, text: &str) -> Line {
+        Line {
+            id,
+            citation: format!("T.1.1.{id}"),
+            text: text.to_string(),
+            normalized: text.to_lowercase(),
+            speaker: speaker.map(|s| s.to_string()),
+            is_dialogue: speaker.is_some(),
+            timestamp: None,
+            div1: 1,
+            div2: 1,
+            line_in_div: id,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    /// A one-scene play work of `n` lines, two speakers alternating every
+    /// 4 lines, each line `width` chars.
+    fn play(n: usize, width: usize) -> Work {
+        let lines = (0..n)
+            .map(|i| {
+                let sp = if (i / 4) % 2 == 0 { "FIRST" } else { "SECOND" };
+                line(i as i64, Some(sp), &format!("{:0width$}", i, width = width))
+            })
+            .collect();
+        Work {
+            abbrev: "T".into(),
+            canonical_abbrev: "T".into(),
+            title: "Test".into(),
+            author: "Nobody".into(),
+            work_type: "play".into(),
+            text_file: None,
+            vocab_highlight: false,
+            lines,
+            timestamps: vec![],
+            media_paths: vec![],
+            media_ids: vec![],
+            media_id: None,
+        }
+    }
+
+    #[test]
+    fn under_budget_scene_passes_through_whole() {
+        // 100 lines x 40 chars ~ 4.6k chars < budget: whole scene, no markers.
+        let w = play(100, 40);
+        let text = play_scene_text_lean(&w, 1, 1, 50);
+        assert!(text.len() <= SCENE_TEXT_MAX_CHARS);
+        assert!(text.contains(&format!("{:040}", 0)), "first line present");
+        assert!(text.contains(&format!("{:040}", 99)), "last line present");
+        assert!(!text.contains("excerpt"), "no markers under budget");
+    }
+
+    #[test]
+    fn over_budget_scene_windows_around_anchor_with_both_markers() {
+        // 400 lines x 60 chars ~ 25k chars > budget.
+        let w = play(400, 60);
+        let text = play_scene_text_lean(&w, 1, 1, 200);
+        assert!(text.contains("scene continues above"), "top marker");
+        assert!(text.contains("scene continues below"), "bottom marker");
+        assert!(text.contains(&format!("{:060}", 200)), "anchor line present");
+        assert!(text.contains(&format!("{:060}", 200 - VERSE_WINDOW_RADIUS)));
+        assert!(text.contains(&format!("{:060}", 200 + VERSE_WINDOW_RADIUS)));
+        assert!(!text.contains(&format!("{:060}", 0)), "scene opening cut");
+        assert!(!text.contains(&format!("{:060}", 399)), "scene end cut");
+        // The excerpt itself respects the budget with room to spare.
+        assert!(text.len() < 25_000);
+    }
+
+    #[test]
+    fn anchor_at_start_has_only_bottom_marker() {
+        let w = play(400, 60);
+        let text = play_scene_text_lean(&w, 1, 1, 0);
+        assert!(!text.contains("scene continues above"));
+        assert!(text.contains("scene continues below"));
+        assert!(text.contains(&format!("{:060}", 0)));
+    }
+
+    #[test]
+    fn anchor_at_end_has_only_top_marker() {
+        let w = play(400, 60);
+        let text = play_scene_text_lean(&w, 1, 1, 399);
+        assert!(text.contains("scene continues above"));
+        assert!(!text.contains("scene continues below"));
+        assert!(text.contains(&format!("{:060}", 399)));
+    }
+
+    #[test]
+    fn anchor_outside_division_falls_back_to_opening() {
+        let w = play(400, 60);
+        // anchor_work_line 9999 is not in the division -> window at the opening.
+        let text = play_scene_text_lean(&w, 1, 1, 9999);
+        assert!(text.contains(&format!("{:060}", 0)), "opens at scene start");
+        assert!(!text.contains("scene continues above"));
+        assert!(text.contains("scene continues below"));
+    }
+
+    #[test]
+    fn speaker_interleave_preserved_in_excerpt() {
+        let w = play(400, 60);
+        let text = play_scene_text_lean(&w, 1, 1, 200);
+        assert!(text.contains("FIRST\n"), "speaker headers survive windowing");
+        assert!(text.contains("SECOND\n"));
+    }
+
+    #[test]
+    fn empty_division_is_empty() {
+        let w = play(10, 40);
+        assert_eq!(play_scene_text_lean(&w, 2, 1, 0), "");
+    }
+}
+
+#[cfg(test)]
 mod chapter_synopsis_tests {
     #[test]
     fn chapter_number_from_flags_counts_inclusive() {
@@ -684,7 +828,7 @@ mod synopsis_tests {
                 // anchor somewhere in the middle
                 let mid = work.lines.len() / 2;
                 let windowed = super::prose_window_text(&work, 1, 0, mid, 10);
-                // full division text length, computed the scene_text_for way
+                // full division text length, computed the full-render way
                 let full_len: usize = work
                     .lines
                     .iter()
