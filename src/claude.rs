@@ -53,15 +53,38 @@ pub struct ChatTurn {
 
 /// Build the /v1/messages request body for a multi-turn conversation.
 /// Kept as a pure fn so the shape is unit-testable.
+///
+/// Prompt caching: the system prompt is stable across requests, and a chat
+/// conversation's history is an append-only prefix — both get `cache_control`
+/// breakpoints so repeat sends bill at the cached-read rate (prefixes under
+/// the model's cacheable minimum are silently not cached, which is safe).
+/// The final-message breakpoint is only set for multi-turn requests: caching
+/// a one-shot's user message writes an entry that can never be read back.
 fn chat_body(system: &str, turns: &[ChatTurn], model: &str) -> serde_json::Value {
+    let n = turns.len();
     let messages: Vec<serde_json::Value> = turns
         .iter()
-        .map(|t| serde_json::json!({"role": t.role, "content": t.content}))
+        .enumerate()
+        .map(|(i, t)| {
+            if n >= 2 && i == n - 1 {
+                serde_json::json!({"role": t.role, "content": [{
+                    "type": "text",
+                    "text": t.content,
+                    "cache_control": {"type": "ephemeral"},
+                }]})
+            } else {
+                serde_json::json!({"role": t.role, "content": t.content})
+            }
+        })
         .collect();
     serde_json::json!({
         "model": model,
         "max_tokens": 4096,
-        "system": system,
+        "system": [{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        }],
         "messages": messages,
     })
 }
@@ -115,6 +138,17 @@ pub async fn send_chat(
     let json: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| ClaudeError::ApiError(e.to_string()))?;
 
+    if let Some(u) = json.get("usage") {
+        let g = |k: &str| u.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+        crate::logging::log(&format!(
+            "CLAUDE: usage in={} cache_read={} cache_write={} out={}",
+            g("input_tokens"),
+            g("cache_read_input_tokens"),
+            g("cache_creation_input_tokens"),
+            g("output_tokens"),
+        ));
+    }
+
     json.get("content")
         .and_then(|c| c.as_array())
         .and_then(|arr| arr.first())
@@ -155,23 +189,31 @@ mod chat_body_tests {
         let body = chat_body("SYS", &turns, "claude-opus-4-8");
         assert_eq!(body["model"], "claude-opus-4-8");
         assert_eq!(body["max_tokens"], 4096);
-        assert_eq!(body["system"], "SYS");
+        // System is a cache-marked content block.
+        assert_eq!(body["system"][0]["text"], "SYS");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0]["role"], "user");
         assert_eq!(msgs[0]["content"], "q1");
         assert_eq!(msgs[1]["role"], "assistant");
         assert_eq!(msgs[1]["content"], "a1");
+        // The final message of a multi-turn request carries the history
+        // cache breakpoint, so it becomes a content-block array.
         assert_eq!(msgs[2]["role"], "user");
-        assert_eq!(msgs[2]["content"], "q2");
+        assert_eq!(msgs[2]["content"][0]["text"], "q2");
+        assert_eq!(msgs[2]["content"][0]["cache_control"]["type"], "ephemeral");
     }
 
     #[test]
-    fn single_turn_body_matches_legacy_send_message_shape() {
+    fn single_turn_body_has_no_message_cache_breakpoint() {
         let body = chat_body("S", &[turn("user", "hello")], "m");
+        // One-shot user content stays a plain string: caching it would
+        // write an entry that is never read back.
         assert_eq!(
             body["messages"],
             serde_json::json!([{"role": "user", "content": "hello"}])
         );
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
     }
 }

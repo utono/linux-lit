@@ -359,15 +359,19 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             genre, &work.title, &work.author, &unit_label, &scene,
             &seg.segments, seg.cursor_index, &question,
         );
-        // Prior turns: each exchange contributes its full user_msg (context
-        // embedded, so history stays coherent as the cursor moves) + answer.
-        let mut turns: Vec<crate::claude::ChatTurn> = Vec::new();
-        for e in &s.chat.exchanges {
-            turns.push(crate::claude::ChatTurn { role: "user", content: e.user_msg.clone() });
-            turns.push(crate::claude::ChatTurn { role: "assistant", content: e.answer.clone() });
-        }
-        turns.push(crate::claude::ChatTurn { role: "user", content: user_msg.clone() });
+        // Prior turns: capped and deduped by build_history_turns. The
+        // current message is likewise sent question-only when its passage
+        // matches the last history turn's; the FULL user_msg is still
+        // stored on the Exchange (revision/consolidation and any future
+        // context-bearing turn read from there).
         let chip: String = seg.segments[seg.cursor_index].chars().take(120).collect();
+        let (mut turns, last_chip) = build_history_turns(&s.chat.exchanges);
+        let wire_current = if last_chip.as_deref() == Some(chip.as_str()) {
+            same_passage_question(&question)
+        } else {
+            user_msg.clone()
+        };
+        turns.push(crate::claude::ChatTurn { role: "user", content: wire_current });
         let meta = (
             seg.div1,
             seg.div2,
@@ -728,6 +732,44 @@ pub(crate) fn set_panel_header(s: &AppState) {
     s.chat_panel.set_header(&scene);
 }
 
+/// How many most-recent exchanges are sent as conversation history (each is
+/// two turns). Older exchanges age out of the wire request — `S` consolidate
+/// is the archival path for anything the model still needs to remember.
+const CHAT_HISTORY_TURNS: usize = 6;
+
+/// Question-only wire form for a turn whose passage context is already
+/// present verbatim in an earlier turn of the same request.
+fn same_passage_question(q: &str) -> String {
+    format!("Reader's question (about the same passage context given above):\n{}", q)
+}
+
+/// Build the wire history from the last `CHAT_HISTORY_TURNS` exchanges,
+/// deduping repeated passage context: within the window, an exchange whose
+/// chip (cursor-segment fingerprint) matches the previous one is sent
+/// question-only — its 5-segment context block is byte-identical to the one
+/// already in the conversation. The first exchange in the window always
+/// carries its full user_msg, so capping can never orphan a question from
+/// its passage. Returns the turns plus the last exchange's chip (for the
+/// current message's own dedupe check).
+fn build_history_turns(
+    exchanges: &[Exchange],
+) -> (Vec<crate::claude::ChatTurn>, Option<String>) {
+    let start = exchanges.len().saturating_sub(CHAT_HISTORY_TURNS);
+    let mut turns = Vec::new();
+    let mut prev_chip: Option<&str> = None;
+    for e in &exchanges[start..] {
+        let content = if prev_chip == Some(e.chip.as_str()) {
+            same_passage_question(&e.question)
+        } else {
+            e.user_msg.clone()
+        };
+        prev_chip = Some(e.chip.as_str());
+        turns.push(crate::claude::ChatTurn { role: "user", content });
+        turns.push(crate::claude::ChatTurn { role: "assistant", content: e.answer.clone() });
+    }
+    (turns, prev_chip.map(str::to_string))
+}
+
 /// Parse a revision reply of the form "Q: ...\nA: ..." (A may span
 /// paragraphs). Falls back to (fallback_q, whole reply) when the format is
 /// absent, so a format-ignoring model still yields a usable answer.
@@ -743,6 +785,67 @@ pub(crate) fn parse_revised_qa(reply: &str, fallback_q: &str) -> (String, String
         }
     }
     (fallback_q.to_string(), trimmed.to_string())
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::{build_history_turns, Exchange, CHAT_HISTORY_TURNS};
+
+    fn ex(chip: &str, q: &str, user_msg: &str, a: &str) -> Exchange {
+        Exchange {
+            question: q.to_string(),
+            answer: a.to_string(),
+            chip: chip.to_string(),
+            user_msg: user_msg.to_string(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id: None,
+        }
+    }
+
+    #[test]
+    fn same_chip_exchange_sends_question_only() {
+        let exchanges = [
+            ex("chipA", "q1", "FULL1", "a1"),
+            ex("chipA", "q2", "FULL2", "a2"),
+            ex("chipB", "q3", "FULL3", "a3"),
+        ];
+        let (turns, last_chip) = build_history_turns(&exchanges);
+        assert_eq!(turns.len(), 6);
+        assert_eq!(turns[0].content, "FULL1");
+        // Same passage as the turn above: question only, no context block.
+        assert!(turns[2].content.contains("same passage"));
+        assert!(turns[2].content.ends_with("q2"));
+        // New passage: full context returns.
+        assert_eq!(turns[4].content, "FULL3");
+        assert_eq!(last_chip.as_deref(), Some("chipB"));
+    }
+
+    #[test]
+    fn history_caps_at_window_and_window_head_gets_full_context() {
+        // 8 exchanges, all on the same passage: only the last 6 are sent,
+        // and the first IN THE WINDOW must carry full context even though
+        // its chip matches the (evicted) exchange before it.
+        let exchanges: Vec<Exchange> = (0..8)
+            .map(|i| ex("chipA", &format!("q{}", i), &format!("FULL{}", i), "a"))
+            .collect();
+        let (turns, _) = build_history_turns(&exchanges);
+        assert_eq!(turns.len(), CHAT_HISTORY_TURNS * 2);
+        assert_eq!(turns[0].content, "FULL2");
+        for i in 1..CHAT_HISTORY_TURNS {
+            assert!(turns[i * 2].content.contains("same passage"));
+        }
+    }
+
+    #[test]
+    fn empty_history_yields_no_turns_and_no_chip() {
+        let (turns, last_chip) = build_history_turns(&[]);
+        assert!(turns.is_empty());
+        assert_eq!(last_chip, None);
+    }
 }
 
 #[cfg(test)]
