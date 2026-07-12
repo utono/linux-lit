@@ -52,12 +52,12 @@ const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "prev bkmk", ":: cycle speed", &[]),
     key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
-    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl")]),
+    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl"), ("C-p", "Q&A page \u{25b2}")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
-    key("r", "R", "vocab tap", "", &[("C-r", "vocab \u{25b6}")]),
+    key("r", "R", "vocab tap", "R: vocab Q&A", &[("C-r", "vocab \u{25b6}")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     ub("@", "^"),
@@ -74,7 +74,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[]),
     key("t", "T", "", "", &[("C-t", "root variant"), ("S-C-T", "root variant prev"), ("C-M-t", "nav test"), ("M-t", "theme next"), ("M-S-T", "theme prev")]),
-    key("n", "N", "next match", "N: prev match", &[]),
+    key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}")]),
     bare("s", "S", "sync tap"),
     key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
@@ -287,6 +287,10 @@ focus; Tab-Tab closes via ChordState::PendingTab) — src/input/actions/chat.rs"
         "vocab tap" => "Action::VocabPopupTap (visible: next word; rr: \
 show/hide via ChordState::PendingR) — src/input/keymap.rs",
         "vocab ▶" => "Action::VocabPopupNext — src/input/keymap.rs",
+        "vocab Q&A" => "Action::VocabJournalAsk (popup visible + vocab word \
+on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
+        "Q&A page ▼" => "Action::VocabJournalPageNext — src/input/actions/vocab_journal.rs",
+        "Q&A page ▲" => "Action::VocabJournalPagePrev — src/input/actions/vocab_journal.rs",
 
         // ── Word copy / visual ──
         "copy word" => "Action::WordCycleCopy — src/input/actions/word_copy.rs",
@@ -442,6 +446,9 @@ fn expand_action(label: &str) -> String {
         "reset font" => "reset font size",
         "vocab ▶" => "next vocab word",
         "vocab tap" => "vocab popup (rr toggles)",
+        "vocab Q&A" => "vocab word journal Q&A",
+        "Q&A page ▼" => "vocab Q&A next page",
+        "Q&A page ▲" => "vocab Q&A previous page",
         _ => return label.to_string(),
     };
     format!("{prefix}{full}")
