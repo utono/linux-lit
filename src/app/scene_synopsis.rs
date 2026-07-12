@@ -579,7 +579,7 @@ pub fn update_title_bar_scene(state: &AppState) {
 /// Inclusive paragraph index range `anchor_pos ± radius`, clamped to `[0, n)`.
 /// Returns `(lo, hi)` with `lo <= hi`. When `n == 0` returns `(0, 0)` — callers
 /// must check `n == 0` separately and not index.
-fn window_range(anchor_pos: usize, radius: usize, n: usize) -> (usize, usize) {
+pub(crate) fn window_range(anchor_pos: usize, radius: usize, n: usize) -> (usize, usize) {
     if n == 0 {
         return (0, 0);
     }
