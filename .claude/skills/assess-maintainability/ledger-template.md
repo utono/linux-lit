@@ -17,6 +17,13 @@ Copy this shape. Keep numbering monotonic; never reuse a merged number.
 - **Rank inputs:** copies=<n>, drift_risk=<low/med/high>, scope=<tiny/small/med>
 ```
 
+**When it ships, prune it to the one-line form** (the full block above moves
+verbatim to `docs/audit-opportunities-archive.md`):
+
+```markdown
+- **#N** <short-name> (<sha>) — <one sentence: what became what, and where>.
+```
+
 The header of the ledger file itself:
 
 ```markdown

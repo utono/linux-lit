@@ -115,6 +115,11 @@ LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
 - `GSK_RENDERER=cairo` is **mandatory** (default renderer aborts headless);
   `LIT_NO_MPV=1` fully isolates from live MPV (`LIT_HEADLESS_TEST=1` alone
   still CONNECTS to a running live socket).
+- **Ad-hoc cage runs need `LIT_DEV=1`** or the app loads `config.json`
+  (release theme/positions) instead of `config-dev.json`; `run-fuzz.sh` and
+  `e2e-env.sh` already set it, a bare `cage -- ./target/debug/...` does not.
+  Without it the run takes a release instance slot (e.g. wrote
+  `linux-lit-release-2.log`) — find the fresh log by mtime, not by name.
 - Cage opens a fresh socket (`ls /run/user/1000/wayland-*`); export
   `WAYLAND_DISPLAY` to it. Default output is 1280×720 — resize to production
   geometry when pagination matters:

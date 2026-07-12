@@ -63,12 +63,39 @@ A safe-scope opportunity:
 
 ## Procedure
 
-1. **Read the ledger.** Open `docs/audit-opportunities.md` (create it
-   from `ledger-template.md` if missing). Note the highest `#N` and which entries
-   are already DONE (cross-check against `git log --grep refactor`). New
-   opportunities continue the numbering; never reuse a merged number.
+1. **Read only the ledger's index, not the whole file.** The ledger
+   (`docs/audit-opportunities.md`; create from `ledger-template.md` if missing)
+   keeps shipped opportunities as **one-liners** and current OPEN ones as full
+   analyses — reading it whole burns tokens on detail an audit does not need.
+   Pull just what numbering + de-dup require:
 
-2. **Gather raw signals** (dispatch parallel `Explore`/`general-purpose` agents
+   ```bash
+   rg -n '^## #|^\*\*#|^- \*\*#|Standing exclusions|Below the floor|^## Lessons|^- \*\*The #' \
+     docs/audit-opportunities.md
+   ```
+
+   From that: the highest `#N` (new work continues the numbering — never reuse a
+   merged number), which numbers are already shipped, the Lessons block, and the
+   Standing exclusions. Read the FULL prose of a specific entry only when a new
+   signal looks like it might collide with it. Cross-check DONE status against
+   `git log --grep refactor`. Do NOT read `audit-opportunities-archive.md` — it
+   holds retired full write-ups and is never part of an audit run.
+
+2. **Prune shipped entries FIRST — always, before adding any new ones.** For
+   every `#N` whose refactor has merged since the last audit (confirm via
+   `git log --grep refactor` and the commit hash), collapse its full analysis to
+   the one-line shipped form (`**#N** slug (hash) — one-sentence what-and-where`,
+   matching the existing `#5`–`#72` list). This keeps the ledger's always-read
+   bulk flat no matter how many batches run. **A completed action item never
+   stays as a full analysis in the live ledger.**
+
+   Before deleting the prose, append it **verbatim** (newest batch first) to
+   `docs/audit-opportunities-archive.md` — the archive the skill never reads —
+   so the Signal / Identical-part / Variants / EXCLUDED reasoning survives
+   outside git history. Move any exclusion that is still load-bearing into the
+   ledger's **Standing exclusions** section rather than losing it in the archive.
+
+3. **Gather raw signals** (dispatch parallel `Explore`/`general-purpose` agents
    for breadth; this is read-only). Look for:
    - **Duplication families** — sibling files/handlers with near-identical bodies.
      The recurring hot spots: `src/ui/*_picker.rs` (~12 files),
@@ -82,18 +109,18 @@ A safe-scope opportunity:
      a specific self-contained block inside it that can move with no coupling
      (e.g. gloss_overlay.rs's ~1100 lines of pure buffer helpers).
 
-3. **Convert each signal into a candidate opportunity.** For each, answer:
+4. **Convert each signal into a candidate opportunity.** For each, answer:
    - What is the **byte-identical** part across all sites? (That is what extracts.)
    - What are the **variants** (how does each site differ)?
    - What must be **EXCLUDED** and why?
    - Is it behavior-preserving? If not, drop it or note it separately as a
      "larger project, not safe-scope" — do NOT number it as an opportunity.
 
-4. **Rank** by `(duplication_count × drift_risk) ÷ scope_size`. Highest = many
+5. **Rank** by `(duplication_count × drift_risk) ÷ scope_size`. Highest = many
    identical copies that can drift apart, extracted by a tiny safe cut. A 6000-line
    file with no clean seam ranks LOW despite its size.
 
-5. **Write the ledger.** Append each new opportunity as a numbered entry (format
+6. **Write the ledger.** Append each new opportunity as a numbered entry (format
    in `ledger-template.md`). Report the ranked list inline to the user, then STOP
    — this skill produces the audit, it does not write specs or refactor. The user
    picks an opportunity; the spec→plan→refactor→merge pipeline takes it from there.
@@ -119,3 +146,10 @@ A safe-scope opportunity:
 - **No EXCLUSIONS.** If you can't name what stays untouched, you haven't scoped it.
 - **Mixing in bug fixes.** `.unwrap()`→`?` is crash safety, not this audit.
 - **Reusing a merged `#N`** or restarting numbering — always continue the ledger.
+- **Leaving a shipped entry as a full analysis.** A merged `#N` must be pruned to
+  a one-liner (its prose archived to `audit-opportunities-archive.md`) before the
+  audit adds anything new — the always-read ledger stays flat, or every batch
+  makes the next run more expensive.
+- **Reading the whole ledger (or the archive) into context.** `rg` the index per
+  step 1; open a full OPEN entry only on a suspected collision; never open the
+  archive during an audit.

@@ -2,1972 +2,512 @@
 
 Numbered, safe-scope, behavior-preserving refactoring opportunities. Produced by
 the `assess-maintainability` skill; consumed by the spec→plan→refactor→merge
-pipeline. DONE entries stay for numbering continuity — never reuse a number.
+pipeline. DONE entries stay (condensed) for numbering continuity — never reuse a
+number.
 
-Larger, behavior-CHANGING projects (god-struct split, app.rs module carve-up)
-are tracked separately at the bottom under "## Larger projects (not safe-scope)"
-— they are NOT numbered opportunities.
+**Two-tier by design:** a shipped entry lives here as a **one-liner** (`#5`–`#72`
+below); an OPEN entry keeps its full analysis until it merges, then gets pruned
+to a one-liner. This keeps the always-read bulk flat — the `assess-maintainability`
+skill reads only the index of this file, never the whole thing.
+
+**Full write-ups of pruned entries** move to `audit-opportunities-archive.md`
+(the skill never reads it) and survive in each refactor commit. What stays
+verbatim below is only what a fresh audit needs: the lessons, the standing
+exclusions, and the larger-projects decisions.
 
 <!-- #1–#4 were resolved before this ledger was created (shared AskCard,
      ask-card key intercept, AppState.picker rename, gloss_block_voice extract).
      Numbering continues from #5; those four numbers are retired. -->
 
-## #5 — footer-row-builder — DONE (commit c976e2c)
+## Lessons (keep applying)
 
-- **Status:** DONE
-- **Signal:** gloss_overlay.rs + journal_overlay.rs repeat an identical
-  gloss-hint footer row (margins, left-hexpand + right-hint layout).
-- **Identical part (extracted):** `build_footer_row` → `FooterRow { container,
-  left, hint }` in `src/ui/footer.rs`.
-- **EXCLUDED:** concordance_bar, vocab_popup, library_picker footers
-  (structurally different); pickers with no footer.
-- **Safe-scope:** yes — pure widget-construction extraction.
+- **The #11 lesson:** confirm bodies are byte-identical by direct side-by-side
+  read before merging — a same-named pair (`shorten_title`) was behaviorally
+  different. Never number from an agent's word or a grep hit alone.
+- Two-site families are at the floor: number one only with a documented drift
+  signal (a "mirror this fix" comment, a hand-copy that already drifted once);
+  otherwise flag it and wait for a third site.
+- Prefer route-to-shared over new helpers: check whether an existing helper
+  already covers the body (new code re-inlining a shipped helper is textbook
+  drift — see #67).
+- When a helper would need a guard/branch some sites don't have, that is a
+  behavior change — split into per-variant helpers (#34) or exclude.
 
-## #6 — picker-nav-helper — DONE (commit 371abd8)
+## Shipped (#5–#72 — all DONE or closed)
 
-- **Status:** DONE
-- **Signal:** 13 ListBox-index pickers repeat the identical select-if-exists
-  tail of `move_selection`.
-- **Identical part (extracted):** `select_row_at(&ListBox, i32)` in
-  `src/ui/picker_nav.rs`.
-- **Variants (stayed at call sites):** A guard+clamp (5); B unwrap_or(-1)+clamp
-  (2); C unwrap_or(-1) no-clamp (5); D unwrap_or(0)+clamp (1).
-- **EXCLUDED:** action_popup / keybinds / settings (rem_euclid over a Vec);
-  library_picker (scroll-into-view). Deliberately NOT a full Picker trait.
-- **Safe-scope:** yes — byte-identical tail extraction.
-
-## #7 — claude-bridge-helper — DONE (commit d53580b)
-
-- **Status:** DONE
-- **Signal:** gloss add/edit + synopsis + journal repeat the
-  spawn_future_local + tokio spawn + Ok(Err)/Err recovery bridge.
-- **Identical part (extracted):** `run_claude_request` in
-  `src/input/actions/claude_bridge.rs`.
-- **Safe-scope:** yes — async-bridge helper, recovery arms preserved.
-
-## #8 — sentinel-key-constants — DONE (commit 63c9779)
-
-- **Status:** DONE
-- **Signal:** whole-work / journal-work scene-key sentinel literals reused
-  unnamed across sites.
-- **Identical part (extracted):** named constants for the sentinels.
-- **Safe-scope:** yes — literal → named constant, greppable.
-
-## #9 — transient-toast-helper — DONE (commit pending)
-
-- **Status:** DONE
-- **Signal:** 30 `timeout_add_local_once` auto-hide closures + ~9 ad-hoc named
-  toast wrappers across app.rs / keymap.rs / search.rs / actions/* repeat the
-  identical show + clone + 3s/2s hide tail.
-- **Identical part (extracted):** `show_transient(&Label, &str, u64)` in
-  `src/ui/toast.rs`; named wrappers keep message construction and delegate the tail.
-- **Variants (stayed at call sites):** which label (chapter/speed/search) and
-  duration (2s confirmations vs 3s).
-- **EXCLUDED:** `show_chapter_toast` (navigation.rs, generation-guarded);
-  `show_persistent_tts_toast`/`hide_tts_toast` (gloss.rs, no auto-hide); the
-  5s startup-reveal / 6s nav-fuzz timers; the 500ms chord-reset; vocab-fade and
-  word-bold gen-guarded closures.
-- **Safe-scope:** yes — pure widget show+schedule extraction, ~107 net code lines
-  removed; build + 413 bin tests green, headless launch verified.
-- **Follow-on candidate:** the `debug_icon` flash (keymap.rs:2240, app.rs:1595,
-  nav_test) is the same primitive on a different Label — out of #9's toast scope;
-  consider as a future #N.
-
-## #10 — subsequence-match-helper — DONE (commit pending)
-
-- **Status:** DONE
-- **Signal:** byte-identical char-level `subsequence_match` (named
-  `subsequence_chars` in library_picker) copied into 5 pickers.
-- **Identical part (extracted):** `subsequence_match(&str, &str) -> bool` in new
-  `src/ui/picker_filter.rs` (pure, no GTK). All call sites already lowercase both
-  sides, so the shared fn stays case-sensitive.
-- **Variants (stayed at call sites):** how each picker builds its `target`
-  (display string vs `format!` of speaker+text vs work title+author+abbrev).
-- **EXCLUDED:** `subsequence_match_work` (work-typed) and `author_name_matches`
-  (pub) — kept as wrappers that delegate their tail; the `#[cfg(test)]`
-  `subsequence_match` alias in library_picker.
-- **Safe-scope:** yes — pure fn extraction; build + 413 bin tests green
-  (incl. 5 library_picker subsequence tests via the delegated path).
-
-## #11 — shorten-author-helper — DONE (commit pending, narrowed)
-
-- **Status:** DONE (narrowed from the original "shorten_author + shorten_title"
-  entry after verification).
-- **Signal:** `shorten_author` byte-identical in `concordance.rs` and
-  `ui/concordance_list_picker.rs`.
-- **Identical part (extracted):** promoted `concordance::shorten_author` to
-  `pub(crate)`; deleted the UI copy, repointed its call site.
-- **EXCLUDED — and why the original #11 was wrong:** the two `shorten_title`
-  functions are NOT identical — `concordance.rs` truncates titles >25 chars at a
-  word boundary; the picker does only the prefix strip (it truncates downstream
-  via `truncate_around_center`). Merging them would change one site's output, so
-  `shorten_title` stays split. `truncate_around_center` is single-copy.
-- **Safe-scope:** yes — pure fn move; build + 413 bin tests green.
-- **Lesson:** the "confirm bodies match before merging" caution earned its keep —
-  a same-named pair was behaviorally different. The audit skill's "verify the
-  byte-identical part" step is what caught it.
-
-## #12 — sync-suppress-window-const — DONE (commit pending)
-
-- **Signal:** `Some(Instant::now() + Duration::from_millis(500))` repeated at 8
-  sites (search.rs ×2, timestamps.rs, keymap.rs, gamepad.rs, echoes.rs ×2,
-  concordance.rs) as the "brief suppression while MPV seeks" window.
-- **Identical part (extracts):** a named `const SYNC_SUPPRESS_SEEK: Duration` (500ms).
-  Sites become `Some(Instant::now() + SYNC_SUPPRESS_SEEK)`.
-- **Variant — name separately, do NOT merge:** navigation.rs:1736 uses
-  `from_secs(86400)` — a distinct "suppress indefinitely" sentinel; give it its
-  own `SYNC_SUPPRESS_INDEFINITE` const.
-- **EXCLUDED:** the two unrelated `from_millis(500)` GTK `timeout_add_local_once`
-  (app.rs:1972, keymap.rs:28) — same number, different meaning (a UI timer, not a
-  sync window). The navigation.rs:1725 max-guard logic stays inline (folding it
-  into a helper would add a guard at the plain sites = behavior change).
-- **Safe-scope:** yes — literal → named const, #8-style. Highest copy count.
-
-## #13 — picker-attach-helper — DONE (commit pending)
-
-- **Status:** DONE
-- **Signal:** picker `attach(&self, base)` body
-  (`overlay.set_child(Some(base)); overlay.add_overlay(&picker_box); picker_box.set_visible(false)`)
-  byte-identical in 10 pickers (scanner said 11; voice/echo_line/echo_turns/
-  concordance_works have no attach).
-- **Identical part (extracted):** `attach_panel(&Overlay, base, Option<&Box> scrim,
-  &Box panel)` in new `src/ui/picker_attach.rs`.
-- **Variants (folded via params):** scrim pickers pass `Some(&scrim)` (echo_picker,
-  library_picker); authorship_picker passes `&container` as the panel;
-  library_picker calls the helper then keeps its responsive-resize block.
-- **EXCLUDED:** all `*_overlay.rs` attach/attach_to (different signatures/bodies);
-  library_picker's resize block (stays inline after the helper call).
-- **Safe-scope:** yes — pure widget-construction extraction; build + 413 bin tests
-  green; headless cage launch renders (overlay wiring confirmed).
-
-## #14 — citation-format-helper — DONE (commit pending)
-
-- **Status:** DONE
-- **Signal:** `format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div)` at 6 sites
-  (gloss.rs ×4, queries.rs ×2).
-- **Identical part (extracted):** `pub fn citation(abbrev, div1, div2, line_in_div)
-  -> String` in `src/db/models.rs` (the module owning `Line.citation`).
-- **Variants:** field source (`first./last.` structs vs row-derived locals) — stays
-  at call site (just the 4 args differ).
-- **EXCLUDED:** `parse_citation` / `format_citation_range` (gloss_overlay.rs) — the
-  inverse + a range formatter, different concern.
-- **Safe-scope:** yes — literal template → helper fn; build + 413 bin tests green.
-
----
-
-## Batch 2 (audited 2026-06-24, after the carve-up + grouping + flake-fix work)
-
-Fresh scan over the post-refactor tree. Ranked by (duplication × drift_risk) ÷
-scope_size. Each verified by direct grep, not agent word alone.
-
-## #15 — listbox-clear-helper — DONE (merge 017fe18)
-
-- **Status:** OPEN (highest-value remaining; pure win)
-- **Signal:** `while let Some(row) = self.list_box.first_child() { self.list_box.remove(&row); }`
-  — the "remove all children" loop — at ~15 sites across 11 picker/overlay files
-  (`*_picker.rs`, `vocab_popup.rs`, `translation_overlay.rs`).
-- **Identical part (extract):** `pub fn clear_list(list_box: &gtk4::ListBox)` in
-  `src/ui/picker_nav.rs` (the module that already owns `select_row_at`).
-- **Variants:** binds `row` vs `child` — cosmetic, disappears inside the helper.
-  Receiver is always a `ListBox` reference.
-- **EXCLUDED:** any `first_child`/`remove` loop over a non-`ListBox` container with
-  extra per-child logic (none found that mixed in work — but exclude on sight).
-- **Safe-scope:** yes — a 3-line GTK loop → one call; no inputs but the list_box.
-
-## #16 — block-visual-key-twin — DONE (merge fe8a563, render-verified 2026-06-24)
-
-- **Status:** DONE — merged AND render-verified. The owed runtime check was run
-  by the user in the synopsis overlay (`h` → Shift+V → j/k/gg/G/y/Escape): all
-  behaviors correct, the unification is confirmed behavior-preserving. (The check
-  surfaced a pre-existing UX wish — Escape leaves the cursor at the moving end
-  rather than the entry block — but that is the ORIGINAL pre-refactor behavior,
-  not a #16 regression; it became the separate `escape-restores-anchor`
-  enhancement, see below.)
-- **Shipped:** `handle_synopsis_visual_key` + `handle_gloss_visual_key` →
-  one `handle_block_visual_key(state, key_state, key_name, cfg)` +
-  `SYNOPSIS_VISUAL_CFG`/`GLOSS_VISUAL_CFG` consts of plain `fn` pointers (no
-  trait). The yank/escape exit asymmetry is captured via separate
-  `yank_exit`/`escape_exit` config slots. Log output byte-equivalent; net -20
-  lines; 413 + clippy 115. Spec under docs/superpowers/ (2026-06-24).
-
-- **Status (orig):** OPEN (most concentrated single duplication found)
-- **Signal:** `handle_synopsis_visual_key` (keymap.rs:1328) and
-  `handle_gloss_visual_key` (keymap.rs:1392) are near-identical whole functions —
-  the second's own comment says "Mirrors `handle_synopsis_visual_key`". The
-  `gg`-chord preamble + `j/k/G/g` visual-step match arms are byte-identical.
-- **Identical part (extract):** one `fn handle_block_visual_key(state, key_state,
-  key_name, cfg: BlockVisualCfg)` taking a 4-field config of plain `fn` pointers /
-  enum values (text-getter, log tag, exit fn, return mode + hint fn).
-- **Variants:** ONLY the `y` (yank) and `Escape|V` (exit) arms differ, by 4
-  substitutions: `visual_selection_text` vs `visual_selection_buffer_text`;
-  `"SYNOPSIS:"` vs `"GLOSS:"` log; `exit_visual` vs `exit_visual_to_start`;
-  `SynopsisOverlay`/`set_synopsis_hint` vs `GlossOverlay`/`set_gloss_hint`.
-- **EXCLUDED:** the central `handle_picker_key` dispatcher (picker-dispatch
-  territory); any other `handle_*_visual_key` would need its own variant check.
-- **Safe-scope:** yes — plain `fn`-pointer config struct, NO trait/generic. The
-  one place this audit found a near-whole-function clone.
-
-## #17 — load-work-titles-helper — DONE (merge 017fe18)
-
-- **Status:** OPEN (cleanest db-side cut: 6× byte-identical)
-- **Signal:** the 4-line chain `let titles = crate::db::queries::open_db().ok()
-  .and_then(|conn| crate::db::queries::load_work_titles(&conn).ok())
-  .unwrap_or_default();` — byte-identical at 6 sites (`visual.rs` ×2, `echoes.rs` ×4).
-- **Identical part (extract):** `pub fn load_work_titles_or_default() -> <its type>`
-  in `src/db/queries.rs` (beside `load_work_titles`).
-- **Variants:** none — all 6 are byte-identical (variant A only).
-- **EXCLUDED:** other `open_db().ok().and_then(...)` chains that call a *different*
-  loader (`load_echo_links`, embeddings) — not this family.
-- **Safe-scope:** yes — pure fn wrapping an existing query; zero behavior change.
-
-## #18 — open-db-rw-or-log-helper — DONE (merge e5bf8ec)
-
-- **Status:** OPEN (file-local, 5 byte-identical)
-- **Signal:** `let conn = match crate::db::queries::open_db_rw() { Ok(c) => c,
-  Err(e) => { crate::logging::log(&format!("TS: open_db_rw failed: {}", e));
-  return false; } };` — 5 byte-identical occurrences in `src/input/timestamps.rs`.
-- **Identical part (extract):** a file-local helper `fn open_db_rw_or_log() ->
-  Option<Connection>` (call sites become `let Some(conn) = open_db_rw_or_log()
-  else { return false; };`) — OR keep the early-return shape via a small macro.
-- **Variants:** B — `timestamps.rs:533` logs `"TS: undo open_db_rw failed"`
-  (different prefix → either parameterize the tag or leave B out). C —
-  `timestamps.rs:52` is silent + returns `()` not `false` → EXCLUDE.
-- **EXCLUDED:** the C silent/unit-return form; the `open_db().expect(...)` panic
-  form (different error policy — that's #19); other files' `if let Ok(conn)` shape.
-- **Safe-scope:** yes for the 5 pure-A sites — scoped to one file. Confirm the
-  helper's early-return shape preserves the exact `return false` control flow.
-
-## #19 — open-db-message-const — DONE (merge 017fe18)
-
-- **Status:** OPEN (literal de-dup; lowest risk, modest payoff)
-- **Signal:** `crate::db::queries::open_db().expect("Failed to open lit.db")` — the
-  identical panic message at 14 sites (action files: `pickers.rs` ×6,
-  `concordance.rs` ×3, `echoes.rs`, `bookmarks.rs`; plus main/app/queries).
-- **Identical part (extract):** hoist the message to a `pub const
-  OPEN_DB_PANIC_MSG: &str` in `src/db/queries.rs`, OR a `fn open_db_or_panic() ->
-  Connection` wrapper. (Const is the more conservative cut — no call-shape change.)
-- **Variants:** none in the message; binding context (`let conn =` vs inline) varies
-  but the literal is identical.
-- **EXCLUDED:** the graceful `open_db_rw()`-match form (#18) and the
-  `.ok().and_then(...)` form (#17) — different error policies, not this literal.
-- **Safe-scope:** yes — literal → const, #8-style. Prevents the panic text drifting.
-
-## #20 — picker-list-scaffold-helper — DONE (merge e5bf8ec)
-
-- **Status:** OPEN (narrow it to the byte-identical pair, per the variant analysis)
-- **Signal:** picker `new()` bodies repeat the `list_box` + `scrolled` construction
-  after #5/#13 already took the footer/attach. The byte-identical pair
-  `let list_box = ListBox::builder().selection_mode(Single).build(); let scrolled
-  = ScrolledWindow::builder().child(&list_box).vexpand(true).build();` recurs at
-  ~6 Variant-A picker `new()`s (bookmark/gloss/journal/media + others).
-- **Identical part (extract):** `fn new_picker_list() -> (gtk4::ListBox,
-  gtk4::ScrolledWindow)` in `src/ui/picker_nav.rs`. (A separate 4-line
-  `ScrolledWindow::new(); set_vexpand; set_max_content_height(400);
-  set_propagate_natural_height(true)` block recurs at 4 imperative-style pickers —
-  a SECOND narrow helper, not unified with the builder one.)
-- **Variants:** A = builder-style 600×400 card (extract the list_box+scrolled pair);
-  C = imperative `ScrolledWindow::new()` + `max_content_height` (its own 4-site
-  helper). Do NOT unify A and C — builder vs imperative + different CSS classes;
-  merging would change literals = not behavior-preserving.
-- **EXCLUDED:** the `picker_box` builder block itself (media_picker inserts a
-  title; concordance uses 400×400/different class — too variant to share cleanly);
-  scrim/header pickers (library/echo — those are the #21 family); authorship
-  (hand-rolled). Extract ONLY the byte-identical list_box+scrolled pair.
-- **Safe-scope:** yes for the narrowed pair — no per-site inputs.
-
-## #21 — picker-header-scrim-helpers — DONE (merge e5bf8ec)
-
-- **Status:** OPEN (clean but small — 3–4 sites each)
-- **Signal:** the scrim block (`GtkBox::builder().hexpand.vexpand.build();
-  add_css_class("library-picker-scrim"); set_visible(false)`) and the header_box +
-  title block (`add_css_class("library-picker-header"/"-title")`) recur across the
-  scrim-style pickers/overlays.
-- **Identical part (extract):** `fn build_picker_scrim() -> gtk4::Box` (4 sites:
-  echo_picker, concordance_works_picker, library_picker, settings_overlay) and
-  `fn build_picker_header(title: &str) -> (gtk4::Box, gtk4::Label)` (3 sites: echo,
-  echo_turns, concordance_works — byte-identical but the label string).
-- **Variants:** header B — `library_picker` appends a second `header_crumb` after
-  the title; it can call the helper then append (still behavior-preserving).
-- **EXCLUDED:** any overlay whose scrim composes differently with an ask-card.
-- **Safe-scope:** yes — two tiny widget-construction helpers; lower payoff than
-  #15–#19, list last.
-
-### Examined and EXCLUDED in Batch 2 (no clean cut — do NOT number)
-
-- **`move_selection` preamble family** (picker): #6 took the `select_row_at` tail;
-  the preamble splits into 3 byte-identical sub-variants (unwrap_or(-1) plain /
-  +`.max(0)` / `if let Some` guard) of 2–5 sites each. Each is only 3–5 lines and
-  the variance is real — if ever extracted, per-variant only; NOT one helper.
-  Left unnumbered: payoff is marginal and forcing a single signature would be
-  mis-scoped. (library/keybinds/settings move_selection genuinely differ — wrap +
-  scroll, rem_euclid, skip-disabled — hard-excluded.)
-- **seek-then-suppress sequence** (handler, ~7 sites): the bare
-  `suppress_sync_until = Some(Instant::now() + SYNC_SUPPRESS_SEEK)` statement
-  recurs, but the surrounding Seek ops reorder per site and `do_mpv_seek` already
-  centralizes the reader binds. A `fn suppress_sync_for_seek(s)` would dedup only
-  one statement; the `navigation.rs` "don't-shorten-existing" max-form variant
-  differs. Marginal — note, don't number. (A `fn preroll_seek_time(start) -> f64`
-  for `(start - SEEK_PREROLL).max(0.0)` ~7 sites is the better latent cut here if
-  revisited.)
-- **restore-return-position 4-liner** (handler): `s.current_line=line;
-  s.page_top_line=top; resnap_page; update_highlight` after a `<field>.take()` —
-  2 pure byte-identical (journal/gloss) + 2 variant (search else-arm, gloss
-  jump-guard). Only 2 clean sites; borderline. Note, don't number.
-- **wl-copy stdin-pipe block** (handler, 3 sites): `Command::new("wl-copy").stdin
-  (piped).spawn()…write_all…wait` at word_copy.rs ×2 + visual.rs. A
-  `fn copy_to_clipboard(text, log_tag)` would dedup 3 sites — but the 4
-  fire-and-forget `wl-copy` arg-form sites (keymap/gloss/echoes) are a DIFFERENT,
-  smaller pattern and can't merge without an arg→stdin behavior change. 3 sites is
-  at the floor; note, don't number unless the clipboard path is touched anyway.
-- **standalone picker j/k arms** (handler, 3 handlers): echo_picker /
-  echo_turns_picker / library_picker still hand-roll `move_selection(±1)` instead
-  of routing through the existing `picker_keys::resolve_picker_key`/`PickerAction`
-  path that voice_picker uses. The clean fix is *routing through the shipped
-  helper*, not a new extraction — a follow-on to the picker-dispatch project, not
-  a Batch-2 numbered cut.
-- **db families with no byte-identical unit:** `ensure_*_table` bodies (distinct
-  columns/FKs; the one shared body is already the `GLOSS_AUDIO_COLUMNS` const),
-  the `prepare/query_map/collect` skeleton (distinct SQL + row-closure every time),
-  FK fragments (singletons or already in a const), the `div1,div2,line_in_div`
-  column list (always a different leading set). Forcing any of these needs a
-  generic/trait — explicitly out of scope. The `created_at strftime` SQL DEFAULT
-  (2 sites) and `has_column` pragma-probe (4 sites, normalizing `=` spacing) are
-  weak/borderline named-const/helper candidates — flag only, not numbered.
-
----
-
-## Batch 3 (audited 2026-06-23, after the gloss API-error + error-card padding fix)
-
-Fresh scan over the post-Batch-2 tree (triggered while fixing the gloss overlay
-auth-error display). Ranked by (duplication × drift_risk) ÷ scope_size. Each
-verified by direct grep, not agent word alone (the #11 lesson). All six are
-byte-identical-modulo-one-token; none needs a trait/generic.
-
-## #22 — select-first-row-helper — DONE (merge pending, commit bc5e612)
-
-- **Status:** DONE — 15 sites collapsed to picker_nav::select_first_row; build + 413 tests green.
-- **Signal:** the "select the first row after populate" block
-  `if let Some(row) = self.list_box.row_at_index(0) { self.list_box.select_row(Some(&row)); }`
-  — byte-identical except the binding name (`row` vs `first`) — at **15 sites**
-  across 12 picker files: echo_picker:116, library_picker:393, voice_picker:154,
-  echo_line_picker:77, journal_picker:125, concordance_works_picker:78,
-  concordance_word_picker:102, gloss_picker:124, bookmark_picker:121,
-  media_picker:118, echo_turns_picker:118, concordance_picker:86 & :131,
-  authorship_picker:57 & :64.
-- **Identical part (extract):** `pub fn select_first_row(list_box: &gtk4::ListBox)`
-  in `src/ui/picker_nav.rs` (already owns `select_row_at`). Call sites become
-  `select_first_row(&self.list_box);`.
-- **Variants:** binding `row` vs `first` — cosmetic, disappears in the helper.
-- **EXCLUDED on sight:** any `row_at_index(0)` followed by extra per-row logic
-  (not just the bare select). The two doubled sites (authorship_picker,
-  concordance_picker) each have two independent bare-select copies — both qualify,
-  but verify the second copy is unconditional (concordance_picker:86 is inside an
-  outer conditional — the inner select block is still byte-identical, extracts).
-- **Safe-scope:** yes — a 3-line GTK block → one call; only input is the list_box.
-
-## #23 — selected-index-helper — DONE (commit bc5e612)
-
-- **Status:** DONE — 5 picker bodies delegate to picker_nav::selected_index.
-- **Signal:** `pub fn selected_index(&self) -> Option<usize>` whole-body identical
-  across 5 pickers: concordance_list_picker:102, echo_turns_picker:123,
-  echo_picker:121, journal_picker:129, gloss_picker:129. Body is
-  `self.list_box.selected_row().and_then(|row| row.widget_name()<parse>.ok())`.
-- **Identical part (extract):** `pub fn selected_index(list_box: &gtk4::ListBox)
-  -> Option<usize>` in `src/ui/picker_nav.rs`; each picker's method delegates.
-- **Variants:** A `.parse::<usize>().ok()` (concordance_list/echo_turns/echo);
-  B `.to_string().parse().ok()` (journal/gloss) — trivially equivalent
-  (`widget_name()` derefs to `&str`); the helper picks one (`.parse::<usize>()`).
-- **EXCLUDED:** pickers that derive the index from `selected_row().index()`
-  (echo_line_picker:90, echo_picker:128) — that's the *row position*, not the
-  widget-name-encoded `items` index; different value, do NOT merge.
-- **Safe-scope:** yes — pure fn over the list_box; method becomes a one-line
+- **#5** footer-row-builder (c976e2c) — `ui/footer.rs::build_footer_row` for the
+  gloss/journal footer row.
+- **#6** picker-nav-helper (371abd8) — `picker_nav::select_row_at` tail of 13
+  `move_selection`s; index-calc variants stayed at call sites.
+- **#7** claude-bridge-helper (d53580b) — `claude_bridge::run_claude_request`.
+- **#8** sentinel-key-constants (63c9779) — named whole-work/journal-work
+  scene-key sentinels.
+- **#9** transient-toast-helper — `ui/toast.rs::show_transient`; ~30 auto-hide
+  closures. (Follow-on flagged: the `debug_icon` flash is the same primitive on
+  another Label — future #N if touched.)
+- **#10** subsequence-match-helper — `picker_filter::subsequence_match`, 5
+  pickers.
+- **#11** shorten-author-helper (narrowed) — `concordance::shorten_author`
+  promoted; the two `shorten_title`s are NOT identical and stay split.
+- **#12** sync-suppress-window-const — `SYNC_SUPPRESS_SEEK` (500ms, ×8) +
+  `SYNC_SUPPRESS_INDEFINITE`.
+- **#13** picker-attach-helper — `picker_attach::attach_panel`, 10 pickers.
+- **#14** citation-format-helper — `db::models::citation`, ×6.
+- **#15** listbox-clear-helper (017fe18) — `picker_nav::clear_list`, ~15 sites.
+- **#16** block-visual-key-twin (fe8a563) — `handle_block_visual_key` +
+  `SYNOPSIS/GLOSS_VISUAL_CFG` plain-fn-pointer configs (no trait).
+- **#17** load-work-titles-helper (017fe18) —
+  `queries::load_work_titles_or_default`, ×6.
+- **#18** open-db-rw-or-log (e5bf8ec) — timestamps.rs file-local helper, the 5
+  pure-A sites.
+- **#19** open-db-message-const (017fe18) — `OPEN_DB_PANIC_MSG`, ×14.
+- **#20** picker-list-scaffold (e5bf8ec) — `new_picker_list()`; builder (A) and
+  imperative (C) variants deliberately NOT unified.
+- **#21** picker-header-scrim (e5bf8ec) — `build_picker_scrim` +
+  `build_picker_header`.
+- **#22** select-first-row (bc5e612) — `picker_nav::select_first_row`, ×15.
+- **#23** selected-index (bc5e612) — `picker_nav::selected_index`, 5 pickers
   delegate.
-
-## #24 — preroll-seek-time-helper — DONE (commit d06ddb8)
-
-- **Status:** DONE — 9 sites use navigation::preroll_seek_time; A-B-loop prerolls excluded as planned.
-- **Signal:** `(start - SEEK_PREROLL).max(0.0)` — the "seek this many seconds
-  before the line's start, clamped at 0" computation — at **9 sites**:
-  timestamps.rs:215, echoes.rs:1359 & :1504, concordance.rs:531 & :545 & :580,
-  search.rs:100 & :228, navigation.rs:1759, gloss.rs:1770. `SEEK_PREROLL` is
-  already `pub const SEEK_PREROLL: f64 = 0.2` (navigation.rs:57).
-- **Identical part (extract):** `pub fn preroll_seek_time(start: f64) -> f64`
-  beside the const in `src/input/navigation.rs`. Sites become
-  `preroll_seek_time(ts.start)`.
-- **EXCLUDED — different preroll consts, do NOT merge:** keymap.rs:2360
-  `(a - CHUNK_PREROLL).max(0.0)` and echoes.rs:885 `(a - TURN_PREROLL).max(0.0)`
-  — A-B-loop start prerolls with their own constants, a distinct concept.
-- **Safe-scope:** yes — one-expression helper; #12-sibling (that named the const,
-  this names the computation that uses it).
-
-## #25 — mpv-set-property-cmd-helper — DONE (commit 681db30)
-
-- **Status:** DONE — 6 sends use set_property_cmd; static pause strings excluded.
-- **Signal:** `format!(r#"{{"command":["set_property","<PROP>",{}]}}"#, val)` —
-  byte-identical envelope, varying only the property-name literal + value — at 6
-  sites in `src/mpv/client.rs`: :44 (ab-loop-a), :45 (ab-loop-b), :50 (pause),
-  :125 (speed), :158 (ab-loop-a), :159 (ab-loop-b).
-- **Identical part (extract):** file-local `fn set_property_cmd(prop: &str, val:
-  impl Display) -> String` in `src/mpv/client.rs`.
-- **EXCLUDED:** the two static-string `pause` sends (:112 true, :120 false) — no
-  format args; converting them adds a call where a `&'static str` literal works.
-- **Safe-scope:** yes — file-local format-template helper; protects the JSON
-  envelope from drifting between commands.
-
-## #26 — mpv-seek-absolute-cmd-helper — DONE (commit 681db30)
-
-- **Status:** DONE — 4 sends use seek_absolute_cmd; relative-exact seek excluded.
-- **Signal:** `format!(r#"{{"command":["seek",{},"absolute"]}}"#, time)` —
-  byte-identical except the time-var name — at 4 sites in `src/mpv/client.rs`:
-  :47, :118, :132, :160.
-- **Identical part (extract):** file-local `fn seek_absolute_cmd(time: f64) ->
-  String`.
-- **EXCLUDED — distinct second template:** client.rs:138
-  `["seek",{},"relative","exact"]` is a different seek mode; give it its own
-  `seek_relative_exact_cmd` only if it ever gains a second site (currently 1×).
-- **Safe-scope:** yes — file-local template helper.
-
-## #27 — card-side-margin-helper — DONE (commit f8e9459)
-
-- **Status:** DONE — 9 sites (audit undercounted; layout.rs:189 included) use crate::ui::card_side_margin; the column_width/8 echo sites stayed untouched (the critical exclusion).
-- **Signal:** `card_width / 4` — the gloss/synopsis/ask card "side margin = a
-  quarter of the live card width" — at 8 computation sites: gloss_overlay.rs:582
-  (`show`), :622 (`show_gloss_with_color`), :642 (`bar_left`), :704
-  (`show_glossing`), :727 (`bar_left`), :888 (`show_synopsis`); ask_card.rs:101;
-  layout.rs:109 (`card_w / 4 - text_margins`, the translation-view variant).
-- **Identical part (extract):** `const CARD_SIDE_MARGIN_DIVISOR: i32 = 4` (or
-  `fn card_side_margin(card_width: i32) -> i32 { card_width / 4 }`), shared by the
-  overlay + ask_card; layout.rs calls it then subtracts `text_margins` (variant).
-- **Variants:** the 6 gloss_overlay sites are plain `card_width / 4`; ask_card
-  applies it to both start+end; layout.rs:109 subtracts `text_margins` (keeps that
-  inline after the helper).
-- **EXCLUDED — CRITICAL, different value & concept:** the echo view's
-  `self.column_width / 8` (gloss_overlay.rs:770/775/791) and `right_margin =
-  column_width / 8` (:175). These are anchored to the FIXED column_width (1050/8),
-  NOT the live card_width, and the code comment (lines 773-774) pins the echo list
-  to `column_width/8`. The past "tiny margin on a wide card" bug (commented at
-  618-621) is exactly what conflating `/8` with `/4` would reintroduce — do NOT
-  unify the two divisor families.
-- **Safe-scope:** yes — literal → named const/helper, #8/#12-style. Lowest copy
-  count of Batch 3 but the one with a documented drift-hazard, so worth naming.
-
-### Examined and EXCLUDED in Batch 3 (no clean cut — do NOT number)
-
-- **settings_overlay arrow-label template** (`format!("\u{25C0} {} \u{25B6}", v)`
-  + the `{}px` variant) — ~14 sites but ALL in one file (settings_overlay.rs:272–
-  426). A file-local `fn arrow_label(&str)` / `fn arrow_px_label(i32)` is a fine
-  tidy, but it's a single-file cosmetic spinner-value format with no cross-file
-  drift risk — low payoff. Flag only; do as a drive-by if settings_overlay is
-  touched, not as its own numbered PR.
-- **echo-picker row-construction block** (meta label + ellipsized first-line
-  label, ~14 lines) — byte-identical at exactly 2 sites (echo_picker.rs:86–113,
-  echo_turns_picker.rs:91–115), differing only by the field name (`passage_text`
-  vs `turn_text`). Meets the 2-site/5-line floor but is borderline; the field-name
-  difference would force a closure/getter param. Note, don't number unless a 3rd
-  echo-style picker appears.
-- **`"Error: {}"` prefix** (5 sites: visual.rs ×3, claude_bridge.rs, settings.rs)
-  — the literal is shared but each routes to a DIFFERENT sink (gloss_overlay.show
-  vs on_error callback vs voice_picker.set_status). No single helper fits; the
-  only shared token is the 7-char prefix. Marginal; do not number.
-- **`format!("%{}%", x)` LIKE-wildcard** (4 sites: queries.rs:2215,
-  concordance.rs:24, gloss.rs:787, viewport.rs:2701) — same template, different
-  modules + inputs (some lowercase first). A `fn like_contains(&str) -> String`
-  would dedup 4 trivial sites across 4 modules — payoff below the floor. Note only.
-- **`set_widget_name(&idx.to_string())` row tail** (4 sites) — overlaps the
-  already-handled picker-list-scaffold / widget-name territory (#20); the other 6
-  `ListBoxRow::builder().child` sites use non-index widget-names. Not a clean new
-  family on its own.
-
----
-
-## Larger projects (not safe-scope)
-
-- **`InputMode → picker` dispatch accessor — DONE (nav + plain-hide scope).**
-  Shipped via the `Picker` trait + `picker_for_mode(&AppState, mode) -> Option<&dyn
-  Picker>` accessor in `src/input/picker_dispatch.rs`. Collapsed the nav
-  `MoveDown`/`MoveUp` arms (Ctrl+n/p, ~20 arms) and the 7 plain Escape
-  `hide(); → Reader` arms in `handle_picker_key`. The parked concern (unifying #6's
-  preserved `move_selection` variants) did NOT apply: those variants live inside
-  each picker's `move_selection` body, not the dispatch arms, so routing through
-  the trait left them untouched. Gloss/Journal/EchoLine Escape arms kept explicit;
-  settings/voice/library handlers untouched. Spec/plan under docs/superpowers/;
-  user-verified (Ctrl+n/p moves selection, Escape closes). See merge commit.
-  **Open-pairs follow-on — DONE.** The `show()`/open mode-set pairs were unified
-  via `open_picker_mode(&mut AppState, mode)` in `src/input/actions/pickers.rs`
-  (8 sites, 7 pickers), which also normalized 4 redundant double-RefCell-borrows
-  to one `borrow_mut`. `show()` itself varies per picker (no-arg / args /
-  prepare-finish) so only the mode-set is shared; library_picker excluded. Spec/
-  plan under docs/superpowers/; headless boot smoke + 413 tests green.
-  **Only the Confirm dispatch remains deferred** — its arms are genuinely bespoke
-  (different `selected_X()` return types + post-selection handlers); abstracting it
-  would add complexity, not remove it. Left as honest duplication by design.
-
-These are real maintainability issues but are behavior-CHANGING and multi-PR.
-They are NOT numbered opportunities; do not run them through the safe-scope
-pipeline as a single refactor.
-
-- **AppState god-struct** (`src/app/mod.rs`) — ~217 fields, de-facto global.
-  **STARTED (Phase A DONE, merge ddf20c2).** A blast-radius inventory scoped the
-  project to the **contained single-file clusters only** — `nav_test`, `journal`,
-  `page_image`, `word_cycle`, `echo_overlay`, `scansion`, `vocab_popup` — each its
-  own sub-project sequenced lowest-risk-first. The **core fields stay flat
-  deliberately** (`buffer` 291 hits/20 files, `current_line` 263/22,
-  `current_work` 196/23, `config` 167/21, `text_view`, `input_mode`): grouping them
-  is huge churn for ~no readability gain. Idiomatic per the existing
-  `ab_repeat: AbRepeatState`; sub-structs init via a nested literal/`::default()`
-  in `build_window` (the only build_window touch). Verification is per-cluster
-  risk-tiered: pure-state clusters use 413+clippy (tier-a), render-touching ones
-  (`vocab_popup`, `scansion`) add a user nav-fuzz before merge (tier-b).
-  **Phase A — `nav_test` → `NavTestState`** (6 fields, 28 access sites in one file,
-  pure-tier) — DONE: first behavior-changing slice (access shape only), exhaustive
-  drift check confirmed zero behavioral mutations; 413+clippy 115 unchanged. Spec/
-  plan under docs/superpowers/ (2026-06-23). **Phase B — `journal` → `JournalState`**
-  (4 fields, 33 access sites in one file, pure-tier) — DONE: established the
-  **non-default-init variant** — `build_window` uses an explicit nested literal
-  (not `::default()`) to preserve `journal_prompt_mode: JournalPromptMode::Ask`,
-  since the enum has no `Default`. Boundary fields (`journal_overlay`/`_picker`/
-  `_band`) correctly untouched. Exhaustive drift check: zero mutations; 413+clippy
-  115 unchanged. Spec/plan (2026-06-24). The two init variants are now both proven:
-  all-`Default` cluster → `::default()` (nav_test); any non-default field →
-  explicit nested literal (journal). **Phases C/D/E — the remaining pure-tier
-  clusters — DONE (batched, merges c9039bf / 149a23b / 8451759):**
-  `word_cycle` → `WordCycleState` (5 fields, 20 sites in word_copy.rs, merge
-  c9039bf); `echo_overlay` → `EchoOverlayState` (6 fields, 91 sites across
-  echoes.rs + keymap.rs, merge 149a23b); `page_image` → `PageImageState` (5
-  fields, ~43 sites all internal to mod.rs's image/calibration fns, merge
-  8451759). All three are the all-`Default` `::default()` variant. Drift-checked:
-  zero behavioral mutations; substring boundaries held (`word_bold_tag`,
-  `page_image_overlay`/`page_image_for_line_id`/`refresh_page_image`,
-  echo_session/pickers). 413 + clippy 115 unchanged; verified on merged master.
-  Spec/plans (2026-06-24). **All five contained PURE-TIER clusters are now done**
-  (nav_test, journal, word_cycle, echo_overlay, page_image). **Remaining contained
-  clusters:** `scansion`, `vocab_popup` — both **render-tier** (touch displayed
-  scansion marks / the vocab Popover widget), so they need a **user nav-fuzz gate
-  before merge** (the agent can't launch cage). vocab_popup is the hardest (8
-  access files, holds a real widget, not `Default`-derivable) — do it last.
-  **Phase F — `scansion` → `ScansionState`** (3 fields, 21 sites across mod.rs/
-  keymap/navigation, merge ace9857) — DONE: the **first render-tier cluster**.
-  Explicit-nested-literal init (`ScanLevel::Off`, no `Default`). Both boundary
-  traps held — `scansion_label_tag` (TextTag) and `s.config.scansion_level`
-  (Config) stay flat. Zero-drift. Verified by the **two-part user render gate**:
-  nav-fuzz on `Son` (scansion-off nav) PLUS a manual scansion-ON eyeball on `TN`
-  (`Alt+i` cycles Off→StressOnly→Full→Off) — marks render correctly post-grouping.
-  413+clippy 115.
-  **Phase G — `vocab_popup` → `VocabPopupState`** (7 fields incl. the VocabPopup
-  widget, 45 sites / 5 files, merge — see git log) — DONE: the **final and hardest
-  contained cluster**. It holds the Popover widget, so a widget/state name-collision
-  forced a **two-way rewrite** — state fields `s.vocab_popup_x` → `s.vocab_popup.x`
-  AND bare-widget calls `s.vocab_popup.m()` → `s.vocab_popup.popup.m()` (16 sites;
-  the cargo-build-as-checklist strategy surfaced 2 beyond the planned 14).
-  Explicit-nested-literal init captures the widget local + `VocabView::Definition`
-  (non-default). The separate vocab-HIGHLIGHT fields (`vocab_words`/`vocab_matches`/
-  `vocab_match_idx`/`vocab_tag`/`vocab_highlight_visible`) stayed flat. Zero-drift;
-  verified by the user render gate (nav-fuzz + manual popup open/update/view-toggle/
-  hide eyeball). 413+clippy 115.
-  **✅ AppState god-struct grouping — COMMITTED SCOPE COMPLETE.** All seven contained
-  clusters are grouped into sub-structs (nav_test, journal, word_cycle, echo_overlay,
-  page_image, scansion, vocab_popup), across Phases A–G. Both init variants
-  (`::default()` / explicit nested literal) and both verification tiers (pure /
-  render) are proven.
-  **Out of scope (unchanged):** grouping the core fields (stays flat, likely permanently);
-  medium-spread clusters (search, mpv/sync, translations, gloss-state, toasts,
-  gutter) — re-evaluate after the contained set ships.
-- **app.rs module carve-up — Phase 1 (leaf modules) DONE (merge 1bd1df3).**
-  `src/app.rs` was converted to a directory module (`src/app/mod.rs`) and three
-  self-contained leaf families were extracted into sibling modules via pure
-  behavior-preserving code motion: `vocab_popup.rs` (239, the vocab-popup widget
-  fns), `font.rs` (194, font-size / line-number-gutter rebuild), `text_prep.rs`
-  (205, GTK-free text preparation). `mod.rs` dropped from 6735 → 6105 lines. No
-  facade — every external call site repathed directly (`crate::app::X` →
-  `crate::app::<mod>::X`). Four visibility bumps, all real + minimal: two planned
-  (`font::reapply_font`, `text_prep::SnapshotOrPrep` → `pub(crate)`) and two
-  compiler-forced (`vocab_popup::update_vocab_popup_margin` → `pub(super)`,
-  `font::rebuild_line_number_gutter` → `pub(crate)`) because non-group `mod.rs`
-  fns call them. The three modules are genuine independent leaves (no
-  cross-edges; only inbound reverse-deps from `mod.rs`). 413 tests + clippy 115
-  unchanged throughout. Spec/plan under docs/superpowers/ (2026-06-22).
-- **app.rs module carve-up — Phase 2 (tier-a families) DONE (merge 42e126c).**
-  The three remaining tier-a topical families were extracted into sibling
-  modules via pure code motion, in dependency order: `formatting.rs` (610, the
-  per-line reader-buffer typographers — dialogue/BCP/scansion/stanza/authorship),
-  `scene_synopsis.rs` (508, scene-boundary derivation + synopsis keys/labels/
-  overlay + scene title bar), `translations.rs` (635, the inline-gloss interleave
-  path + two-column translation overlay). `mod.rs` dropped 6105 → 4360 lines. No
-  facade. Visibility bumps, all real + minimal: `apply_dialogue_formatting`,
-  `apply_authorship_formatting`, `apply_scansion_marks`, `apply_bcp_formatting`,
-  `scene_heading_start` → `pub(crate)`, and `vocab_popup::update_vocab_popup_margin`
-  `pub(super)` → `pub(crate)` (a sibling can't see a `pub(super)` item). The only
-  new inter-module edge is `translations → scene_synopsis` (overlay cluster needs
-  `current_scene_divs`/`synopsis_label`), which is why scene_synopsis extracted
-  first; the graph stays an acyclic DAG. 413 tests + clippy 115 unchanged. Spec/
-  plan under docs/superpowers/ (2026-06-23). **The entire tier-a (safe-scope)
-  carve-up is now complete** — across Phases 1+2, `mod.rs` went 6735 → 4360 with
-  six focused sibling modules.
-- **app.rs module carve-up — Phase 3 (layout module, tier-b start) DONE (merge
-  8eab5aa).** The first **tier-b** slice. The structural inventory established
-  that the audit's three tier-b targets are NOT equally tractable:
-  `build_window`'s body is dominated by the ~218-field `AppState` struct literal
-  + closures that capture `state` built mid-function, so it **cannot** be split
-  by pure code motion without first grouping the god-struct (a separate
-  behavior-changing project — build_window is *blocked on* the god-struct, not
-  merely adjacent to it). But the **layout free functions are callable**
-  (`&mut AppState`-in / widgets-out), so they move like tier-a. Phase 3 extracted
-  the layout cluster into `layout.rs` (406): `apply_tiled_mode`,
-  `apply_card_sizing`, `apply_column_layout`, `target_card_width`,
-  `is_tiled_layout`, `current_block_text_width`, `verse_left_offset`,
-  `overlay_card_size`, `line_number_gutter_geometry` + `SONNET_BLOCK_SAMPLE` +
-  the `card_width`/`column_default` test modules. `mod.rs` 4360 → 3959. Bumps:
-  `apply_tiled_mode`/`apply_card_sizing`/`apply_column_layout` → `pub(crate)`,
-  and `setup_gutter` (stays in mod.rs) `fn` → `pub(super)` (a child-module
-  reverse-call). Two-column/spacer consts stayed in mod.rs (shared with
-  build_window/display_work). No facade; sibling + external call sites repathed.
-  **Verification was tier-b, not tier-a:** `cargo test --bins` (413) covers only
-  the pure sizing math (the moved unit tests); the widget-bound fns
-  (`apply_tiled_mode`/`apply_card_sizing`/`apply_column_layout`/
-  `current_block_text_width`) render to screen, so the real proof was a
-  **user-run nav-fuzz on `H8-Amb` (two-column play) + `Son` (sonnet sequence),
-  both clean**. Spec/plan under docs/superpowers/ (2026-06-23). **Still parked:**
-  `build_window`'s body + `display_work_at_with_prepared` (the remaining tier-b,
-  higher e2e burden), and the **AppState god-struct** grouping (~217 fields) —
-  which is the prerequisite for any real `build_window` split. ~~Pre-existing
-  flake: `db::queries::tests::test_bookmark_toggle`.~~ **FIXED (merge e172779).**
-  Root cause: it and `test_load_bookmarks_with_details` toggled the same Ham row
-  on the shared real lit.db in parallel with no serialization (the only 2 of 34
-  tests using `open_db_rw`), reading each other's writes — the other test's
-  INSERT landed between this test's toggle-off DELETE and its `!contains` assert.
-  Fixed by isolating both in a fresh in-memory DB via a shared `bookmark_fixture()`
-  (stub `works` + `line_mapping` + the real bookmarks schema), matching the
-  32-test in-memory majority. Verified across 6 consecutive clean full-suite runs.
-
-- **DECISION (2026-06-24): the two still-parked larger projects are NOT worth
-  doing — leave them parked, do not re-litigate.** The "larger projects" section
-  is otherwise complete (picker-dispatch accessor, the entire god-struct
-  *contained-cluster* grouping Phases A–G, all three app.rs carve-up phases, and
-  gloss_overlay — all merged). What remains is exactly two coupled items, and the
-  blast-radius data gathered when scoping the god-struct project shows the cost
-  exceeds the benefit:
-  - **Grouping the AppState *core* fields** (`buffer` 291 hits/20 files,
-    `current_line` 263/22, `current_work` 196/23, `config` 167/21, `text_view`,
-    `input_mode`). Each is a 90–290-site rewrite, all **render-tier** (drives the
-    reading view → needs a user nav-fuzz/eyeball per slice, not just
-    `cargo test`), for **~zero readability gain** — `state.buffer` /
-    `state.current_line` are already perfectly clear as flat fields. Worst
-    churn:value ratio in the entire backlog. (Contained clusters like `nav_test_*`
-    / `vocab_popup_*` were worth grouping because they're a genuine *cluster* that
-    reads better named; the core fields are the irreducible reader state and are
-    not.) This is why Phase A–G's scope note said the core fields "stay flat,
-    likely permanently" — a judgment, not a deferral.
-  - **The `build_window` body + `display_work` split** is **blocked on the core
-    split** (build_window's body is the ~203-field `AppState` struct literal +
-    closures capturing `state` built mid-fn; no *worthwhile* grouping unblocks
-    it). Its only payoff is a smaller `build_window` — real, but `mod.rs` is
-    already 6735 → ~3,950 and navigable, so the unblock isn't worth its
-    prerequisite.
-  - **When this changes:** only a *specific* concrete pain re-opens a slice — e.g.
-    `build_window` becomes genuinely unworkable to edit, or a particular core
-    field's flatness causes an actual bug. "Finish the section for completeness"
-    is the wrong reason; it would be the most expensive, least rewarding work in
-    the repo. The valuable structural work (everything with a good churn:value
-    ratio) is done.
-
-- **gloss_overlay.rs — DONE (merge 81acba8).** The ~1100 lines of pure helpers
-  (block model, OP-IPA markup, geometry/citation) + their ~750 lines of tests
-  were extracted into three sibling modules: `gloss_block.rs` (707),
-  `gloss_ipa.rs` (480, leaf), `gloss_util.rs` (404, leaf). gloss_overlay.rs is
-  now 2043 lines (the GlossOverlay widget + GTK buffer-population code that
-  intentionally stayed). Clean acyclic graph (a cross-task fix moved
-  `replace_word_ipa_in_source_block` into gloss_block to keep gloss_ipa a leaf);
-  call sites repathed, no facade. 413 tests unchanged. Spec/plan under
-  docs/superpowers/. Confirms the "MAY qualify as safe-scope" hypothesis was
-  correct for the pure tail; the GTK buffer-population code was correctly left
-  as behavior-risky.
-
-## #28 — parse-citation-reuse (collapse cite_tail closures) — DONE (commit 95c7343)
-
-- **Status:** DONE (commit 95c7343) — 4 cite_tail closures deleted, repointed to app::parse_citation. Rank #1 of this batch — highest (4 dup sites × real drift) ÷
-  (tiny cut: the helper already exists and is tested).
-- **Signal:** the citation-tail parse `rsplitn(4,'.') -> (div1,div2,line)` is
-  inlined as a `cite_tail` closure at **4 sites**, byte-identical except a `: i64`
-  annotation and indentation:
-  gloss.rs:29 (jump_to_gloss_source_start), gloss.rs:1972 (toggle_overlay),
-  journal.rs:588 (action_gloss_from_journal_passage), keymap.rs:1076 (J handler).
-- **Identical part (extract → ALREADY EXISTS):** `crate::app::parse_citation(cite)
-  -> Option<(i64,i64,i64)>` (app/mod.rs:3583) is byte-identical to all four and is
-  already `pub(crate)` and unit-tested (`parse_citation_extracts_div_and_line`).
-  So this is NOT a new helper — each `cite_tail` closure is deleted and its call
-  sites call `crate::app::parse_citation(...)`.
-- **Variants:** `: i64` annotation present at 2 sites, absent at 2 — disappears
-  when calling the typed free fn. journal.rs:588 parses BOTH start and end
-  citations with the same closure — both calls map to parse_citation.
-- **EXCLUDED on sight:** the `cite_tail` name is reused but any site whose closure
-  body differs from the bare 3-field tail (none found — all 4 are the bare form).
-  Do NOT touch `GlossContext`-building citation construction (`models::citation`,
-  the forward direction, audit #14) — this is the parse direction only.
-- **Safe-scope:** yes — delete 4 closures, repoint to an existing tested fn. Zero
-  new code; pure dedup. The strongest cut in the ledger since #22.
-
-## #29 — journal-page-row-mapper — DONE (commit 5900e79)
-
-- **Status:** DONE (commit 5900e79) — 4 row builders -> map_journal_page_row + JOURNAL_PAGE_COLUMNS const. Rank #2 — 4 sites, single file, clean fn extraction.
-- **Signal:** the `|row| Ok(JournalPage { id: row.get(0)?, … source_text:
-  row.get(9)? })` 10-field row-builder closure is byte-identical at **4 sites** in
-  src/db/journal.rs: find_journal_pages:90, find_work_pages:118,
-  find_all_pages_ordered:150, find_passage_pages:206. The SELECT column list
-  string `"id, div1, div2, question, answer, COALESCE(claude_model,''), timestamp,
-  start_citation, end_citation, source_text"` is also byte-identical across the 4
-  queries (a two-part family: column-list const + row mapper).
-- **Identical part (extract):** a file-local `fn map_journal_page_row(row:
-  &rusqlite::Row) -> Result<JournalPage, rusqlite::Error>`; each `query_map(params,
-  |row| Ok(...))` becomes `query_map(params, map_journal_page_row)`. Optionally a
-  `const JOURNAL_PAGE_COLUMNS: &str` for the SELECT list.
-- **Variants:** only the WHERE/ORDER BY and the `params!` binding differ — left at
-  each call site. find_passage_pages reformats the closure to one-per-line but is
-  structurally identical.
-- **EXCLUDED:** find_journal_scenes:218 maps to `(i64,i64)` tuples, not JournalPage
-  — different return type, hard exclude. No JournalPage row-builder in queries.rs.
-- **Safe-scope:** yes — pure data-mapping extraction; query bodies unchanged.
-
-## #30 — overlay-attach-body — DONE (commit 694ac40)
-
-- **Status:** DONE (commit 694ac40) — 3 attach() -> picker_attach::attach_overlay_panel. Rank #3 — 3 sites, cross-file, genuine drift risk.
-- **Signal:** the 7-line overlay-attach wiring is byte-identical at **3 sites**:
-  GlossOverlay::attach (gloss_overlay.rs:566), JournalOverlay::attach
-  (journal_overlay.rs:117), TranslationOverlay::attach (translation_overlay.rs:131).
-  Body: `set_child(Some(child)); add_overlay(&scrim); add_overlay(&container);
-  set_measure_overlay(&scrim,false); set_measure_overlay(&container,false);
-  set_clip_overlay(&scrim,true); set_clip_overlay(&container,true);` — all three
-  types have identically-named `overlay`/`scrim`/`container` fields.
-- **Identical part (extract):** `fn attach_overlay_panel(overlay: &gtk4::Overlay,
-  child: &impl IsA<Widget>, scrim: &gtk4::Box, container: &gtk4::Box)` in
-  src/ui/picker_attach.rs (the existing home for this class, audit #13). Each
-  `attach` becomes one call.
-- **EXCLUDED (named, why):** picker `attach_panel` (#13) — omits the
-  measure/clip overlay calls, different contract. settings_overlay::attach — adds
-  scrim+container separately via `panels()`. gamepad_overlay — adds a drawing_area
-  not a scrim/container pair. echo_keybinds_overlay::attach_to / page_image_overlay
-  — take an external `&Overlay`, no `set_child`, different signature.
-- **Safe-scope:** yes — pure widget wiring; only inputs are the 4 widget refs.
-
-## #31 — reassert-italic-tags — DONE (commit 43a5f71)
-
-- **Status:** DONE (commit 43a5f71) — 2 italic loops -> ui::reassert_italic_tags; guard test passes. Rank #4 — only 2 sites, but a comment cross-reference proves
-  the two are EXPECTED to stay in sync (drift risk is documented, not theoretical).
-- **Signal:** the 7-line italic-priority re-assertion inside each overlay's
-  `apply_font` per-view loop is byte-identical at **2 sites**:
-  gloss_overlay.rs:436, journal_overlay.rs:360. Body: `let top = table.size(); for
-  italic in ["gloss-stage","gloss-bracket"] { if let Some(t)=table.lookup(italic){
-  if top>0 { t.set_priority(top-1); } } }`. journal_overlay.rs's comment literally
-  says "Mirror the same fix used in gloss_overlay.rs" — so a third italic tag added
-  to one must be added to the other.
-- **Identical part (extract):** `fn reassert_italic_tags(table:
-  &gtk4::TextTagTable)` (a new src/ui/overlay_util.rs or inline in ui/mod.rs). Each
-  per-view loop body collapses to one call.
-- **EXCLUDED:** the rest of each `apply_font` is NOT identical — gloss iterates 3
-  views + uses tag name "gloss-font" + calls apply_synopsis_label_bold after;
-  journal iterates 2 views + "journal-font" + has an early-return guard. Only the
-  7-line italic loop extracts; the surrounding apply_font stays per-overlay.
-- **Safe-scope:** yes, narrowly. At the 2-site floor — but the explicit "mirror
-  this fix" comment is exactly the drift signal the house bar wants.
-
-## #32 — gloss-overlay-clip-helpers-route-to-shared — DONE (commit b9c7d26)
-
-- **Status:** DONE (commit b9c7d26) — gloss_overlay private display_rows + recompute_bottom_clip deleted, all callers route to ui::mod shared helpers; ~85 lines removed; 445 tests, clippy parity.
-  (was: highest-value of the 2026-06-25 post-citation-work audit —
-  removes ~85 lines AND kills a lockstep-fragile duplicate of tested clip math).
-- **Signal:** the bottom-clip refactor extracted `display_rows`,
-  `bottom_clip_height` (pure, tested), and `recompute_overlay_bottom_clip` into
-  `src/ui/mod.rs:84-160`. **journal_overlay routes through them**
-  (journal_overlay.rs:427,442). **gloss_overlay never got converted** — it still
-  carries private copies: `gloss_overlay.rs:1091-1108` `fn display_rows` is
-  **byte-identical** to `ui::mod::display_rows` (mod.rs:124-142, verified — only
-  the helper's leading `use gtk4::prelude::*;` + indentation differ); and
-  `gloss_overlay.rs:1021-1073` `fn recompute_bottom_clip` reimplements the tested
-  `bottom_clip_height` + `recompute_overlay_bottom_clip` pair
-  (last_full_bottom/any_full/effective_bottom/guard logic matches mod.rs:84-115).
-- **Identical part (extract / route):** delete both private fns;
-  `gloss_overlay.rs:1111-1113` `update_bottom_clip` becomes the same one-line
-  shared call journal already uses:
-  `crate::ui::recompute_overlay_bottom_clip(&self.gloss_view, &self.bottom_clip,
-  &self.gloss_scrolled)`. Field names line up.
-- **EXCLUDED (named, why):** gloss's `row_step` (gloss_overlay.rs:1513) and
-  `snap_value_to_line` (:1537) — they intentionally use `display_rows`-based
-  geometry and differ from journal's `line_yrange`-based versions; not part of
-  this cut.
-- **Safe-scope:** yes — routes to the already-running tested superset journal
-  uses. The drift risk (two clip implementations that must stay in lockstep) is
-  exactly the bug class the shared helper was created to kill.
-
-## #33 — two-label-picker-row-builder — DONE (commit 66c844a)
-
-- **Status:** DONE (commit 66c844a) — gloss/bookmark/journal row builders -> picker_nav::two_label_row + speaker_prefixed_first_line; 445 tests, clippy parity..
-- **Signal:** inside `populate_list`, three card pickers build the identical row
-  — an ellipsizing start-aligned `text_label` (hexpand) + an end-aligned
-  secondary label with css `picker-item-detail` + an hbox (Horizontal, spacing 8)
-  appending both: gloss_picker.rs:99-117, bookmark_picker.rs:96-114
-  (character-identical to gloss's block), journal_picker.rs:100-119 (same shape,
-  only local var names differ). The preceding `speaker.is_empty()` display
-  computation is byte-identical between two: gloss_picker.rs:92-97 and
-  bookmark_picker.rs:89-94.
-- **Identical part (extract):** a helper `(primary: &str, detail: &str) ->
-  gtk4::Box` returning the configured spacing-8 hbox with the two aligned labels.
-  Caller wraps in `ListBoxRow` and stamps `widget_name` (varies: `idx` vs
-  `item.line_mapping_id`) — that stays out of the helper.
-- **EXCLUDED (named, why):** echo_picker.rs:86-113 / echo_turns_picker use a
-  **Vertical** row_box (meta-over-text), a structurally different row.
-  concordance_works_picker / concordance_list_picker use a single primary + count
-  detail with explicit `set_margin_*`, a different builder style. The
-  `speaker.is_empty()` display-compute is a separate optional 2-site sub-cut.
-- **Safe-scope:** yes — pure widget construction, identical CSS/align/spacing.
-
-## #34 — picker-move-selection-two-families — DONE (commit 6d7dc7f)
-
-- **Status:** DONE (commit 6d7dc7f) — 9 sites -> picker_nav::move_selection_clamped (5) / move_selection_from (4); two helpers preserve the clamp-vs-no-clamp contract..
-- **Signal:** `picker_nav` has `select_row_at`/`select_first_row`/`selected_index`
-  but NOT `move_selection`; every picker hand-rolls it in exactly TWO shapes.
-  **Family A (clamp-from-current):** `if let Some(current) =
-  list_box.selected_row() { let idx = current.index(); let new_idx = (idx +
-  delta).max(0); select_row_at(...) }` — **5 byte-identical bodies**:
-  bookmark_picker.rs:130-136, gloss_picker.rs:131-137, journal_picker.rs:128-134,
-  media_picker.rs:148-154, concordance_picker.rs:138-144.
-  **Family B (unwrap_or(-1), no clamp):** `let current =
-  ...selected_row().map(|r| r.index()).unwrap_or(-1); let next = current + delta;
-  select_row_at(...)` — 4 identical: concordance_word_picker.rs:111-115,
-  concordance_list_picker.rs:106-110, concordance_works_picker.rs:96-100,
-  echo_line_picker.rs:80-84.
-- **Identical part (extract):** TWO free fns in `picker_nav` —
-  `move_selection_clamped(list_box, delta)` (Family A: requires a current
-  selection, clamps ≥0) and `move_selection_from(list_box, delta)` (Family B:
-  −1 start, no clamp). Each is the exact existing body with `self.list_box` →
-  `list_box`.
-- **EXCLUDED (named, why):** the `-1`-vs-`0` sentinel and the presence of
-  `.max(0)` are what distinguish A from B — that is why this is two helpers, not
-  one (folding them would change behavior). Near-variants with `.max(0)` added
-  (echo_picker.rs:123-127, echo_turns_picker.rs:125-128,
-  authorship_picker.rs:69-72) are a THIRD shape — flag only, don't fold.
-  voice_picker.rs:172 and library_picker.rs:483 carry extra logic beyond the
-  pattern — verify before routing, likely exclude.
-- **Safe-scope:** yes per family — identical bodies, mechanical `self.` → param.
-
-## #35 — picker-card-builder-600x400 — DONE (commit a2a7f54)
-
-- **Status:** DONE (commit a2a7f54) — 4 card boxes -> picker_nav::build_picker_card; unused Orientation imports removed.
-- **Signal:** the `picker_box = GtkBox::builder()...width_request(600)
-  .height_request(400)...add_css_class("library-picker")` block is byte-identical
-  at **4 sites**: gloss_picker.rs:20-28, journal_picker.rs:28-36,
-  media_picker.rs:23-31, bookmark_picker.rs:20-28.
-- **Identical part (extract):** `picker_nav::build_picker_card() -> gtk4::Box`
-  returning the configured 600×400 `library-picker` box.
-- **EXCLUDED (named, why):** concordance_picker.rs:18-26 (width 400, css
-  `concordance-picker`), echo_picker.rs:24-32 (640×520, spacing 0),
-  concordance_word_picker.rs:17-22 (uses `GtkBox::new` + setters, not the
-  builder). Genuinely a 4-site family, not 12.
-- **Safe-scope:** yes — fixed-config widget construction.
-
-## #36 — gloss-normalize-abbrev-reuse — DONE (commit 8abc18a)
-
-- **Status:** DONE (commit 8abc18a) — gloss.rs:786 + queries.rs:1898 route through gloss::normalize_abbrev; guard/superset sites excluded as planned..
-- **Signal:** `gloss::normalize_abbrev` (gloss.rs:524) IS
-  `abbrev.strip_suffix("-Amb").unwrap_or(abbrev)`. Two sites re-inline that exact
-  expression instead of calling it: gloss.rs:786
-  (`source_work.strip_suffix("-Amb").unwrap_or(source_work)`) and queries.rs:1898
-  (`exclude_work.strip_suffix("-Amb").unwrap_or(exclude_work)`). Both return
-  `&str` and feed a SQL bind / comparison.
-- **Identical part (route):** replace the two inline expressions with
-  `crate::gloss::normalize_abbrev(...)` (or bare `normalize_abbrev(...)` inside
-  gloss.rs). Centralizes the `-Amb` literal behind the one helper that owns it.
-- **EXCLUDED (named, why):** queries.rs:373 `if let Some(base) =
-  abbrev.strip_suffix("-Amb")` is a control-flow GUARD (the fallback branch only
-  runs when the suffix is present), NOT `unwrap_or` — routing it would change
-  behavior. app/mod.rs:2227 `base_work_abbrev` strips at the FIRST `-`
-  (`-Amb`/`-BBC`/`-Ep-N`), a SUPERSET with ~15 call sites — not interchangeable
-  with `normalize_abbrev` (which keeps `-BBC`/`-Ep-N`). The SQL `NOT LIKE
-  '%-Amb'` (gloss.rs:802) is a SQL pattern, not a Rust suffix — no shared const.
-  Do NOT add a new `const AMB_SUFFIX` or `base_abbrev()` — the helper exists.
-- **Safe-scope:** yes — identical semantics, both `&str`.
-
-## #37 — column-exists-pragma-helper — DONE (commit 3b560fc)
-
-- **Status:** DONE (commit 3b560fc) — 3 `.exists([])?` probes
-  (ensure_claude_model_columns/characters/gloss_audio) -> `column_exists(conn,
-  table, col)`; the error-swallowing `works.default_voice_id` probe was EXCLUDED
-  (it deliberately doesn't propagate with `?`), keeping the cut behavior-preserving.
-  The borderline concern resolved cleanly: only the 3 same-shape sites collapsed.
-- **Signal:** the `pragma_table_info` column-exists migration guard recurs at **4
-  sites**: queries.rs:670, :725, :800, :903, each running `SELECT 1 FROM
-  pragma_table_info('<table>') WHERE name = '<col>'`. The comment at :657 already
-  says it "mirrors `ensure_characters_table`'s `pragma_table_info` pattern."
-- **Identical part (extract):** `fn column_exists(conn, table: &str, col: &str)
-  -> bool` centralizing the SQL skeleton.
-- **EXCLUDED / caveat:** :670 uses `format!` while others are static strings, and
-  table/column vary — so this is "parameterize a SQL template," closer to an
-  abstraction than a byte-identical block extraction. The house bar leans against
-  it; included only because the drift count (4) and the existing "mirrors…"
-  comment are real signals.
-- **Safe-scope:** marginal — behavior-preserving, but it is a new helper with
-  interpolated args, not a literal-naming or byte-identical cut.
-
-## #38 — claude-bridge-async-render-tail — DONE (commit 062ceed)
-
-- **Status:** DONE (commit 062ceed) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-  deferred family audit #7 flagged; ~240 lines across 4 sites, and each NEW
-  gloss-type path copies the whole tail, so drift is structural).
-- **Signal:** the async Claude-call render tail — the
-  `match result { Ok(Ok(gloss_text)) => { save_gloss → find_glosses_by_start
-  reload → render overlay → reinstall gloss_context }, Ok(Err)/Err => log }` body
-  — is byte-identical (verified: the `Ok(Ok)` `save_gloss` arm matches
-  token-for-token between visual.rs and journal.rs) at **4 sites**:
-  visual.rs:528-586 (`action_reader_gloss`), visual.rs:676-734
-  (`action_gloss_with_claude`), visual.rs:941-1000
-  (`run_pending_inner_monologue_blocking`), journal.rs:702-762 (`ask_claude`,
-  gloss-from-journal). The arms differ in **3 tokens** — the gloss_type literal
-  (the `save_gloss` arg + `record_last_gloss` arg) and the log-prefix strings.
-- **Identical part (extract):** a NEW sibling helper (e.g.
-  `persist_render_install_gloss(s, ctx, text, gloss_type, log_prefix)`) — it
-  moves `ctx` in, persists, reloads, renders, AND reinstalls
-  `s.gloss_context = Some(ctx)` + calls `record_last_gloss`. Each `match` arm
-  collapses to one call.
-- **EXCLUDED (named, why):** the existing `persist_and_render_gloss` (gloss.rs)
-  does NOT cover these — it takes `&str`, does NOT reinstall gloss_context, and
-  does NOT `record_last_gloss` (add/edit keep context live); the async sites move
-  `ctx` in and must reinstall it. The inner-monologue site adds one line
-  (`verify_echo_citations`) and renders the verified text — pass the to-persist
-  text in so the body stays shared. The `spawn_future_local` + `call_claude`
-  PROLOGUE differs per site (different prompt const / `call_claude` vs
-  `_with_prompt`) — only the post-await `match result` body extracts.
-- **Safe-scope:** yes — same concrete types, no trait/generic; a parameterized
-  block move.
-
-## #39 — overlay-close-position-restore-helpers — DONE (commit 0a37259)
-
-- **Status:** DONE (commit 0a37259) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-  centralized mode+tint, this centralizes the still-duplicated position-restore;
-  7 of 8 sites collapse).
-- **Signal:** the take-and-restore tail
-  `if let Some((line, top)) = <FIELD>.take() { s.current_line = line;
-  s.page_top_line = top; [resnap_page; update_highlight] }` recurs in two
-  byte-identical variants. **No-tail (TRANSITION) variant — 4 sites:**
-  journal.rs:647, journal.rs:856, journal.rs:929, keymap.rs:1130 (each is exactly
-  the 3-line restore, nothing else inside). **Resnap (return-to-CARD) variant —
-  3 sites:** journal.rs:138, gloss.rs:1934, keymap.rs:1050 (inner) — the same
-  body plus `resnap_page` + `update_highlight`.
-- **Identical part (extract):** two free fns —
-  `restore_saved_position(s, pos)` (the bare 3-line restore, collapses the 4
-  transition sites) and `restore_saved_position_resnap(s, pos)` (restore +
-  resnap + update_highlight, collapses the 3 card sites). Two fns, not one
-  bool-flag fn, keeps each call site byte-identical. Caller still passes
-  `s.journal.return_pos.take()` / `s.gloss_return_pos.take()`.
-- **EXCLUDED (named, why):** keymap.rs:596 (search Escape) has an
-  `else { page_top_line = current_line }` branch AND runs `resnap`/`update_highlight`
-  UNCONDITIONALLY outside the `if` — folding it changes control flow. The
-  `return_to_reader_mode`/`input_mode = Reader` line stays at the call site (mode
-  ordering differs per site; already centralized).
-- **Safe-scope:** yes — pure cut-and-lift, no abstraction.
-
-## #40 — timestamps-line-id-extraction — DONE (commit daba8bc)
-
-- **Status:** DONE (commit daba8bc) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-  timestamps.rs).
-- **Signal:** the `let line_id = { let work = match &state.current_work { Some(w)
-  => w, None => return false }; work.lines[line_idx].id };` block is byte-identical
-  (incl. whitespace) at **5 sites**: timestamps.rs:144-150 (set_start_time),
-  :304-310 (set_chapter), :394-400 (set_end_time), :456-462 (delete_timestamp),
-  :528-534 (nudge_start_time).
-- **Identical part (extract):** `fn work_line_id(state, line_idx) -> Option<i64>`;
-  each caller writes `let Some(line_id) = work_line_id(state, line_idx) else {
-  return false };` (the `return false` can't live in the helper).
-- **EXCLUDED (named, why):** `undo_timestamp` resolves the line by id lookup, not
-  `line_idx` — different shape.
-- **Safe-scope:** yes — byte-identical, helper returns Option.
-
-## #41 — timestamps-sign-column-setter — DONE (commit c2bb5e6)
-
-- **Status:** DONE (commit c2bb5e6) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-- **Signal:** the sign-column borrow-and-set block
-  `{ let mut ht = state.has_timestamp.borrow_mut(); if bl < ht.len() { ht[bl] = V; }
-  let mut manual = state.is_manual.borrow_mut(); if bl < manual.len() { manual[bl]
-  = V; } }` is byte-identical (given the value V) at **4 sites**:
-  timestamps.rs:218-228 (set_start, V=true), :342-352 (set_chapter, true),
-  :495-505 (delete, false), :683-700 (undo). The adjacent `is_chapter_line`
-  sub-block is byte-identical at **3** of those.
-- **Identical part (extract):** `fn set_sign_columns(state, buffer_line, has_ts:
-  bool, is_manual: bool, is_chapter: bool)` covering all 4 (incl. undo, whose
-  values are computed). Each site becomes one call.
-- **EXCLUDED (named, why):** none material — undo's values come from computed
-  `has_ts`/`is_man`/`is_ch` rather than constants, but the setter takes them as
-  args so it still covers undo.
-- **Safe-scope:** yes — self-contained block move.
-
-## #42 — unspoken-stage-direction-refusal-block — DONE (commit 47909ed)
-
-- **Status:** DONE (commit 47909ed) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-  in lockstep, the exact drift signal the house bar wants).
-- **Signal:** the `u`/end-time spoken-line gate body is byte-identical at **2
-  sites**: timestamps.rs:131-141 (set_start_time) and :381-391 (set_end_time) —
-  `let l = &work.lines[line_idx]; if !timestamp_allowed(l.sub_line, l.is_spoken) {
-  log("TS: refused start/end time …"); show_chapter_toast(state, "Not a spoken
-  line — no timestamp set"); return false; }` — identical incl. the log string and
-  the toast literal.
-- **Identical part (extract):** a helper returning `bool` (the `return false`
-  stays at the call site: `if !timestamp_writable(state, line_idx) { return false }`).
-  The toast string `"Not a spoken line — no timestamp set"` is a load-bearing
-  literal worth a `const`.
-- **EXCLUDED (named, why):** nudge/delete intentionally ungated (operate on
-  existing timestamps) — do not add the gate there.
-- **Safe-scope:** yes — byte-identical block + named literal.
-
-## #43 — word-prefix-boundary-predicate — DONE (commit 0256fe9)
-
-- **Status:** DONE (commit 0256fe9) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-  that's exactly the kind that drifts).
-- **Signal:** the "needle is a prefix of haystack at a WORD boundary" test —
-  `X.starts_with(needle) && X.as_bytes().get(needle.len()) == Some(&b' ')` —
-  recurs at **3 sites**: text_file_map.rs:466-467 (`candidate`), :512-513
-  (`nf`), :649-650 (`find_skip_target`, `nf`). Same off-by-one-prone boundary
-  semantics, receiver/needle vary.
-- **Identical part (extract):** `fn is_word_prefix(haystack: &str, needle: &str)
-  -> bool`. All 3 sites collapse byte-identically.
-- **EXCLUDED (named, why):** none — all three are the exact same boundary check.
-- **Safe-scope:** yes — pure predicate.
-
-## #44 — gloss-render-current-row-block — DONE (commit 959b09b)
-
-- **Status:** DONE (commit 959b09b) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-- **Signal:** the 13-line "render the current gloss row" block (`gloss_start`/
-  `gloss_end` clone, `ctx`, `cw`, `h`, `pairs`, `show_gloss_with_color`,
-  `set_position`, `set_citation`, `recolor_cached_blocks`) is byte-identical
-  (modulo indent) at **2 sites**: gloss.rs:184-196 (`cycle_gloss`) and
-  gloss.rs:261-273 (`delete_current_gloss` re-render).
-- **Identical part (extract):** `fn render_gloss_row(s, gloss, new_idx)`.
-- **EXCLUDED (named, why):** `persist_and_render_gloss` tail (renders `full_gloss`
-  over `all.len()`, mutates list after, citation from `ctx`), `apply_ipa_fix`
-  (owned clones, citation from ctx), `open_gloss_overlay` (empty source_lines) —
-  all near-but-not-byte-identical.
-- **Safe-scope:** yes.
-
-## #45 — gloss-row-map-closures — DONE (commit 8d73eb4)
-
-- **Status:** DONE (commit 8d73eb4) — merged in refactor/audit-38-45; behavior-preserving, individually + whole-branch reviewed clean.
-  near-minimal; named for completeness).
-- **Signal:** two byte-identical (modulo indent) row-map closures — the SavedGloss
-  7-field map at queries.rs:1588-1599 (`find_all_glosses`) and 1637-1647
-  (`find_glosses_by_start`); the GlossedPassage 8-field map at 1700-1709
-  (`find_glossed_passages`) and 1750-1759 (`find_glossed_passage_by_start`),
-  incl. the `row.get::<_, Option<String>>(6)?.unwrap_or_default()` speaker line.
-- **Identical part (extract):** `fn row_to_saved_gloss(row) ->
-  rusqlite::Result<SavedGloss>` and `fn row_to_glossed_passage(row)`, passed as
-  `|row| row_to_*(row)`.
-- **EXCLUDED (named, why):** `find_existing_gloss` SavedGloss map has shifted
-  column indices + `gloss_type` from a captured `gt.clone()` — not foldable. The
-  dynamic-IN `placeholders`/`params`/`param_refs` boilerplate differs by
-  placeholder offset (+4/+3/+2/+3) — only the trailing line is identical, needs
-  generics, skip.
-- **Safe-scope:** yes, but lowest priority.
-
-## #46 — apply-font-to-views helper — DONE
-
-- **Status:** PROPOSED (post-overlay-parity audit, 2026-06-28). Ranked #1 of this
-  batch — byte-identical loop body, two callers, real drift risk (font/italic
-  handling).
-- **Signal:** `apply_font` in `gloss_overlay.rs:449-468` and
-  `journal_overlay.rs:521-544` share a byte-identical per-view loop body: build
-  `"{family} {size}"`, then for each view — `table.lookup(tag)`→remove, build a
-  `TextTag` with `.name(tag).font(font_str)`, `table.add`, `apply_tag` over
-  `buffer.bounds()`, `reassert_italic_tags(&table)`. Only the TAG NAME
-  (`"gloss-font"` vs `"journal-font"`) and the VIEW LIST (gloss: gloss_view +
-  echo_header_view + ask input; journal: view + ask input + 3 edit-card views)
-  differ.
-- **Identical part (extract):** a free fn in `src/ui/mod.rs` (or a new
-  `src/ui/font.rs`): `fn apply_font_to_views(views: &[&gtk4::TextView], font_str:
-  &str, tag_name: &str)` owning the loop body. Each overlay builds its own
-  `font_str` + view slice + tag name and calls it.
-- **EXCLUDED (named, why):** the journal's `family.is_empty()` early guard (the
-  family is user-set and starts blank — keep at the caller; gloss has a compiled
-  default so doesn't need it); the gloss-only trailing
-  `self.apply_synopsis_label_bold()` (stays in the gloss caller after the call).
-- **Safe-scope:** yes — pure loop-body extraction, no behavior change.
-
-## #47 — cached-coloring span helper — DONE
-
-- **Status:** PROPOSED. Ranked #2 — common tag-lifecycle + apply loop, two
-  callers, both recently added (likely to drift).
-- **Signal:** `gloss_overlay.rs::color_audio_blocks` (515-583) and
-  `journal_overlay.rs::color_cached_blocks` (728-765) share: tag
-  lookup-or-create with `set_foreground`, the priority raise
-  (`tag.set_priority(size - 1)` after `table.size()`), and the per-span
-  `iter_at_line(...).unwrap_or(start/end_iter)` + `apply_tag` loop.
-- **Identical part (extract):** `fn apply_cached_coloring(buffer:
-  &gtk4::TextBuffer, tag_name: &str, accent: &str, spans: &[(i32, i32)])` —
-  caller passes the already-computed (start_line, end_line) spans of blocks to
-  color.
-- **EXCLUDED (named, why):** the predicate (different arity: journal
-  `Fn(usize)`, gloss `Fn(&BlockKind, i32)`) — caller filters and builds the span
-  list; the gloss-only speaker-header extension (extend a Source block up one
-  line when `line_is_speaker`) — caller folds it into its spans; the gloss-only
-  `parse_hex_color` round-trip normalization (journal passes the accent
-  directly); the gloss-only `log_fmt!` calls.
-- **Safe-scope:** yes — the caller keeps all the variant logic and only delegates
-  the tag application.
-
-## #48 — bar-stroke-loop helper — DONE
-
-- **Status:** PROPOSED. Ranked #3 — the selection-bar draw closure's stroke loop
-  is duplicated; PARTIAL because the gloss closure also draws line numbers.
-- **Signal:** the per-span stroke loop in the `bar_drawing.set_draw_func` closure
-  is near-identical at `journal_overlay.rs:183-195` and `gloss_overlay.rs:229-243`
-  — `iter_at_line` both ends, `iter_location().y()` for the top,
-  `line_yrange().0+.1` for the bottom, two `buffer_to_window_coords(Widget,0,…)`
-  calls, `move_to`/`line_to`/`stroke` at a fixed x. Also the
-  `vadjustment().connect_value_changed(|_| …queue_draw())` repaint hook and the
-  three `add_overlay`/`set_measure_overlay(false)`/`set_clip_overlay(true)` calls
-  are 1-for-1.
-- **Identical part (extract):** `fn draw_bar_spans(cr: &cairo::Context, view:
-  &gtk4::TextView, spans: &[(i32, i32)], x: f64)` — the stroke loop only.
-- **EXCLUDED (named, why):** the range ELEMENT TYPE differs (journal `(i32,i32)`
-  tuple vs gloss `BarRange` struct) — normalize the gloss caller to pass
-  `(start_line, end_line)` tuples at the call (or keep `BarRange` and map); the
-  gloss-only second pass that draws line numbers (lines 247-274) — stays in the
-  gloss closure; the color source (journal fixed `set_source_rgb`, gloss
-  `Rc<RefCell<(f64,f64,f64)>>` theme color) and x source (journal computed from
-  `left_margin()`, gloss `Rc<RefCell<i32>>`) — caller sets the source before the
-  loop.
-- **Safe-scope:** yes — stroke-loop body only.
-
-## #49 — visual-mode tail helpers — DONE (partial: visual_selection_count only)
-
-- **Status:** PROPOSED, lowest priority — only ~30 lines saved; worth doing ONLY
-  if/when a third block-cursor overlay appears, or while already editing the
-  visual-mode code.
-- **Signal:** `visual_selection_len` (journal 984-993 / gloss 1346-1354),
-  `exit_visual` (998-1001 / 1277-1280), `exit_visual_to_anchor` (1005-1011 /
-  1300-1306), and the `visual_to_end` body (959-966 / 1324-1332) are
-  structurally identical over "a list of (start_line,end_line) spans + an anchor
-  Cell + a cursor Cell", modulo the anchor field name (`visual_anchor` vs
-  `synopsis_visual_anchor`) and a gloss-only `scroll_cursor_into_view()` tail in
-  `visual_to_end`.
-- **Identical part (extract):** small free fns over `(anchor: Option<usize>,
-  cursor: usize, len: usize)` for the index math, leaving the bar redraw +
-  field-name + scroll tail at the caller.
-- **EXCLUDED (named, why):** `enter_visual` (different SEED — journal
-  `topmost_visible_block`, gloss `cursor_block`), `step_cursor`/`step_full_cursor`
-  (journal page-turn `sync_cursor_page` vs gloss `scroll_cursor_into_view`),
-  `mark_cursor_block` (gloss `(kind,index)` lookup vs journal direct index) — all
-  divergent, stay per-overlay.
-- **Safe-scope:** yes but marginal; do not do speculatively.
-
-## Noted but NOT numbered (below the safe-scope floor or behavior-risky)
-
-These came up in the post-journal-Q&A audit but do not qualify as numbered
-safe-scope opportunities:
-
-- **close-gloss-overlay + restore-pos block (2 sites: journal.rs:930, keymap.rs:1124)
-  and close-journal-overlay-restore (2 pure sites: journal.rs:648, :859).** Each is
-  a real 5-line byte-identical block (the gloss one even shares a verbatim comment),
-  but each family is only 2 sites at the floor, and the close-and-restore tails have
-  sibling variants (toggle_overlay adds resnap+update_highlight; view_gloss sets
-  gloss_return_pos after) that complicate a clean cut. Flag; number if a 3rd site
-  appears.
-- **journal_overlay show_* reveal tail (2 sites: show_page:163, show_passage_page:230).**
-  7 identical lines (apply_font; ask.close; scrim/container visible; scroll-to-top;
-  update_bottom_clip), but only 2 sites in one file; show_loading/show_message are
-  4-line variants. Single-file `fn reveal_page(&self)` — low payoff, flag only.
-- **async reader-gloss spawn+save+render tail (2 sites: visual.rs:519,
-  journal.rs:698) and the cache-hit show-gloss block (2 sites: visual.rs:484,
-  journal.rs:661).** Byte-identical save/render bodies (log string aside), BUT
-  extracting them cleanly needs ~6 params or folding into claude_bridge
-  (audit #7) which changes the callback shape — a small API change, NOT pure
-  behavior-preserving extraction. The `action_gloss_with_claude`/`inner_monologue`
-  siblings differ by gloss_type literal. Larger near-identical family; not a
-  safe-scope byte-identical cut. Note for a future broader pass, do not number.
-
-### From the 2026-06-25 post-citation-work audit
-
-- **citation/id → buffer-line resolution family (~12 sites).** Thematically real
-  (`work.lines.position(|l| l.id == x or (div1,div2,line_in_div) == t)` →
-  `lm.work_to_buffer[work_idx]`), but NOT a safe-scope cut: the only
-  byte-identical pair is concordance.rs:495 ↔ db/concordance.rs:187, and the
-  latter is a `#[test]`-module helper that DELIBERATELY duplicates prod to verify
-  it (its own comment: "Replicate concordance_resolve_indices logic") — folding it
-  defeats the test. Every other site differs in a load-bearing token: id-vs-tuple
-  key, presence/absence of the `buffer_to_work.get(bi) == Some(&Some(work_idx))`
-  round-trip check, panic-`[idx]` vs `.get().unwrap_or(state.current_line)` vs
-  `.get()→None` access, and a site-specific failure path
-  (`None`/`current_line`/`continue`). Unifying would CHANGE behavior. Not numbered.
-- **Behavior-difference flag (not a refactor — for /code-review, not this audit):**
-  the round-trip validity check (`buffer_to_work.get(bi) == Some(&Some(work_idx))`)
-  is PRESENT in concordance.rs:495, app/mod.rs resume (~2944) + concordance-target
-  (~3057), and main.rs sync (~175), but SILENTLY ABSENT in pickers.rs:215,
-  pickers.rs:985, bookmarks.rs:84, keymap.rs:320, timestamps.rs:599. Without it, an
-  unmatched/default-0 work line resolves to buffer 0 instead of being rejected.
-  This is a latent correctness divergence, not duplication — route to /code-review
-  if it ever manifests; out of scope for maintainability numbering.
-
-## #50 — keybinds-legend-overlay-wrapper — DONE
-
-- **Status:** PROPOSED (2026-06-29 keybind-legend-focused audit). Ranked #1 of
-  this batch — three byte-identical wrapper structs, cross-file, real drift risk
-  (a 4th overlay would copy a 4th identical struct; the recent footer-hint and
-  two-column changes already had to be re-checked against all three by hand).
-- **Signal:** `src/ui/gloss_keybinds_overlay.rs`, `synopsis_keybinds_overlay.rs`,
-  and `journal_keybinds_overlay.rs` are line-for-line identical EXCEPT for the
-  struct name, the `GROUPS` const, and the title string passed to
-  `build_legend`. All three define the same `{ container, scrim }` struct and the
-  same four methods — `new()` (calls `keybinds_legend::build_legend(title,
-  GROUPS)`), `attach_to(&overlay)` (two `add_overlay`), `show()` (two
-  `set_visible(true)`), `hide()` (two `set_visible(false)`). The bodies of
-  `attach_to`/`show`/`hide` are byte-identical across the three; `new()` differs
-  only in the two string/const arguments.
-- **Identical part (extract):** one concrete struct in `keybinds_legend.rs`, e.g.
-  `pub struct KeybindsLegend { pub container: GtkBox, pub scrim: GtkBox }` with
-  `KeybindsLegend::new(title: &str, groups: &[Group]) -> Self` (wrapping the
-  existing `build_legend`) plus `attach_to`/`show`/`hide`. The three call sites in
-  `app/mod.rs:1235-1242` become `KeybindsLegend::new("Gloss keybinds",
-  gloss_keybinds_overlay::GROUPS)` etc.; the three `AppState` fields
-  (`app/mod.rs:423-425`) all become `KeybindsLegend`. The per-overlay files
-  collapse to just their `pub const GROUPS` (the legend DATA — kept separate,
-  hand-maintained, one per overlay, with their "Matches handle_*_key" comment).
-- **EXCLUDED (named, why):** `echo_keybinds_overlay.rs` — it does NOT route
-  through `build_legend`; it constructs its widgets inline with the dark
-  `picker-box`/`picker-item-title` CSS and a flat single-column `BINDS` (no
-  groups, no two-column split, no `legend-*` classes). Folding it would CHANGE its
-  look — leave it. `keybinds_overlay.rs` (the reader card's Ctrl+/ Cairo overlay)
-  — entirely different mechanism (Cairo-drawn keycap strip + detail panel), not a
-  legend card. The three `GROUPS` consts themselves — they are DATA that must
-  drift per overlay (different binds); they stay as three separate consts, only
-  the wrapper boilerplate is shared.
-- **Safe-scope:** yes — pure struct/method consolidation, no behavior change. The
-  rendered card is produced by the same `build_legend` either way; only the
-  triplicated wrapper type collapses. Net ~120 lines → ~one struct + three
-  `GROUPS` consts.
-
-## #51 — overlay-legend-show-mode-setter — DONE
-
-- **Status:** PROPOSED, low priority — only ~6 lines, 3 sites, but they sit in
-  three different `handle_*_key` arms so the drift is invisible in any one diff
-  (the open-legend half mirrors the already-shared close half in
-  `handle_overlay_keybinds_key`). Worth folding only while doing #50 or touching
-  these handlers.
-- **Signal:** the "open this overlay's legend" block is repeated three times in
-  `keymap.rs` — `keymap.rs:1009-1011` (gloss), `:1451-1453` (synopsis),
-  `:800-802` (journal): `s.<x>_keybinds_overlay.show(); s.input_mode =
-  InputMode::<X>KeybindsOverlay;`. This is the exact inverse of the CLOSE side,
-  which is ALREADY shared via `handle_overlay_keybinds_key` + the `OverlayLegend`
-  enum (`keymap.rs:2029-2053`). The open side was never given the same treatment.
-- **Identical part (extract):** a small helper keyed by the same `OverlayLegend`
-  enum, e.g. `fn open_overlay_legend(s: &mut AppState, which: OverlayLegend)` that
-  does the `show()` + `input_mode` set (mapping `Gloss → GlossKeybindsOverlay`,
-  etc.) — the symmetric partner of the close path. Each `Ctrl+/` arm calls it
-  with its variant.
-- **EXCLUDED (named, why):** if #50 lands and the three legends become one
-  `KeybindsLegend` type held in three fields, the `show()` call is uniform but the
-  FIELD and the target `InputMode` still differ per overlay — so the `match
-  which { … }` is still required (same shape as the close path). Nothing else in
-  those `handle_*_key` arms is shared (each is reached from a different modal
-  handler). Do NOT try to also unify which field/mode — that is the irreducible
-  per-overlay part, exactly as in the close handler.
-- **Safe-scope:** yes — mechanical, mirrors an existing shared helper. Marginal
-  payoff; bundle with #50 rather than ship alone.
-
-### Clip-prevention pass (2026-06-25, see specs/2026-06-25-clip-prevention-design.md)
-
-- **Free-scroll covering math is now unified.** `scrolloff_bottom_clip_widgets`
-  (scroll.rs) was a verbatim copy of `bottom_clip_height`; it now feeds
-  `ui::line_yrange_rows` into the pure `bottom_clip_height`, so scroll-mode shares
-  the overlays' single tested covering algorithm. The translation overlay gained a
-  bottom-clip guard (`recompute_overlay_bottom_clip_box`, a box-content variant —
-  its scrolled child is a widget Box, not a TextView). An overlay clip-invariant
-  test (`tests/overlay_clipping.rs`) now enforces no-clip on the synopsis overlay.
-- **Deliberately NOT unified (do not re-propose as safe-scope dedup):** (1) the
-  MAIN reading card's `update_bottom_clip` (scroll.rs) is a PAGINATED clip
-  (boundary-line `line_yrange` sums from page_top + descender-guard/column-split/
-  section logic), a fundamentally different strategy from the free-scroll
-  partial-row mask — merging would change behavior. (2) The gloss vs journal
-  overlay `snap_value_to_line` are DIFFERENT algorithms (per-`display_rows`-row
-  snap vs uniform `row_step` rounding), not duplicates. Both are behavior-changing
-  to "unify", so they are out of scope for maintainability dedup.
-
-### From the 2026-06-25 post-gloss-fixes audit
-
-- **`work_line_for_buffer -> None => return false` guard (timestamps.rs, 6 sites).**
-  Real, but splits into 2 variants: 4 bare `None => return false` and 2 that LOG
-  before returning. A helper can only return `Option<usize>` (the `return false`
-  is the caller's), so the bare 4 collapse to `let-else` but the 2 logged sites
-  keep a custom else — partial. Lower value than #40/#41; fold opportunistically
-  when touching the file, don't number separately.
-- **timestamp upsert family** (`upsert_start_time`/`upsert_spoken_status`/
-  `upsert_chapter`/`update_end_time`/`restore_timestamp`, queries.rs): structurally
-  similar but each has a DIFFERENT SQL string + param list — folding needs
-  parameterizing SQL, not a byte-identical cut. Not numbered.
-- **map-commit triple** (`buffer_to_work[..]=Some; work_to_buffer[..]=..;
-  db_cursor=..; matched+=1`, text_file_map): too many micro-variants (range-fill
-  fallback, ParagraphAccumulate `wi+=1`, trailing `continue`) — only 2 sites
-  truly identical, would need a parameterized abstraction. Not numbered.
-- **`window_end = (db_cursor+WINDOW).min(n_work)` (2 sites, 57 lines apart in one
-  fn) and `is_stage_row = sub_line>0` (3 trivial comparisons):** both
-  behavior-preserving but marginal (tiny, low drift). Name them only if touching
-  the matcher anyway.
-- **picker/overlay show()/hide() tails:** the remaining `set_visible` reveal/hide
-  tails reach PRIVATE fields on different structs, so a clean free-function cut is
-  impossible without a trait/inherent method (out of scope). `hide_pair(&a,&b)`
-  for the 5 scrim+container hides saves ~1 line/site across 4 structs — marginal,
-  skip.
-
-## #52 — overlay-panel-attach helper (gloss + journal) — DONE (commit 9e9fc71)
-
-- **Status:** PROPOSED, **highest value of this batch.** Directly serves the
-  "standardize journal + gloss overlays" goal — the panel wiring was added to both
-  files by hand this session and two of its pieces are already byte-identical.
-- **Signal:** the inset-panel setup (`feat/overlay-inset-panel-framing`) is
-  duplicated across `gloss_overlay.rs` and `journal_overlay.rs`. Byte-level
-  breakdown (Explore, 2026-07-01):
-  - **Piece 3 — the `panel_drawing.set_draw_func` closure** (gloss :389-403,
-    journal :281-295): **BYTE-IDENTICAL** except `gloss_view.clone()` vs
-    `view.clone()`. Same `draw_overlay_panel(cr, &view, w, h, *panel_color, 24.0,
-    12.0)` call incl. the pad/radius comments.
-  - **Piece 4 — the `panel_for_scroll.queue_draw()` add to the vadjustment
-    closure** (gloss :411-418, journal :296-304): **BYTE-IDENTICAL** except
-    `gloss_scrolled` vs `scrolled`.
-  - **Piece 2 — `panel_color` Rc creation + `panel_drawing = DrawingArea::new()` +
-    `set_can_target(false)`** (gloss :294-297, journal :216-222): the individual
-    lines are byte-identical; only the surrounding declaration ORDER differs.
-- **Identical part (extract):** a constructor helper, e.g.
-  `fn attach_overlay_panel(view: &TextView, scrolled: &ScrolledWindow, bar: &DrawingArea) -> (DrawingArea, Rc<RefCell<(f64,f64,f64)>>)`
-  that: creates `panel_color` (placeholder rgb) + `panel_drawing`
-  (`set_can_target(false)`), installs the draw_func (calls `draw_overlay_panel`
-  with the 24/12 constants), and adds `panel.queue_draw()` to the passed
-  `scrolled.vadjustment().connect_value_changed` (or returns a closure the caller
-  wires). Both overlays call it and store the returned `(panel_drawing,
-  panel_color)`. The 24.0/12.0 magic literals become named consts in one place
-  (`PANEL_PAD`/`PANEL_RADIUS`), currently duplicated as inline comments at both
-  call sites.
-- **EXCLUDED (named, why):** Piece 5 (the `set_child(panel)` + `add_overlay` +
-  bottom-clip-guard sequence) — the six wiring lines are byte-identical modulo
-  names, BUT the **clip-guard attach ORDER differs** (gloss attaches it AFTER the
-  panel/bar wiring; journal BEFORE, because `panel_drawing` is built after the
-  guard). That ordering is load-bearing (main-child assignment vs guard) and
-  structurally different, so the overlay-child wiring stays per-file. Also EXCLUDE
-  the struct field declarations (Piece 1) — same types, different positions; not
-  worth reordering.
-- **Safe-scope:** yes — pure widget-construction extraction, behavior-preserving,
-  verifiable by the existing overlay-clip e2e + an on-screen glance. Ranks highest:
-  2 byte-identical multi-line pieces × high drift risk (they were hand-copied and
-  already drifted once — the pad went 10→24 at both sites this session) ÷ small
-  helper.
-
-## #53 — overlay set_rc_color setter family — DONE (commit 305d02b)
-
-- **Status:** PROPOSED, medium value. Five near-identical setter methods across the
-  two overlays; the family grew again this session (`set_bar_color` added to
-  journal).
-- **Signal:** the `set_*_color(&self, hex: &str)` setters
-  (`set_marker_color`/`set_panel_color`/`set_bar_color`) share one body shape
-  (Explore, 2026-07-01):
-  ```
-  if let Some(rgb) = <parse>(hex) { *self.<field>.borrow_mut() = rgb; self.<drawing>.queue_draw(); }
-  ```
-  Five sites: gloss `set_marker_color` (:639) + `set_panel_color` (:647); journal
-  `set_marker_color` (:719) + `set_panel_color` (:727) + `set_bar_color` (:736).
-  Byte-identical modulo (a) the `Rc` field, (b) which `DrawingArea` is queue_drawn.
-- **Variant delta (must reconcile):** gloss calls **bare** `parse_hex_color(hex)`
-  (imported at :10); journal calls the **full path**
-  `crate::ui::gloss_util::parse_hex_color(hex)`. A shared helper picks ONE spelling
-  (add the `use` to journal, or use the full path in the helper).
-- **Identical part (extract):** a free function
-  `fn set_rc_color(slot: &RefCell<(f64,f64,f64)>, drawing: &DrawingArea, hex: &str)`
-  in `gloss_util` (beside `parse_hex_color`). Each setter becomes a one-line
-  forwarder: `set_rc_color(&self.marker_color, &self.bar_drawing, hex)`. The public
-  method names stay (callers in app/mod.rs + settings.rs are unchanged).
-- **EXCLUDED (named, why):** gloss has NO `set_bar_color` — it writes `bar_color`
-  INLINE in four `show_*` methods (`show_gloss_with_color`/`show_glossing`/
-  `show_echoes`/`show_synopsis`) via `parse_hex_color(color)` +
-  `*self.bar_color.borrow_mut()`. Those inline writes are a DIFFERENT shape (no
-  method, set during render, no standalone queue_draw) — do NOT try to fold them
-  into the setter helper. `translation_overlay` has zero such fields (colors are
-  `show()` params) — excluded entirely.
-- **Safe-scope:** yes — trivial mechanical forwarders, behavior-preserving. Medium
-  rank: 5 sites, but each is only ~4 lines and low individual drift; the payoff is
-  eliminating the bare-vs-qualified `parse_hex_color` inconsistency that already
-  bit this session.
-
-## #54 — overlay bar_drawing draw-func shared prefix — DONE (commit aa85226)
-
-- **Status:** DONE — `ui::draw_vim_block_cursor(cr, view, block_line, x)` beside
-  `draw_bar_spans`; both closures call it, each passing its own x (journal now
-  reads `left_margin()` unconditionally — a pure getter, no behavior change).
-- **Orig:** PROPOSED, medium value but larger cut than #52/#53 — the two
-  `bar_drawing.set_draw_func` closures share a substantial identical prefix.
-- **Signal:** gloss `bar_drawing.set_draw_func` (:314-387) and journal (:232-279)
-  share three byte-identical pieces (Explore, 2026-07-01):
-  1. the `draw_page_marker_glyph(cr, &view, <w>, *marker_glyph, *marker_color,
-     0.55, 8)` call (identical args/order);
-  2. the vim blank-line block-cursor rectangle (identical `bh`/`bw` formulas,
-     `buffer_to_window_coords`, `set_source_rgb`+`rectangle`+`fill`);
-  3. the bar tail: `set_source_rgb(r,g,b)` + `set_line_width(2.0)` +
-     `draw_bar_spans(cr, &view, &spans, x)`.
-- **Identical part (extract):** the page-marker call is already
-  `crate::ui::draw_page_marker_glyph` (shared) — the new cut is a
-  `draw_vim_block_cursor(cr, view, block_line_opt, x)` helper for piece 2 (the
-  blank-line block rect), reused by both draw funcs. The bar tail is already
-  `draw_bar_spans` (shared); only the block-cursor rect is un-extracted.
-- **EXCLUDED (named, why):** (a) the **bar x-offset** differs — gloss reads a
-  stored `bar_x` Rc (updated per-render by `show_*`), journal computes
-  `left_margin() - 12` live. Keep per-file. (b) the **block-cursor x** differs —
-  gloss uses a captured `block_left_margin` const, journal computes
-  `left_margin().max(2.0)` live. The helper takes `x` as a param so each caller
-  passes its own. (c) gloss has an entire **line-numbers section** (~25 lines,
-  every-5th verse number) journal lacks — gloss-only, excluded. (d) journal has an
-  early `return` on empty ranges (it has no line-numbers section to reach); gloss
-  wraps the bar in `if !ranges.is_empty()`. Control-flow difference — keep per-file.
-- **Safe-scope:** yes for the block-cursor-rect extraction (behavior-preserving,
-  pixel-verifiable). The rest of the closure stays per-file. Rank below #52/#53:
-  only ~10 lines extract, and the block cursor only shows during vim edit (narrow
-  surface).
-
-## #55 — overlay header-tag style triple (gloss + journal) — DONE (commit 305d02b)
-
-- **Status:** PROPOSED, medium value. NEW duplication introduced THIS session by the
-  header restyle (journal `Q:` header + gloss speaker/verse all adopted one look).
-- **Signal:** the "header" TextTag style — `weight(700)` + `scale(0.9)` +
-  `pixels_below_lines(10)` — is now hard-coded as literal builder args at **5 sites**:
-  gloss_render.rs `gloss-speaker` (:165), `gloss-verse` (:177),
-  `gloss-speaker-first` (:210), `gloss-speaker-source` (:224); and
-  journal_overlay.rs `journal-qa-header` in `apply_qa_header` (:771). No shared
-  const/helper exists (grep: no `HEADER_`, `header_style`, `header_tag`).
-- **Identical core (extract):** the triple `(weight 700, scale 0.9, pixels_below 10)`
-  — either a named `const HEADER_STYLE: (i32, f64, i32) = (700, 0.9, 10)` or a
-  `fn header_tag_core(b: TextTagBuilder) -> TextTagBuilder` chaining just those three
-  in `src/ui/mod.rs` (beside `draw_overlay_panel`). Each site calls it, then adds its
-  own variant properties.
-- **Per-site VARIANTS (stay caller-side):** `.variant(SmallCaps)` (the 3 speaker tags,
-  not verse/journal); `.pixels_above_lines(36|8)` (speaker 36, speaker-source 8;
-  verse/first/journal none); `.left_margin(quote_speaker|quote_verse)` (gloss only;
-  journal uses the view left_margin). These differ per site — do NOT fold them in.
-- **EXCLUDED — the color-application split (a real inconsistency, but NOT part of this
-  cut):** gloss applies color via `.foreground(&str)` (hex string, via the local
-  `header_dim` closure, `dim_color.or(speaker_accent)`, ABSENT when None); journal
-  applies via `.foreground_rgba(RGBA::new(r,g,b,1.0))` decoded from an `(f64,f64,f64)`
-  tuple in `marker_color`, ALWAYS present. The core-triple helper must NOT touch color
-  (the `&str` vs `RGBA` type + source mismatch is separate). Reconciling the color path
-  is a bigger change (would mean storing hex in `marker_color`, or a color enum) —
-  note it, don't bundle it.
-- **Safe-scope:** yes for the triple — pure literal→named, behavior-preserving,
-  pixel-verifiable. Medium rank: 5 sites, low individual drift, but the style was just
-  hand-copied to all 5 and a future tweak (e.g. scale 0.9→0.85) must hit all five or
-  the gloss/journal headers visibly diverge.
-
-## #56 — PANEL_PAD / PANEL_RADIUS named constants — DONE (commit 9e9fc71)
-
-- **Status:** PROPOSED, low value but trivial. NEW this session (the inset panel).
-- **Signal:** `draw_overlay_panel(cr, view, w, h, rgb, PAD, RADIUS)` is called at two
-  sites with the SAME literals `24.0` (pad) and `12.0` (radius) — gloss_overlay.rs:401
-  and journal_overlay.rs:297 — each "named" only by an inline comment
-  (`// PANEL_PAD` / `// PANEL_RADIUS`), not a real `const`. The pad value `24` also
-  relates to the `24`px scroll_overlay top margin (implicit coupling).
-- **Identical part (extract):** `const PANEL_PAD: f64 = 24.0;` +
-  `const PANEL_RADIUS: f64 = 12.0;` at `src/ui/mod.rs` scope (beside
-  `draw_overlay_panel`). Both call sites pass the const. Makes the two literals a
-  single source and documents the pad↔radius↔card-border-radius relationships.
-- **EXCLUDED:** the per-overlay `pad`/`radius` args STAY parameters of
-  `draw_overlay_panel` (don't hardcode inside the fn — a future overlay might want a
-  different inset). This only names the shared call-site value.
-- **Safe-scope:** yes — literal→const, zero behavior change. Low rank (2 sites, tiny),
-  fold in opportunistically (e.g. while doing #52, the panel-attach helper, which would
-  naturally own these constants).
-
-## #57 — body-indent `60` split across gloss + journal — RESOLVED by redesign (commit 2b03c7a)
-
-- **Status:** PROPOSED, low value. NEW implicit coupling this session.
-- **Signal:** the "body indented past the accent bar" value **60** is
-  `const JOURNAL_BODY_INDENT: i32 = 60` in journal_overlay.rs:141, but appears as a
-  RAW INLINE literal `60` in gloss_overlay.rs:1358-1359 (`p.left_margin - 60`, the
-  gloss prose_card measurement, commented "proportional inset + 60 past the bar").
-  Same semantic constant (the gloss body/verse indent off the accent bar), two
-  locations, one named + one raw.
-- **Identical part (extract):** a single shared `const` (e.g. `OVERLAY_BODY_INDENT: i32
-  = 60` in `src/ui/mod.rs`, or reuse `JOURNAL_BODY_INDENT` from a shared scope), used
-  at the journal size_card AND the two gloss measurement sites.
-- **EXCLUDED:** gloss's OTHER quote offsets — `quote_speaker = bar_left + 60` and
-  `quote_verse = quote_speaker + 60` in gloss_render.rs — are a DIFFERENT 60 (the
-  render-time speaker/verse indent, a separate concern from the prose_card measurement
-  60). Do NOT merge those; verify each `60` is the same semantic before sharing. Only
-  the prose_card-measurement 60 matches JOURNAL_BODY_INDENT.
-- **Safe-scope:** borderline — needs confirming the two 60s are truly the same concept
-  (they appear to be: both = "body pushed right of the bar"). If confirmed, literal→
-  shared const. Low rank; the risk is mis-merging two coincidentally-equal 60s, so scope
-  it carefully or skip.
-
-## #53 UPDATE (2026-07-01) — setter family grew 4→5
-
-The `set_*_color` byte-identical setter family (#53) GREW this session: `set_bar_color`
-(journal_overlay.rs:746) was added, bringing the count from 4 to **5** byte-identical
-setters (gloss set_marker/set_panel; journal set_marker/set_panel/set_bar). The 2
-`set_highlight_color` methods remain EXCLUDED (they store a `String` + call
-`apply_hi_color`, not the parse→borrow_mut→queue_draw shape). The bare-vs-full-path
-`parse_hex_color` split persists (gloss bare, journal `crate::ui::gloss_util::`). Scope
-unchanged in character; the shared `set_rc_color` helper now eliminates 5 bodies, not 4.
-
-## Consistency audit (2026-07-01) — journal↔gloss overlays, #58-#60 + updates
-
-Run after this session's overlay-consistency work (both overlays now share a
-"prose overlay identity" — font family/size, marker/panel/bar/dim colors, header
-style, panel, ~12px bar gap — but each holds its own copy, which is exactly why
-they kept drifting: the empty-font_family fallback bug, hardcoded 16pt, pale
-hardcoded bar color were all this class). Two Explore finders, byte-level.
-
-## #58 — BAR_TEXT_GAP shared const — RESOLVED by the #57 indent redesign (2b03c7a)
-
-**Resolution (2026-07-01):** both former bare-12 sites now flow through the
-shared named const: gloss `quote_body = bar_left + QUOTE_BODY_INDENT`
-(gloss_render.rs:20/:178) and journal `left_margin() - JOURNAL_BODY_INDENT`
-where `JOURNAL_BODY_INDENT` is an alias of `QUOTE_BODY_INDENT`
-(journal_overlay.rs:143). No bare 12 remains; nothing to extract.
-
-- **Status:** PROPOSED, low value but clean. Both overlays encode the SAME 12px
-  accent-bar↔text gap as a bare literal, inverse structure — a shared const makes
-  the coupling explicit.
-- **Signal:** gloss `quote_body = bar_left + 12` (gloss_render.rs:153, the
-  explication's left margin = bar + 12); journal bar `x = left_margin() - 12.0`
-  (journal_overlay.rs:283, bar sits 12px LEFT of the text). Structurally inverse,
-  same semantic distance. Both bare `12`.
-- **Identical part (extract):** `const BAR_TEXT_GAP: i32 = 12;` (a shared home,
-  e.g. `src/ui/mod.rs`). Substitute at both sites (`bar_left + BAR_TEXT_GAP`;
-  `left_margin() - BAR_TEXT_GAP as f64`).
-- **EXCLUDED:** the gloss `bar_left + 48` speaker/verse indent — 48 is an
-  INDEPENDENT design choice, NOT `4 * BAR_TEXT_GAP`; do not express it as a
-  multiple (would obscure intent). The journal's `JOURNAL_BODY_INDENT = 60`
-  already bundles `48 + 12` as one named unit; leave it (splitting into
-  `48 + BAR_TEXT_GAP` alters an existing const — defer).
-- **Safe-scope:** yes — literal→const, zero behavior change. Low rank (2 sites),
-  fold in opportunistically.
-
-## #59 — remove journal apply_font vestigial empty-guard — DONE (commit 305d02b)
-
-- **Status:** PROPOSED, trivial cleanup. NEW dead code as of this session's
-  font-family fix.
-- **Signal:** `journal_overlay.rs` `apply_font` (~697) has
-  `let family = ...; if family.is_empty() { return; }`. That guard existed because
-  the journal used to init `font_family = String::new()` (empty) — which was the
-  root cause of the "journal renders smaller" bug (empty family → early return →
-  no font tag → fell back to the `.gloss-text` CSS at config size). The fix seeded
-  `font_family = GLOSS_DEFAULT_FONT_FAMILY` ("Charter", non-empty) at construction,
-  so the guard is now PERMANENTLY DEAD. Removing it makes the journal
-  `apply_font` core byte-identical to gloss's (`format!` + `apply_font_to_views`).
-- **Identical part (remove):** the 3-line empty-guard. After removal, the journal
-  `let family = self.font_family.borrow().clone();` can inline back into the
-  `format!` like gloss.
-- **EXCLUDED:** the `apply_font` BODY otherwise stays per-overlay — the view list
-  (gloss 3 views vs journal 2), the tag name (gloss-font vs journal-font), and
-  gloss's tail (`apply_synopsis_label_bold` + `apply_hi_color`) are irreducibly
-  per-overlay. NO shared free-fn for the whole body (a `format!`-only helper adds
-  indirection for one line).
-- **Safe-scope:** yes — removing provably-dead code, behavior-preserving.
-  Do it while touching the file.
-
-## #60 — OVERLAY_BOTTOM_PAD alignment (journal 28 vs gloss 80) — CLOSED, keep 80 (2026-07-01)
-
-**Resolution (2026-07-01):** the required on-screen check could not be run — a
-live user dev instance owned the session (a second instance would share
-config-dev.json + the log; headless cage from the agent shell was SIGTERMed,
-the documented seat-busy failure). Per this entry's own rule (only unify if
-visually verified; the 80 may be load-bearing for the gloss's denser content +
-clip guard, and it also feeds gloss pagination capacity), the divergence is
-KEPT and documented. Re-open only if a visual check someday shows the 80 is
-redundant.
-
-- **Status:** PROPOSED but CONDITIONAL — needs on-screen verification, NOT a blind
-  literal→const.
-- **Signal:** journal view `set_bottom_margin(28)` (journal_overlay.rs:187) vs
-  gloss view `set_bottom_margin(80)` (gloss_overlay.rs:290) — a 52px divergence.
-  BOTH also add an external `scroll_overlay.set_margin_bottom(20)`. The gloss 80 is
-  an ADDITIONAL internal pad; the comment doesn't decisively justify why gloss needs
-  52px more than journal internally.
-- **Possible cut:** `const OVERLAY_BOTTOM_PAD = 28` applied to both — BUT only
-  behavior-preserving if the extra 52px in gloss is truly redundant with the
-  external 20px + the BottomClipGuard. That is NOT provable from source alone.
-- **EXCLUDED unless verified:** do NOT change gloss's 80 without an on-screen check
-  that the last gloss line still clears the footer at end-of-scroll (the 80 may be
-  load-bearing for the gloss's denser content + clip guard). If it clips, keep 80.
-- **Safe-scope:** conditional — it's literal→const in shape, but the VALUE change
-  (80→28 for gloss) is a behavior change that must be visually accepted. Treat as a
-  "verify then maybe unify," not a mechanical cut.
-
-## #53 UPDATE (2026-07-01, 2nd) — set_rc_color family now 5 confirmed sites
-
-Re-confirmed the byte-identical `parse_hex_color(hex) → *cell.borrow_mut() = rgb →
-drawing.queue_draw()` triple at 5 sites: gloss set_marker_color (core) + set_panel_color;
-journal set_marker_color (core) + set_panel_color + set_bar_color. The shared helper
-`fn set_rc_color(hex, cell: &Rc<RefCell<(f64,f64,f64)>>, drawing: &DrawingArea)` (home:
-gloss_util.rs, beside parse_hex_color) collapses all 5. NOTE: gloss set_marker_color has
-an EXTRA line BEFORE the triple — `*self.dim_fg.borrow_mut() = hex.to_string()` (stashes
-the dim_fg for the speaker/verse header color) — that line stays OUTSIDE the helper.
-set_highlight_color is EXCLUDED (stores a String + calls apply_hi_color, different shape).
-
-## #55 UPDATE (2026-07-01) — header triple still 4+1 sites; verse drops pixels_below
-
-Header style triple (weight 700 / scale 0.9 / pixels_below_lines 10) confirmed at 4
-gloss_render.rs sites (gloss-speaker, gloss-speaker-first, gloss-speaker-source, +
-journal-qa-header). The gloss-verse tag INTENTIONALLY drops pixels_below_lines (each
-verse line is its own paragraph; a per-line gap read as double-spacing — fixed this
-session). So the fully-shared pair is weight(700)+scale(0.9); pixels_below(10) is 4 of 5.
-A `fn dim_header_tag_base(name, left_margin) -> TextTagBuilder` chaining weight+scale
-would serve all 5, each caller adding its own pixels_below/pixels_above/variant. The
-color-application split STANDS and is load-bearing (gloss `.foreground(hex)` from a
-String; journal `.foreground_rgba(RGBA)` from an (f64,f64,f64) tuple) — EXCLUDED until
-color storage is normalized.
-
-## EXCLUDED (documented, do NOT propose as cuts)
-- **Top margins** (journal 28 always; gloss 8/24/32 per show-mode) — legitimately
-  per-surface (gloss's one view serves synopsis/echo/gloss-result, each a distinct
-  layout). Not a drift, real intent.
-- **The dim-header + full-body pattern** — SAME visual intent, STRUCTURALLY divergent
-  mechanism: gloss bakes the dim into tags at render time (populate_verse_buffer with
-  dim_fg/speaker_accent); journal applies a post-render tag on the `Q:` line
-  (apply_qa_header after set_text). Different color type (hex vs RGBA), different
-  boundary concept (element-typed vs line-prefix). Not extractable without two code
-  paths inside a helper. Keep parallel, documented, unmerged.
-- **Font family/size init** — already shared (GLOSS_DEFAULT_FONT_FAMILY /
-  GLOSS_DEFAULT_FONT_SIZE consts, journal consumes by path). Done, no cut.
-
-## Landing notes (2026-07-01, branch refactor/overlay-consistency-53-59)
-
-- **#53 DONE (`305d02b`)** — shared `ui::set_rc_color(hex, cell, drawing)`
-  collapses all 5 setter bodies. DEVIATION from the proposal: home is
-  `src/ui/mod.rs` (beside the other shared overlay helpers), NOT
-  `gloss_util.rs` — that module's charter is "No GTK dependencies" and the
-  helper takes a `DrawingArea`. The gloss `dim_fg` pre-line noted in the 2nd
-  update no longer existed (field removed in `e2fd6f2`), so all 5 were pure
-  triples. Bare-vs-qualified `parse_hex_color` split gone with the bodies.
-- **#55 DONE (`305d02b`)** — helper `header_tag_base(name, left_margin)` in
-  `gloss_render.rs` (named without "dim": headers render full ink except
-  echoes; the `header_dim` closure still owns color). Sites were 4, not 5 —
-  `journal-qa-header`/`apply_qa_header` was removed on this branch
-  (`8361f5a`). All 4 sites also shared `left_margin`, so it joined the core;
-  small-caps/pixels_above/below stay caller-side as proposed.
-- **#59 DONE (`305d02b`)** — dead empty-guard removed; journal `apply_font`
-  core now matches gloss's. The stale "family guard" clause in the #46 helper
-  doc (`apply_font_to_views`) dropped too.
-- **#52/#56 DONE (`9e9fc71`, earlier this branch)** + **#57 RESOLVED
-  (`2b03c7a`)** — back-filled headings; these landed during the session but
-  were never flipped from PROPOSED. #57's two coupled `60`s no longer exist:
-  the indent redesign made `JOURNAL_BODY_INDENT` an alias of
-  `QUOTE_BODY_INDENT` (12) and removed the raw gloss `- 60` measurement.
-- **Still open:** ~~#54 / #58 / #60~~ — ALL CLOSED 2026-07-01 on
-  `refactor/audit-54-58-61-66` (#54 done `aa85226`; #58 resolved by the #57
-  redesign; #60 closed keep-80, verify unavailable). The ledger has NO open
-  opportunities as of this batch.
-
----
-
-## Batch 4 (audited 2026-07-01, post overlay-consistency-53-59 branch)
-
-Fresh full-tree scan (three parallel Explore finders over input/actions+keymap,
-ui/, db/app/misc). Every entry below verified by direct side-by-side read, not
-agent word (the #11 lesson — one agent claim, the current_line→id pair, turned
-out token-different and was demoted to the #23-style-equivalence entry #66).
-Ranked by (duplication × drift_risk) ÷ scope_size.
-
-## #61 — buffer-line-for-line-id resolver — DONE (commit 8be7961)
-
-- **Status:** DONE — helper beside `jump_to_line`; the 3 A-sites and the
-  restructured `jump_to_line_mapping_id` variant all delegate.
-- **Orig:** rank #1 of this batch: 3 byte-identical 10-line sites,
-  cross-file, in the mapping logic that is the repo's most bug-prone core.
-- **Signal:** the "resolve a `line_mapping_id` to a buffer line, honoring the
-  optional `line_map`" block is byte-identical at **3 sites**:
-  bookmarks.rs:84-92, pickers.rs:983-991, keymap.rs:350-359. Body:
-  `let buffer_line = if let Some(ref lm) = s.line_map {
-  s.current_work.as_ref().and_then(|w| { let work_idx = w.lines.iter()
-  .position(|l| l.id == lm_id)?; Some(lm.work_to_buffer[work_idx]) }) } else {
-  s.current_work.as_ref().and_then(|w| w.lines.iter().position(|l| l.id == lm_id)) };`
-- **Identical part (extract):** `pub(crate) fn buffer_line_for_line_id(s: &AppState,
-  lm_id: i64) -> Option<usize>` in `src/input/navigation.rs` (beside
-  `jump_to_line`, which all three sites call next).
-- **Variant (delegable):** pickers.rs:216-224 `jump_to_line_mapping_id` computes
-  the same value restructured (position hoisted above the `lm` check; else-arm
-  `Some(work_idx)` ≡ the position result). Trivially equivalent — its body can
-  delegate to the helper (#23-style, the helper picks one shape).
-- **EXCLUDED (named, why):** concordance.rs:493 `concordance_resolve_indices`
-  (adds the canonical `buffer_to_work.get(bi) == Some(&Some(work_idx))` check +
-  returns a `(buf, work)` pair — different contract); app/mod.rs:3066 & :3179
-  (guarded `.get(work_idx).unwrap_or(&state.current_line)` + canonical check
-  falling back to `current_line` — different fallback semantics, hard exclude);
-  timestamps.rs:623-630 (`.get(idx).copied()` over an already-computed Option —
-  different shape); gutter.rs/main.rs direct `work_to_buffer` consumers.
-- **Safe-scope:** yes — pure resolver extraction; each site keeps its own borrow
-  scope and follow-up (`jump_to_line`, mode set). Drift risk is real: a fix to
-  the mapping fallback must currently be hand-copied to 3 files.
-
-## #62 — readonly-textview triple — DONE (commit bb03dc8)
-
-- **Status:** DONE — `ui::set_view_readonly`; all 5 construction sites call it,
-  vim per-mode toggles stayed inline as planned.
-- **Orig:** rank #2: 5 byte-identical sites across 3 files.
-- **Signal:** the read-only display-view init triple `view.set_editable(false);
-  view.set_cursor_visible(false); view.set_focusable(false);` — byte-identical
-  modulo receiver name — at **5 sites**: gloss_overlay.rs:279-281 (gloss_view),
-  :447-449 (echo_header_view); journal_overlay.rs:179-181; 
-  translation_overlay.rs:431-433 (interlude view), :630-632 (make_column).
-- **Identical part (extract):** `pub fn set_view_readonly(view: &gtk4::TextView)`
-  in `src/ui/mod.rs` (beside the other shared overlay helpers).
-- **EXCLUDED (named, why):** gloss_overlay.rs:720-722 vim begin_edit (sets
-  `focusable(true)` + `grab_focus` — the vim-editor entry toggle, opposite
-  intent); gloss_overlay.rs:782-783 + journal_overlay.rs:977-978 vim exit pairs
-  (2-line, no `set_editable` — the editable flag never changed during vim edit;
-  different lifecycle, leave inline); ask_card's editable prompt view (true
-  values).
-- **Safe-scope:** yes — 3-line construction-time widget init → one call.
-
-## #63 — gloss set_bar_color_from_root — DONE (commit a9a83dd)
-
-- **Status:** DONE — private GlossOverlay method, draw-free as specified (NOT
-  routed through ui::set_rc_color).
-- **Orig:** rank #3: 4 byte-identical sites, one file, 5 lines.
-- **Signal:** the Option-guarded accent-bar color update
-  `if let Some(color) = root_color { if let Some((r, g, b)) =
-  parse_hex_color(color) { *self.bar_color.borrow_mut() = (r, g, b); } }`
-  — byte-identical at **4 sites** in gloss_overlay.rs: :1057-1061
-  (show_gloss_prose), :1161-1165 (show_gloss_prose_loading), :1234-1238
-  (show_echo_list), :1393-1397 (show_synopsis).
-- **Identical part (extract):** a private method
-  `fn set_bar_color_from_root(&self, root_color: Option<&str>)` on GlossOverlay.
-- **Related but do NOT merge:** #53's shared `ui::set_rc_color` takes a bare
-  `&str` AND queues a draw — these show-path sites are Option-guarded and
-  deliberately do NOT `queue_draw` (the show fn repaints anyway). Routing them
-  through `set_rc_color` would add a redundant draw per show = not the exact
-  same behavior; keep the new helper draw-free.
-- **EXCLUDED:** gloss_overlay.rs:836 (`parse_hex_color(&fill).unwrap_or(...)` —
-  fallback-default form, different consumer); :930 (rgba match for a tag color).
-- **Safe-scope:** yes — 5-line block → one method call at 4 sites.
-
-## #64 — gloss hide-diff-labels core — DONE (commit a9a83dd)
-
-- **Status:** DONE — `hide_diff_labels()` at all 5 sites, per-caller extras
-  inline; the `set_prose_margins(left)` rider shipped too (both prose twins).
-- **Orig:** rank #4: 5 sites, one file; the extensions have already
-  drifted (which is the evidence the core needs a name).
-- **Signal:** the 4-line diff-label hide core `orig_header/original_label/
-  corr_header/corrected_label .set_visible(false)` — byte-identical and
-  contiguous at **5 sites** in gloss_overlay.rs: :1050-1053, :1152-1155,
-  :1229-1232, :1367-1370, :2423-2426. The tails vary per site
-  (echo_header_view+echo_rule at 4 of 5; position_label at 2;
-  gloss_scroll_overlay + hint at the :2423 clear-all site) — those stay inline.
-- **Identical part (extract):** `fn hide_diff_labels(&self)` on GlossOverlay
-  hiding exactly the 4 diff widgets; every site calls it then keeps its own
-  extra hides.
-- **Rider (same-PR candidate, at the 2-site floor):** the byte-identical 5-line
-  prose-margin prefix `self.title.set_margin_start(left); gloss_view
-  set_left/right_margin(left); set_top_margin(32); set_pixels_below_lines(4);`
-  at :1044-1048 & :1145-1149 (the show_gloss_prose / _loading twins) →
-  `fn set_prose_margins(&self, left: i32)` while touching the file.
-- **EXCLUDED:** the show-path `set_visible(true)` sequences (hint/scrim/container
-  order genuinely varies per show fn — extraction risks reordering side effects);
-  any site hiding only a subset of the 4.
-- **Safe-scope:** yes — pure widget-visibility extraction.
-
-## #65 — mpv discover-or-launch-blocking closure — DONE (commit 576684b)
-
-- **Status:** DONE — `discovery::discover_or_launch_blocking(path)` beside
-  `launch_mpv`; both spawn_blocking sites are one-line calls.
-- **Orig:** rank #5: only 2 sites, but the whole ~12-line closure
-  body is byte-identical and it encodes MPV startup behavior that must stay in
-  lockstep.
-- **Signal:** the `spawn_blocking` closure body — `if let Some((sock, _)) =
-  find_socket_for_work(&[path.clone()]) { return sock…; } let launched =
-  launch_mpv(&path); for _ in 0..60 { sleep(50ms); if Path::new(&launched)
-  .exists() { return launched; } } launched` — byte-identical at **2 sites** in
-  pickers.rs: :419-431 (media-picker confirm) and :505-521 (the other confirm
-  path).
-- **Identical part (extract):** `pub fn discover_or_launch_blocking(path: &str)
-  -> String` in `src/mpv/discovery.rs` (beside `launch_mpv` /
-  `find_socket_for_work`, which it composes). Call sites become
-  `spawn_blocking(move || discover_or_launch_blocking(&path_for_discover))`.
-  Also names the magic 60×50ms (≤3s socket wait) in one place.
-- **EXCLUDED:** every other `find_socket_for_work` caller (discovery without the
-  launch+wait tail — e.g. display_work's skip/attach paths); the
-  `LIT_HEADLESS_TEST` skip lives inside `launch_mpv` and is untouched.
-- **Safe-scope:** yes — pure fn extraction of a blocking helper; identical
-  control flow preserved (early returns become the fn's returns).
-
-## #66 — current-line-id helper — DONE (commit 8be7961)
-
-- **Status:** DONE — shipped with #61 as planned; the helper standardized on
-  the `.copied().flatten()` shape (the `?.as_ref().copied()` twin was
-  equivalent).
-- **Orig:** rank #6 (2 sites at the floor; do in the same PR as
-  #61 — same home, inverse direction).
-- **Signal:** the inverse resolution ("current buffer line → line_mapping_id")
-  at **2 sites**: bookmarks.rs:18-24 and concordance.rs:66-72. NOT byte-identical
-  — bookmarks uses `lm.buffer_to_work.get(s.current_line)?.as_ref().copied()`,
-  concordance `.get(s.current_line).copied().flatten()` — but trivially
-  equivalent (both `Option<&Option<usize>>` → `Option<usize>`; #23-precedent:
-  the helper picks one shape). The wrapper + tail
-  (`work_idx.and_then(|wi| w.lines.get(wi).map(|l| l.id))`) is byte-identical.
-- **Identical part (extract):** `pub(crate) fn current_line_id(s: &AppState) ->
-  Option<i64>` beside #61's `buffer_line_for_line_id` in navigation.rs.
-- **EXCLUDED:** timestamps' undo path (works from a stored id, not the cursor);
-  any site with a canonical-check or fallback (none found at this shape).
-- **Safe-scope:** yes — with the one-token equivalence noted above verified.
-
-### Examined and EXCLUDED in Batch 4 (no clean cut — do NOT number)
-
-- **app/mod.rs canonical-check resolver pair** (:3066 resume, :3179 concordance
-  target) — near-identical to *each other* (guarded `.get().unwrap_or(&current_line)`
-  + canonical check), but their else/fallback arms differ in comments/structure
-  and both live in the same fn's flow; 2 sites, one file, load-bearing startup
-  logic. Note only; revisit if a third site appears.
-- **queries.rs dynamic gloss-param scaffold** (4 sites, :1925/:1963/:2015/:2051)
-  — the `param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect()`
-  line is byte-identical ×4 but the push-prefix varies 1–3 pushes; a helper would
-  dedup one line or need a builder (speculative generality). Note only.
-- **"No gloss on this line" drop+toast 3-liner** (×3, all inside one gloss.rs fn)
-  — below the cross-site floor; an early-guard restructure of that fn would be a
-  behavior-risk rewrite, not a dedup.
-- **gloss_context work_abbrev guard** (gloss.rs ×2, 4 lines) — below floor.
-- **vim exit_edit_buffer near-twin** (gloss_overlay:776-784 vs
-  journal_overlay:971-979) — same intent, but statement ORDER differs and journal
-  has an extra `clear_block_cursor` line; vim-editor lifecycle is behavior-risky
-  to reorder. Keep parallel, documented, unmerged.
-- **2-line idiom pairs** — scrollbar-policy pair (gloss/journal), pixels
-  above/below pair (translation ×2), `.map_or(0, |w| w.lines.len())` (app ×2),
-  `.optional().ok().flatten()` (queries ×2), the 3-line `for row in rows` collect
-  loops (queries ×2 ×2) — all idiomatic Rust/GTK at or below the floor. Skip.
-
----
-
-## Batch 5 (audited 2026-07-02, after the corpus/author journal-notes + Markdown-render merge)
-
-Fresh full-tree scan (three parallel Explore finders over journal/markdown/notes,
-TextTag construction, and the new author-scope db/overlay paths — the
-`feat/corpus-author-journal-notes` branch, merged fdc22df). Every entry verified
-by direct side-by-side read, not agent word (the #11 lesson). The recent branch
-mostly REUSED the prior-batch shared helpers (`JOURNAL_PAGE_COLUMNS`,
-`map_journal_page_row`, `apply_cached_coloring`, `apply_font_to_views`,
-`block_scale`/`block_spacing`) — good hygiene — so the fresh crop is small.
-All six shipped together on `refactor/audit-67-72`; build + 633 bin tests green.
-
-## #67 — journal pragma-probes route to shared column_exists — DONE (branch refactor/audit-67-72)
-
-- **Signal:** `db::journal::ensure_journal_table` hand-rolls the
-  `SELECT 1 FROM pragma_table_info('journal_entries') WHERE name=…`.`exists()`
-  probe at **3 non-test sites** (scope :64, the citation-cols loop :73, kind :82)
-  — the EXACT pattern audit #37 already extracted into `db::queries::column_exists`.
-  A helper was shipped, then new code re-introduced the raw form: textbook drift.
-- **Identical part (route to existing helper):** promoted `column_exists` from
-  private `fn` to `pub(crate)`; the 3 sites become `column_exists(conn,
-  "journal_entries", <col>)?`. The `?1`-param loop site collapses too (the helper
-  interpolates the col — safe for these fixed identifiers).
-- **EXCLUDED:** the 2 `#[cfg(test)]` probes (:411, :485 — test assertions, not
-  migrations); the `works.default_voice_id` probe (queries.rs:1033) that
-  deliberately swallows its error (already #37's documented exclusion).
-- **Safe-scope:** yes — route-to-shared, one visibility bump; #32/#66-style.
-
-## #68 — raise_tag_to_top helper — DONE (branch refactor/audit-67-72)
-
-- **Signal:** `let size = table.size(); if size > 0 { tag.set_priority(size - 1); }`
-  — the "outrank the buffer-wide font tag" priority-raise — byte-identical with
-  ZERO varying tokens at **3 sites, 2 files**: mod.rs:349 (`paint_block_cursor`),
-  mod.rs:408 (`apply_cached_coloring`), gloss_overlay.rs:893
-  (`apply_synopsis_label_bold`).
-- **Identical part (extract):** `pub(crate) fn raise_tag_to_top(table:
-  &TextTagTable, tag: &TextTag)` in `src/ui/mod.rs` (beside the other shared tag
-  helpers). Each site becomes one call; the `size > 0` GTK-range guard moves into
-  the helper.
-- **EXCLUDED:** any `set_priority` with a different value (none found — all 3 are
-  the `size - 1` top-of-stack form).
-- **Safe-scope:** yes — cross-file verbatim idiom → one 2-line helper.
-
-## #69 — dedup author-sentinel (-2,-2) constant — DONE (branch refactor/audit-67-72)
-
-- **Signal:** the author/corpus `(div1,div2)` sentinel is defined TWICE:
-  `db::journal::AUTHOR_DIV` (:154, `pub`) and `app::mod::JOURNAL_AUTHOR_DIV`
-  (:3948, `pub(crate)`) — same magic `(-2, -2)`, a cross-module literal-drift
-  hazard (change one, the other silently disagrees and author rows misclassify).
-- **Identical part (unify):** kept `db::journal::AUTHOR_DIV` as the single source
-  of truth (declared beside `save_author_page`, its main consumer) and made
-  `app::mod::JOURNAL_AUTHOR_DIV` a `pub(crate) use … as` re-export. Avoids a
-  `db → app` dependency (db is the lower layer). All existing `JOURNAL_AUTHOR_DIV`
-  readers (journal.rs:91/106/1248) are unchanged.
-- **EXCLUDED:** `JOURNAL_WORK_DIV = (-1,-1)` is single-defined already — leave it.
-- **Safe-scope:** yes — literal dedup via re-export; #8/#12/#27-style.
-
-## #70 — named toast literal consts (journal passage guards) — DONE (branch refactor/audit-67-72)
-
-- **Signal:** three passage-guard toast strings repeated verbatim in
-  actions/journal.rs: `"Not a passage page"` (×4, dur 2), `"No gloss for this
-  passage"` (×3, dur 3), `"No journal page for this passage"` (×2, dur 3).
-- **Identical part (extract):** three `const TOAST_*: &str` at the module top; the
-  9 `show_transient` sites reference the const. Durations stay inline (they are
-  the site's own concern, not part of the message).
-- **EXCLUDED:** other one-off toast strings (single-site); the durations
-  themselves (2 vs 3 varies by call, not a shared literal).
-- **Safe-scope:** yes — literal → named const, #8-style; protects message text
-  from drifting between the guard sites.
-
-## #71 — markdown heading-tag closure — DONE (branch refactor/audit-67-72)
-
-- **Signal:** in `MarkdownTags::register`, the H1/H2/H3 `get_or_add("md-hN",
-  builder.name("md-hN").family(serif).weight(700).scale(block_scale(&Style::HN))
-  .pixels_above_lines(a).pixels_below_lines(b).build())` blocks are near-identical
-  at **3 sites** (markdown.rs:437/451/465), differing ONLY by the `Style::HN`
-  variant + the `"md-hN"` name (which is DOUBLED per block — the `get_or_add` key
-  and `.name()`). Scale/spacing are already single-sourced in
-  `block_scale`/`block_spacing`.
-- **Identical part (extract):** a local `let heading = |name, style|` closure that
-  reads `block_spacing(&style)`, builds the bold serif scaled tag, and returns via
-  `get_or_add`. The 3 blocks collapse to `let h1 = heading("md-h1", Style::H1);`
-  etc. Also removes the name-duplicated-twice hazard.
-- **EXCLUDED:** the non-heading builders (body/bold/italic/blockquote/listitem/
-  rule/mono) — each sets a DIFFERENT attribute set, not congruent with the
-  headings. The `get_or_add` scaffold + `sp(&Style::X)` (8 sites) is subsumed by
-  the closure for the 3 headings only; unifying all 10 would need a per-tag prop
-  closure = more machinery than payoff. Kept the closure heading-only.
-- **Safe-scope:** yes — pure builder-construction reshuffle inside one fn;
-  identical resulting tags. No trait/generic (a plain closure).
-
-## #72 — current_work_abbrev(s) getter — DONE (branch refactor/audit-67-72)
-
-- **Signal:** `s.current_work.as_ref().map(|w| w.canonical_abbrev.clone())
-  .unwrap_or_default()` — the "current work's canonical abbrev or empty" idiom —
-  byte-identical (modulo indentation) at **5 sites** in actions/journal.rs
-  (render_current, nav_page, nav_scene, populate_and_show_picker,
-  view_journal_from_gloss).
-- **Identical part (extract):** file-local `fn current_work_abbrev(s: &AppState)
-  -> String`. `&mut`-holding sites pass `s`; `Ref`/`RefMut`-holding sites pass
-  `&s` (deref-coercion) — verified with clippy (no needless_borrow introduced).
-- **EXCLUDED:** the `gloss.rs` work_abbrev guards (below floor, different module);
-  any site reading `abbrev` rather than `canonical_abbrev` (none in this set).
-- **Safe-scope:** yes — pure getter extraction; #17/#66-style.
-
-### Examined and EXCLUDED in Batch 5 (no clean cut — do NOT number)
-
-- **`find_*` journal query skeleton** (db/journal.rs, 6 sites) — the
-  `prepare(&format!("SELECT {JOURNAL_PAGE_COLUMNS} … WHERE … ORDER BY …"))?;
-  query_map(params, map_journal_page_row)?; collect()` wrapper recurs, but the
-  load-bearing WHERE/ORDER-BY string AND the params tuple differ per fn (and
-  `find_all_pages_ordered` even differs in ORDER BY). The column list + row mapper
-  are ALREADY shared consts (#29); only the varying SQL body remains. A helper
-  would parameterize the SQL = the #29-excluded "query bodies unchanged" line.
-- **`band_for_page` → Author-name remap block** (journal.rs:380/1081, 6 lines,
-  2 sites) — byte-identical modulo the matched binding name; a clean pure
-  `band_for_page_with_author(s, p)` extraction IS available. Deferred, not
-  shipped: at exactly the 2-site floor and lower value than the six above; number
-  it in a future batch if a 3rd site appears or the file is touched anyway.
-- **author-sentinel predicate** (`p.div1 == JOURNAL_AUTHOR_DIV.0 && p.div2 ==
-  .1`, journal.rs:91/106/1248) — a 1-line expr at 3 sites; a `fn author_sentinel(p)`
-  predicate is behavior-preserving but below the ≥4-line-block bar. The #69
-  constant-dedup already removes the drift hazard on the VALUE; the predicate
-  shape is idiomatic. Note only.
-- **close-journal-to-reader 4-liner** (journal.rs:1412/1580, 2 sites) —
-  `hide(); input_mode = Reader; let pos = return_pos.take();
-  restore_saved_position(&mut s, pos);` byte-identical at 2 sites; a
-  `close_journal_to_reader(s)` helper is clean BUT the near-misses (toggle_overlay
-  uses `return_to_reader_mode`+`_resnap`; the gloss-close reorders + takes a
-  different field) mean it's a narrow 2-site cut. At the floor; note, don't number.
-- **journal_overlay `reveal()` visibility tail** (footer/scrim/container
-  `set_visible(true)`, 3 sites) + **`restore_card_size` size-request guard**
-  (2 sites) — both clean small extractions, but single-file and low drift risk;
-  `show_loading`'s inverse footer-bool correctly disqualifies it from the reveal
-  set. Do as a drive-by if journal_overlay is touched; not worth their own PR.
-- **`return_pos = Some((s.current_line, s.page_top_line))`** (journal ×5 + gloss
-  ×3) — the RHS is a repeated `current_pos(s)` candidate, but it spans the
-  journal AND gloss return-position families (wider than this batch) and the LHS
-  field differs; revisit as a cross-cutting cut, not a journal-local one.
+- **#24** preroll-seek-time (d06ddb8) — `navigation::preroll_seek_time`, ×9;
+  `CHUNK_PREROLL`/`TURN_PREROLL` ab-loop prerolls excluded (distinct concept).
+- **#25** mpv-set-property-cmd (681db30) — client.rs `set_property_cmd`, ×6.
+- **#26** mpv-seek-absolute-cmd (681db30) — `seek_absolute_cmd`, ×4.
+- **#27** card-side-margin (f8e9459) — `ui::card_side_margin`, 9 sites. **The
+  echo `column_width / 8` family is a DIFFERENT concept — never merge it with
+  `card_width / 4`** (a documented past bug class).
+- **#28** parse-citation-reuse (95c7343) — 4 `cite_tail` closures deleted →
+  `app::parse_citation`.
+- **#29** journal-page-row-mapper (5900e79) — `map_journal_page_row` +
+  `JOURNAL_PAGE_COLUMNS`.
+- **#30** overlay-attach-body (694ac40) —
+  `picker_attach::attach_overlay_panel`, ×3.
+- **#31** reassert-italic-tags (43a5f71) — `ui::reassert_italic_tags`, ×2
+  ("mirror this fix" comment was the drift signal).
+- **#32** gloss-overlay-clip-route-to-shared (b9c7d26) — gloss's private
+  `display_rows`/`recompute_bottom_clip` deleted; routes to `ui::mod` shared.
+- **#33** two-label-picker-row (66c844a) — `picker_nav::two_label_row` +
+  `speaker_prefixed_first_line`, 3 card pickers.
+- **#34** picker-move-selection-two-families (6d7dc7f) —
+  `move_selection_clamped` (×5) / `move_selection_from` (×4); TWO helpers keep
+  the clamp-vs-no-clamp contract.
+- **#35** picker-card-builder-600x400 (a2a7f54) —
+  `picker_nav::build_picker_card`, ×4.
+- **#36** gloss-normalize-abbrev-reuse (8abc18a) — 2 inline `-Amb` strips route
+  to `gloss::normalize_abbrev`. **queries.rs's strip-suffix GUARD and
+  `base_work_abbrev` (first-`-` superset) are NOT interchangeable with it.**
+- **#37** column-exists-pragma (3b560fc) — `queries::column_exists`, ×3; the
+  error-swallowing `works.default_voice_id` probe stays excluded.
+- **#38** claude-bridge-async-render-tail (062ceed) —
+  `persist_render_install_gloss`, ×4.
+- **#39** overlay-close-position-restore (0a37259) — `restore_saved_position`
+  (+`_resnap`), 7 of 8 sites; the search-Escape else-arm site excluded.
+- **#40** timestamps-line-id (daba8bc) — `work_line_id`, ×5.
+- **#41** timestamps-sign-column-setter (c2bb5e6) — `set_sign_columns`, ×4.
+- **#42** unspoken-stage-direction-refusal (47909ed) — spoken-line gate helper +
+  const toast literal, ×2; nudge/delete stay ungated by design.
+- **#43** word-prefix-boundary (0256fe9) — `is_word_prefix`, ×3.
+- **#44** gloss-render-current-row (959b09b) — `render_gloss_row`, ×2.
+- **#45** gloss-row-map-closures (8d73eb4) — `row_to_saved_gloss` /
+  `row_to_glossed_passage`.
+- **#46** apply-font-to-views — `ui::apply_font_to_views` (gloss+journal
+  per-view loop body).
+- **#47** cached-coloring-span — `ui::apply_cached_coloring`.
+- **#48** bar-stroke-loop — `ui::draw_bar_spans`.
+- **#49** visual-mode tail (partial) — `visual_selection_count` only; the rest
+  stays per-overlay until a third block-cursor overlay appears.
+- **#50** keybinds-legend-wrapper — one `KeybindsLegend` struct; per-overlay
+  files keep only their `GROUPS` const. echo_keybinds_overlay excluded (does not
+  route through `build_legend`; folding would change its look).
+- **#51** overlay-legend-show-mode-setter — `open_overlay_legend`, symmetric
+  partner of the shared close path.
+- **#52** overlay-panel-attach (9e9fc71) — panel draw-func + queue_draw wiring
+  shared. **The clip-guard attach ORDER differs per overlay and is
+  load-bearing — stays per-file.**
+- **#53** set_rc_color family (305d02b) — `ui::set_rc_color`, ×5;
+  `set_highlight_color` excluded (String + apply_hi_color, different shape).
+- **#54** bar-draw shared prefix (aa85226) — `ui::draw_vim_block_cursor`; bar-x
+  and block-x sources stay per-file.
+- **#55** header-tag triple (305d02b) — `gloss_render::header_tag_base`, ×4.
+  **The color-application split (gloss hex `&str` vs journal `RGBA`) stands and
+  is load-bearing — do not reconcile without normalizing color storage.**
+- **#56** PANEL_PAD / PANEL_RADIUS consts (9e9fc71).
+- **#57** body-indent 60 — RESOLVED by the indent redesign (2b03c7a):
+  `JOURNAL_BODY_INDENT` aliases `QUOTE_BODY_INDENT`; the raw gloss `- 60` is
+  gone.
+- **#58** BAR_TEXT_GAP — RESOLVED by the #57 redesign; no bare 12 remains.
+- **#59** journal apply_font dead empty-guard removed (305d02b).
+- **#60** OVERLAY_BOTTOM_PAD (journal 28 vs gloss 80) — **CLOSED, keep 80.** The
+  on-screen check couldn't be run; the 80 may be load-bearing (denser gloss
+  content + clip guard + pagination capacity). Re-open only with a visual check.
+- **#61** buffer-line-for-line-id (8be7961) —
+  `navigation::buffer_line_for_line_id`, 3 sites + 1 restructured variant.
+  **The canonical-check resolvers (concordance, app resume/target) have
+  different contracts/fallbacks — hard-excluded.**
+- **#62** readonly-textview triple (bb03dc8) — `ui::set_view_readonly`, ×5; vim
+  per-mode focus toggles stay inline (different lifecycle).
+- **#63** gloss set_bar_color_from_root (a9a83dd) — draw-free private method,
+  ×4. Deliberately NOT routed through `set_rc_color` (would add a redundant
+  draw per show).
+- **#64** gloss hide-diff-labels (a9a83dd) — `hide_diff_labels()`, ×5, +
+  `set_prose_margins` rider.
+- **#65** mpv discover-or-launch-blocking (576684b) —
+  `discovery::discover_or_launch_blocking`, ×2; names the 60×50ms socket wait.
+- **#66** current-line-id (8be7961) — `current_line_id` beside #61's helper.
+- **#67** journal pragma-probes (refactor/audit-67-72) — routed 3 re-inlined
+  probes to the existing `column_exists` (#37). Textbook route-to-shared drift.
+- **#68** raise_tag_to_top (refactor/audit-67-72) — ×3, 2 files.
+- **#69** AUTHOR_DIV sentinel dedup (refactor/audit-67-72) —
+  `db::journal::AUTHOR_DIV` single source; app re-exports (db is the lower
+  layer).
+- **#70** journal toast literal consts (refactor/audit-67-72) — 3 consts, 9
+  `show_transient` sites; durations stay inline.
+- **#71** markdown heading-tag closure (refactor/audit-67-72) — heading-only
+  local closure; the other 7 tag builders are not congruent, kept separate.
+- **#72** current_work_abbrev getter (refactor/audit-67-72) — file-local, ×5.
+
+## Standing exclusions — examined, do NOT re-propose
+
+Each was analyzed in a past batch and rejected for cause. Re-open one only if
+its stated condition changes (usually: a new site appears, or the divergence is
+proven cosmetic on screen).
+
+**Different-by-design (behavior-changing to unify):**
+
+- Main reading card's PAGINATED `update_bottom_clip` (scroll.rs) vs the
+  free-scroll partial-row mask — different strategies, never merge.
+- Gloss vs journal `snap_value_to_line` — different algorithms (per-row snap vs
+  uniform `row_step`), not duplicates.
+- Gloss vs journal overlay top margins — per-surface intent, not drift.
+- The dim-header mechanism — gloss bakes color into render-time tags (hex);
+  journal post-render tags a line (RGBA). Structurally divergent; keep parallel.
+- vim `exit_edit_buffer` near-twin — statement ORDER differs + an extra
+  `clear_block_cursor`; vim lifecycle is behavior-risky to reorder.
+- Citation/id → buffer-line resolution family (~12 sites): each differs in a
+  load-bearing token (id vs tuple key, round-trip check present/absent, panic vs
+  fallback access). The one byte-identical pair includes a test helper that
+  DELIBERATELY duplicates prod. (The missing round-trip check at 5 sites is a
+  latent /code-review flag, not a dedup.)
+- Timestamp upsert family + `find_*` journal query skeletons + dynamic-IN
+  param scaffolds + `ensure_*_table` bodies: the varying SQL is load-bearing;
+  folding needs parameterized SQL/generics — out of scope permanently.
+
+**Below the floor (flag; number only if the family grows):**
+
+- `move_selection` third shape (`+.max(0)`: echo/echo_turns/authorship);
+  voice/library carry extra logic — verify before ever routing.
+- Standalone picker j/k arms (echo/echo_turns/library) — fix is routing through
+  `picker_keys::resolve_picker_key`, a follow-on to picker-dispatch, not a cut.
+- seek-then-suppress single statement; the wl-copy stdin-pipe (×3) vs arg-form
+  (×4) split (merging changes arg→stdin behavior).
+- settings_overlay arrow-label format (~14 sites, one file) — drive-by only.
+- echo_picker vs echo_turns_picker row block (2 sites, field name differs).
+- `"Error: {}"` prefix (different sinks); `format!("%{}%")` LIKE wildcard;
+  `has_column`/`created_at strftime` SQL fragments.
+- close-overlay-and-restore tails (2-site families with near-miss siblings);
+  journal_overlay reveal/`restore_card_size` tails (single-file, low drift).
+- `band_for_page` author remap (journal.rs, 2 sites — clean cut, deferred at
+  the floor); author-sentinel predicate (1-line, value drift already killed by
+  #69); close-journal-to-reader 4-liner (2 sites, near-misses differ).
+- `return_pos = Some((s.current_line, s.page_top_line))` (journal ×5 + gloss
+  ×3) — a cross-family `current_pos(s)` candidate; revisit as a cross-cutting
+  cut only.
+- app/mod.rs canonical-check resolver pair (resume vs concordance-target) —
+  2 sites, one fn's flow, load-bearing startup logic.
+- async reader-gloss spawn+save+render tail + cache-hit show-gloss block —
+  extraction needs ~6 params or a claude_bridge callback-shape change (an API
+  change, not pure extraction).
+
+## Larger projects (not safe-scope) — all resolved or parked by decision
+
+Behavior-changing, multi-PR work tracked here so it never gets numbered.
+
+- **InputMode → picker dispatch** — DONE (`Picker` trait +
+  `picker_for_mode`; nav + plain-hide arms collapsed; `open_picker_mode` for
+  the open pairs). Confirm dispatch stays bespoke by design — honest
+  duplication, do not abstract.
+- **AppState god-struct grouping** — committed scope COMPLETE (Phases A–G: all
+  seven contained clusters — nav_test, journal, word_cycle, echo_overlay,
+  page_image, scansion, vocab_popup — grouped; both init variants and both
+  verification tiers proven).
+- **app.rs carve-up** — Phases 1–3 DONE (`mod.rs` 6735 → ~3,950 across
+  vocab_popup/font/text_prep, formatting/scene_synopsis/translations, layout).
+- **gloss_overlay.rs split** — DONE (gloss_block / gloss_ipa / gloss_util
+  siblings; the GTK buffer-population code correctly stayed).
+- **DECISION (2026-06-24, do not re-litigate):** the two remaining items stay
+  parked permanently — grouping the AppState CORE fields (`buffer`,
+  `current_line`, `current_work`, `config`, `text_view`, `input_mode`; 90–290
+  render-tier sites each for ~zero readability gain) and the `build_window` /
+  `display_work` split (blocked on that core split; mod.rs is already
+  navigable). Only a specific concrete pain re-opens a slice — "finish the
+  section" is the wrong reason.
+- **Clip-prevention unification (2026-06-25)** — free-scroll covering math
+  unified into the tested shared helper; the deliberate non-unifications are
+  recorded under Standing exclusions.
+
+## Batch 6 (audited 2026-07-12, post regex-search + tint-guard-rails + chat/vocab-float work)
+
+Fresh scan over the post-2026-07-02 surface (regex search, theme.rs contrast
+guard rails, chat panel, vocab popup 2-col float, segment-overlay cycle,
+keybinds legends). Three parallel Explore finders; every entry below verified
+by direct side-by-side read, not agent word (the #11 lesson). Ranked by
+(duplication × drift_risk) ÷ scope_size.
+
+## #73 — search match-iters triple
+
+- **Status:** OPEN (rank #1 — 3 byte-identical 8-line bodies in the code the
+  regex-search branch just touched twice).
+- **Signal:** the match-char-range computation — `line_end` +
+  `forward_to_line_end` guard, `line_text` slice, `char_start`/`char_end` via
+  `.chars().count()`, `match_start`/`match_end` via `forward_chars` — is
+  byte-identical at **3 sites** in `src/input/search.rs`: `apply_highlights`
+  :541-551 (loop body), `apply_current_highlight` :564-573,
+  `remove_current_highlight` :584-592.
+- **Identical part (extract):** `fn match_iters(state: &AppState, m:
+  &SearchMatch) -> Option<(TextIter, TextIter)>` returning the
+  `(match_start, match_end)` pair; `None` on the `iter_at_line` failure. Each
+  site keeps its own None arm (`continue` in the loop, `return` in the
+  singles) and its own tail (apply `search_tag` / apply `search_current_tag`
+  + log / remove `search_current_tag`).
+- **EXCLUDED (named, why):** the `search_matches.is_empty()` +
+  `[search_match_idx]` preamble of the two singles (the loop site iterates
+  instead — different access shape, stays at call sites); the tag operations
+  and the `log_fmt!` (the load-bearing per-site difference).
+- **Safe-scope:** yes — pure iterator computation → Option helper; guards
+  stay at call sites, zero control-flow change.
+
+## #74 — column-float-rect twin (chat float ↔ vocab float)
+
+- **Status:** OPEN (rank #2 — 2 sites, cross-file, hand-copied THIS WEEK with
+  an explicit "same as the chat float" comment; the exact #31-class mirror
+  signal).
+- **Signal:** the two-column float geometry — `col.compute_bounds(&window)
+  .map(|b| (b.x() as i32, b.width() as i32)).unwrap_or((24,
+  MIN_TWO_COLUMN_COLUMN_WIDTH))` + the divider-extension block
+  (`d_left`/`d_right`, `new_x = d_left.min(x); w += x - new_x; x = new_x`
+  vs `w = w.max(d_right - x)`) — is byte-identical modulo the side predicate
+  at **2 sites**: `src/app/vocab_popup.rs:109-124` (`position_vocab_popup`)
+  and `src/input/actions/chat.rs:731-747` (`size_panel` float arm). The
+  vocab doc comment says "mirroring the chat panel's float geometry (see
+  `chat::size_panel`)".
+- **Identical part (extract):** `pub(crate) fn column_float_rect(s: &AppState,
+  over_right: bool) -> (i32, i32)` in `src/app/layout.rs` (the module owning
+  `main_card_rect`), returning `(x, w)`. Normalize the predicate: vocab's
+  `over_right` ≡ chat's `FloatRight` (the branch bodies line up exactly once
+  the polarity is normalized — verify the arm pairing during the cut).
+- **EXCLUDED (named, why):** each caller's tail — vocab
+  `place_float(x, w, card_h)`; chat `set_margin_start(x.max(0))` +
+  `add_css_class("chat-panel-float")` + `size_to(w, h)` — and chat's Pinned
+  arm. The column-pick two-liner could fold in via the normalized flag but
+  the `ChatPlacement` enum stays chat-side.
+- **Safe-scope:** yes — pure geometry extraction; the next divider/margin fix
+  currently has to be hand-copied between the two floats.
+
+## #75 — search scan-loop block (execute ↔ collect twins)
+
+- **Status:** OPEN (rank #3 — ~14 lines byte-identical modulo rustfmt line
+  breaks, one file, same fresh regex-search family as #73).
+- **Signal:** the matcher scan — `let mut new_matches = Vec::new(); if
+  state.line_map.is_some() { buffer text + lines().enumerate() +
+  collect_line } else { work.lines.iter().enumerate() + collect_line }
+  state.search_matches = new_matches; apply_highlights(&state);` — is
+  byte-identical (only the `.text(...)` call's line-wrapping differs) at
+  **2 sites** in `src/input/search.rs`: `execute_search_with_query` :44-62
+  and `collect_matches` :315-331.
+- **Identical part (extract):** `fn scan_matches(state: &AppState, work:
+  &Work, re: &Matcher) -> Vec<SearchMatch>` (the if/else + collect); each
+  caller keeps its own `state.search_matches = ...` assignment +
+  `apply_highlights` if preferred, or the helper covers through
+  `apply_highlights` (both sites run the same two statements next — either
+  boundary is behavior-preserving; pick one in the spec).
+- **EXCLUDED (named, why):** the two functions' wider shared prologue
+  (clear_highlights / `search_matches.clear()` / empty-query early-return /
+  `last_search_query` set / `current_work` match) — near-identical but the
+  receivers differ (`&mut AppState` flows vs the borrow shapes) and the
+  empty-query arms differ (`update_counter(0,0)` only in one) — folding the
+  whole body is a bigger, riskier cut; ONLY the scan block extracts.
+- **Safe-scope:** yes — byte-identical block → helper, no control-flow change.
+
+## #76 — theme.rs contrast_ratio routes to relative_luminance
+
+- **Status:** OPEN (rank #4 — route-to-shared drift on the WCAG formula, the
+  one place a constant tweak would silently fork the math).
+- **Signal:** `contrast_ratio` (theme.rs:666-674) re-inlines the exact
+  `relative_luminance` body (theme.rs:110-114) as local `lin`/`lum` closures
+  — the sRGB linearize (`0.03928 / 12.92 / 1.055 / 2.4`) and the
+  `0.2126/0.7152/0.0722` weighted sum are byte-identical.
+- **Identical part (route):** delete the closures;
+  `let (la, lb) = (relative_luminance(a_hex) + 0.05,
+  relative_luminance(b_hex) + 0.05);`. Identical f64 result (same
+  `hex_to_rgb`, same formula).
+- **Rider (same-PR, same file):** `hue_distance` (theme.rs:647-648) calls
+  `hex_to_rgb(cN)` three times per color to feed `rgb_to_hsl` —
+  `complement_hex` (:657-658) already shows the clean destructured form. A
+  tiny `fn hue_of(hex) -> f64` (or inline destructure) collapses both lines
+  and the same idiom in the `complement_rotates_hue_180` test.
+- **EXCLUDED (named, why):** theme.rs `hex_to_rgb` vs gloss_util
+  `parse_hex_color` — NOT duplicates (infallible `.unwrap_or(0)` + `len<6`
+  vs `Option` + strict `len!=6`; different contracts, keep both).
+  `darken_color` vs `blend_colors` — different arithmetic, not a pair.
+- **Safe-scope:** yes — route-to-shared (#32/#67-style) + a pure destructure.
+
+## #77 — distinct-tint guard-rail literal consts (40.0 / 1.4 / 0.50)
+
+- **Status:** OPEN (rank #5 — #12-style literal naming inside the guard-rail
+  fn the recent tint commits kept editing).
+- **Signal:** inside `ensure_gloss_color_min` (theme.rs): the hue-distance
+  "reads as a different color" threshold `40.0` at **4 sites** (:703, :715,
+  :717, :720); its paired fallback contrast `1.4` at **2 sites** (:717,
+  :720); the saturation floor `s.max(0.50)` at **2 sites** (:730, :753).
+  The doc comment (:677) already states the rule ("hue distance ≥ 40° OR
+  contrast ≥ 1.4") — the values just aren't named.
+- **Identical part (extract):** `const HUE_DISTINCT_MIN_DEG: f64 = 40.0;`,
+  `const TINT_DISTINCT_MIN_CONTRAST: f64 = 1.4;`, `const TINT_MIN_SATURATION:
+  f64 = 0.50;` beside the other `READER_GLOSS_*` consts. Optionally hoist the
+  second `let s2 = s.max(...)` (:753) — `s` is not mutated between the two
+  passes, so computing once is behavior-preserving.
+- **EXCLUDED (named, why):** the `4.5` values — ALREADY named
+  (`READER_GLOSS_MIN_CONTRAST` / `VOCAB_WORD_MIN_CONTRAST` /
+  `VOCAB_POPUP_DIM_MIN_CONTRAST`), deliberately distinct semantics despite
+  equal values — do NOT merge. The two lightness-rung arrays (:731-737 vs
+  :754-758) differ in values AND order (fine-grained forward sweep vs
+  reordered last-resort sweep) — load-bearing, do NOT unify. The
+  `ensure_gloss_color_min` CALL sites (4) differ in every argument — a call
+  cluster, not a duplication family; no cut there. Test-file copies of the
+  literals may reference the consts or stay — implementer's choice.
+- **Safe-scope:** yes — literal → named const, #8/#12-style.
+
+## #78 — titlecase_first route-to-shared
+
+- **Status:** OPEN (rank #6 — textbook #67-class drift: a tested helper
+  exists and two newer sites re-inline it).
+- **Signal:** `journal.rs:20 fn titlecase_first` (private, unit-tested) is
+  re-inlined at **2 sites**: `vocab_journal.rs:201-207` (character-identical
+  body as a block expression) and `chat.rs:361-364` (ASCII variant:
+  `unit_label.get_mut(0..1)` + `make_ascii_uppercase`).
+- **Identical part (route):** promote `titlecase_first` to `pub(crate)`;
+  both sites become `let unit_label = titlecase_first(unit);`.
+- **Equivalence note (verify in the spec):** chat's ASCII form is
+  output-identical only because `unit` is always `genre_unit`'s static
+  `"scene"`/`"chapter"`/`"book"` — ASCII lowercase. That domain fact makes
+  the routing behavior-preserving; state it in the spec (the #66 precedent:
+  trivially-equivalent shapes, helper picks one).
+- **EXCLUDED:** none found — no other first-letter-uppercase sites.
+- **Safe-scope:** yes — route to an existing tested fn; zero new code.
+
+## #79 — vocab_popup internal twins (set_counter + clear_content)
+
+- **Status:** OPEN (rank #7 — single-file, but the file was just rebuilt for
+  the 2-col float and will be touched again).
+- **Signal:** in `src/ui/vocab_popup.rs`: (a) the counter block `if total > 1
+  { counter_label.set_text(&format!("{} / {}", index + 1, total));
+  set_visible(true) } else { set_visible(false) }` byte-identical at **2
+  sites** (:169-174 `update`, :306-311 `update_journal`); (b) the
+  content-clear loop `while let Some(child) = self.content_box.first_child()
+  { self.content_box.remove(&child); }` byte-identical at **3 sites** (:162,
+  :248, :300).
+- **Identical part (extract):** two private methods — `fn set_counter(&self,
+  index: usize, total: usize)` and `fn clear_content(&self)`.
+- **EXCLUDED (named, why):** `picker_nav::clear_list` is NOT the home for the
+  clear loop — it takes a `ListBox`; this is a plain `GtkBox` content region
+  (different type, keep the method local). `update_journal`'s extra
+  `*self.journal_scroll.borrow_mut() = None;` (:303) stays at its site (not
+  part of the clear).
+- **Safe-scope:** yes — private-method extraction, byte-identical bodies.
+
+## #80 — shared VIM_EDIT_GROUP legend const (gloss + synopsis)
+
+- **Status:** OPEN (rank #8 — legend DATA that mirrors the ONE shared vim
+  engine; a new vim bind currently needs three hand-edits).
+- **Signal:** the 11-row `("Vim edit mode (after e)", &[...])` group is
+  byte-identical at **2 sites** — gloss_keybinds_overlay.rs:35-47 and
+  synopsis_keybinds_overlay.rs:27-39 — and identical-but-one-row at
+  journal_keybinds_overlay.rs:36-48 (its Ctrl+v row reads "(also in the r
+  ask prompt)" vs "(also in ask prompts)").
+- **Identical part (extract):** a `pub const VIM_EDIT_GROUP` (whatever
+  `Group`'s concrete type is) in `keybinds_legend.rs`; gloss + synopsis
+  reference it in their `GROUPS` arrays.
+- **EXCLUDED (named, why):** journal's copy — its one differing hint string
+  is deliberate per-overlay wording (the journal ask prompt is bound to
+  `r`); keep its full copy rather than parameterizing one row. This does NOT
+  contradict #50's "GROUPS are data that must drift per overlay": the
+  OVERLAY-specific groups stay per-file; only the vim-ENGINE group (same
+  engine, same binds everywhere) is genuinely shared. If a `const` can't
+  express the nested slice cleanly, a `pub fn vim_edit_group()` returning
+  `&'static` data is the fallback — no macro.
+- **Safe-scope:** yes — static-data dedup, rendered output identical.
+
+## #81 — float-frame CSS fragment (vocab float + chat float)
+
+- **Status:** OPEN (rank #9 — 2 sites, one format string, mirror documented
+  in the vocab-float design doc).
+- **Signal:** in `generate_css` (theme.rs) the float-frame recipe
+  `background-color: {bg}; border: 1px solid alpha({fg}, 0.25);
+  border-radius: 8px;` is identical at **2 selectors**:
+  `.vocab-popup.vocab-popup-float` (:1016-1018) and `.chat-panel-float`
+  (:1043-1045). Only the trailing `padding` differs (`12px 16px` vs `12px`).
+- **Identical part (extract):** compute once as `let float_frame =
+  format!("background-color: {bg}; border: 1px solid alpha({fg}, 0.25);
+  border-radius: 8px;")` and interpolate `{float_frame}` into both rules;
+  each keeps its own `padding`. (A shared `.float-frame` widget class would
+  also work but touches two constructors — the format-local binding is the
+  smaller, purely-textual cut with byte-identical CSS output.)
+- **EXCLUDED (named, why):** the paddings (per-surface); the
+  `.chat-panel-float .chat-panel-header/.chat-panel-rule` overrides
+  (chat-only); `.vocab-popup`'s base (non-float) rule.
+- **Safe-scope:** yes — identical generated CSS, verifiable by diffing
+  `generate_css` output before/after.
+
+## #82 — TEST_*_VIEWPORT_RECT log formatter
+
+- **Status:** OPEN (rank #10, lowest — test instrumentation, but the e2e
+  pixel harness GREPS these exact lines, so format drift breaks tests
+  silently).
+- **Signal:** the 7-line rect-format body `"{TAG} {} {} {}",
+  r.x().round() as i32, r.y().round() as i32, r.width().round() as i32,
+  r.height().round() as i32` recurs at **4 sites**:
+  journal_overlay.rs:600-606 (`TEST_JOURNAL_VIEWPORT_RECT`),
+  journal_overlay.rs:942-949 (`TEST_JOURNAL_ASK_VIEWPORT_RECT`),
+  gloss_overlay.rs:1465-1472 (`TEST_OVERLAY_VIEWPORT_RECT`),
+  scroll.rs:1115-1121 (`TEST_VIEWPORT_RECT`).
+- **Identical part (extract):** `pub(crate) fn log_viewport_rect(tag: &str,
+  r: &graphene::Rect)` in `src/logging.rs` (or ui/mod.rs) owning the rounded
+  4-int format; callers pass their tag + already-computed rect.
+- **EXCLUDED (named, why):** the bounds SOURCES differ (three use
+  `sc.root()` + `compute_bounds(&root)`; scroll.rs uses
+  `compute_bounds(&state.window)`) — stay at call sites. The guards differ
+  (journal :598 adds `width>0 && height>0` inside `connect_changed`; the
+  others are idle-once) — stay. The `unavailable (…)` else-log wording
+  varies slightly per site — either pass the tag to a second tiny helper or
+  leave the else arms inline (3 of 4 have one).
+- **Safe-scope:** yes — format-body extraction; the greppable tag strings
+  remain literal at call sites.
+
+### Examined and EXCLUDED in Batch 6 (no clean cut — do NOT number)
+
+- **execute_search_with_query ↔ collect_matches full-body merge** — the
+  prologue/tail beyond #75's scan block near-match but the empty-query arms
+  differ (`update_counter(0,0)` in one) and the receiver shapes differ.
+  Only the scan block is numbered.
+- **post-seek fade-skip pair** (search.rs :111-114 vs :260-265, plus a
+  variant in highlight.rs) — only 2 common lines; the adjacent
+  `suppress_sync_until` handling differs load-bearingly (conditional +
+  clear-to-None vs unconditional). Below floor.
+- **overlay_cycle close vs toggle_overlay close** — the `jumped` branch
+  (jump-to-source vs always-restore) is the documented point of the cycle
+  module (its own doc comment says so). Behavior-changing to merge.
+- **echo_keybinds_overlay → KeybindsLegend routing** — still excluded (#50):
+  echo is single-column, ungrouped, different CSS/widths; folding changes
+  its look. Re-open only as a deliberate UX-normalization task, not dedup.
+- **chat consolidate_transcript vs build_history_turns** — same `Q:`/`A:`
+  surface, different data shape + dedupe logic. Not a pair.
+- **`ensure_gloss_color_min` call cluster** (4 sites) — every argument
+  differs load-bearingly; a shared call signature is not a duplication
+  family.
+- **vocab_popup label-builder chains** (~8 in-file) — differ by CSS class /
+  margins / wrap-mode; collapsing needs a builder abstraction. Skip.
+- **`(adj.upper() - adj.page_size()).max(0.0)` clamp** (chat_panel ×2,
+  vocab_popup, journal_overlay) — 1-line GTK idiom, below floor.
+- **`vocab_popup_ink(theme)` recomputed 3× in generate_css's format args** —
+  CPU redundancy, not drift; bind once as a drive-by if touching the file.
+- **chat flash / `flash_widget`** — already routed to the shared helper; the
+  chat-only wash CSS + 160ms is single-site. No cut.
