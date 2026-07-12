@@ -30,6 +30,13 @@ pub(crate) fn line_contains_word(line: &str, word: &str) -> bool {
 /// grouped under work titles, deduped, capped at `cap` with a "+N more"
 /// tail. `current_canonical` excludes the reading work and its media
 /// variants (Cym, Cym-Amb, Cym-BBC share the base "Cym").
+///
+/// Dedupe is on `canonical_text` ALONE: lit.db line_mapping duplicates every
+/// line per media edition (Tit, Tit-Amb, Tit-Argo carry identical-text rows
+/// under titles like "Titus Andronicus" / "Titus Andronicus (Ambrose)"), so a
+/// per-(abbrev,text) key would let each variant consume the cap as a fake
+/// separate work. Hits arrive ordered by work_abbrev, so the base edition
+/// sorts first and wins the group title.
 pub(crate) fn vocab_corpus_block(
     hits: &[crate::db::concordance::ConcordanceRow],
     current_canonical: &str,
@@ -47,7 +54,7 @@ pub(crate) fn vocab_corpus_block(
         if !line_contains_word(&h.canonical_text, word) {
             continue;
         }
-        if !seen.insert((h.work_abbrev.clone(), h.canonical_text.clone())) {
+        if !seen.insert(h.canonical_text.clone()) {
             continue;
         }
         if lines.len() >= cap {
@@ -147,10 +154,27 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
     };
     let question = vocab_question(&word, &author);
 
+    // In-flight guard: a second R on the SAME word while its request is still
+    // pending would send a duplicate paid API call and insert a second row. A
+    // second R on a DIFFERENT word replaces the pending display, by design.
+    {
+        use crate::app::vocab_popup::JournalDisplay;
+        let s = state_rc.borrow();
+        if matches!(
+            s.vocab_popup.journal.as_ref(),
+            Some(JournalDisplay::Pending { word: w, .. }) if *w == word
+        ) {
+            return;
+        }
+    }
+
+    // One DB connection serves both the reuse lookup and the corpus query.
+    let conn = crate::db::queries::open_db().ok();
+
     // Reuse: a stored vocab Q&A for this word + segment renders immediately.
-    if let Ok(conn) = crate::db::queries::open_db() {
+    if let Some(conn) = conn.as_ref() {
         if let Ok(Some(page)) =
-            crate::db::journal::find_vocab_page(&conn, &canonical, div1, div2, &word)
+            crate::db::journal::find_vocab_page(conn, &canonical, div1, div2, &word)
         {
             let mut s = state_rc.borrow_mut();
             s.vocab_popup.journal = Some(crate::app::vocab_popup::JournalDisplay::Answer {
@@ -167,9 +191,9 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
     }
 
     // Fresh ask: corpus evidence, pending render, request.
-    let corpus_block = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| crate::db::concordance::find_word_occurrences(&conn, &word, &author).ok())
+    let corpus_block = conn
+        .as_ref()
+        .and_then(|conn| crate::db::concordance::find_word_occurrences(conn, &word, &author).ok())
         .map(|hits| vocab_corpus_block(&hits, &canonical, &word, CORPUS_HITS_CAP))
         .unwrap_or_else(|| "(none found)".to_string());
 
@@ -313,6 +337,22 @@ mod tests {
         assert!(!block.contains("huswife"), "current work + variants excluded");
         assert!(block.contains("Henry IV, Part 1:"));
         assert!(block.contains("2.1.55: There is a franklin in the Wild of Kent"));
+    }
+
+    #[test]
+    fn corpus_block_dedupes_other_work_media_variants() {
+        // lit.db line_mapping duplicates every line per media edition. The
+        // base edition sorts first (hits are ordered by work_abbrev), so the
+        // line is emitted once under the base title — the variant rows must
+        // NOT consume the cap as fake separate works.
+        let hits = vec![
+            hit("Tit", "Titus Andronicus", 2, 3, 40, "A franklin passed this way"),
+            hit("Tit-Amb", "Titus Andronicus (Ambrose)", 2, 3, 40, "A franklin passed this way"),
+        ];
+        let block = vocab_corpus_block(&hits, "Cym", "franklin", 10);
+        assert_eq!(block.matches("A franklin passed this way").count(), 1);
+        assert!(block.contains("Titus Andronicus:"), "base title wins, block was:\n{block}");
+        assert!(!block.contains("(Ambrose)"), "variant title not shown, block was:\n{block}");
     }
 
     #[test]

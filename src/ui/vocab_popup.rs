@@ -369,11 +369,18 @@ impl VocabPopup {
             *self.journal_footer_base.borrow_mut() = base.clone();
             self.footer_label.set_visible(true);
             self.footer_label.set_text(&base);
-            // Page count needs a viewport allocation; refresh after layout.
+            // Page count needs a viewport allocation, which is not in place
+            // by the time an idle would fire (page_size()==0 → page 1's
+            // indicator would be missing). Refresh from the adjustment's own
+            // `changed` signal instead: it fires once the ScrolledWindow is
+            // allocated. The adjustment is created fresh per render, so no
+            // disconnect bookkeeping is needed.
             if let Some(scroll) = self.journal_scroll.borrow().clone() {
                 let footer = self.footer_label.clone();
-                gtk4::glib::idle_add_local_once(move || {
-                    refresh_journal_footer(&scroll, &footer, &base);
+                let adj = scroll.vadjustment();
+                let scroll_for_cb = scroll.clone();
+                adj.connect_changed(move |_| {
+                    refresh_journal_footer(&scroll_for_cb, &footer, &base);
                 });
             }
         } else {
