@@ -803,9 +803,9 @@ pub(crate) fn select_first_echo(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Close the echoes overlay and return to the reader, clearing the echo session
-/// state and any turn AB-loop. This is the exact behavior of the overlay's
-/// Escape close — extracted so Ctrl+g can share it (Ctrl+g returns to the reader
-/// consistently across the gloss/synopsis/echoes overlays).
+/// state and any turn AB-loop. This is the overlay's Escape close — the only
+/// close key under the Escape-only policy; Ctrl+g/Ctrl+j are consumed no-ops
+/// in this overlay.
 pub(crate) fn close_echoes_to_reader(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     s.gloss_overlay.hide();

@@ -1245,7 +1245,8 @@ fn handle_journal_key(
         key_state.borrow_mut().chord = ChordState::None;
         // A ctrl-chord within the gg window cancels the pending `g` and
         // dispatches normally below (Ctrl+g arrives as key_name "g" too, so
-        // without this `g` then Ctrl+g ran the gg jump instead of view-gloss).
+        // without this `g` then Ctrl+g would run the gg jump instead of
+        // reaching the Ctrl+g consumed no-op arm below).
         if !is_ctrl {
             if key_name == "g" {
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
@@ -1518,9 +1519,9 @@ fn handle_gloss_key(
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
         // A ctrl-chord within the gg window cancels the pending `g` and
-        // dispatches normally below — otherwise `g` then Ctrl+g ran the gg
-        // jump instead of the Ctrl+g cross-jump (Ctrl+g arrives as key_name
-        // "g" too), and Ctrl+j was swallowed as a no-op.
+        // dispatches normally below — otherwise `g` then Ctrl+g would run the
+        // gg jump instead of reaching the Ctrl+g/Ctrl+j consumed no-op arms
+        // below (Ctrl+g arrives as key_name "g" too).
         if !is_ctrl {
             if key_name == "g" {
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
@@ -1746,8 +1747,7 @@ fn handle_gloss_key(
         "Escape" => {
             // Close to the reader, landing on the glossed passage's source line
             // (recomputes the reader-gloss tint so a just-created gloss colors
-            // without a reload; falls back to the pre-open page). Shared with
-            // Ctrl+g via `close_gloss_to_reader`.
+            // without a reload; falls back to the pre-open page).
             crate::input::actions::gloss::close_gloss_to_reader(state);
             true
         }
@@ -2525,6 +2525,10 @@ fn handle_echoes_overlay_key(
             // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the
             // only overlay-to-overlay navigation). Consumed no-op.
             "j" => return true,
+            // Ctrl+Tab: dropped inside overlays (reader-side Ctrl+Tab still
+            // reopens the last overlay). Consumed so it can't fall through
+            // to the plain Tab play arm.
+            "Tab" | "ISO_Left_Tab" => return true,
             "Up" => {
                 let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
                 return true;

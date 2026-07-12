@@ -2615,9 +2615,8 @@ pub(crate) fn open_gloss_overlay(
 
 /// Close the gloss overlay and return to the reader, landing the cursor on the
 /// glossed passage's source line (falling back to the pre-open page). This is
-/// the exact behavior of the overlay's Escape/`n` close — extracted so Ctrl+g
-/// can share it (Ctrl+g in the gloss overlay now returns to the reader instead
-/// of cross-jumping to the journal; the gloss→journal flip lives on Ctrl+j).
+/// the overlay's Escape close — the only close key under the Escape-only
+/// policy; `n`/Ctrl+g/Ctrl+j are consumed no-ops in this overlay.
 pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.tts.stop();

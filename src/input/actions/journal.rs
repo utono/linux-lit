@@ -416,9 +416,9 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// letting the reader jump to any existing Q&A rather than landing on a blank
 /// band. Assumes reader mode / no conflicting overlay is showing; saves
 /// `return_pos` from the current cursor. Shared by the reader Ctrl+j
-/// (`toggle_overlay`'s open half) and the synopsis/echoes/ translation overlays'
-/// Ctrl+j, which each return to the reader first (so the cursor is on the line
-/// whose scene the journal should open on) and then call this.
+/// (`toggle_overlay`'s open half) and the `\` overlay cycle
+/// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
+/// is on the line whose scene the journal should open on) and then call this.
 pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     let (d1, d2, scene_empty) = {
         let s = state.borrow();
@@ -635,9 +635,9 @@ pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
 
 /// Set up the journal overlay for a passage Q&A and open the ask card.
 ///
-/// Called both from `action_journal_qa` (visual selection path) and from the
-/// gloss overlay's `J` key (gloss-context path). The caller has already
-/// exited visual mode / closed any conflicting overlay and set `return_pos`.
+/// Called from the visual-selection path (`src/input/visual.rs`). The caller
+/// has already exited visual mode / closed any conflicting overlay and set
+/// `return_pos`.
 ///
 /// - Sets `journal.pending_passage` with the `<speaker>/<verse>` markup.
 /// - Sets `journal_band` to `Passage { div1, div2, start, end }`.
