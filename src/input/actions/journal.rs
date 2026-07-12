@@ -94,6 +94,13 @@ pub struct JournalState {
     /// Read and consumed by `submit_prompt`, which sends it + the typed
     /// instruction to Claude as a rewrite. `None` for a normal create-ask.
     pub vim_rewrite: Option<(i64, String, String)>,
+    /// Id of the page the overlay OPENED on when entered from the reader
+    /// (Ctrl+j). While the viewer is still on this page, closing restores the
+    /// exact saved reading position instead of source-jumping — a peek at the
+    /// current passage's Q&A must not re-frame the page. Traversing to any
+    /// other page (Ctrl+n/p, picker) re-enables the source jump. `None` for
+    /// opens that are themselves navigation (picker confirm, add flows).
+    pub entry_page_id: Option<i64>,
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
@@ -385,11 +392,21 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // for reader_gloss_lines), so a reader-gloss created/edited in the overlay
         // colors immediately on return.
         crate::app::return_to_reader_mode(&mut s);
-        // Land on the passage's source start when this page is a passage page
-        // whose source lives in the current work; else restore the saved reading
-        // page. Covers Ctrl+Tab, Ctrl+j, and Escape (all route through here).
-        // Take return_pos regardless so it doesn't leak into the next open.
-        let jumped = jump_to_journal_source_start(&mut s);
+        // Land on the passage's source start when the viewer TRAVERSED to this
+        // page (Ctrl+n/p, picker); when it still shows the page the overlay
+        // opened on from the reader, restore the exact saved reading position —
+        // a peek-and-Escape must not re-frame the page the reader left.
+        // Covers Ctrl+Tab, Ctrl+j, and Escape (all route through here).
+        // Take return_pos/entry_page_id regardless so they don't leak into the
+        // next open.
+        let entry = s.journal.entry_page_id.take();
+        let on_entry_page = entry.is_some()
+            && s.journal.pages.get(s.journal.page_index).map(|p| p.id) == entry;
+        let jumped = if on_entry_page {
+            false
+        } else {
+            jump_to_journal_source_start(&mut s)
+        };
         let pos = s.journal.return_pos.take();
         if !jumped {
             crate::app::restore_saved_position_resnap(&mut s, pos);
@@ -443,6 +460,10 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     s.journal.page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
     render_current(&mut s);
+    // Remember the page this reader-entered open landed on: while the viewer
+    // is still on it, close restores the exact reading position (no source
+    // jump). Must be read AFTER render_current loads the band's pages.
+    s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
 }
 
 pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
@@ -660,6 +681,7 @@ pub(crate) fn begin_passage_ask(
 ) {
     let mut s = state.borrow_mut();
     s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.prompt_mode = JournalPromptMode::Ask;
     let band = JournalBand::Passage { div1, div2, start, end };
     s.journal.pending_passage = Some(PendingPassage {
@@ -689,6 +711,7 @@ pub(crate) fn begin_passage_ask(
 pub(crate) fn begin_scene_ask(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64) {
     let mut s = state.borrow_mut();
     s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.prompt_mode = JournalPromptMode::Ask;
     s.journal_band = JournalBand::Scene(div1, div2);
     s.journal.page_index = 0;
@@ -1359,6 +1382,7 @@ pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
         return;
     }
     s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.picker_from_reader = true;
     if !populate_and_show_picker(&mut s) {
         // Empty journal: nothing shown, drop the half-set reader-return state.
@@ -1873,6 +1897,7 @@ pub(crate) fn view_journal_from_gloss(state: &Rc<RefCell<AppState>>) {
     {
         let mut s = state.borrow_mut();
         s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+        s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
         s.journal_band = band;
         s.journal.page_index = 0;
         s.input_mode = InputMode::JournalOverlay;

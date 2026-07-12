@@ -1794,6 +1794,7 @@ pub fn build_window(
             pending_passage: None,
             picker_from_reader: false,
             vim_rewrite: None,
+            entry_page_id: None,
         },
         page_image_overlay,
         page_image: PageImageState::default(),
