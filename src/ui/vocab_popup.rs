@@ -37,6 +37,10 @@ impl VocabPopup {
         let content_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
+            // In float mode the container is column-height; expanding the
+            // content region pins the hint footer to the panel bottom. At
+            // natural height (strip mode) this has no effect.
+            .vexpand(true)
             .build();
 
         let header_label = Label::builder()
@@ -97,9 +101,33 @@ impl VocabPopup {
         self.container.set_visible(false);
     }
 
-    /// Set the left margin so the popup starts to the right of the text card.
-    pub fn set_margin_start(&self, margin: i32) {
-        self.container.set_margin_start(margin);
+    /// Single-column placement: the strip right of the text card. Restores
+    /// every container property `place_float` changes, so the two calls can
+    /// alternate as the work's layout changes.
+    pub fn place_strip(&self, margin_start: i32) {
+        self.container.remove_css_class("vocab-popup-float");
+        self.container.set_halign(gtk4::Align::Fill);
+        self.container.set_valign(gtk4::Align::End);
+        self.container.set_margin_start(margin_start);
+        self.container.set_margin_end(5);
+        self.container.set_margin_bottom(24);
+        self.container.set_width_request(-1);
+        self.container.set_height_request(-1);
+    }
+
+    /// Two-column placement: a full-column panel over one reading column
+    /// (mirrors the chat panel's float geometry — x/w in window coords from
+    /// the column overlay's compute_bounds, h = card height, vertically
+    /// centered like the card).
+    pub fn place_float(&self, x: i32, w: i32, h: i32) {
+        self.container.add_css_class("vocab-popup-float");
+        self.container.set_halign(gtk4::Align::Start);
+        self.container.set_valign(gtk4::Align::Center);
+        self.container.set_margin_start(x.max(0));
+        self.container.set_margin_end(0);
+        self.container.set_margin_bottom(0);
+        self.container.set_width_request(w.max(0));
+        self.container.set_height_request(h.max(0));
     }
 
     pub fn show(&self) {

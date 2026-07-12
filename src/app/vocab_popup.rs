@@ -87,12 +87,44 @@ pub fn open_vocab_popup(state: &mut AppState) {
     state.vocab_popup.journal = None;
     state.vocab_popup.line = Some(current_line);
 
-    update_vocab_popup_margin(state);
+    position_vocab_popup(state);
     show_vocab_popup(state);
 }
 
-/// Set the vocab popup's left margin so it starts just right of the text card.
-pub(crate) fn update_vocab_popup_margin(state: &AppState) {
+/// Place the vocab popup for the current layout. Single-column: the strip
+/// just right of the text card (the historical placement). Two-column: a
+/// full-column float over the reading column the cursor is NOT in, mirroring
+/// the chat panel's float geometry (see `chat::size_panel`). Called at every
+/// (re)show so the float side follows the cursor across the column split.
+pub(crate) fn position_vocab_popup(state: &AppState) {
+    use gtk4::prelude::WidgetExt;
+    if state.column_count() == 2 {
+        let over_right = !crate::input::actions::chat::cursor_in_right_column(state);
+        let col = if over_right {
+            &state.right_scrolled_overlay
+        } else {
+            &state.scrolled_overlay
+        };
+        let (_, card_h) = crate::app::layout::main_card_rect(state);
+        let (mut x, mut w) = col
+            .compute_bounds(&state.window)
+            .map(|b| (b.x() as i32, b.width() as i32))
+            .unwrap_or((24, crate::app::MIN_TWO_COLUMN_COLUMN_WIDTH));
+        // Extend to the column divider so the panel border sits on it
+        // instead of leaving a sliver of card (same as the chat float).
+        if let Some(d) = state.column_divider.compute_bounds(&state.window) {
+            let (d_left, d_right) = (d.x() as i32, (d.x() + d.width()) as i32);
+            if over_right {
+                let new_x = d_left.min(x);
+                w += x - new_x;
+                x = new_x;
+            } else {
+                w = w.max(d_right - x);
+            }
+        }
+        state.vocab_popup.popup.place_float(x, w, card_h);
+        return;
+    }
     let window = state.text_view.root()
         .and_then(|r| r.downcast::<gtk4::Window>().ok());
     let window = match window {
@@ -105,7 +137,7 @@ pub(crate) fn update_vocab_popup_margin(state: &AppState) {
     );
     if let Some(pt) = state.scrolled_window.compute_point(&window, &sw_right) {
         let margin = (pt.x() as i32 + 12).max(0);
-        state.vocab_popup.popup.set_margin_start(margin);
+        state.vocab_popup.popup.place_strip(margin);
     }
 }
 
@@ -242,6 +274,9 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
     state.vocab_popup.view = VocabView::Definition;
     state.vocab_popup.journal = None;
     state.vocab_popup.line = Some(current_line);
+    // The cursor may have crossed the column split since the last show —
+    // re-place so the float stays on the non-cursor column.
+    position_vocab_popup(state);
     show_vocab_popup(state);
 }
 
