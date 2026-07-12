@@ -1800,6 +1800,7 @@ pub fn build_window(
             picker_from_reader: false,
             vim_rewrite: None,
             entry_page_id: None,
+            filter: None,
         },
         page_image_overlay,
         page_image: PageImageState::default(),
