@@ -19,6 +19,7 @@ pub mod journal_block;
 pub mod journal_overlay;
 pub mod journal_move_picker;
 pub mod journal_picker;
+pub mod journal_term_input;
 pub mod gloss_picker;
 pub mod echo_picker;
 pub mod echo_line_picker;
