@@ -377,10 +377,8 @@ impl VocabPopup {
             // disconnect bookkeeping is needed.
             if let Some(scroll) = self.journal_scroll.borrow().clone() {
                 let footer = self.footer_label.clone();
-                let adj = scroll.vadjustment();
-                let scroll_for_cb = scroll.clone();
-                adj.connect_changed(move |_| {
-                    refresh_journal_footer(&scroll_for_cb, &footer, &base);
+                scroll.vadjustment().connect_changed(move |adj| {
+                    refresh_journal_footer(adj, &footer, &base);
                 });
             }
         } else {
@@ -407,7 +405,7 @@ impl VocabPopup {
             return false;
         }
         adj.set_value(new);
-        refresh_journal_footer(&scroll, &self.footer_label, &self.journal_footer_base.borrow());
+        refresh_journal_footer(&scroll.vadjustment(), &self.footer_label, &self.journal_footer_base.borrow());
         true
     }
 }
@@ -415,8 +413,7 @@ impl VocabPopup {
 /// Rewrite the Journal footer with the page position ("saved · m — page
 /// 2 / 3 · C-n ▸"). Free function so the post-layout idle can call it with
 /// cloned widgets (VocabPopup itself is not reference-counted).
-fn refresh_journal_footer(scroll: &gtk4::ScrolledWindow, footer: &Label, base: &str) {
-    let adj = scroll.vadjustment();
+fn refresh_journal_footer(adj: &gtk4::Adjustment, footer: &Label, base: &str) {
     let page = adj.page_size();
     if page <= 0.0 || adj.upper() <= page + 1.0 {
         footer.set_text(base);
