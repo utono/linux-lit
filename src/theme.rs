@@ -936,12 +936,19 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .chat-panel-rule {{ background-color: alpha({bg}, 0.45); min-height: 1px; }} \
          .chat-panel-float .chat-panel-header {{ color: {dim}; }} \
          .chat-panel-float .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
-         .chat-q {{ color: {fg}; }} \
-         .chat-a {{ color: alpha({fg}, 0.72); }} \
-         .chat-chip {{ color: {dim}; font-style: italic; \
-           border-left: 2px solid alpha({fg}, 0.35); padding-left: 8px; }} \
-         .chat-error {{ color: alpha({fg}, 0.55); font-style: italic; }} \
-         .chat-saved {{ color: {dim}; }} \
+         .chat-transcript {{ font-family: {font}; font-size: {chat_size}pt; }} \
+         .chat-q {{ color: alpha({chat_ink}, 0.95); }} \
+         .chat-a {{ color: alpha({chat_ink}, 0.80); }} \
+         .chat-chip {{ color: alpha({chat_ink}, 0.62); font-style: italic; \
+           border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; }} \
+         .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; }} \
+         .chat-saved {{ color: alpha({chat_ink}, 0.70); }} \
+         .chat-panel-float .chat-q {{ color: {fg}; }} \
+         .chat-panel-float .chat-a {{ color: alpha({fg}, 0.72); }} \
+         .chat-panel-float .chat-chip {{ color: {dim}; \
+           border-left: 2px solid alpha({fg}, 0.35); }} \
+         .chat-panel-float .chat-error {{ color: alpha({fg}, 0.55); }} \
+         .chat-panel-float .chat-saved {{ color: {dim}; }} \
          .chat-input {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.30); border-radius: 6px; }} \
          .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
@@ -984,6 +991,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
+        chat_size = font_size.saturating_sub(2).max(8),
+        chat_ink = contrast_on(&theme.root_color),
     );
     // Diagnostic knob: LIT_DEBUG_CLIP_COLOR=<css color> paints every bottom-clip
     // box (main card + overlays) that color for the run, so a clip edge that is

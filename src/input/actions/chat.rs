@@ -273,7 +273,7 @@ fn prompt_title_hint(s: &AppState) -> (&'static str, &'static str) {
     if s.chat.revision_of.is_some() {
         ("Revise this entry", "Ctrl+Enter send \u{b7} s update \u{b7} Tab cycle")
     } else {
-        ("Ask about this passage", "Ctrl+Enter send \u{b7} Tab cycle")
+        ("Ask about this passage", "Ctrl+Enter send \u{b7} s save \u{b7} S consolidate \u{b7} Tab cycle")
     }
 }
 
@@ -298,6 +298,28 @@ pub(crate) fn focus_reader(s: &mut AppState) {
 /// context + gloss context for the cursor's passage, assembles the multi-turn
 /// history from prior exchanges, and dispatches the Claude chat request.
 pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
+    // A bare `s` is the save alias, mirroring the transcript pane's `s`:
+    // saving is the natural reflex right after an answer arrives, and focus
+    // is still in the input — it must never go to the API as a question
+    // (or, in revision mode, as a rewrite instruction). A bare `S` (or the
+    // word "consolidate") merges the whole transcript into one cohesive
+    // journal Q&A instead.
+    let typed = state_rc.borrow().chat_panel.peek_input_text().trim().to_string();
+    if typed == "s" {
+        let _ = state_rc.borrow().chat_panel.take_input_text();
+        if state_rc.borrow().chat.exchanges.is_empty() {
+            let s = state_rc.borrow();
+            crate::ui::toast::show_transient(&s.chapter_toast, "No reply to save yet", 2);
+            return;
+        }
+        save_selected_exchange(state_rc);
+        return;
+    }
+    if typed == "S" || typed.eq_ignore_ascii_case("consolidate") {
+        let _ = state_rc.borrow().chat_panel.take_input_text();
+        consolidate_chat(state_rc);
+        return;
+    }
     // Revision mode: the prompt text is an instruction, not a question.
     if state_rc.borrow().chat.revision_of.is_some() {
         chat_revision::submit_revision(state_rc);
@@ -406,9 +428,12 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
     );
 }
 
-fn transcript_rows(s: &AppState) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+/// Build the transcript rows; also returns the row index of the cursor
+/// exchange's question, so renders can scroll the selection into view.
+fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
+    let mut cursor_row = 0;
     let mut prev_chip: Option<&str> = None;
     for (i, e) in s.chat.exchanges.iter().enumerate() {
         if prev_chip != Some(e.chip.as_str()) {
@@ -416,22 +441,26 @@ fn transcript_rows(s: &AppState) -> Vec<crate::ui::chat_panel::TranscriptRow> {
         }
         prev_chip = Some(e.chip.as_str());
         let marker = if i == s.chat.cursor { "\u{25b8} " } else { "" };
+        if i == s.chat.cursor {
+            cursor_row = rows.len();
+        }
         rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
         rows.push(R::Answer(e.answer.clone()));
         if e.saved_id.is_some() {
             rows.push(R::SavedMark);
         }
     }
-    rows
+    (rows, cursor_row)
 }
 
 pub(crate) fn render_transcript(s: &AppState) {
-    s.chat_panel.render_rows(&transcript_rows(s));
+    let (rows, cursor_row) = transcript_rows(s);
+    s.chat_panel.render_rows_focused(&rows, cursor_row);
 }
 
 fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let mut rows = transcript_rows(s);
+    let (mut rows, _) = transcript_rows(s);
     rows.push(R::Chip(chip.to_string()));
     rows.push(R::Question(format!("Q: {}", question)));
     rows.push(R::Thinking);
@@ -440,20 +469,27 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {
 
 fn render_transcript_with_error(s: &AppState, msg: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let mut rows = transcript_rows(s);
+    let (mut rows, _) = transcript_rows(s);
     rows.push(R::Error(msg.to_string()));
     s.chat_panel.render_rows(&rows);
 }
 
-/// Move the transcript exchange cursor by `delta`, clamped to bounds, and
-/// re-render.
+/// Move the transcript exchange cursor by `delta` and scroll the selected
+/// exchange into view. When the cursor is already clamped at a boundary
+/// (single exchange, or first/last), degrade to plain viewport scrolling so
+/// an answer taller than the panel stays fully readable.
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
     let n = s.chat.exchanges.len();
     if n == 0 {
         return;
     }
     let cur = s.chat.cursor as i32 + delta;
-    s.chat.cursor = cur.clamp(0, n as i32 - 1) as usize;
+    let clamped = cur.clamp(0, n as i32 - 1) as usize;
+    if clamped == s.chat.cursor {
+        s.chat_panel.scroll_transcript_step(delta as f64);
+        return;
+    }
+    s.chat.cursor = clamped;
     render_transcript(s);
 }
 
@@ -497,6 +533,130 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
             crate::logging::log(&format!("CHAT: save failed: {}", err));
         }
     }
+}
+
+/// `S` (or "consolidate") in the ask input: ask the model to merge the whole
+/// transcript into ONE cohesive journal Q&A, save it as a passage journal
+/// page, and pivot into the revision loop on the new entry (same landing as
+/// `s` save, so Ctrl+Enter refines it further). The entry is filed under the
+/// FIRST exchange's passage — the conversation's origin.
+pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
+    let (system, user_msg, model, fallback_q, meta) = {
+        let s = state_rc.borrow();
+        if s.chat.pending {
+            crate::ui::toast::show_transient(&s.chapter_toast, "Waiting for the previous reply\u{2026}", 2);
+            return;
+        }
+        if s.chat.revision_of.is_some() {
+            crate::ui::toast::show_transient(&s.chapter_toast, "Entry is saved \u{2014} Ctrl+Enter revises it", 2);
+            return;
+        }
+        if s.chat.exchanges.is_empty() {
+            crate::ui::toast::show_transient(&s.chapter_toast, "No conversation to consolidate yet", 2);
+            return;
+        }
+        let Some(work) = s.current_work.as_ref() else { return };
+        let first = &s.chat.exchanges[0];
+        let scene = crate::app::scene_synopsis::synopsis_label(&s, first.div1, first.div2);
+        let mut transcript = String::new();
+        for e in &s.chat.exchanges {
+            transcript.push_str("Q: ");
+            transcript.push_str(&e.question);
+            transcript.push_str("\nA: ");
+            transcript.push_str(&e.answer);
+            transcript.push_str("\n\n");
+        }
+        let user_msg = format!(
+            "Work: {} by {}\nThis conversation is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nConversation:\n{}Consolidate this conversation into a single cohesive journal Q&A: one question capturing what the conversation was really asking, one answer synthesizing its insights (drop dead ends, false starts, and meta-chatter). Return the consolidated Q&A in exactly this format:\nQ: <question>\nA: <answer>",
+            work.title, work.author, scene, first.source_markup, transcript,
+        );
+        let meta = (
+            first.div1,
+            first.div2,
+            first.start_citation.clone(),
+            first.end_citation.clone(),
+            first.source_markup.clone(),
+            first.chip.clone(),
+        );
+        (
+            crate::gloss::journal_qa_prompt(&work.work_type),
+            user_msg,
+            s.config.claude_model.clone(),
+            first.question.clone(),
+            meta,
+        )
+    };
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat.pending = true;
+        let (mut rows, _) = transcript_rows(&s);
+        rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
+        s.chat_panel.render_rows(&rows);
+        crate::ui::toast::show_persistent(&s.chapter_toast, "Consolidating\u{2026}");
+    }
+    let user_msg_for_exchange = user_msg.clone();
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        system,
+        user_msg,
+        model,
+        move |st, reply| {
+            let mut s = st.borrow_mut();
+            s.chat.pending = false;
+            let (q, a) = parse_revised_qa(&reply, &fallback_q);
+            let (div1, div2, start_citation, end_citation, source_markup, chip) = meta.clone();
+            let (abbrev, model_for_db) = {
+                let Some(work) = s.current_work.as_ref() else { return };
+                (work.canonical_abbrev.clone(), s.config.claude_model.clone())
+            };
+            let saved = crate::db::queries::open_db_rw().and_then(|conn| {
+                crate::db::journal::save_passage_page(
+                    &conn, &abbrev, div1, div2,
+                    &start_citation, &end_citation, &source_markup,
+                    &q, &a, &model_for_db,
+                )
+            });
+            match saved {
+                Ok(id) => {
+                    let merged = s.chat.exchanges.len();
+                    s.chat.exchanges.push(Exchange {
+                        question: q.clone(),
+                        answer: a.clone(),
+                        chip,
+                        user_msg: user_msg_for_exchange.clone(),
+                        div1,
+                        div2,
+                        start_citation,
+                        end_citation,
+                        source_markup,
+                        saved_id: Some(id),
+                    });
+                    s.chat.cursor = s.chat.exchanges.len() - 1;
+                    s.chat.revision_of = Some(id);
+                    render_saved_entry(&s, &q, &a);
+                    let (title, hint) = prompt_title_hint(&s);
+                    s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+                    s.input_mode = crate::app::InputMode::ChatPrompt;
+                    crate::ui::toast::show_transient(&s.chapter_toast, "Consolidated and saved", 2);
+                    crate::logging::log(&format!(
+                        "CHAT: consolidated {} exchanges into journal page {}",
+                        merged, id
+                    ));
+                }
+                Err(err) => {
+                    render_transcript(&s);
+                    crate::ui::toast::show_transient(&s.chapter_toast, "Save failed", 3);
+                    crate::logging::log(&format!("CHAT: consolidation save failed: {}", err));
+                }
+            }
+        },
+        move |st, msg| {
+            let mut s = st.borrow_mut();
+            s.chat.pending = false;
+            render_transcript_with_error(&s, msg);
+            crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+        },
+    );
 }
 
 /// Revision view: the panel content IS the saved entry (Q + A), no history.

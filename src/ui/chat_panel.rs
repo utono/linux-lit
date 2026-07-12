@@ -38,6 +38,9 @@ impl ChatPanel {
         rule.add_css_class("chat-panel-rule");
 
         let transcript_box = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+        // Reader font, slightly smaller than the main card (theme.rs sets
+        // .chat-transcript to font_size - 2pt); the row labels inherit it.
+        transcript_box.add_css_class("chat-transcript");
         let transcript_scroll = gtk4::ScrolledWindow::new();
         transcript_scroll.set_child(Some(&transcript_box));
         transcript_scroll.set_vexpand(true);
@@ -107,6 +110,47 @@ impl ChatPanel {
 
     /// Rebuild the transcript from rows, newest last, and scroll to the end.
     pub fn render_rows(&self, rows: &[TranscriptRow]) {
+        self.rebuild_rows(rows);
+        let adj = self.transcript_scroll.vadjustment();
+        glib::idle_add_local_once(move || adj.set_value(adj.upper()));
+    }
+
+    /// Rebuild the transcript and scroll the row at index `focus` to the top
+    /// of the viewport (exchange-cursor navigation). Unlike `render_rows`,
+    /// this does NOT pin the scroll to the end — pinning is what made j/k
+    /// cursor moves look like dead keys.
+    pub fn render_rows_focused(&self, rows: &[TranscriptRow], focus: usize) {
+        self.rebuild_rows(rows);
+        let boxx = self.transcript_box.clone();
+        let scroll = self.transcript_scroll.clone();
+        glib::idle_add_local_once(move || {
+            let mut child = boxx.first_child();
+            let mut i = 0usize;
+            while let Some(c) = child {
+                if i == focus {
+                    if let Some(b) = c.compute_bounds(&boxx) {
+                        let adj = scroll.vadjustment();
+                        let max = (adj.upper() - adj.page_size()).max(0.0);
+                        adj.set_value((b.y() as f64).clamp(0.0, max));
+                    }
+                    return;
+                }
+                child = c.next_sibling();
+                i += 1;
+            }
+        });
+    }
+
+    /// Scroll the transcript viewport by `dir` (±1) steps of ~a third of a
+    /// page. Used when a j/k cursor move is already clamped at a boundary,
+    /// so an answer taller than the viewport stays fully readable.
+    pub fn scroll_transcript_step(&self, dir: f64) {
+        let adj = self.transcript_scroll.vadjustment();
+        let max = (adj.upper() - adj.page_size()).max(0.0);
+        adj.set_value((adj.value() + dir * adj.page_size() * 0.35).clamp(0.0, max));
+    }
+
+    fn rebuild_rows(&self, rows: &[TranscriptRow]) {
         while let Some(child) = self.transcript_box.first_child() {
             self.transcript_box.remove(&child);
         }
@@ -128,8 +172,6 @@ impl ChatPanel {
             label.add_css_class(class);
             self.transcript_box.append(&label);
         }
-        let adj = self.transcript_scroll.vadjustment();
-        glib::idle_add_local_once(move || adj.set_value(adj.upper()));
     }
 
     // ---- ask-input passthroughs (mirror journal_overlay's ask_host wrappers)
