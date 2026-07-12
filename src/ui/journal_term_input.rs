@@ -40,8 +40,12 @@ impl JournalTermInput {
         crate::ui::picker_attach::attach_panel(&self.overlay, base, None, &self.picker_box);
     }
 
+    /// Replace the suggestion list and reset the box to a clean state (empty
+    /// entry, unfiltered list). Self-contained so it is safe to call without a
+    /// following `show()` — the two do not depend on call order.
     pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
         self.suggestions = suggestions;
+        self.search_entry.set_text("");
         self.populate_list("");
     }
 

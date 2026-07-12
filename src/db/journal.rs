@@ -263,19 +263,19 @@ pub fn find_pages_by_term(
          WHERE id IN (SELECT entry_id FROM journal_tags WHERE LOWER(term) = ?1) \
          {order}"
     );
-    let mut out = Vec::new();
-    {
+    let tags: Vec<TermMatch> = {
         let mut stmt = conn.prepare(&tag_sql)?;
         let rows = stmt.query_map([&term_norm], map_term_match_row)?;
-        for r in rows {
-            out.push(r?);
-        }
-    }
-    if !out.is_empty() {
-        return Ok(out);
+        rows.collect::<Result<_, _>>()?
+    };
+    if !tags.is_empty() {
+        return Ok(tags);
     }
 
-    // 2) FTS5 fallback (phrase-quoted so multi-word terms match as a phrase)
+    // 2) FTS5 fallback (phrase-quoted so multi-word terms match as a phrase).
+    // Strip embedded quotes so the term can't break out of the phrase; an
+    // all-punctuation term collapses to an empty phrase that simply matches
+    // nothing (returns Ok([]), the "no matches" toast — never an FTS error).
     let fts_sql = format!(
         "SELECT {JOURNAL_PAGE_COLUMNS}, work_abbrev \
          FROM journal_entries \
@@ -285,11 +285,7 @@ pub fn find_pages_by_term(
     let phrase = format!("\"{}\"", term_norm.replace('"', ""));
     let mut stmt = conn.prepare(&fts_sql)?;
     let rows = stmt.query_map([&phrase], map_term_match_row)?;
-    let mut out2 = Vec::new();
-    for r in rows {
-        out2.push(r?);
-    }
-    Ok(out2)
+    rows.collect()
 }
 
 fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Error> {
@@ -783,6 +779,25 @@ mod tests {
         ).unwrap();
         let hits2 = find_pages_by_term(&conn, "Fee Simple").unwrap(); // case-insensitive
         assert_eq!(hits2.iter().map(|m| m.page.id).collect::<Vec<_>>(), vec![7]);
+    }
+
+    #[test]
+    fn term_query_empty_or_pathological_returns_empty_not_error() {
+        let conn = mem();
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (1, 'Rom', 1, 1, 'q', 'a fee simple answer', 'scene')",
+            [],
+        )
+        .unwrap();
+
+        // Empty / whitespace-only terms short-circuit to Ok([]) (no query run).
+        assert!(find_pages_by_term(&conn, "").unwrap().is_empty());
+        assert!(find_pages_by_term(&conn, "   ").unwrap().is_empty());
+
+        // A term of only quote chars strips to an empty FTS phrase (MATCH '""'),
+        // which matches nothing -> Ok([]), NOT an FTS syntax error/panic.
+        assert!(find_pages_by_term(&conn, "\"\"").unwrap().is_empty());
     }
 
     #[test]

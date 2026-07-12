@@ -310,8 +310,9 @@ pub(crate) fn render_current(s: &mut AppState) {
 /// `journal_band` / `current_work`. Drives `show_page` directly with the
 /// fetched entry (bypasses the band-driven `render_current` so an entry from
 /// another work displays in place). Footer reads
-/// "<abbrev> <div1>.<div2> · match N of M". No-op if there is no active filter
-/// or the position is out of range.
+/// "<abbrev> <div1>.<div2> · "<term>" · match N of M" — the searched term
+/// orients the reader across cross-work matches. No-op if there is no active
+/// filter or the position is out of range.
 pub(crate) fn render_filtered_match(s: &mut AppState) {
     let Some(filter) = s.journal.filter.as_ref() else {
         return;
@@ -322,10 +323,11 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     let p = m.page.clone();
     let work_abbrev = m.work_abbrev.clone();
     let footer_left = format!(
-        "{} {}.{} \u{00b7} match {} of {}",
+        "{} {}.{} \u{00b7} \u{201c}{}\u{201d} \u{00b7} match {} of {}",
         work_abbrev,
         p.div1,
         p.div2,
+        filter.term,
         filter.pos + 1,
         filter.matches.len()
     );
