@@ -2652,6 +2652,15 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
+    open_gloss_at_cursor(state);
+}
+
+/// Open the gloss overlay for the passage covering the reader cursor line
+/// (the open half of `toggle_overlay`, shared with the `\` segment-overlay
+/// cycle). Toasts "No gloss on this line" and opens nothing when no glossed
+/// passage covers the cursor. Saves `gloss_return_pos` from the current
+/// reader position so Escape/cycle-advance can restore it.
+pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
 
     // Resolve the cursor line -> its (work abbrev, (div1, div2, line_in_div)).
