@@ -27,9 +27,6 @@ pub enum ChordState {
     /// line's timestamp (the single tap only toasts). See
     /// Action::DeleteTimestampTap.
     PendingBackspace,
-    /// First Tab while the chat/journal panel is open: a second Tab within
-    /// the chord window closes the panel (single Tab opens/cycles focus).
-    PendingTab,
 }
 
 #[derive(Default)]
@@ -72,33 +69,6 @@ pub fn handle_key(
         let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         state.borrow().window.close();
         return true;
-    }
-
-    // Tab-Tab (quick succession) closes the open chat/journal panel from any
-    // of its focus states (Reader / ChatPrompt / ChatTranscript); the single
-    // Tab keeps its per-focus meaning (open panel / cycle focus) and merely
-    // arms the chord. Scoped to those modes so overlay Tab (TTS etc.) is
-    // untouched. See ChordState::PendingTab.
-    if (key_name == "Tab" || key_name == "ISO_Left_Tab") && !is_ctrl && !is_alt {
-        let in_chat_cycle = {
-            let s = state.borrow();
-            s.chat_layout_open
-                && matches!(
-                    s.input_mode,
-                    crate::app::InputMode::Reader
-                        | crate::app::InputMode::ChatPrompt
-                        | crate::app::InputMode::ChatTranscript
-                )
-        };
-        if in_chat_cycle {
-            if key_state.borrow().chord == ChordState::PendingTab {
-                key_state.borrow_mut().chord = ChordState::None;
-                crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
-                return true;
-            }
-            KeyState::start_chord(key_state, ChordState::PendingTab);
-            // fall through: the first tap still opens/cycles as before
-        }
     }
 
     // Journal vim-edit mode owns ALL keys (including space, which Insert mode must

@@ -265,8 +265,8 @@ picker via ChordState::PendingPeriod) — src/input/keymap.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
         "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
         "last overlay" => "Action::ToggleLastOverlay — src/input/actions/gloss.rs",
-        "chat layout" => "Action::ToggleChatLayout (single Tab opens/cycles \
-focus; Tab-Tab closes via ChordState::PendingTab) — src/input/actions/chat.rs",
+        "chat layout" => "Action::ToggleChatLayout (Tab opens/cycles focus; \
+Ctrl+Tab closes) — src/input/actions/chat.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
         "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
         "BCP echo turns" => "Action::ShowEchoTurnsBcp — src/input/actions/echoes.rs",
