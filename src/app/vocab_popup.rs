@@ -212,6 +212,7 @@ pub fn vocab_popup_toggle_view(state: &mut AppState) {
     state.vocab_popup.view = match state.vocab_popup.view {
         VocabView::Definition => VocabView::Gloss,
         VocabView::Gloss => VocabView::Definition,
+        VocabView::Journal => VocabView::Definition,
     };
     show_vocab_popup(state);
 }
