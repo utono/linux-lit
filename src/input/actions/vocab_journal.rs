@@ -292,7 +292,9 @@ fn journal_pending_for(s: &AppState, word: &str) -> bool {
 /// Journal view (the keys stay inert in normal reading).
 pub(crate) fn vocab_journal_page(state_rc: &Rc<RefCell<AppState>>, dir: i32) {
     let s = state_rc.borrow();
-    if s.vocab_popup.view != crate::ui::vocab_popup::VocabView::Journal {
+    if s.vocab_popup.view != crate::ui::vocab_popup::VocabView::Journal
+        || !s.vocab_popup.popup.is_visible()
+    {
         return;
     }
     s.vocab_popup.popup.journal_page(dir);

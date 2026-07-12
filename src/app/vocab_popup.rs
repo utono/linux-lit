@@ -214,6 +214,8 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
 
     if words.is_empty() {
         state.vocab_popup.data.clear();
+        state.vocab_popup.view = VocabView::Definition;
+        state.vocab_popup.journal = None;
         state.vocab_popup.popup.hide();
         state.vocab_popup.line = Some(current_line);
         return;
