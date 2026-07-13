@@ -159,6 +159,27 @@ pub fn handle_key(
         return true;
     }
 
+    // Global theme cycling — works in EVERY overlay, not just reader mode.
+    // Ctrl+t / Ctrl+Shift+t cycle the reader theme regardless of the active
+    // overlay. Resolved through the keymap so keymap.json overrides still apply;
+    // scoped to the Theme* actions ONLY (we do NOT leak every reader bind into
+    // overlays). No overlay handler binds these chords, so there is no conflict.
+    // The vim editors (JournalEdit/GlossEdit/SegmentVim) are intercepted above
+    // this point, so typing in them is unaffected.
+    {
+        use crate::input::actions::Action;
+        // Bind on its own line so the `state.borrow()` temporary drops at the `;`
+        // BEFORE dispatch_action → cycle_theme calls state.borrow_mut(). An
+        // `if let` would hold the read borrow across the whole body → a RefCell
+        // double-borrow → non-unwinding abort (mirrors the reader path at the
+        // main keymap.lookup dispatch below).
+        let theme_action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
+        if let Some(action @ (Action::ThemeNext | Action::ThemePrev)) = theme_action {
+            dispatch_action(state, action, key_state, tokio_handle);
+            return true;
+        }
+    }
+
     // Mode dispatch — delegate to per-mode handler functions
     let mode = state.borrow().input_mode;
     if mode != crate::app::InputMode::Reader {
