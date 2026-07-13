@@ -155,6 +155,12 @@ pub enum InputMode {
     /// the card shows "Undo last edit? y / Esc". `y` restores the pre-edit text
     /// and returns to the originating overlay; `Esc`/`n` cancels.
     UndoConfirm,
+    /// Choose the target of a journal `R` rewrite: the card shows
+    /// "Rewrite: q question · a answer · b both · Esc cancel". A single key
+    /// routes to the answer-only flow (`a`), the question-improve + regenerate
+    /// flow (`q`), or improve-question + instruction-driven answer rewrite
+    /// (`b`); `Esc`/any other key returns to the journal overlay.
+    RewriteTargetChoice,
     /// Manual page-image calibration: the card shows a page PNG and a readout of
     /// the cursor line; Enter marks the cursor line as that page's start and
     /// advances to the next page.
@@ -548,6 +554,12 @@ pub struct AppState {
     /// Set when `D` opens the confirm; cleared when it closes. Mirrors
     /// `undo_confirm_origin`.
     pub delete_confirm_origin: Option<InputMode>,
+    /// The journal `R` target chooser box (q/a/b/Esc) and its parent overlay,
+    /// so the chooser handler can tear it down on any exit key. Mirrors
+    /// `delete_confirm_container`/`delete_confirm_overlay`; the chooser always
+    /// returns to the journal overlay, so no origin marker is needed.
+    pub rewrite_target_container: Option<glib::WeakRef<gtk4::Box>>,
+    pub rewrite_target_overlay: Option<glib::WeakRef<gtk4::Overlay>>,
     pub gloss_picker: GlossPicker,
     pub echo_picker: crate::ui::echo_picker::EchoPicker,
     pub echo_turns_picker: crate::ui::echo_turns_picker::EchoTurnsPicker,
@@ -1865,6 +1877,8 @@ pub fn build_window(
         delete_confirm_container: None,
         delete_confirm_overlay: None,
         delete_confirm_origin: None,
+        rewrite_target_container: None,
+        rewrite_target_overlay: None,
         gloss_undo: None,
         journal_undo: None,
         undo_confirm_origin: None,

@@ -1,5 +1,6 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
 use crate::ui::journal_move_picker::MoveTargetRow;
+use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1350,6 +1351,165 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     let _ = s
         .journal_overlay
         .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
+}
+
+/// Body of `begin_rewrite` given an explicit `(id, q, a)`: stash the rewrite
+/// tuple in `journal.vim_rewrite` and open the ask card in INSERT so
+/// `submit_prompt` sends the typed instruction with this (id, q, a). Factored
+/// so the `both` question-improve path opens the instruction card with the
+/// IMPROVED question (not the stale on-screen one).
+///
+/// BORROW SAFETY: the `vim_rewrite` write is under a scoped `borrow_mut` that
+/// drops before the read-only `borrow` used to open the ask card — mirrors
+/// `begin_rewrite`.
+pub(crate) fn begin_rewrite_with(state: &Rc<RefCell<AppState>>, id: i64, q: &str, a: &str) {
+    {
+        let mut s = state.borrow_mut();
+        s.journal.vim_rewrite = Some((id, q.to_string(), a.to_string()));
+    }
+    let s = state.borrow();
+    s.journal_overlay.open_ask_card(
+        "Rewrite instruction",
+        "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
+    let _ = s
+        .journal_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
+}
+
+/// `R` in the journal overlay: open the small target chooser
+/// ("Rewrite: q question · a answer · b both · Esc cancel") and switch to
+/// `InputMode::RewriteTargetChoice`. The single-key handler
+/// (`handle_rewrite_target_key`) then routes to the answer/question/both path.
+/// No-op (toast) when there is nothing displayed to rewrite. Mirrors
+/// `show_delete_confirmation`'s centered amend-dialog box.
+///
+/// BORROW SAFETY: the "nothing to rewrite" check + the overlay-parent lookup are
+/// scoped read borrows dropped before `add_overlay`; the state writes (the two
+/// weakrefs + `input_mode`) happen in a single trailing `borrow_mut`, with no
+/// widget call that re-enters `state` held across it.
+pub(crate) fn open_rewrite_target(state: &Rc<RefCell<AppState>>) {
+    // Nothing displayed → toast and stay in the overlay (no chooser).
+    let has_entry = {
+        let s = state.borrow();
+        displayed_journal_page(&s).is_some()
+    };
+    if !has_entry {
+        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        return;
+    }
+
+    let overlay_parent = {
+        let s = state.borrow();
+        s.action_popup_widget.container.parent()
+    };
+    let overlay_parent = match overlay_parent.and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
+        Some(o) => o,
+        None => return,
+    };
+
+    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    container.set_halign(gtk4::Align::Center);
+    container.set_valign(gtk4::Align::Center);
+    container.set_width_request(400);
+    container.add_css_class("amend-dialog");
+
+    let label = gtk4::Label::new(Some("Rewrite target"));
+    label.add_css_class("amend-title");
+    label.set_halign(gtk4::Align::Start);
+    container.append(&label);
+
+    let hint = gtk4::Label::new(Some(
+        "q = question  \u{00b7}  a = answer  \u{00b7}  b = both  \u{00b7}  Esc = cancel",
+    ));
+    hint.add_css_class("amend-hint");
+    hint.set_halign(gtk4::Align::Center);
+    container.append(&hint);
+
+    overlay_parent.add_overlay(&container);
+
+    let mut s = state.borrow_mut();
+    s.rewrite_target_container = Some(container.downgrade());
+    s.rewrite_target_overlay = Some(overlay_parent.downgrade());
+    s.input_mode = InputMode::RewriteTargetChoice;
+}
+
+/// Tear down the `R` target chooser box and return to the journal overlay.
+///
+/// BORROW SAFETY: single `borrow_mut`; `remove_overlay` operates on the taken
+/// weakref upgrades (no `state` re-entry).
+pub(crate) fn close_rewrite_target(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if let (Some(cw), Some(ow)) = (
+        s.rewrite_target_container.take(),
+        s.rewrite_target_overlay.take(),
+    ) {
+        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
+            o.remove_overlay(&c);
+        }
+    }
+    s.input_mode = InputMode::JournalOverlay;
+}
+
+/// `R` → question (`both == false`) or both (`both == true`): improve the
+/// DISPLAYED entry's question via Claude, persist the improved question
+/// immediately (answer unchanged), then either open the answer-rewrite
+/// instruction card for the improved question (`both`) or regenerate the answer
+/// afresh with a fixed reword instruction (question-only).
+///
+/// BORROW SAFETY: the displayed page is read under a scoped borrow that drops
+/// before the toast; the toast takes another scoped borrow; `improve_question`
+/// is then called with NO outer borrow held (it borrows `state` itself). Inside
+/// the `on_done` closure: the `update_journal_page` write opens its own
+/// `open_db_rw` conn and reads the model under a scoped `borrow` that drops
+/// before `begin_rewrite_with`/`rewrite_with_claude` (each of which re-borrows
+/// `state`) — no borrow is held across those calls.
+pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
+    let page = {
+        let s = state.borrow();
+        displayed_journal_page(&s)
+    };
+    let Some(page) = page else {
+        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        return;
+    };
+    let id = page.id;
+    let old_q = page.question.trim().to_string();
+    let answer = page.answer.trim().to_string();
+
+    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Improving question\u{2026}");
+
+    improve_question(state, old_q, move |st, improved_q| {
+        // Persist the improved question immediately with the unchanged answer,
+        // reusing the entry's stored model. Own conn + scoped borrow for the
+        // model, both dropped before the re-borrowing calls below.
+        {
+            let model = {
+                let s = st.borrow();
+                displayed_journal_page(&s)
+                    .map(|p| p.claude_model.clone())
+                    .unwrap_or_default()
+            };
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let _ =
+                    crate::db::journal::update_journal_page(&conn, id, &improved_q, &answer, &model);
+            }
+        }
+        // No borrow held here.
+        if both {
+            begin_rewrite_with(st, id, &improved_q, &answer);
+        } else {
+            rewrite_with_claude(
+                st,
+                id,
+                &improved_q,
+                &answer,
+                "The question was reworded for clarity; answer this (possibly reworded) question afresh, grounded as before.",
+            );
+        }
+    });
 }
 
 /// Undo the last `e` journal edit (single-level): restore the snapshot in
