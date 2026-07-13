@@ -5,6 +5,57 @@
 **Builds on:** `2026-07-13-journal-rewrite-uses-key-terms-design.md` (the `R`-path
 feature; reuses `improve_question(terms)` and `improve_terms_line`).
 
+## Claude API calls when creating a new journal entry
+
+Creating a new Q&A entry (Ctrl+Enter on the ask card) drives a fixed sequence of
+Claude requests. Every request goes through
+`claude_bridge::run_claude_request` → `gloss::call_claude_with_prompt(system_prompt,
+user_msg, model)`, spawned off the GTK thread with callbacks marshalled back to
+the main loop. Each call is one system-prompt + one user-message single-turn
+request; the prompt text is `db::prompts::active_prompt(<key>)` (the lit.db
+`api_prompts` active row) with a compiled `FALLBACK_*` constant when the row is
+absent.
+
+For a **new Scene or Passage ask** (`submit_prompt` → `extract_scene_terms`),
+there are **three blocking round-trips** in strict sequence, then a fourth
+fire-and-forget call after the entry saves:
+
+1. **Extract scene terms** — `extract_scene_terms`.
+   Prompt `journal.scene-terms` (fallback `FALLBACK_SCENE_TERMS_PROMPT`), user
+   message = the windowed scene/passage text, model = `config.tag_extract_model`.
+   Reply parsed by `journal_tags::parse_terms` into `Vec<String>` (`{"terms":[…]}`
+   contract). Terms are fed FORWARD, not stored.
+
+2. **Improve the question** — `improve_question(terms)`.
+   Prompt `journal.improve-question` (fallback `FALLBACK_IMPROVE_QUESTION_PROMPT`)
+   with `{terms}` substituted by `improve_terms_line(terms)`, user message = the
+   reader's raw question, model = `config.claude_model`. Reply cleaned by
+   `parse_improved_question` (falls back to the original on empty/error).
+
+3. **Answer the question** — `ask_claude(improved)`.
+   Prompt `gloss::journal_qa_prompt(work_type)`, user message = the band-aware
+   grounding block (work header + band label + windowed scene text + passage
+   source for Passage) followed by the improved question, model =
+   `config.claude_model`. On success the answer is written to lit.db via
+   `save_journal_page` / `save_passage_page` / `save_author_page`.
+
+4. **Auto-tag the saved entry** — `spawn_retag` (background, after save).
+   Prompt `journal.extract-terms` (fallback
+   `journal_tags::FALLBACK_EXTRACT_PROMPT`), user message = `Q: … / A: …`, model =
+   `config.tag_extract_model`. Reply → `parse_terms` → `replace_auto_tags`.
+   No-op when `config.auto_tag_journal` is off; a call error leaves existing tags
+   intact.
+
+For a **Work or Author ask** there is no scene text, so step 1 short-circuits
+with `terms = []` and makes **no** API call — the entry is **two** blocking
+round-trips (improve → answer) plus the background retag, exactly as before this
+feature. Both models are configurable: the phrasing/answer steps use
+`claude_model`, the term-extraction steps use `tag_extract_model`.
+
+(A vim-editor `R` rewrite is a different path — `rewrite_with_claude` sends one
+answer-rewrite request grounded on the saved entry's own `journal_tags`, plus its
+own background `spawn_retag`; it does not run the scene-terms extractor.)
+
 ## Problem
 
 The `R`-rewrite path now grounds the improve-question (phrasing) step on a saved
