@@ -1443,20 +1443,22 @@ fn handle_journal_key(
     // Ctrl+n/p stepping (handled in the is_ctrl block above via nav_page's
     // filter branch) stay live; `s` is a consumed no-op below.
     // While a term filter is active the overlay shows a cross-work match via
-    // `render_filtered_match`. Keys that resolve the DISPLAYED entry
+    // `render_filtered_match`. LIVE keys operate on the DISPLAYED entry
     // (displayed_journal_page → the filter match) and re-render the filtered
-    // view are LIVE: block-nav j/k/x/y/g/G (overlay buffer only), plus the
-    // entry ops R (rewrite), e (edit), D (delete), c (copy id) — each operates
-    // on the on-screen cross-work entry, not the stale origin. Still GATED
-    // (not yet filter-aware — they'd hit the origin band): undo (u), new-Q&A
-    // (r), visual-select (V), overlay-cycle (backslash), TTS (space/a — audio
-    // keyed by the stale id). Ctrl+n/p step the subset; f re-searches; Esc clears.
+    // view: block-nav j/k/x/y/g/G (overlay buffer only), the entry ops R/e/D/c,
+    // undo u (reverts the displayed entry's edit), and visual-select V (selects
+    // in the overlay buffer, yanks to clipboard — no DB/origin read). Still
+    // GATED — semantically ambiguous or origin-bound under a cross-work browse:
+    // new-Q&A (r, no clear home band), overlay-cycle (backslash, would switch
+    // works), TTS (space/a — the audio cache is keyed by entry_id + work_abbrev
+    // of the ORIGIN, so cross-work playback would mis-path the cache). Clear the
+    // filter (Esc) to use these. Ctrl+n/p step the subset; f re-searches.
     if state.borrow().journal.filter.is_some()
-        && matches!(key_name, "r" | "u" | "V" | "space" | "a" | "backslash")
+        && matches!(key_name, "r" | "space" | "a" | "backslash")
     {
         crate::ui::toast::show_transient(
             &state.borrow().chapter_toast,
-            "Clear the term filter (Esc) to edit or play entries",
+            "Clear the term filter (Esc) for this key",
             3,
         );
         return true;

@@ -1316,10 +1316,30 @@ pub(crate) fn undo_journal_edit(state: &Rc<RefCell<AppState>>) {
 
     let mut s = state.borrow_mut();
     s.journal_undo = None;
-    render_current(&mut s);
-    // The restore bumped the row's timestamp; re-find it so the band's ordering
-    // doesn't leave the view on a different page (see land_on_current_band_id).
-    land_on_current_band_id(&mut s, id);
+    // Filter-aware: if the undone entry is the displayed cross-work filter match,
+    // revert its in-memory q/a and re-render the filtered view (an `f`-opened
+    // e/R edit is what set this snapshot). Otherwise the normal band re-render.
+    let in_filter = s
+        .journal
+        .filter
+        .as_ref()
+        .and_then(|f| f.matches.get(f.pos))
+        .map(|m| m.page.id == id)
+        .unwrap_or(false);
+    if in_filter {
+        if let Some(filter) = s.journal.filter.as_mut() {
+            if let Some(m) = filter.matches.get_mut(filter.pos) {
+                m.page.question = question.clone();
+                m.page.answer = answer.clone();
+            }
+        }
+        render_filtered_match(&mut s);
+    } else {
+        render_current(&mut s);
+        // The restore bumped the row's timestamp; re-find it so the band's
+        // ordering doesn't leave the view on a different page.
+        land_on_current_band_id(&mut s, id);
+    }
     crate::ui::toast::show_transient(&s.chapter_toast, "Undid edit", 2);
 }
 
