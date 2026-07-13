@@ -1471,7 +1471,13 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     if text.trim().is_empty() {
         return;
     }
-    ask_claude(state, &text);
+    // Show the loading card immediately with the raw text so the UI isn't
+    // dead during the improve-question round-trip; `ask_claude` re-shows it
+    // with the improved phrasing once that call returns.
+    state.borrow().journal_overlay.show_loading(&text);
+    improve_question(state, text, move |st, improved| {
+        ask_claude(st, &improved);
+    });
 }
 
 /// Send a journal Q&A `(question, answer)` plus a rewrite `instruction` to Claude,
