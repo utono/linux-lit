@@ -1479,8 +1479,15 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
     let old_q = page.question.trim().to_string();
     let answer = page.answer.trim().to_string();
     // Capture the model up-front (like id/q/a) so a navigate during the async
-    // improve-question round-trip can't stamp a different entry's model.
-    let model = page.claude_model.clone();
+    // improve-question round-trip can't stamp a different entry's model. Fall
+    // back to the config model when the entry has none (legacy/unstamped rows),
+    // mirroring rewrite_with_claude — else the immediate persist would write an
+    // empty model string.
+    let model = if page.claude_model.is_empty() {
+        state.borrow().config.claude_model.clone()
+    } else {
+        page.claude_model.clone()
+    };
 
     crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Improving question\u{2026}");
 
