@@ -54,6 +54,26 @@ the surrounding intent allows.\n\
 Return ONLY the improved question as a single line of plain text — no preamble, \
 no quotes, no markdown, no explanation.";
 
+/// Fallback for the scene-terms extractor when the `journal.scene-terms`
+/// api_prompts row is absent. Mirrors the master so a missing row does not
+/// silently disable first-ask term grounding. Same `{"terms":[...]}` contract as
+/// the extract-terms prompt, so `parse_terms` handles the reply unchanged.
+const FALLBACK_SCENE_TERMS_PROMPT: &str = "\
+You extract the substantive terms of art that a reader working through the\n\
+following passage might want to ask about — legal, rhetorical, historical,\n\
+prosodic, or theological terms a reader might later look up (e.g. \"fee simple\",\n\
+\"anaphora\", \"recusant\").\n\
+\n\
+Do NOT include ordinary vocabulary, character names, or the work's title.\n\
+Prefer the canonical phrasing of each term. Return AT MOST 8 terms.\n\
+\n\
+Return ONLY a JSON object (no markdown fences, no commentary) with exactly one\n\
+key:\n\
+\n\
+{\"terms\": [\"term one\", \"term two\"]}\n\
+\n\
+If the passage has no such term, return {\"terms\": []}.";
+
 /// The `{terms}` substitution for the improve-question prompt: a guidance
 /// sentence naming the entry's key terms of art and telling Claude to keep them,
 /// or the empty string when the entry has no tags (so the prompt reads cleanly
@@ -79,6 +99,51 @@ fn improve_terms_line(terms: &[String]) -> String {
 /// later, inside `run_claude_request`'s on_success/on_error closures on the
 /// main loop, receiving the `&Rc<RefCell<AppState>>` those closures are
 /// handed.
+/// Resolve candidate terms of art for a BRAND-NEW ask by extracting them from
+/// the current scene text, then hand `(state, question, terms)` to `on_done`.
+/// Empty scene text (Work/Author band, unresolvable position) or any extraction
+/// error yields an empty term list — the ask then proceeds ungrounded, exactly
+/// as before this feature.
+///
+/// BORROW SAFETY: scene text + model are read under one scoped borrow that drops
+/// before `run_claude_request` (which re-borrows `state`), mirroring
+/// `spawn_retag`. `on_done` runs later inside the request callbacks.
+fn extract_scene_terms(
+    state: &Rc<RefCell<AppState>>,
+    question: String,
+    on_done: impl Fn(&Rc<RefCell<AppState>>, String, Vec<String>) + 'static,
+) {
+    let (scene_text, model) = {
+        let s = state.borrow();
+        (current_scene_text(&s), s.config.tag_extract_model.clone())
+    };
+    if scene_text.trim().is_empty() {
+        on_done(state, question, Vec::new());
+        return;
+    }
+    let prompt = crate::db::prompts::active_prompt("journal.scene-terms")
+        .unwrap_or_else(|| FALLBACK_SCENE_TERMS_PROMPT.to_string());
+    // `on_done` is shared (not Clone) between the two callbacks; wrap in Rc.
+    let on_done = Rc::new(on_done);
+    let on_done_err = Rc::clone(&on_done);
+    let q_ok = question.clone();
+    let q_err = question;
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        prompt,
+        scene_text, // the user message is the passage text to mine
+        model,
+        move |st, reply| {
+            let terms = crate::journal_tags::parse_terms(&reply);
+            on_done(st, q_ok.clone(), terms);
+        },
+        move |st, msg| {
+            crate::logging::log(&format!("SCENE-TERMS: extract failed ({msg}); no grounding"));
+            on_done_err(st, q_err.clone(), Vec::new());
+        },
+    );
+}
+
 fn improve_question(
     state: &Rc<RefCell<AppState>>,
     question: String,
@@ -1670,9 +1735,12 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     // dead during the improve-question round-trip; `ask_claude` re-shows it
     // with the improved phrasing once that call returns.
     state.borrow().journal_overlay.show_loading(&text);
-    // A brand-new ask has no saved entry yet, so no tags exist to ground on.
-    improve_question(state, text, &[], move |st, improved| {
-        ask_claude(st, &improved);
+    // A brand-new ask has no saved entry/tags yet — derive candidate terms from
+    // the scene text first, then ground the phrasing on them.
+    extract_scene_terms(state, text, move |st, question, terms| {
+        improve_question(st, question, &terms, move |st2, improved| {
+            ask_claude(st2, &improved);
+        });
     });
 }
 
@@ -1835,6 +1903,28 @@ pub(crate) fn spawn_retag(
     );
 }
 
+/// The windowed scene/passage text for the current journal band, anchored on the
+/// reader's saved position — the same context `ask_claude` sends to the answer
+/// prompt. Empty for Work/Author bands and unresolvable positions. Factored so
+/// the answer path and the first-ask term extractor build it identically.
+fn current_scene_text(s: &AppState) -> String {
+    let anchor_work_line = s
+        .journal
+        .return_pos
+        .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
+        .unwrap_or(0);
+    match &s.journal_band {
+        JournalBand::Work => String::new(),
+        JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_windowed(
+            s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+        ),
+        JournalBand::Passage { div1, div2, .. } => crate::app::scene_synopsis::scene_text_windowed(
+            s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+        ),
+        JournalBand::Author(_) => String::new(),
+    }
+}
+
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let (work_title, work_author, work_abbrev, work_type, band, scene_text, model) = {
         let s = state_rc.borrow();
@@ -1849,26 +1939,9 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             None => return,
         };
         // Anchor on the reader's saved position (where the journal overlay was
-        // opened from), mapped to a work line. Falls back to 0 (the division's
-        // first paragraph) when unresolvable — scene_text_windowed clamps.
-        let anchor_work_line = s
-            .journal
-            .return_pos
-            .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
-            .unwrap_or(0);
-        let scene_text = match band {
-            JournalBand::Work => String::new(),
-            JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_windowed(
-                &s, d1, d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
-            ),
-            JournalBand::Passage { div1, div2, .. } => {
-                crate::app::scene_synopsis::scene_text_windowed(
-                    &s, div1, div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
-                )
-            }
-            // Author band: no single scene to anchor on.
-            JournalBand::Author(_) => String::new(),
-        };
+        // opened from), mapped to a work line — factored so the first-ask term
+        // extractor builds identical context. Empty for Work/Author bands.
+        let scene_text = current_scene_text(&s);
         (
             title,
             author,
