@@ -1127,6 +1127,15 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
                 );
                 purge_journal_audio(&conn, id);
             }
+            // The hand-edits are a real user-authored Q&A change persisted with
+            // no Claude call — re-tag it, exactly like the `:w` edit-save path.
+            // (conn block dropped above; call before re-borrowing state.)
+            spawn_retag(
+                state,
+                id,
+                question.trim().to_string(),
+                answer.trim().to_string(),
+            );
             let mut s = state.borrow_mut();
             render_current(&mut s);
             land_on_current_band_id(&mut s, id);
