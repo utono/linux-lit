@@ -184,6 +184,13 @@ pub struct GlossOverlay {
     hi_ranges: RefCell<Vec<(usize, usize)>>,
     /// Reading font family stashed on edit-enter, restored on exit (mono swap).
     pre_edit_family: RefCell<Option<String>>,
+    /// Overlay-search highlight tags, registered once on `gloss_view.buffer()`'s
+    /// tag table in `new` (the buffer is never replaced — `set_text`/populate
+    /// paths write into it in place — so registering once here is safe for the
+    /// view's lifetime). Placeholder colors; `set_search_colors` wires them to
+    /// the theme (Task 5).
+    search_tag: gtk4::TextTag,
+    search_current_tag: gtk4::TextTag,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -522,6 +529,22 @@ impl GlossOverlay {
         scrim.add_css_class("gloss-scrim");
         scrim.set_visible(false);
 
+        // Overlay-search highlight tags (Task 2 of the overlay-search feature).
+        // Registered once here, mirroring the gloss-hi tag pattern, so later
+        // search/step logic (Task 3) can apply them without re-registering.
+        // Placeholder colors; Task 5 wires these to the theme via
+        // `set_search_colors`.
+        let search_tag = gtk4::TextTag::builder()
+            .name("overlay_search")
+            .background("#ffe000")
+            .build();
+        let search_current_tag = gtk4::TextTag::builder()
+            .name("overlay_search_current")
+            .background("#ff9000")
+            .build();
+        gloss_view.buffer().tag_table().add(&search_tag);
+        gloss_view.buffer().tag_table().add(&search_current_tag);
+
         GlossOverlay {
             overlay,
             scrim,
@@ -580,6 +603,8 @@ impl GlossOverlay {
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
             pre_edit_family: RefCell::new(None),
+            search_tag,
+            search_current_tag,
         }
     }
 
@@ -607,6 +632,40 @@ impl GlossOverlay {
     pub fn set_highlight_color(&self, color: &str) {
         *self.highlight_bg.borrow_mut() = color.to_string();
         self.apply_hi_color();
+    }
+
+    /// The overlay's TextView buffer (stable for the view's lifetime — never
+    /// replaced by `set_text`/populate), for overlay-search (Task 3) to read/scan.
+    pub fn buffer(&self) -> gtk4::TextBuffer {
+        self.gloss_view.buffer()
+    }
+
+    /// The "all matches" search-highlight tag.
+    pub fn search_tag(&self) -> &gtk4::TextTag {
+        &self.search_tag
+    }
+
+    /// The "current match" search-highlight tag (brighter than `search_tag`).
+    pub fn search_current_tag(&self) -> &gtk4::TextTag {
+        &self.search_current_tag
+    }
+
+    /// Set the search-highlight tag colors (theme-wired; see Task 5).
+    pub fn set_search_colors(&self, all: &str, current: &str) {
+        self.search_tag.set_background(Some(all));
+        self.search_current_tag.set_background(Some(current));
+    }
+
+    /// Scroll the view so the given char offset is on-screen. Creates a
+    /// throwaway mark at the offset, scrolls it into view, then deletes it
+    /// (matches the `get_insert`/`scroll_mark_onscreen` idiom used for the vim
+    /// cursor elsewhere in this file).
+    pub fn scroll_to_char_offset(&self, off: i32) {
+        let buffer = self.gloss_view.buffer();
+        let iter = buffer.iter_at_offset(off);
+        let mark = buffer.create_mark(None, &iter, false);
+        self.gloss_view.scroll_mark_onscreen(&mark);
+        buffer.delete_mark(&mark);
     }
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.
