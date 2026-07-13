@@ -1712,6 +1712,38 @@ impl GlossOverlay {
         self.scroll_cursor_into_view();
     }
 
+    /// Move the block cursor (accent bar) to the CURRENT PAGE's block that
+    /// contains buffer char offset `off`. Used by overlay search so n/N move the
+    /// bar to the block holding the match. The search buffer is the shown page,
+    /// so we map `off` → line → the page-local `BlockRange` containing it and set
+    /// the page-local `cursor_block`. No-op with no blocks.
+    pub fn cursor_to_char_offset(&self, off: i32) {
+        let buffer = self.buffer();
+        let (start, end) = buffer.bounds();
+        let full = buffer.text(&start, &end, false).to_string();
+        let lines: Vec<&str> = full.split('\n').collect();
+        let mut line_start = Vec::with_capacity(lines.len() + 1);
+        let mut acc: i32 = 0;
+        for l in &lines {
+            line_start.push(acc);
+            acc += l.chars().count() as i32 + 1;
+        }
+        // Which buffer line does `off` fall on?
+        let target_line = line_start
+            .iter()
+            .rposition(|&s| off >= s)
+            .unwrap_or(0) as i32;
+        let blocks = self.blocks.borrow();
+        if let Some(idx) = blocks
+            .iter()
+            .position(|b| target_line >= b.start_line && target_line <= b.end_line)
+        {
+            drop(blocks);
+            self.cursor_block.set(idx);
+            self.mark_cursor_block();
+        }
+    }
+
     /// Jump the cursor to the first (`false`) or last (`true`) block; mark it and
     /// scroll it into view. Paginated: jumps the global cursor + turns the page.
     fn cursor_to_end(&self, last: bool) {

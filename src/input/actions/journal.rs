@@ -567,6 +567,10 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
         crate::input::overlay_search::apply(&buffer, &tag, &ctag, search);
     }
     if let Some(off) = scroll_to {
+        // Move the accent bar to the block holding the match, then scroll.
+        // (cursor_to_char_offset may turn the page; scroll after so the match
+        // is on-screen within it.)
+        s.journal_overlay.cursor_to_char_offset(off);
         s.journal_overlay.scroll_to_char_offset(off);
     }
 }

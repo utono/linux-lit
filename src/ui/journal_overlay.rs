@@ -1574,6 +1574,50 @@ impl JournalOverlay {
         self.sync_cursor_page();
     }
 
+    /// Move the block cursor (the accent bar) to the paragraph that CONTAINS the
+    /// buffer char offset `off`, turning to its page. Used by overlay search so
+    /// n/N move the accent bar to the block holding the current match, not just
+    /// the highlight. No-op for note pages (their block model is Markdown-planned,
+    /// not paragraph-line based) and when there are no nav blocks.
+    pub fn cursor_to_char_offset(&self, off: i32) {
+        if self.page_is_note.get() || self.all_paragraphs.borrow().is_empty() {
+            return;
+        }
+        // Rebuild paragraph line-spans from the live buffer (same basis as
+        // all_paragraphs = paragraph_texts(full)); map `off` (a CHAR offset)
+        // to the paragraph whose [start_line, end_line] char span contains it.
+        let buffer = self.view.buffer();
+        let (start, end) = buffer.bounds();
+        let full = buffer.text(&start, &end, false).to_string();
+        let lines: Vec<&str> = full.split('\n').collect();
+        // Char offset of each line's first char (line i starts after i newlines
+        // + all prior line chars).
+        let mut line_start = Vec::with_capacity(lines.len() + 1);
+        let mut acc: i32 = 0;
+        for l in &lines {
+            line_start.push(acc);
+            acc += l.chars().count() as i32 + 1; // +1 for the '\n'
+        }
+        let blocks = crate::ui::journal_block::journal_blocks(&lines);
+        // Blocks are index-aligned with all_paragraphs (both from the same
+        // journal_blocks split). Find the block whose char span holds `off`.
+        let target = blocks.iter().position(|b| {
+            let s = *line_start.get(b.start_line as usize).unwrap_or(&0);
+            let e = line_start
+                .get(b.end_line as usize)
+                .map(|ls| ls + lines.get(b.end_line as usize).map(|l| l.chars().count() as i32).unwrap_or(0))
+                .unwrap_or(i32::MAX);
+            off >= s && off <= e
+        });
+        if let Some(idx) = target {
+            let total = self.all_paragraphs.borrow().len();
+            if idx < total {
+                self.cursor_full.set(idx);
+                self.sync_cursor_page();
+            }
+        }
+    }
+
     fn full_cursor_to_end(&self, last: bool) {
         let total = self.all_paragraphs.borrow().len();
         if total == 0 {
