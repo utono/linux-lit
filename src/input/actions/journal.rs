@@ -374,17 +374,28 @@ pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
 
 /// Open the term input box (with distinct-tag suggestions) from inside the
 /// overlay (the `f` key). The user types a term freely; existing tags are
-/// suggested beneath. `set_suggestions` must run BEFORE `show()` (show clears
-/// the entry + grabs focus but does not populate suggestions).
+/// suggested beneath.
+///
+/// BORROW SAFETY: `set_suggestions`/`show()` call `search_entry.set_text("")`,
+/// which SYNCHRONOUSLY emits the entry's `changed` signal; that handler does
+/// `state.borrow()` to re-filter. So we must NOT hold a `borrow_mut` across
+/// those calls — do the widget work under a short-lived borrow that is dropped
+/// before the signal can re-enter, then set `input_mode` in a fresh borrow.
+/// (Holding the borrow across `set_text` is what caused the RefCell
+/// non-unwinding panic in the GTK callback.)
 pub(crate) fn open_term_input(state: &Rc<RefCell<AppState>>) {
     let terms = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_distinct_terms(&conn).ok())
         .unwrap_or_default();
-    let mut s = state.borrow_mut();
-    s.journal_term_input.set_suggestions(terms);
-    s.journal_term_input.show();
-    s.input_mode = InputMode::JournalTermInput;
+    {
+        let mut s = state.borrow_mut();
+        s.journal_term_input.set_suggestions(terms);
+    }
+    // Borrow dropped: `show()`'s set_text can now re-enter the `changed`
+    // handler's `state.borrow()` without a double-borrow.
+    state.borrow().journal_term_input.show();
+    state.borrow_mut().input_mode = InputMode::JournalTermInput;
 }
 
 /// Confirm the entered term: hide the box, return to the overlay, then activate

@@ -1388,16 +1388,24 @@ fn handle_journal_key(
     // them with a hint. `f` (re-search), `Escape` (clears the filter), and the
     // Ctrl+n/p stepping (handled in the is_ctrl block above via nav_page's
     // filter branch) stay live; `s` is a consumed no-op below.
+    // While a term filter is active the overlay shows a read-only cross-work
+    // entry via `render_filtered_match` (its own rendered buffer). Block-nav
+    // keys (j/k/x/y/g/G) act ONLY on `journal_overlay`'s buffer, so they are
+    // SAFE and stay live — the reader can page through the landed match.
+    // The GATED keys are the ones that read the stale origin-band
+    // `s.journal.pages[page_index]` or mutate: edit/rewrite/delete/copy
+    // (e/R/D/c/u), new-Q&A (r), visual-select (V), overlay-cycle (backslash),
+    // and TTS (space/a — they key audio by the stale entry id). Ctrl+n/p step
+    // the match subset; f re-searches; Esc clears.
     if state.borrow().journal.filter.is_some()
         && matches!(
             key_name,
-            "r" | "R" | "e" | "u" | "D" | "c" | "V" | "g" | "G"
-                | "j" | "q" | "k" | "comma" | "x" | "y" | "space" | "a" | "backslash"
+            "r" | "R" | "e" | "u" | "D" | "c" | "V" | "space" | "a" | "backslash"
         )
     {
         crate::ui::toast::show_transient(
             &state.borrow().chapter_toast,
-            "Clear the term filter (Esc) to edit or navigate entries",
+            "Clear the term filter (Esc) to edit or play entries",
             3,
         );
         return true;
