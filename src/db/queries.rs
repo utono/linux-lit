@@ -857,7 +857,7 @@ pub fn set_media_priority(
 
 pub fn open_db_rw() -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open(db_path())?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
 }
 

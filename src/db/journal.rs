@@ -496,6 +496,12 @@ pub fn move_journal_page(
 }
 
 pub fn delete_journal_page(conn: &Connection, id: i64) -> Result<(), rusqlite::Error> {
+    // Enable FK enforcement on THIS connection only, so `journal_tags`'
+    // `ON DELETE CASCADE` fires and the entry's tags are removed with it.
+    // Scoped here (not globally in `open_db_rw`) to avoid changing FK behavior
+    // for the ~50 other write paths that share that connection (bookmarks,
+    // glosses, echo — some of which reference synthetic line_mapping rows).
+    conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     conn.execute("DELETE FROM journal_entries WHERE id = ?1", [id])?;
     Ok(())
 }
