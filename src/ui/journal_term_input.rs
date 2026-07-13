@@ -29,7 +29,12 @@ impl JournalTermInput {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
-        let hint = Label::builder().xalign(0.0).build();
+        // Left margin aligns the hint text with the suggestion-row text above
+        // it. Rows sit inside the scrolledwindow (.library-picker scrolledwindow
+        // padding-left 8px) then the row itself (.library-picker row padding-left
+        // 14px) = 22px from the card edge; the hint is a direct card child, so
+        // it needs the full 22px to line up. Flush-left looked misaligned.
+        let hint = Label::builder().xalign(0.0).margin_start(22).build();
         hint.add_css_class("picker-item-detail");
 
         picker_box.append(&search_entry);
