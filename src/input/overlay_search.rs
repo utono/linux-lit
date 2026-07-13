@@ -121,7 +121,7 @@ mod gtk_ops {
     }
 }
 
-pub use gtk_ops::{apply, buffer_text, clear, reapply, set_from_text};
+pub use gtk_ops::{apply, clear, reapply, set_from_text};
 
 #[cfg(test)]
 mod tests {

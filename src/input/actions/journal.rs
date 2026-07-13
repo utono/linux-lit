@@ -478,7 +478,13 @@ pub(crate) fn open_overlay_search(state: &Rc<RefCell<AppState>>) {
         let s = state.borrow();
         s.search_bar.show();
     }
-    state.borrow_mut().input_mode = InputMode::OverlaySearchInput;
+    // Set the origin on EVERY open path — the field is sticky (gloss's open sets
+    // it to GlossOverlay and nothing resets it), so relying on the init default
+    // would route a journal `/` to the gloss overlay after any prior gloss
+    // search. Both writes are plain fields (no signal), safe in one borrow.
+    let mut s = state.borrow_mut();
+    s.overlay_search_origin = InputMode::JournalOverlay;
+    s.input_mode = InputMode::OverlaySearchInput;
 }
 
 /// Return in the `/` bar: read the typed regex, hide the bar, return to the
