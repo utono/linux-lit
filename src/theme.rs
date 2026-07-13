@@ -1179,6 +1179,87 @@ mod tests {
         assert!(c > 2.5 && c < 3.5, "rose on cream ~3.0, got {c}");
     }
 
+    // Env-driven contrast report for the `colorscheme` skill. NOT a real test
+    // (always passes); it is a harness the skill's script invokes via
+    // `cargo test contrast_report_harness -- --nocapture` to compute the app's
+    // OWN contrast for candidate colors, so the skill's verdict matches
+    // production. Reuses the private contrast_ratio (same module) — zero
+    // production surface (#[cfg(test)] only). Silent no-op when the env var is
+    // unset, so a normal `cargo test` run prints nothing.
+    //
+    // Input:  LIT_CONTRAST_THEME=<name>   (resolves card bg / ink / root)
+    //         LIT_CONTRAST_COLORS=key=#hex,key=#hex,...
+    //           keys: gloss gloss-cursor vocab-fg search root phrase cursor-line
+    // Output (stdout, one line per foreground color × surface):
+    //   CONTRAST <key> vs <surface> <ratio> <floor> PASS|FAIL
+    //   plus a final `CONTRAST_SUMMARY PASS|FAIL <nfail>` line.
+    #[test]
+    fn contrast_report_harness() {
+        let Ok(colors_spec) = std::env::var("LIT_CONTRAST_COLORS") else {
+            return; // not invoked by the skill; no-op
+        };
+        let theme_name =
+            std::env::var("LIT_CONTRAST_THEME").unwrap_or_else(|_| "default".to_string());
+        let theme = super::load_theme(&theme_name);
+        let bg = theme.text_bg.clone();
+        let ink = theme.text_fg.clone();
+        let root = theme.root_color.clone();
+
+        // Foreground colors (must be READABLE) get the full bg/root/ink matrix
+        // at their app floor; tints (phrase/cursor-line) are backgrounds, so we
+        // only report their contrast vs the card bg for visibility of overlaid
+        // text and skip the fg-only surfaces.
+        let fg_floor = READER_GLOSS_MIN_CONTRAST; // 4.5
+        let nfail = std::cell::Cell::new(0u32);
+        let check = |key: &str, color: &str, surface: &str, surf_hex: &str, floor: f64| {
+            // rgba tints: composite over the card bg before measuring.
+            let solid = if color.trim_start().starts_with("rgba(") {
+                let (r, g, b) = super::rgba_str_to_rgb(color);
+                format!("#{:02x}{:02x}{:02x}", r as u8, g as u8, b as u8)
+            } else {
+                color.to_string()
+            };
+            let ratio = contrast_ratio(&solid, surf_hex);
+            let verdict = if ratio >= floor { "PASS" } else { "FAIL" };
+            if ratio < floor {
+                nfail.set(nfail.get() + 1);
+            }
+            println!("CONTRAST {key} vs {surface} {ratio:.2} {floor:.2} {verdict}");
+        };
+
+        for pair in colors_spec.split(',') {
+            let Some((key, hex)) = pair.split_once('=') else { continue };
+            let (key, hex) = (key.trim(), hex.trim());
+            match key {
+                // Foreground colors: full matrix (bg 4.5, root 1.8, ink 1.5).
+                "gloss" | "gloss-cursor" | "vocab-fg" | "search" => {
+                    check(key, hex, "bg", &bg, fg_floor);
+                    check(key, hex, "root", &root, READER_GLOSS_ROOT_MIN_CONTRAST);
+                    check(key, hex, "ink", &ink, READER_GLOSS_INK_MIN_CONTRAST);
+                }
+                // Tint backgrounds: report vs bg only (visibility of the tint).
+                "phrase" | "cursor-line" => {
+                    // A tint is "visible" if it differs enough from bg; we use a
+                    // low informational floor (not an app-enforced gate).
+                    check(key, hex, "bg", &bg, 1.05);
+                }
+                // Root itself: report vs bg + ink so the wallpaper isn't a
+                // near-match of the card or the body text.
+                "root" => {
+                    check(key, hex, "bg", &bg, 1.10);
+                    check(key, hex, "ink", &ink, 1.10);
+                }
+                _ => {
+                    println!("CONTRAST_ERROR unknown key {key}");
+                    nfail.set(nfail.get() + 1);
+                }
+            }
+        }
+        let n = nfail.get();
+        let summary = if n == 0 { "PASS" } else { "FAIL" };
+        println!("CONTRAST_SUMMARY {summary} {n}");
+    }
+
     #[test]
     fn vocab_popup_ink_contrasts_with_root_variants() {
         // Dark root: the default theme's light text_fg wins over its dark
