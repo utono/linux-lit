@@ -8,10 +8,6 @@ pub const TITLE: &str = "Journal keybinds";
 /// Grouped (key, action) rows. Matches handle_journal_key + journal visual mode.
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
-        ("j / q", "next block"),
-        ("k / ,", "prev block"),
-        ("x / y", "next / prev page (this Q&A)"),
-        ("g g / G", "first / last block"),
         ("Ctrl+n / Ctrl+p", "next / prev Q&A in band"),
         ("Alt+n / Alt+p", "next / prev scene"),
         ("Alt+s", "current scene band"),
@@ -34,17 +30,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+Shift+J", "move Q&A to another band"),
     ]),
     ("Vim edit mode (after e)", &[
-        ("h j k l / w b e / 0 ^ $", "motions"),
-        ("g g / G / f t F T / %", "go top/end · find · match"),
-        ("i a o / I A O", "insert / append / open line"),
-        ("x dd D / cw ciw / r J ~", "delete · change · replace · join"),
-        ("y p P / v V", "yank · put · visual"),
         ("H", "highlight selection (visual; toggles)"),
-        ("u / Ctrl+R / .", "undo · redo · repeat"),
         ("Ctrl+v", "paste clipboard (also in the r ask prompt)"),
-        (":w / :wq", "save / save & quit"),
-        ("R", "ask Claude to rewrite"),
-        (":q / Esc / :q!", "quit (warns if unsaved) · force"),
     ]),
     ("Cross-reference", &[
         ("Ctrl+\\", "pick a Q&A"),

@@ -1225,12 +1225,21 @@ pub(crate) fn vim_open_rewrite(
 /// come straight from the displayed page. Stashes them in `journal.vim_rewrite`
 /// so `submit_prompt` sends them with the instruction (same rewrite path as `R`
 /// inside the editor). No-op (toast) on an empty band.
+/// The journal entry currently DISPLAYED in the overlay: the active term-filter
+/// match (`f`-opened cross-work entry) when a filter is set, else the current
+/// band page. Rewrite/edit paths must read THIS, not `journal.pages[page_index]`
+/// (which is the origin band and holds the wrong entry under a filter).
+fn displayed_journal_page(s: &AppState) -> Option<crate::db::journal::JournalPage> {
+    if let Some(filter) = s.journal.filter.as_ref() {
+        return filter.matches.get(filter.pos).map(|m| m.page.clone());
+    }
+    s.journal.pages.get(s.journal.page_index).cloned()
+}
+
 pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     let page = {
         let s = state.borrow();
-        s.journal
-            .pages
-            .get(s.journal.page_index)
+        displayed_journal_page(&s)
             .map(|p| (p.id, p.question.trim().to_string(), p.answer.trim().to_string()))
     };
     let Some((id, q, a)) = page else {
@@ -1329,8 +1338,23 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
                 answer.trim().to_string(),
             );
             let mut s = state.borrow_mut();
-            render_current(&mut s);
-            land_on_current_band_id(&mut s, id);
+            // Filter-aware re-render (an `f`-opened entry's R with an empty
+            // instruction lands here) — keep the filtered view, not the origin
+            // band. The answer is unchanged (empty instruction), so no in-memory
+            // match update needed.
+            let in_filter = s
+                .journal
+                .filter
+                .as_ref()
+                .and_then(|f| f.matches.get(f.pos))
+                .map(|m| m.page.id == id)
+                .unwrap_or(false);
+            if in_filter {
+                render_filtered_match(&mut s);
+            } else {
+                render_current(&mut s);
+                land_on_current_band_id(&mut s, id);
+            }
             crate::ui::toast::show_transient(&s.chapter_toast, "Saved as-is", 2);
             return;
         }
@@ -1356,9 +1380,12 @@ fn rewrite_with_claude(
 ) {
     let (model, context, work_type, prev_question, prev_answer) = {
         let s = state.borrow();
-        let Some(p) = s.journal.pages.iter().find(|p| p.id == id) else {
+        // The displayed entry (filter match under `f`, else band page) — NOT a
+        // bare journal.pages lookup, which misses the cross-work filter entry.
+        let Some(p) = displayed_journal_page(&s) else {
             return;
         };
+        let p = &p;
         let model = if p.claude_model.is_empty() {
             s.config.claude_model.clone()
         } else {
@@ -1408,8 +1435,28 @@ fn rewrite_with_claude(
             // Background auto-tag the rewritten entry (rw conn above is dropped).
             spawn_retag(st, id, question_owned.clone(), revised.clone());
             let mut s = st.borrow_mut();
-            render_current(&mut s);
-            land_on_current_band_id(&mut s, id);
+            // Under an active term filter the displayed entry is a cross-work
+            // filter match, not a band page — update the in-memory match's answer
+            // and re-render the filtered view (render_current would show the
+            // wrong origin band). Otherwise the normal band re-render + land.
+            let in_filter = s
+                .journal
+                .filter
+                .as_ref()
+                .and_then(|f| f.matches.get(f.pos))
+                .map(|m| m.page.id == id)
+                .unwrap_or(false);
+            if in_filter {
+                if let Some(filter) = s.journal.filter.as_mut() {
+                    if let Some(m) = filter.matches.get_mut(filter.pos) {
+                        m.page.answer = revised.clone();
+                    }
+                }
+                render_filtered_match(&mut s);
+            } else {
+                render_current(&mut s);
+                land_on_current_band_id(&mut s, id);
+            }
             crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
         },
         move |st, msg| {

@@ -1446,15 +1446,18 @@ fn handle_journal_key(
     // entry via `render_filtered_match` (its own rendered buffer). Block-nav
     // keys (j/k/x/y/g/G) act ONLY on `journal_overlay`'s buffer, so they are
     // SAFE and stay live — the reader can page through the landed match.
-    // The GATED keys are the ones that read the stale origin-band
-    // `s.journal.pages[page_index]` or mutate: edit/rewrite/delete/copy
-    // (e/R/D/c/u), new-Q&A (r), visual-select (V), overlay-cycle (backslash),
-    // and TTS (space/a — they key audio by the stale entry id). Ctrl+n/p step
-    // the match subset; f re-searches; Esc clears.
+    // `R` (rewrite) is also LIVE: begin_rewrite/rewrite_with_claude resolve the
+    // DISPLAYED entry (the filter match) via displayed_journal_page and
+    // re-render the filtered view, so it operates on the cross-work entry on
+    // screen, not the stale origin. The still-GATED keys read the stale
+    // origin-band `s.journal.pages[page_index]` or mutate without that
+    // filter-awareness: edit/delete/copy/undo (e/D/c/u), new-Q&A (r),
+    // visual-select (V), overlay-cycle (backslash), TTS (space/a — audio keyed
+    // by the stale id). Ctrl+n/p step the subset; f re-searches; Esc clears.
     if state.borrow().journal.filter.is_some()
         && matches!(
             key_name,
-            "r" | "R" | "e" | "u" | "D" | "c" | "V" | "space" | "a" | "backslash"
+            "r" | "e" | "u" | "D" | "c" | "V" | "space" | "a" | "backslash"
         )
     {
         crate::ui::toast::show_transient(
