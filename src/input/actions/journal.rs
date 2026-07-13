@@ -912,12 +912,13 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
     let (question, answer) = state.borrow().journal_overlay.edit_buffer_qa();
     let q = question.trim().to_string();
     let a = answer.trim().to_string();
+    let saved_id;
     {
         let mut s = state.borrow_mut();
         let undo_snap = s.journal.pages.get(s.journal.page_index).map(|page| {
             (page.id, page.question.clone(), page.answer.clone(), page.claude_model.clone())
         });
-        let saved_id = s.journal.pages.get(s.journal.page_index).map(|page| {
+        saved_id = s.journal.pages.get(s.journal.page_index).map(|page| {
             let (id, model) = (page.id, page.claude_model.clone());
             if let Ok(conn) = crate::db::queries::open_db_rw() {
                 let _ = crate::db::journal::update_journal_page(&conn, id, &q, &a, &model);
@@ -946,6 +947,10 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
     if !quit {
         let s = state.borrow();
         s.journal_overlay.reseed_edit_buffer(&q, &a);
+    }
+    // Background auto-tag the edited entry (all state borrows above are dropped).
+    if let Some(id) = saved_id {
+        spawn_retag(state, id, q.clone(), a.clone());
     }
 }
 
@@ -1122,6 +1127,15 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
                 );
                 purge_journal_audio(&conn, id);
             }
+            // The hand-edits are a real user-authored Q&A change persisted with
+            // no Claude call — re-tag it, exactly like the `:w` edit-save path.
+            // (conn block dropped above; call before re-borrowing state.)
+            spawn_retag(
+                state,
+                id,
+                question.trim().to_string(),
+                answer.trim().to_string(),
+            );
             let mut s = state.borrow_mut();
             render_current(&mut s);
             land_on_current_band_id(&mut s, id);
@@ -1199,6 +1213,8 @@ fn rewrite_with_claude(
                 }
                 purge_journal_audio(&conn, id);
             }
+            // Background auto-tag the rewritten entry (rw conn above is dropped).
+            spawn_retag(st, id, question_owned.clone(), revised.clone());
             let mut s = st.borrow_mut();
             render_current(&mut s);
             land_on_current_band_id(&mut s, id);
@@ -1207,6 +1223,60 @@ fn rewrite_with_claude(
         move |st, msg| {
             let s = st.borrow();
             crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+        },
+    );
+}
+
+/// Fire-and-forget: extract this entry's terms via Claude (the shared
+/// `journal.extract-terms` prompt, on `tag_extract_model`) and replace its
+/// auto-generated `journal_tags`. No-op when `auto_tag_journal` is off. On a
+/// call error nothing is written (existing tags survive); only a successful
+/// reply runs the replace. Text is captured by value so overlapping re-edits
+/// each tag their own snapshot (last commit wins — correct).
+pub(crate) fn spawn_retag(
+    state: &Rc<RefCell<AppState>>,
+    entry_id: i64,
+    question: String,
+    answer: String,
+) {
+    let (enabled, model) = {
+        let s = state.borrow();
+        (s.config.auto_tag_journal, s.config.tag_extract_model.clone())
+    };
+    if !enabled {
+        return;
+    }
+    // The active DB prompt wins when present; otherwise fall back to the
+    // hardcoded prompt (litdb's batch tagger does the same — the row has never
+    // been seeded in the real lit.db), so the feature works unseeded.
+    let prompt = crate::db::prompts::active_prompt("journal.extract-terms")
+        .unwrap_or_else(|| crate::journal_tags::FALLBACK_EXTRACT_PROMPT.to_string());
+    let user_msg = format!("Q: {question}\nA: {answer}");
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        prompt,
+        user_msg,
+        model,
+        // on_success: parse + write. Own its own rw connection; never touches AppState.
+        move |_state, reply| {
+            let terms = crate::journal_tags::parse_terms(&reply);
+            match crate::db::queries::open_db_rw() {
+                Ok(conn) => {
+                    if let Err(e) = crate::db::journal::replace_auto_tags(&conn, entry_id, &terms) {
+                        crate::logging::log(&format!("AUTO_TAG: write failed for {entry_id}: {e}"));
+                    } else {
+                        crate::logging::log(&format!(
+                            "AUTO_TAG: entry {entry_id} tagged with {} term(s)",
+                            terms.len()
+                        ));
+                    }
+                }
+                Err(e) => crate::logging::log(&format!("AUTO_TAG: open_db_rw failed: {e}")),
+            }
+        },
+        // on_error: write NOTHING — leave existing tags intact.
+        move |_state, msg| {
+            crate::logging::log(&format!("AUTO_TAG: extract call failed ({msg}); tags unchanged"));
         },
     );
 }
@@ -1320,41 +1390,38 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         user_msg,
         model,
         move |st, answer| {
+            let mut saved_id: Option<i64> = None;
             if let Ok(conn) = crate::db::queries::open_db_rw() {
                 let write_result = match &band {
-                    JournalBand::Work => {
-                        crate::db::journal::save_journal_page(
-                            &conn, &work_abbrev,
-                            crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1,
-                            &question_owned, &answer, &model_for_db, "work", "qa",
-                        )
-                        .map(|_| ())
-                    }
-                    JournalBand::Scene(d1, d2) => {
-                        crate::db::journal::save_journal_page(
-                            &conn, &work_abbrev, *d1, *d2,
-                            &question_owned, &answer, &model_for_db, "scene", "qa",
-                        )
-                        .map(|_| ())
-                    }
+                    JournalBand::Work => crate::db::journal::save_journal_page(
+                        &conn, &work_abbrev,
+                        crate::app::JOURNAL_WORK_DIV.0, crate::app::JOURNAL_WORK_DIV.1,
+                        &question_owned, &answer, &model_for_db, "work", "qa",
+                    ),
+                    JournalBand::Scene(d1, d2) => crate::db::journal::save_journal_page(
+                        &conn, &work_abbrev, *d1, *d2,
+                        &question_owned, &answer, &model_for_db, "scene", "qa",
+                    ),
                     JournalBand::Passage { div1, div2, start, end } => {
                         crate::db::journal::save_passage_page(
                             &conn, &work_abbrev, *div1, *div2, start, end,
                             &passage_source_text, &question_owned, &answer, &model_for_db,
                         )
-                        .map(|_| ())
                     }
-                    JournalBand::Author(_) => {
-                        crate::db::journal::save_author_page(
-                            &conn, &work_author,
-                            &question_owned, &answer, &model_for_db, "qa",
-                        )
-                        .map(|_| ())
-                    }
+                    JournalBand::Author(_) => crate::db::journal::save_author_page(
+                        &conn, &work_author,
+                        &question_owned, &answer, &model_for_db, "qa",
+                    ),
                 };
-                if let Err(e) = write_result {
-                    crate::logging::log(&format!("JOURNAL: db write failed: {}", e));
+                match write_result {
+                    Ok(id) => saved_id = Some(id),
+                    Err(e) => crate::logging::log(&format!("JOURNAL: db write failed: {}", e)),
                 }
+            }
+            // Background auto-tag the new entry (borrows `st` briefly; the rw
+            // connection above is already dropped).
+            if let Some(id) = saved_id {
+                spawn_retag(st, id, question_owned.clone(), answer.clone());
             }
             let pages = crate::db::queries::open_db()
                 .ok()

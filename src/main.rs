@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod gutter;
 mod input;
+mod journal_tags;
 mod instance;
 mod logging;
 mod mode;

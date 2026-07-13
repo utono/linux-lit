@@ -303,6 +303,33 @@ pub fn find_distinct_terms(conn: &Connection) -> Result<Vec<String>, rusqlite::E
     rows.collect()
 }
 
+/// Replace this entry's auto-generated tags with `terms` in one transaction:
+/// delete rows whose source is 'backfill' or 'reader-auto', then insert `terms`
+/// with source 'reader-auto'. Tags with any other source (e.g. 'manual') are
+/// preserved. An empty `terms` slice just clears the auto rows.
+pub fn replace_auto_tags(
+    conn: &Connection,
+    entry_id: i64,
+    terms: &[String],
+) -> Result<(), rusqlite::Error> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM journal_tags \
+         WHERE entry_id = ?1 AND source IN ('backfill', 'reader-auto')",
+        rusqlite::params![entry_id],
+    )?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT OR IGNORE INTO journal_tags (entry_id, term, source) \
+             VALUES (?1, ?2, 'reader-auto')",
+        )?;
+        for term in terms {
+            stmt.execute(rusqlite::params![entry_id, term])?;
+        }
+    }
+    tx.commit()
+}
+
 pub fn save_passage_page(
     conn: &Connection,
     work_abbrev: &str,
@@ -469,6 +496,12 @@ pub fn move_journal_page(
 }
 
 pub fn delete_journal_page(conn: &Connection, id: i64) -> Result<(), rusqlite::Error> {
+    // Enable FK enforcement on THIS connection only, so `journal_tags`'
+    // `ON DELETE CASCADE` fires and the entry's tags are removed with it.
+    // Scoped here (not globally in `open_db_rw`) to avoid changing FK behavior
+    // for the ~50 other write paths that share that connection (bookmarks,
+    // glosses, echo — some of which reference synthetic line_mapping rows).
+    conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     conn.execute("DELETE FROM journal_entries WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -832,6 +865,68 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn replace_auto_tags_replaces_auto_preserves_manual() {
+        let conn = mem();
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (5, 'Rom', 1, 1, 'q', 'a', 'scene')",
+            [],
+        ).unwrap();
+        // Pre-existing tags: one backfill, one reader-auto (both auto), one manual.
+        conn.execute(
+            "INSERT INTO journal_tags (entry_id, term, source) VALUES \
+             (5,'old-backfill','backfill'),(5,'old-auto','reader-auto'),(5,'keepme','manual')",
+            [],
+        ).unwrap();
+
+        replace_auto_tags(&conn, 5, &["fee simple".to_string(), "freehold".to_string()]).unwrap();
+
+        let mut got: Vec<(String, String)> = conn
+            .prepare("SELECT term, source FROM journal_tags WHERE entry_id=5 ORDER BY term")
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        got.sort();
+        // manual survives; both auto rows gone; two new reader-auto rows present.
+        assert_eq!(
+            got,
+            vec![
+                ("fee simple".to_string(), "reader-auto".to_string()),
+                ("freehold".to_string(), "reader-auto".to_string()),
+                ("keepme".to_string(), "manual".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn replace_auto_tags_empty_clears_auto_only() {
+        let conn = mem();
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (6, 'Rom', 1, 1, 'q', 'a', 'scene')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO journal_tags (entry_id, term, source) VALUES \
+             (6,'gone','reader-auto'),(6,'stay','manual')",
+            [],
+        ).unwrap();
+
+        replace_auto_tags(&conn, 6, &[]).unwrap();
+
+        let terms: Vec<String> = conn
+            .prepare("SELECT term FROM journal_tags WHERE entry_id=6 ORDER BY term")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(terms, vec!["stay".to_string()]);
     }
 
     #[test]
