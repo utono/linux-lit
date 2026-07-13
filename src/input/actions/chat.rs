@@ -957,7 +957,7 @@ pub(crate) mod chat_revision {
             .unwrap_or_default();
         {
             let s = state_rc.borrow();
-            crate::ui::toast::show_persistent(&s.chapter_toast, "Rewriting\u{2026}");
+            crate::ui::toast::show_persistent(&s.chapter_toast, "Rewriting Q & A\u{2026}");
         }
         let model_for_db = model.clone();
         crate::input::actions::claude_bridge::run_claude_request(

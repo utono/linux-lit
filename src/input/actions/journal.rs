@@ -30,6 +30,29 @@ fn titlecase_first(s: &str) -> String {
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
 
+/// What an `R` rewrite is regenerating, solely so the "Rewriting …" toast can
+/// say which part is in flight. `Answer` is the plain `a` path (and the vim-`R`
+/// instruction path); `Question` is the `q` path (question reworded, answer
+/// regenerated afresh); `Both` is the `b` path (question improved, then the
+/// answer regenerated for it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewriteTarget {
+    Question,
+    Answer,
+    Both,
+}
+
+impl RewriteTarget {
+    /// The persistent toast text shown while the rewrite call is in flight.
+    fn toast(self) -> &'static str {
+        match self {
+            RewriteTarget::Question => "Rewriting question\u{2026}",
+            RewriteTarget::Answer => "Rewriting answer\u{2026}",
+            RewriteTarget::Both => "Rewriting question & answer\u{2026}",
+        }
+    }
+}
+
 /// Parse the improve-question reply: strip a markdown fence + trim. Returns
 /// `original` when the reply is empty/whitespace so the question is never lost.
 fn parse_improved_question(raw: &str, original: &str) -> String {
@@ -45,11 +68,27 @@ fn parse_improved_question(raw: &str, original: &str) -> String {
 /// `journal.improve-question` api_prompts row is absent. Returns ONLY the
 /// improved question (one line, no preamble, no JSON).
 const FALLBACK_IMPROVE_QUESTION_PROMPT: &str = "\
-You improve the phrasing of a reader's question about a literary work. Make it \
-clear, specific, and well-formed while PRESERVING the reader's intent and \
-meaning — do not answer it, do not add new sub-questions, do not change what is \
-being asked. Fix grammar, tighten wording, and resolve vague references only as \
-the surrounding intent allows.\n\
+You are a literature tutor helping a student learn to ask sharper, more \
+insightful questions about a text. Recast the student's question the way an \
+expert reader would pose it, so the student absorbs how scholars frame \
+inquiry. Two things to do at once:\n\
+1. FRAME IT LIKE AN EXPERT — name the literary technique, device, rhetorical \
+move, or term of art actually at stake, and anchor the question to the specific \
+moment (speaker, line, or turn) it concerns, rather than asking in vague, \
+general terms.\n\
+2. DEEPEN THE INQUIRY — push a surface question toward the richer question \
+underneath it: from \"what does this mean\" toward \"how does this work\" or \
+\"why does it matter here\". Draw out the interpretive stakes the student is \
+circling.\n\
+PRESERVE what the student is genuinely curious about — do not swap in a \
+different question, do not answer it, and do not add extra sub-questions. Even \
+when the original is already grammatical, produce a genuinely sharper, more \
+expert version rather than returning it unchanged.\n\
+When the improved question uses a scholarly or technical term — a literary \
+device, rhetorical figure, or term of art (e.g. conceit, ironize, metonymy, or \
+a legal or prosodic term) — gloss it briefly in a parenthetical the first time, \
+so the student learns the vocabulary as they read (e.g. \"ironize (turn against \
+itself)\", \"conceit (an extended, ingenious metaphor)\").\n\
 {terms}\n\
 Return ONLY the improved question as a single line of plain text — no preamble, \
 no quotes, no markdown, no explanation.";
@@ -167,6 +206,15 @@ fn improve_question(
         model,
         move |st, reply| {
             let improved = parse_improved_question(&reply, &original);
+            if improved == original {
+                crate::logging::log(
+                    "IMPROVE-Q: model returned the question unchanged (no reword)",
+                );
+            } else {
+                crate::logging::log(&format!(
+                    "IMPROVE-Q: reworded\n  from: {original}\n  to:   {improved}"
+                ));
+            }
             on_done(st, improved);
         },
         move |st, msg| {
@@ -240,10 +288,11 @@ pub struct JournalState {
     /// Escape returns to the reader (not a hidden journal overlay).
     pub picker_from_reader: bool,
     /// Set by `vim_open_rewrite` (the `R` key in the vim editor) before opening
-    /// the ask card: `(page_id, question, answer)` of the CURRENT edit buffer.
-    /// Read and consumed by `submit_prompt`, which sends it + the typed
-    /// instruction to Claude as a rewrite. `None` for a normal create-ask.
-    pub vim_rewrite: Option<(i64, String, String)>,
+    /// the ask card: `(page_id, question, answer, target)` of the CURRENT edit
+    /// buffer. Read and consumed by `submit_prompt`, which sends it + the typed
+    /// instruction to Claude as a rewrite. `target` selects the "Rewriting …"
+    /// toast wording. `None` for a normal create-ask.
+    pub vim_rewrite: Option<(i64, String, String, RewriteTarget)>,
     /// Id of the page the overlay OPENED on when entered from the reader
     /// (Ctrl+j). While the viewer is still on this page, closing restores the
     /// exact saved reading position instead of source-jumping — a peek at the
@@ -1175,11 +1224,39 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
 /// rewrite instruction that references the band (e.g. "now that this is in the
 /// work band, broaden the opening") has the context it needs. The question, the
 /// current answer, and the instruction follow in "revise this answer" shape.
+///
+/// A journal Q&A is often browsed (via the cross-work term filter) while reading
+/// a DIFFERENT work than the one it was filed under. The rewrite must answer the
+/// question as asked — about the work the QUESTION concerns — and must never open
+/// with meta-commentary about which work is on screen. The `FOCUS` directive
+/// suppresses the "the scene you're reading belongs to X, but your question is
+/// about Y" preamble and stops the answer from drifting onto the on-screen work.
 pub(crate) fn rewrite_user_message(context: &str, question: &str, answer: &str, instruction: &str) -> String {
     format!(
-        "{}\n\nOriginal question:\n{}\n\nCurrent answer:\n{}\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
+        "{}\n\nOriginal question:\n{}\n\nCurrent answer:\n{}\n\nFOCUS: Answer the question as it is asked — stay on the work, scene, and passage the QUESTION itself concerns. Do NOT switch to a different work, and do NOT open with any disambiguation or meta-commentary about which work the reader is currently viewing (no \"this passage belongs to X, but your question is about Y\"). Just give the revised answer.\n\nRevise the answer per this instruction (return only the revised answer):\n{}",
         context, question, answer, instruction,
     )
+}
+
+/// Grounding block for rewriting a CROSS-WORK filter entry (see
+/// `displayed_entry_is_cross_work`): the reader is browsing this Q&A while
+/// reading a different work, so we deliberately omit the on-screen work's
+/// header and scene text. The entry's own stored passage source (if any) is the
+/// only grounding; the question itself names its subject. Keeps the rewrite
+/// anchored to what the Q&A is actually about, not what happens to be on screen.
+fn cross_work_rewrite_context(passage_source: &str) -> String {
+    let ps = passage_source.trim();
+    if ps.is_empty() {
+        "This Q&A stands on its own — answer the question as it is asked, about \
+         the work and passage it concerns. Do not tie it to any other work."
+            .to_string()
+    } else {
+        format!(
+            "This Q&A concerns the following passage. Answer the question as it \
+             is asked, about the work this passage belongs to — do not tie it to \
+             any other work.\n\nPassage:\n{ps}"
+        )
+    }
 }
 
 /// Assemble the band-aware grounding context for a journal Q&A, mirroring the
@@ -1375,7 +1452,7 @@ pub(crate) fn vim_open_rewrite(
         s.input_mode = crate::app::InputMode::JournalOverlay;
         render_current(&mut s);
         land_on_current_band_id(&mut s, id);
-        s.journal.vim_rewrite = Some((id, q, a));
+        s.journal.vim_rewrite = Some((id, q, a, RewriteTarget::Answer));
     }
     let s = state.borrow();
     s.journal_overlay.open_ask_card(
@@ -1409,6 +1486,24 @@ fn displayed_journal_page(s: &AppState) -> Option<crate::db::journal::JournalPag
     s.journal.pages.get(s.journal.page_index).cloned()
 }
 
+/// True when the DISPLAYED entry belongs to a work OTHER than the one currently
+/// being read — i.e. an `f`-opened cross-work term-filter match whose stored
+/// `work_abbrev` differs from `current_work`'s. In that case the on-screen work's
+/// scene text is the WRONG grounding for a rewrite (it would drag the answer onto
+/// the work in front of the reader), so `rewrite_with_claude` grounds on the
+/// entry's own passage source instead. Band pages (no filter) are always the
+/// current work, so this is `false` for them.
+fn displayed_entry_is_cross_work(s: &AppState) -> bool {
+    let Some(filter) = s.journal.filter.as_ref() else {
+        return false;
+    };
+    let Some(m) = filter.matches.get(filter.pos) else {
+        return false;
+    };
+    let current = current_work_abbrev(s);
+    !current.is_empty() && m.work_abbrev != current
+}
+
 pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     let page = {
         let s = state.borrow();
@@ -1421,7 +1516,7 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     };
     {
         let mut s = state.borrow_mut();
-        s.journal.vim_rewrite = Some((id, q, a));
+        s.journal.vim_rewrite = Some((id, q, a, RewriteTarget::Answer));
     }
     let s = state.borrow();
     s.journal_overlay.open_ask_card(
@@ -1450,7 +1545,7 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
 pub(crate) fn begin_rewrite_with(state: &Rc<RefCell<AppState>>, id: i64, q: &str, a: &str) {
     {
         let mut s = state.borrow_mut();
-        s.journal.vim_rewrite = Some((id, q.to_string(), a.to_string()));
+        s.journal.vim_rewrite = Some((id, q.to_string(), a.to_string(), RewriteTarget::Both));
     }
     let s = state.borrow();
     s.journal_overlay.open_ask_card(
@@ -1607,6 +1702,7 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
                 &improved_q,
                 &answer,
                 "The question was reworded for clarity; answer this (possibly reworded) question afresh, grounded as before.",
+                RewriteTarget::Question,
             );
         }
     });
@@ -1677,7 +1773,7 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     // instruction for the stashed (id, q, a) — not a new-Q&A question.
     let rewrite = state.borrow_mut().journal.vim_rewrite.take();
     close_prompt(state);
-    if let Some((id, question, answer)) = rewrite {
+    if let Some((id, question, answer, target)) = rewrite {
         let instruction = text.trim();
         if instruction.is_empty() {
             // Empty instruction → just save the hand-edits as-is.
@@ -1725,7 +1821,7 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
             crate::ui::toast::show_transient(&s.chapter_toast, "Saved as-is", 2);
             return;
         }
-        rewrite_with_claude(state, id, &question, &answer, instruction);
+        rewrite_with_claude(state, id, &question, &answer, instruction, target);
         return;
     }
     if text.trim().is_empty() {
@@ -1754,6 +1850,7 @@ fn rewrite_with_claude(
     question: &str,
     answer: &str,
     instruction: &str,
+    target: RewriteTarget,
 ) {
     let (model, context, work_type, prev_question, prev_answer) = {
         let s = state.borrow();
@@ -1774,20 +1871,30 @@ fn rewrite_with_claude(
             .map(|w| w.work_type.clone())
             .unwrap_or_default();
         let passage_source = p.source_text.clone().unwrap_or_default();
-        let band = band_for_rewrite(p);
-        let anchor_work_line = s
-            .journal
-            .return_pos
-            .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
-            .unwrap_or(0);
-        let context = rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source);
+        // A cross-work filter entry (browsing another work's Q&A while reading
+        // this one) must NOT be grounded on the on-screen work's scene text —
+        // that framing drags the rewritten answer onto the work in front of the
+        // reader and prompts a "this belongs to a different work" preamble. Ground
+        // it on its OWN stored passage source only; the question carries its own
+        // subject. Same-work band pages keep the full band-aware grounding.
+        let context = if displayed_entry_is_cross_work(&s) {
+            cross_work_rewrite_context(&passage_source)
+        } else {
+            let band = band_for_rewrite(p);
+            let anchor_work_line = s
+                .journal
+                .return_pos
+                .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
+                .unwrap_or(0);
+            rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source)
+        };
         (model, context, work_type, p.question.clone(), p.answer.clone())
     };
     let question_owned = question.to_string();
     let model_for_db = model.clone();
     let user_msg = rewrite_user_message(&context, question, answer, instruction);
 
-    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Rewriting\u{2026}");
+    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, target.toast());
 
     crate::input::actions::claude_bridge::run_claude_request(
         state,
@@ -2466,6 +2573,10 @@ mod tests {
         assert!(c_pos < q_pos, "context should lead the message");
         assert!(q_pos < a_pos, "question before answer");
         assert!(i_pos > a_pos, "instruction should follow the current answer");
+        // The focus directive that suppresses cross-work mismatch preambles is
+        // present, between the current answer and the instruction.
+        let r_pos = msg.find("FOCUS:").expect("focus directive present");
+        assert!(r_pos > a_pos && r_pos < i_pos, "focus directive sits after the answer, before the instruction");
     }
 
     /// Build a `JournalPage` for band-classification tests.
