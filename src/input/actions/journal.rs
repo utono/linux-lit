@@ -1775,52 +1775,17 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     close_prompt(state);
     if let Some((id, question, answer, target)) = rewrite {
         let instruction = text.trim();
-        if instruction.is_empty() {
-            // Empty instruction → just save the hand-edits as-is.
-            if let Ok(conn) = crate::db::queries::open_db_rw() {
-                let model = state
-                    .borrow()
-                    .journal
-                    .pages
-                    .iter()
-                    .find(|p| p.id == id)
-                    .map(|p| p.claude_model.clone())
-                    .unwrap_or_default();
-                let _ = crate::db::journal::update_journal_page(
-                    &conn, id, question.trim(), answer.trim(), &model,
-                );
-                purge_journal_audio(&conn, id);
-            }
-            // The hand-edits are a real user-authored Q&A change persisted with
-            // no Claude call — re-tag it, exactly like the `:w` edit-save path.
-            // (conn block dropped above; call before re-borrowing state.)
-            spawn_retag(
-                state,
-                id,
-                question.trim().to_string(),
-                answer.trim().to_string(),
-            );
-            let mut s = state.borrow_mut();
-            // Filter-aware re-render (an `f`-opened entry's R with an empty
-            // instruction lands here) — keep the filtered view, not the origin
-            // band. The answer is unchanged (empty instruction), so no in-memory
-            // match update needed.
-            let in_filter = s
-                .journal
-                .filter
-                .as_ref()
-                .and_then(|f| f.matches.get(f.pos))
-                .map(|m| m.page.id == id)
-                .unwrap_or(false);
-            if in_filter {
-                render_filtered_match(&mut s);
-            } else {
-                render_current(&mut s);
-                land_on_current_band_id(&mut s, id);
-            }
-            crate::ui::toast::show_transient(&s.chapter_toast, "Saved as-is", 2);
-            return;
-        }
+        // An empty instruction means "no instructions — rerun with the existing
+        // prompt": regenerate the answer afresh for the current (possibly
+        // hand-edited) question, grounded as before. Any buffer hand-edits were
+        // already persisted before the card opened (vim_open_rewrite) or come
+        // straight from the displayed page (begin_rewrite*), so regenerating over
+        // them loses nothing. The typed-instruction path below is unchanged.
+        let instruction = if instruction.is_empty() {
+            "No further instruction was given; answer this question afresh under the standard guidance, grounded as before."
+        } else {
+            instruction
+        };
         rewrite_with_claude(state, id, &question, &answer, instruction, target);
         return;
     }

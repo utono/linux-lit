@@ -16,6 +16,20 @@ request; the prompt text is `db::prompts::active_prompt(<key>)` (the lit.db
 `api_prompts` active row) with a compiled `FALLBACK_*` constant when the row is
 absent.
 
+Two terms describe how these requests relate to the reader:
+
+- **Blocking round-trip** — a request the entry *waits on*. The reader has
+  submitted and sees the loading card; the next step cannot start until this
+  call's reply comes back (each step feeds the next: terms → phrasing → answer).
+  Nothing is saved and no answer appears until all the blocking calls finish, so
+  each one adds to the latency the reader feels before the answer shows. These
+  run in sequence, not in parallel.
+- **Fire-and-forget call** — a request the entry does *not* wait on. It is
+  spawned after the answer is already saved and shown, runs in the background,
+  and the reader never blocks on it. If it fails, the entry is unaffected (the
+  auto-tag simply doesn't update); its reply is written to lit.db whenever it
+  returns.
+
 For a **new Scene or Passage ask** (`submit_prompt` → `extract_scene_terms`),
 there are **three blocking round-trips** in strict sequence, then a fourth
 fire-and-forget call after the entry saves:
