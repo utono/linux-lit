@@ -303,6 +303,13 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("n"), Action::VocabJournalPageNext),
         (KeyCombo::ctrl("p"), Action::VocabJournalPagePrev),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
+        // Ctrl+Shift+g: on RPD this physical key emits key_name "g" (lowercase)
+        // with shift=true under Ctrl+Shift — NOT "G" — so the "G" bind alone
+        // never matched and the reader scrolled instead (confirmed from the
+        // KEY: log: `name=g ctrl=true shift=true`). Bind the emitted lowercase
+        // combo; keep "G" for layouts that DO capitalize (e.g. Ctrl+Shift+L
+        // logs as "L"). Both compiled here + in the stowed keymap.json.
+        (KeyCombo::ctrl_shift("g"), Action::OpenLastGloss),
         (KeyCombo::ctrl_shift("G"), Action::OpenLastGloss),
         // Alt+u/Alt+i are swapped with the plain u/i swap: Alt+u cycles
         // scansion, Alt+i sets the end timestamp (beside plain i's start).
@@ -542,6 +549,19 @@ mod tests {
         let km = Keymap::default();
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageForward));
         assert_eq!(km.lookup("y", false, false, false), Some(Action::PageBackward));
+    }
+
+    #[test]
+    fn ctrl_shift_g_resolves_open_last_gloss_both_cases() {
+        // RPD emits Ctrl+Shift+g as key_name "g" (lowercase) + shift=true (NOT
+        // "G") — confirmed from the KEY: log. The lookup must resolve the
+        // emitted lowercase combo; the "G" case is kept for layouts that
+        // capitalize. (ctrl is set, so lookup does NOT strip shift.)
+        let km = Keymap::default();
+        assert_eq!(km.lookup("g", true, true, false), Some(Action::OpenLastGloss));
+        assert_eq!(km.lookup("G", true, true, false), Some(Action::OpenLastGloss));
+        // Ctrl+g (no shift) stays the overlay toggle, unaffected.
+        assert_eq!(km.lookup("g", true, false, false), Some(Action::ToggleGlossOverlay));
     }
 
     #[test]
