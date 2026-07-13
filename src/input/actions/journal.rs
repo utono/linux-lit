@@ -29,6 +29,17 @@ fn titlecase_first(s: &str) -> String {
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
 
+/// Parse the improve-question reply: strip a markdown fence + trim. Returns
+/// `original` when the reply is empty/whitespace so the question is never lost.
+fn parse_improved_question(raw: &str, original: &str) -> String {
+    let cleaned = crate::journal_tags::strip_code_fence(raw).trim().to_string();
+    if cleaned.is_empty() {
+        original.to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
 /// markup (as built by `build_source_header`), for the Q&A picker to show
 /// instead of the question. Returns the inner text of the first `<verse>` or
@@ -2202,5 +2213,22 @@ mod tests {
             bands,
             vec![JournalBand::Scene(1, 1), JournalBand::Scene(1, 2), JournalBand::Scene(3, 1)]
         );
+    }
+
+    #[test]
+    fn improved_question_parse_strips_fence_and_falls_back() {
+        // plain
+        assert_eq!(
+            parse_improved_question("What does 'fee simple' mean here?", "orig"),
+            "What does 'fee simple' mean here?"
+        );
+        // fenced (model wrapped it)
+        assert_eq!(
+            parse_improved_question("```\nWhat is a fee simple?\n```", "orig"),
+            "What is a fee simple?"
+        );
+        // empty / whitespace -> keep the original (never lose the question)
+        assert_eq!(parse_improved_question("", "the original q"), "the original q");
+        assert_eq!(parse_improved_question("   \n  ", "the original q"), "the original q");
     }
 }

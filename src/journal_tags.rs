@@ -25,7 +25,7 @@ If the entry explains no such term, return {\"terms\": []}.";
 /// Strip a leading/trailing markdown code fence, if present. Models (esp. Haiku)
 /// wrap JSON in ```` ```json ... ``` ```` despite instructions not to. Mirrors
 /// litdb tag_journal.py::parse_terms_result's fence handling.
-fn strip_code_fence(raw: &str) -> &str {
+pub(crate) fn strip_code_fence(raw: &str) -> &str {
     let text = raw.trim();
     let Some(after_open) = text.strip_prefix("```") else {
         return text;
