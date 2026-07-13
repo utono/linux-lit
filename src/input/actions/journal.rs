@@ -1246,10 +1246,11 @@ pub(crate) fn spawn_retag(
     if !enabled {
         return;
     }
-    let Some(prompt) = crate::db::prompts::active_prompt("journal.extract-terms") else {
-        crate::logging::log("AUTO_TAG: no active journal.extract-terms prompt; skipping");
-        return;
-    };
+    // The active DB prompt wins when present; otherwise fall back to the
+    // hardcoded prompt (litdb's batch tagger does the same — the row has never
+    // been seeded in the real lit.db), so the feature works unseeded.
+    let prompt = crate::db::prompts::active_prompt("journal.extract-terms")
+        .unwrap_or_else(|| crate::journal_tags::FALLBACK_EXTRACT_PROMPT.to_string());
     let user_msg = format!("Q: {question}\nA: {answer}");
     crate::input::actions::claude_bridge::run_claude_request(
         state,
