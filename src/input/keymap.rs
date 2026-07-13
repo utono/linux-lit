@@ -201,6 +201,7 @@ pub fn handle_key(
             crate::app::InputMode::VocabLoop => handle_vocab_loop_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
             crate::app::InputMode::Search => handle_search_key(state, key_name),
+            crate::app::InputMode::OverlaySearchInput => handle_overlay_search_input_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
             crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, key_char, is_ctrl, is_alt),
@@ -789,6 +790,29 @@ fn handle_search_key(
         }
         // Tab must not toggle playback while typing a search query. Consume it
         // so it neither triggers playback nor moves focus out of the Entry.
+        "Tab" | "ISO_Left_Tab" => true,
+        _ => false, // let GTK route to the Entry (including Space)
+    }
+}
+
+/// Keys while typing a regex into the `search_bar` to search the CURRENT
+/// journal overlay entry (`InputMode::OverlaySearchInput`, opened by the
+/// overlay `/`). Return confirms (sets the pattern on the overlay buffer and
+/// returns to the overlay); Escape cancels back to the overlay leaving any
+/// prior search untouched; every other key flows to the focused search-bar
+/// Entry (return false). Tab is swallowed so it neither toggles playback nor
+/// moves focus out of the Entry.
+fn handle_overlay_search_input_key(state: &Rc<RefCell<AppState>>, key_name: &str) -> bool {
+    match key_name {
+        "Return" => {
+            crate::input::actions::journal::confirm_overlay_search(state);
+            true
+        }
+        "Escape" => {
+            state.borrow().search_bar.hide();
+            state.borrow_mut().input_mode = crate::app::InputMode::JournalOverlay;
+            true
+        }
         "Tab" | "ISO_Left_Tab" => true,
         _ => false, // let GTK route to the Entry (including Space)
     }
@@ -1569,10 +1593,30 @@ fn handle_journal_key(
             crate::input::actions::journal::open_term_input(state);
             true
         }
-        // First Escape clears an active term filter (staying in the overlay on
-        // the pre-filter position); a second Escape (no filter) closes.
+        // `/`: open the search bar to type a regex for the CURRENT overlay entry.
+        // Acts only on the overlay buffer, so it is SAFE under an active term
+        // filter (excluded from the mutating-key gate above).
+        "slash" => {
+            crate::input::actions::journal::open_overlay_search(state);
+            true
+        }
+        // n / N: step the current entry's search matches (revive the MRU pattern
+        // when no live search but a prior one exists). Buffer-only → safe under
+        // a filter.
+        "n" => {
+            crate::input::actions::journal::step_overlay_search(state, true);
+            true
+        }
+        "N" => {
+            crate::input::actions::journal::step_overlay_search(state, false);
+            true
+        }
+        // Escape precedence: an active overlay search clears first (stay in the
+        // overlay); else an active term filter clears (stay); else close.
         "Escape" => {
-            if state.borrow().journal.filter.is_some() {
+            if crate::input::actions::journal::clear_overlay_search(state) {
+                // cleared a live search; stay in the overlay
+            } else if state.borrow().journal.filter.is_some() {
                 crate::input::actions::journal::clear_filter(state);
             } else {
                 crate::input::actions::journal::close_overlay(state);

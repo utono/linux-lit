@@ -92,6 +92,11 @@ pub enum InputMode {
     MediaPicker,
     Settings,
     Search,
+    /// Typing a regex into the reader `search_bar` to search the CURRENT
+    /// journal/gloss overlay entry (the overlay `/` bind). Return sets the
+    /// pattern on the overlay buffer; Escape cancels back to the overlay. Keys
+    /// otherwise flow to the focused search-bar Entry.
+    OverlaySearchInput,
     GlossOverlay,
     GlossVisual,
     JournalOverlay,
@@ -1809,6 +1814,8 @@ pub fn build_window(
             vim_rewrite: None,
             entry_page_id: None,
             filter: None,
+            search: None,
+            last_pattern: None,
         },
         page_image_overlay,
         page_image: PageImageState::default(),
