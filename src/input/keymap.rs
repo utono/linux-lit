@@ -1442,23 +1442,17 @@ fn handle_journal_key(
     // them with a hint. `f` (re-search), `Escape` (clears the filter), and the
     // Ctrl+n/p stepping (handled in the is_ctrl block above via nav_page's
     // filter branch) stay live; `s` is a consumed no-op below.
-    // While a term filter is active the overlay shows a read-only cross-work
-    // entry via `render_filtered_match` (its own rendered buffer). Block-nav
-    // keys (j/k/x/y/g/G) act ONLY on `journal_overlay`'s buffer, so they are
-    // SAFE and stay live — the reader can page through the landed match.
-    // `R` (rewrite) is also LIVE: begin_rewrite/rewrite_with_claude resolve the
-    // DISPLAYED entry (the filter match) via displayed_journal_page and
-    // re-render the filtered view, so it operates on the cross-work entry on
-    // screen, not the stale origin. The still-GATED keys read the stale
-    // origin-band `s.journal.pages[page_index]` or mutate without that
-    // filter-awareness: edit/delete/copy/undo (e/D/c/u), new-Q&A (r),
-    // visual-select (V), overlay-cycle (backslash), TTS (space/a — audio keyed
-    // by the stale id). Ctrl+n/p step the subset; f re-searches; Esc clears.
+    // While a term filter is active the overlay shows a cross-work match via
+    // `render_filtered_match`. Keys that resolve the DISPLAYED entry
+    // (displayed_journal_page → the filter match) and re-render the filtered
+    // view are LIVE: block-nav j/k/x/y/g/G (overlay buffer only), plus the
+    // entry ops R (rewrite), e (edit), D (delete), c (copy id) — each operates
+    // on the on-screen cross-work entry, not the stale origin. Still GATED
+    // (not yet filter-aware — they'd hit the origin band): undo (u), new-Q&A
+    // (r), visual-select (V), overlay-cycle (backslash), TTS (space/a — audio
+    // keyed by the stale id). Ctrl+n/p step the subset; f re-searches; Esc clears.
     if state.borrow().journal.filter.is_some()
-        && matches!(
-            key_name,
-            "r" | "e" | "u" | "D" | "c" | "V" | "space" | "a" | "backslash"
-        )
+        && matches!(key_name, "r" | "u" | "V" | "space" | "a" | "backslash")
     {
         crate::ui::toast::show_transient(
             &state.borrow().chapter_toast,

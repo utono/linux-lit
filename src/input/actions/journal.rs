@@ -1087,7 +1087,8 @@ fn rewrite_context(
 /// current page's Q&A (replaces the old edit card). No-op if the band is empty.
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
-    let Some(page) = s.journal.pages.get(s.journal.page_index) else {
+    // Edit the DISPLAYED entry (filter match under `f`, else band page).
+    let Some(page) = displayed_journal_page(&s) else {
         return;
     };
     let (q, a, kind) = (page.question.clone(), page.answer.clone(), page.kind.clone());
@@ -1107,10 +1108,12 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
     let saved_id;
     {
         let mut s = state.borrow_mut();
-        let undo_snap = s.journal.pages.get(s.journal.page_index).map(|page| {
+        // Save the DISPLAYED entry (filter match under `f`, else band page).
+        let disp = displayed_journal_page(&s);
+        let undo_snap = disp.as_ref().map(|page| {
             (page.id, page.question.clone(), page.answer.clone(), page.claude_model.clone())
         });
-        saved_id = s.journal.pages.get(s.journal.page_index).map(|page| {
+        saved_id = disp.as_ref().map(|page| {
             let (id, model) = (page.id, page.claude_model.clone());
             if let Ok(conn) = crate::db::queries::open_db_rw() {
                 let _ = crate::db::journal::update_journal_page(&conn, id, &q, &a, &model);
@@ -1119,13 +1122,36 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
             id
         });
         s.journal_undo = undo_snap;
+        // Under a filter, keep the in-memory match's answer in sync so the
+        // filtered re-render shows the saved text.
+        if let (Some(id), Some(filter)) = (saved_id, s.journal.filter.as_mut()) {
+            if let Some(m) = filter.matches.get_mut(filter.pos) {
+                if m.page.id == id {
+                    m.page.question = q.clone();
+                    m.page.answer = a.clone();
+                }
+            }
+        }
+        let in_filter = saved_id
+            .and_then(|id| {
+                s.journal
+                    .filter
+                    .as_ref()
+                    .and_then(|f| f.matches.get(f.pos))
+                    .map(|m| m.page.id == id)
+            })
+            .unwrap_or(false);
         if quit {
             // Leave the editor, restore the read view, land on the saved entry.
             s.journal_overlay.exit_edit_buffer();
             s.input_mode = crate::app::InputMode::JournalOverlay;
-            render_current(&mut s);
-            if let Some(id) = saved_id {
-                land_on_current_band_id(&mut s, id);
+            if in_filter {
+                render_filtered_match(&mut s);
+            } else {
+                render_current(&mut s);
+                if let Some(id) = saved_id {
+                    land_on_current_band_id(&mut s, id);
+                }
             }
             crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
         } else {
@@ -1922,13 +1948,35 @@ pub(crate) fn purge_journal_audio(conn: &rusqlite::Connection, id: i64) {
 
 pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
-    if s.journal.pages.is_empty() {
+    // Delete the DISPLAYED entry (filter match under `f`, else band page).
+    let Some(id) = displayed_journal_page(&s).map(|p| p.id) else {
         return;
-    }
-    let id = s.journal.pages[s.journal.page_index].id;
+    };
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         let _ = crate::db::journal::delete_journal_page(&conn, id);
         purge_journal_audio(&conn, id);
+    }
+    // Under a filter, drop the deleted entry from the match list and re-render
+    // the filtered view (next match, clamped); if it was the last match, clear
+    // the filter and fall back to the band.
+    if s.journal.filter.is_some() {
+        let empty = {
+            let filter = s.journal.filter.as_mut().unwrap();
+            if filter.pos < filter.matches.len() {
+                filter.matches.remove(filter.pos);
+            }
+            if filter.pos >= filter.matches.len() {
+                filter.pos = filter.matches.len().saturating_sub(1);
+            }
+            filter.matches.is_empty()
+        };
+        if empty {
+            s.journal.filter = None;
+            render_current(&mut s);
+        } else {
+            render_filtered_match(&mut s);
+        }
+        return;
     }
     if s.journal.page_index > 0 {
         s.journal.page_index -= 1;
@@ -1940,7 +1988,9 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
 /// the Wayland clipboard (via `wl-copy`) and confirm with a transient toast.
 pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    let Some(id) = s.journal.pages.get(s.journal.page_index).map(|p| p.id) else {
+    // Displayed entry (filter match under `f`, else band page) — copy the id of
+    // what's on screen, not the stale origin band.
+    let Some(id) = displayed_journal_page(&s).map(|p| p.id) else {
         return;
     };
     let _ = std::process::Command::new("wl-copy")
