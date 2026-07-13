@@ -803,14 +803,23 @@ fn handle_search_key(
 /// Entry (return false). Tab is swallowed so it neither toggles playback nor
 /// moves focus out of the Entry.
 fn handle_overlay_search_input_key(state: &Rc<RefCell<AppState>>, key_name: &str) -> bool {
+    // The same search bar serves the journal AND gloss overlays; route confirm
+    // and cancel back to whichever overlay opened it (recorded in
+    // `overlay_search_origin` by that overlay's `open_overlay_search`).
+    let origin = state.borrow().overlay_search_origin;
+    let is_gloss = origin == crate::app::InputMode::GlossOverlay;
     match key_name {
         "Return" => {
-            crate::input::actions::journal::confirm_overlay_search(state);
+            if is_gloss {
+                crate::input::actions::gloss::confirm_overlay_search(state);
+            } else {
+                crate::input::actions::journal::confirm_overlay_search(state);
+            }
             true
         }
         "Escape" => {
             state.borrow().search_bar.hide();
-            state.borrow_mut().input_mode = crate::app::InputMode::JournalOverlay;
+            state.borrow_mut().input_mode = origin;
             true
         }
         "Tab" | "ISO_Left_Tab" => true,
@@ -1887,19 +1896,37 @@ fn handle_gloss_key(
             crate::input::actions::overlay_cycle::cycle_from_gloss(state);
             true
         }
-        // Escape closes the overlay by jumping the cursor to the glossed
-        // passage's source on close, NOT like toggle_overlay's
-        // return-to-origin.
-        "Escape" => {
-            // Close to the reader, landing on the glossed passage's source line
-            // (recomputes the reader-gloss tint so a just-created gloss colors
-            // without a reload; falls back to the pre-open page).
-            crate::input::actions::gloss::close_gloss_to_reader(state);
+        // `/`: open the search bar to type a regex for the CURRENT gloss buffer
+        // (mirrors the journal overlay's `/`). Ctrl+/ (the gloss keybind legend)
+        // is handled in the is_ctrl block above, so this plain-`/` arm is safe.
+        "slash" => {
+            crate::input::actions::gloss::open_overlay_search(state);
             true
         }
-        // n: Escape-only close policy — was Escape's close alias; consumed
-        // no-op so it can't leak past the handler.
-        "n" => true,
+        // Escape precedence: an active overlay search clears first (stay in the
+        // overlay); else close to the reader, landing on the glossed passage's
+        // source line (recomputes the reader-gloss tint so a just-created gloss
+        // colors without a reload; falls back to the pre-open page). Gloss has no
+        // journal-style term filter, so the precedence is simpler.
+        "Escape" => {
+            if crate::input::actions::gloss::clear_overlay_search(state) {
+                // cleared a live search; stay in the overlay
+            } else {
+                crate::input::actions::gloss::close_gloss_to_reader(state);
+            }
+            true
+        }
+        // n / N: step the current gloss's search matches (revive the MRU pattern
+        // when no live search but a prior one exists). Buffer-only. Was a
+        // consumed no-op (Escape-only close policy retired `n` as a close alias).
+        "n" => {
+            crate::input::actions::gloss::step_overlay_search(state, true);
+            true
+        }
+        "N" => {
+            crate::input::actions::gloss::step_overlay_search(state, false);
+            true
+        }
         // Shift+V enters visual block-selection mode (j/k extend, gg/G ends,
         // y yank, Esc/V exit), mirroring the synopsis overlay. The old voice
         // cycle moved to Ctrl+V (handled in the is_ctrl block above).

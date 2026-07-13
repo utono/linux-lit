@@ -183,6 +183,129 @@ pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     render_gloss_row(&mut s, new_idx);
 }
 
+/// `/` in the gloss overlay: open the reader `search_bar` to type a regex to
+/// search the CURRENT gloss buffer. Mirrors `journal::open_overlay_search`, but
+/// records the gloss overlay as the search origin so the shared
+/// `OverlaySearchInput` handler routes Return/Escape back here.
+///
+/// BORROW SAFETY: `search_bar.show()` synchronously calls `entry.set_text("")`
+/// and `grab_focus()`; the bar's Entry has NO `changed`/signal handler that
+/// re-enters `state`, so this is safe under a short borrow. Still, scope the
+/// widget borrow and set the fields in a fresh borrow (consistent with journal).
+pub(crate) fn open_overlay_search(state: &Rc<RefCell<AppState>>) {
+    {
+        let s = state.borrow();
+        s.search_bar.show();
+    }
+    let mut s = state.borrow_mut();
+    s.overlay_search_origin = crate::app::InputMode::GlossOverlay;
+    s.input_mode = crate::app::InputMode::OverlaySearchInput;
+}
+
+/// Return in the `/` bar (gloss origin): read the typed regex, hide the bar,
+/// return to the gloss overlay, and set the pattern on the gloss buffer. Empty
+/// query is a no-op (search stays whatever it was). Stores the pattern as the
+/// gloss MRU. Mirrors `journal::confirm_overlay_search`.
+///
+/// BORROW SAFETY: read `query()` and `hide()` under scoped borrows dropped
+/// before the mutating `borrow_mut`. The tags are cloned into locals and the
+/// buffer taken by value BEFORE building/applying, so no `&s` getter borrow is
+/// held across the `set_from_text` write to `s.gloss_search`.
+pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
+    let query = {
+        let s = state.borrow();
+        s.search_bar.query()
+    };
+    {
+        let s = state.borrow();
+        s.search_bar.hide();
+    }
+    state.borrow_mut().input_mode = crate::app::InputMode::GlossOverlay;
+    let pattern = query.trim();
+    if pattern.is_empty() {
+        return;
+    }
+    let mut s = state.borrow_mut();
+    let buffer = s.gloss_overlay.buffer();
+    let tag = s.gloss_overlay.search_tag().clone();
+    let ctag = s.gloss_overlay.search_current_tag().clone();
+    let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, pattern);
+    if search.matches.is_empty() {
+        crate::ui::toast::show_transient(&s.chapter_toast, "No matches", 2);
+    } else if let Some((off, _)) = search.matches.first() {
+        s.gloss_overlay.scroll_to_char_offset(*off);
+    }
+    s.gloss_last_pattern = Some(pattern.to_string());
+    s.gloss_search = Some(search);
+}
+
+/// n / N in the gloss overlay: step matches within the current gloss buffer. If
+/// no live search but an MRU pattern exists, revive it first (post-Escape n/N).
+/// Mirrors `journal::step_overlay_search`.
+///
+/// BORROW SAFETY: one `borrow_mut` held throughout. `s.gloss_search` (mutable)
+/// and `s.gloss_overlay` (getter, immutable) alias `s`, so the tags are cloned +
+/// the buffer taken into locals FIRST; the mutable step of `search.current`
+/// happens in a scoped block; then `apply` is called on the locals with
+/// `search.as_ref()` — no getter borrow overlaps the mutable use.
+pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) {
+    let mut s = state.borrow_mut();
+    if s.gloss_search.is_none() {
+        // Revive the MRU pattern (post-Escape n/N).
+        let Some(pat) = s.gloss_last_pattern.clone() else {
+            return;
+        };
+        let buffer = s.gloss_overlay.buffer();
+        let tag = s.gloss_overlay.search_tag().clone();
+        let ctag = s.gloss_overlay.search_current_tag().clone();
+        let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, &pat);
+        if search.matches.is_empty() {
+            crate::ui::toast::show_transient(&s.chapter_toast, "No matches", 2);
+            return;
+        }
+        s.gloss_search = Some(search);
+    }
+    let buffer = s.gloss_overlay.buffer();
+    let tag = s.gloss_overlay.search_tag().clone();
+    let ctag = s.gloss_overlay.search_current_tag().clone();
+    let scroll_to = {
+        let search = s.gloss_search.as_mut().unwrap();
+        match crate::input::overlay_search::step(search.current, search.matches.len(), forward) {
+            Some(next) => {
+                search.current = next;
+                search.matches.get(next).map(|(a, _)| *a)
+            }
+            None => None,
+        }
+    };
+    if let Some(search) = s.gloss_search.as_ref() {
+        crate::input::overlay_search::apply(&buffer, &tag, &ctag, search);
+    }
+    if let Some(off) = scroll_to {
+        s.gloss_overlay.scroll_to_char_offset(off);
+    }
+}
+
+/// Clear the active gloss overlay search (Escape). Keeps `gloss_last_pattern`
+/// for MRU revival. Returns `true` when it cleared a live search (caller then
+/// stays in the overlay), `false` when there was none (caller falls to the
+/// existing close). Mirrors `journal::clear_overlay_search`.
+///
+/// BORROW SAFETY: single `borrow_mut`; tags cloned + buffer taken into locals
+/// before `clear`, so no getter borrow overlaps writing `s.gloss_search`.
+pub(crate) fn clear_overlay_search(state: &Rc<RefCell<AppState>>) -> bool {
+    let mut s = state.borrow_mut();
+    if s.gloss_search.is_none() {
+        return false;
+    }
+    let buffer = s.gloss_overlay.buffer();
+    let tag = s.gloss_overlay.search_tag().clone();
+    let ctag = s.gloss_overlay.search_current_tag().clone();
+    crate::input::overlay_search::clear(&buffer, &tag, &ctag);
+    s.gloss_search = None;
+    true
+}
+
 pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
     let copied = {
         let s = state.borrow();
@@ -787,6 +910,19 @@ fn render_gloss_row(s: &mut AppState, new_idx: usize) {
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
     s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
     recolor_cached_blocks(s);
+    // Re-apply any active overlay search so a `/`-typed pattern keeps
+    // highlighting across gloss/passage stepping (same locals-first borrow
+    // discipline as journal's render_current: tags cloned + buffer taken into
+    // locals BEFORE borrowing `s.gloss_search` mutably, so no `s.gloss_overlay`
+    // getter borrow overlaps the mutable use — `reapply` re-collects spans
+    // against the new buffer text and re-tags).
+    if s.gloss_search.is_some() {
+        let buffer = s.gloss_overlay.buffer();
+        let tag = s.gloss_overlay.search_tag().clone();
+        let ctag = s.gloss_overlay.search_current_tag().clone();
+        let search = s.gloss_search.as_mut().unwrap();
+        crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
+    }
 }
 
 /// Persist a freshly composed gloss, reload the start-citation gloss list,
@@ -2622,6 +2758,11 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     s.tts.stop();
     s.gloss_overlay.hide();
     s.gloss_opened_from_picker = false;
+    // Drop any overlay search + MRU so neither leaks into the next gloss overlay
+    // session (the buffer is re-rendered on the next open regardless). Mirrors
+    // the journal overlay's close-branch cleanup.
+    s.gloss_search = None;
+    s.gloss_last_pattern = None;
     crate::app::return_to_reader_mode(&mut s);
     let jumped = jump_to_gloss_source_start(&mut s);
     let saved = s.gloss_return_pos.take();

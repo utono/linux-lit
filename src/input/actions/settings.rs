@@ -283,6 +283,17 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     // change must repaint both overlays' highlight color (responsive to dwl theme).
     state.gloss_overlay.set_highlight_color(selection_bg);
     state.journal_overlay.set_highlight_color(selection_bg);
+    // Overlay `/` regex-search tags: all-matches use the same selection color as
+    // the `<hi>` marker; the CURRENT match uses `reader_gloss_cursor` (the
+    // per-theme cursor-block gloss tint), which is a distinct, contrast-guarded
+    // color that visibly stands out from selection_bg. Both overlays share the
+    // same two colors so Ctrl+t recolors the live search in place.
+    state
+        .gloss_overlay
+        .set_search_colors(selection_bg, &theme.reader_gloss_cursor);
+    state
+        .journal_overlay
+        .set_search_colors(selection_bg, &theme.reader_gloss_cursor);
     // Page-marker glyph color follows theme dim foreground.
     state.gloss_overlay.set_marker_color(&theme.dim_fg);
     state.journal_overlay.set_marker_color(&theme.dim_fg);

@@ -505,6 +505,22 @@ pub struct AppState {
     /// position order) — which voice plays next. Session-only; reset to 0 on
     /// gloss change. With no associated voices, the gender default is used.
     pub gloss_active_voice: usize,
+    /// Live regex search over the CURRENT gloss overlay buffer (the `/` bind,
+    /// n/N stepping). Its match spans are re-collected on every gloss render so
+    /// the pattern keeps highlighting as glosses/passages are stepped. `None`
+    /// when no search is active. The gloss analog of `journal.search` (gloss has
+    /// no grouped state struct, so this is a flat field).
+    pub gloss_search: Option<crate::input::overlay_search::OverlaySearch>,
+    /// MRU search pattern for post-Escape n/N revival in the gloss overlay:
+    /// clearing the search drops `gloss_search` but keeps this, so the next n/N
+    /// rebuilds the search from it. Gloss analog of `journal.last_pattern`.
+    pub gloss_last_pattern: Option<String>,
+    /// Which overlay opened the shared `OverlaySearchInput` search bar (the `/`
+    /// bind). Set by `journal`/`gloss` `open_overlay_search`; read by the search
+    /// bar's Return/Escape handler to route confirm/cancel back to the right
+    /// overlay and write the right overlay's search state. Defaults to
+    /// `JournalOverlay`.
+    pub overlay_search_origin: InputMode,
     /// Where the voice picker was opened from, so confirm/cancel route back
     /// correctly and write the right target.
     pub voice_picker_origin: VoicePickerOrigin,
@@ -1830,6 +1846,9 @@ pub fn build_window(
         gloss_opened_from_picker: false,
         gloss_picker_from_overlay: false,
         gloss_active_voice: 0,
+        gloss_search: None,
+        gloss_last_pattern: None,
+        overlay_search_origin: InputMode::JournalOverlay,
         voice_picker_origin: VoicePickerOrigin::Settings,
         settings_return_mode: InputMode::Reader,
         keybinds_return_mode: InputMode::Reader,
