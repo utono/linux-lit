@@ -1478,20 +1478,16 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
     let id = page.id;
     let old_q = page.question.trim().to_string();
     let answer = page.answer.trim().to_string();
+    // Capture the model up-front (like id/q/a) so a navigate during the async
+    // improve-question round-trip can't stamp a different entry's model.
+    let model = page.claude_model.clone();
 
     crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Improving question\u{2026}");
 
     improve_question(state, old_q, move |st, improved_q| {
         // Persist the improved question immediately with the unchanged answer,
-        // reusing the entry's stored model. Own conn + scoped borrow for the
-        // model, both dropped before the re-borrowing calls below.
+        // reusing the entry's stored model (captured before the async call).
         {
-            let model = {
-                let s = st.borrow();
-                displayed_journal_page(&s)
-                    .map(|p| p.claude_model.clone())
-                    .unwrap_or_default()
-            };
             if let Ok(conn) = crate::db::queries::open_db_rw() {
                 let _ =
                     crate::db::journal::update_journal_page(&conn, id, &improved_q, &answer, &model);
@@ -1722,6 +1718,12 @@ fn rewrite_with_claude(
             if in_filter {
                 if let Some(filter) = s.journal.filter.as_mut() {
                     if let Some(m) = filter.matches.get_mut(filter.pos) {
+                        // Sync BOTH q and a: the R→question path passes an
+                        // improved question, so the in-memory match must carry
+                        // it too, else render_filtered_match shows the stale old
+                        // question with the new answer (the DB is already
+                        // correct; this is display-only).
+                        m.page.question = question_owned.clone();
                         m.page.answer = revised.clone();
                     }
                 }
