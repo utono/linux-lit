@@ -50,6 +50,79 @@ pub fn step(cur: usize, len: usize, forward: bool) -> Option<usize> {
     }
 }
 
+// --- GTK-touching helpers: apply/clear/(re)build the match set on an overlay
+// buffer. `prelude` is scoped to this block (fn-local `use`) so the pure
+// collect/step core above stays GTK-free.
+mod gtk_ops {
+    use super::{collect, OverlaySearch};
+    use gtk4::prelude::*;
+
+    fn char_iter(buffer: &gtk4::TextBuffer, off: i32) -> gtk4::TextIter {
+        buffer.iter_at_offset(off)
+    }
+
+    /// Remove both search tags over the whole buffer.
+    pub fn clear(buffer: &gtk4::TextBuffer, tag: &gtk4::TextTag, current_tag: &gtk4::TextTag) {
+        let (start, end) = buffer.bounds();
+        buffer.remove_tag(tag, &start, &end);
+        buffer.remove_tag(current_tag, &start, &end);
+    }
+
+    /// Clear old tags, re-tag every `s.matches` span with `tag`, and tag the
+    /// current match (`s.matches[s.current]`) with `current_tag`.
+    pub fn apply(
+        buffer: &gtk4::TextBuffer,
+        tag: &gtk4::TextTag,
+        current_tag: &gtk4::TextTag,
+        s: &OverlaySearch,
+    ) {
+        clear(buffer, tag, current_tag);
+        for (a, b) in &s.matches {
+            buffer.apply_tag(tag, &char_iter(buffer, *a), &char_iter(buffer, *b));
+        }
+        if let Some((a, b)) = s.matches.get(s.current) {
+            buffer.apply_tag(current_tag, &char_iter(buffer, *a), &char_iter(buffer, *b));
+        }
+    }
+
+    /// The full text of `buffer`, start to end.
+    pub fn buffer_text(buffer: &gtk4::TextBuffer) -> String {
+        let (start, end) = buffer.bounds();
+        buffer.text(&start, &end, false).to_string()
+    }
+
+    /// Build a fresh `OverlaySearch` for `pattern` against `buffer`'s current
+    /// text, apply the tags, and return it.
+    pub fn set_from_text(
+        buffer: &gtk4::TextBuffer,
+        tag: &gtk4::TextTag,
+        current_tag: &gtk4::TextTag,
+        pattern: &str,
+    ) -> OverlaySearch {
+        let matches = collect(&buffer_text(buffer), pattern);
+        let s = OverlaySearch { pattern: pattern.to_string(), matches, current: 0 };
+        apply(buffer, tag, current_tag, &s);
+        s
+    }
+
+    /// Re-collect `s.pattern` against the buffer's CURRENT text (e.g. the
+    /// entry text changed), clamp `s.current` into range, and re-apply tags.
+    pub fn reapply(
+        buffer: &gtk4::TextBuffer,
+        tag: &gtk4::TextTag,
+        current_tag: &gtk4::TextTag,
+        s: &mut OverlaySearch,
+    ) {
+        s.matches = collect(&buffer_text(buffer), &s.pattern);
+        if s.current >= s.matches.len() {
+            s.current = s.matches.len().saturating_sub(1);
+        }
+        apply(buffer, tag, current_tag, s);
+    }
+}
+
+pub use gtk_ops::{apply, buffer_text, clear, reapply, set_from_text};
+
 #[cfg(test)]
 mod tests {
     use super::*;
