@@ -49,8 +49,26 @@ You improve the phrasing of a reader's question about a literary work. Make it \
 clear, specific, and well-formed while PRESERVING the reader's intent and \
 meaning — do not answer it, do not add new sub-questions, do not change what is \
 being asked. Fix grammar, tighten wording, and resolve vague references only as \
-the surrounding intent allows. Return ONLY the improved question as a single \
-line of plain text — no preamble, no quotes, no markdown, no explanation.";
+the surrounding intent allows.\n\
+{terms}\n\
+Return ONLY the improved question as a single line of plain text — no preamble, \
+no quotes, no markdown, no explanation.";
+
+/// The `{terms}` substitution for the improve-question prompt: a guidance
+/// sentence naming the entry's key terms of art and telling Claude to keep them,
+/// or the empty string when the entry has no tags (so the prompt reads cleanly
+/// and behaves exactly as before this feature).
+fn improve_terms_line(terms: &[String]) -> String {
+    if terms.is_empty() {
+        return String::new();
+    }
+    format!(
+        "The reader's question concerns these terms of art: {}. Preserve them \
+         verbatim in your rewrite — keep each term's canonical phrasing, and do \
+         not rename, gloss away, or drop any of them.",
+        terms.join(", ")
+    )
+}
 
 /// Improve a journal question's phrasing via Claude, then hand the improved
 /// question (or the original on empty/error) to `on_done` on the main loop.
@@ -64,11 +82,13 @@ line of plain text — no preamble, no quotes, no markdown, no explanation.";
 fn improve_question(
     state: &Rc<RefCell<AppState>>,
     question: String,
+    terms: &[String],
     on_done: impl Fn(&Rc<RefCell<AppState>>, String) + 'static,
 ) {
     let model = state.borrow().config.claude_model.clone();
     let prompt = crate::db::prompts::active_prompt("journal.improve-question")
-        .unwrap_or_else(|| FALLBACK_IMPROVE_QUESTION_PROMPT.to_string());
+        .unwrap_or_else(|| FALLBACK_IMPROVE_QUESTION_PROMPT.to_string())
+        .replace("{terms}", &improve_terms_line(terms));
     let original = question.clone();
     let original_err = question.clone();
     // `on_done` is shared (not Clone) between the two callbacks, so wrap it in
@@ -1488,10 +1508,17 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
     } else {
         page.claude_model.clone()
     };
+    // Fetch the displayed entry's key terms up-front (like id/q/a/model) so a
+    // navigate during the async improve round-trip can't cross entries. A fetch
+    // failure yields no terms — the rewrite proceeds exactly as before.
+    let terms = crate::db::queries::open_db_rw()
+        .ok()
+        .and_then(|conn| crate::db::journal::terms_for_entry(&conn, id).ok())
+        .unwrap_or_default();
 
     crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Improving question\u{2026}");
 
-    improve_question(state, old_q, move |st, improved_q| {
+    improve_question(state, old_q, &terms, move |st, improved_q| {
         // Persist the improved question immediately with the unchanged answer,
         // reusing the entry's stored model (captured before the async call).
         {
@@ -1643,7 +1670,8 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     // dead during the improve-question round-trip; `ask_claude` re-shows it
     // with the improved phrasing once that call returns.
     state.borrow().journal_overlay.show_loading(&text);
-    improve_question(state, text, move |st, improved| {
+    // A brand-new ask has no saved entry yet, so no tags exist to ground on.
+    improve_question(state, text, &[], move |st, improved| {
         ask_claude(st, &improved);
     });
 }
@@ -2264,6 +2292,16 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn improve_terms_line_guidance_or_empty() {
+        // empty -> empty string (prompt reads clean)
+        assert_eq!(super::improve_terms_line(&[]), "");
+        // terms -> guidance naming them, preserve-verbatim instruction present
+        let line = super::improve_terms_line(&["fee simple".to_string(), "quibble".to_string()]);
+        assert!(line.contains("fee simple, quibble"), "names terms: {line}");
+        assert!(line.to_lowercase().contains("preserve"), "guidance present: {line}");
+    }
 
     #[test]
     fn title_case_first_letter() {
