@@ -1495,6 +1495,11 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
         }
         // No borrow held here.
         if both {
+            // Replace the persistent "Improving question…" toast (the else path
+            // clears it via rewrite_with_claude's own toast; the both path opens
+            // the instruction card, which does not, so dismiss it here) before
+            // opening the answer-instruction card for the improved question.
+            crate::ui::toast::show_transient(&st.borrow().chapter_toast, "Question improved", 2);
             begin_rewrite_with(st, id, &improved_q, &answer);
         } else {
             rewrite_with_claude(
