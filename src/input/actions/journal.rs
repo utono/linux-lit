@@ -40,6 +40,56 @@ fn parse_improved_question(raw: &str, original: &str) -> String {
     }
 }
 
+/// Fallback prompt for improving a reader's journal question when the
+/// `journal.improve-question` api_prompts row is absent. Returns ONLY the
+/// improved question (one line, no preamble, no JSON).
+const FALLBACK_IMPROVE_QUESTION_PROMPT: &str = "\
+You improve the phrasing of a reader's question about a literary work. Make it \
+clear, specific, and well-formed while PRESERVING the reader's intent and \
+meaning — do not answer it, do not add new sub-questions, do not change what is \
+being asked. Fix grammar, tighten wording, and resolve vague references only as \
+the surrounding intent allows. Return ONLY the improved question as a single \
+line of plain text — no preamble, no quotes, no markdown, no explanation.";
+
+/// Improve a journal question's phrasing via Claude, then hand the improved
+/// question (or the original on empty/error) to `on_done` on the main loop.
+///
+/// BORROW SAFETY: `config.claude_model` is read under a scoped borrow that
+/// drops before `run_claude_request` (which itself borrows `state` for
+/// `tokio_handle`) — mirrors `ask_claude`'s borrow discipline. `on_done` runs
+/// later, inside `run_claude_request`'s on_success/on_error closures on the
+/// main loop, receiving the `&Rc<RefCell<AppState>>` those closures are
+/// handed.
+fn improve_question(
+    state: &Rc<RefCell<AppState>>,
+    question: String,
+    on_done: impl Fn(&Rc<RefCell<AppState>>, String) + 'static,
+) {
+    let model = state.borrow().config.claude_model.clone();
+    let prompt = crate::db::prompts::active_prompt("journal.improve-question")
+        .unwrap_or_else(|| FALLBACK_IMPROVE_QUESTION_PROMPT.to_string());
+    let original = question.clone();
+    let original_err = question.clone();
+    // `on_done` is shared (not Clone) between the two callbacks, so wrap it in
+    // an Rc rather than requiring callers to pass a Clone closure.
+    let on_done = Rc::new(on_done);
+    let on_done_err = Rc::clone(&on_done);
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        prompt,
+        question, // the user message is the raw question
+        model,
+        move |st, reply| {
+            let improved = parse_improved_question(&reply, &original);
+            on_done(st, improved);
+        },
+        move |st, msg| {
+            crate::logging::log(&format!("IMPROVE-Q: call failed ({msg}); keeping original"));
+            on_done_err(st, original_err.clone());
+        },
+    );
+}
+
 /// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
 /// markup (as built by `build_source_header`), for the Q&A picker to show
 /// instead of the question. Returns the inner text of the first `<verse>` or
