@@ -22,12 +22,34 @@ key:\n\
 \n\
 If the entry explains no such term, return {\"terms\": []}.";
 
+/// Strip a leading/trailing markdown code fence, if present. Models (esp. Haiku)
+/// wrap JSON in ```` ```json ... ``` ```` despite instructions not to. Mirrors
+/// litdb tag_journal.py::parse_terms_result's fence handling.
+fn strip_code_fence(raw: &str) -> &str {
+    let text = raw.trim();
+    let Some(after_open) = text.strip_prefix("```") else {
+        return text;
+    };
+    // Drop the rest of the opening-fence line (e.g. "json\n" or just "\n").
+    let body = match after_open.find('\n') {
+        Some(nl) => &after_open[nl + 1..],
+        None => "",
+    };
+    // Drop the closing fence and anything after it.
+    match body.rfind("```") {
+        Some(close) => body[..close].trim(),
+        None => body.trim(),
+    }
+}
+
 /// Parse the extractor's `{"terms":[...]}` reply into a clean term list:
 /// lowercase, trim, dedupe (order-preserving), cap at 8. Tolerant — returns an
 /// empty Vec when the JSON is unparseable, lacks a `"terms"` key, or `"terms"`
-/// is not a list. Non-string / blank-after-trim elements are skipped.
+/// is not a list. A leading/trailing markdown code fence is stripped first.
+/// Non-string / blank-after-trim elements are skipped.
 pub fn parse_terms(raw: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+    let cleaned = strip_code_fence(raw);
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(cleaned) else {
         return Vec::new();
     };
     let Some(arr) = value.get("terms").and_then(|t| t.as_array()) else {
@@ -62,6 +84,19 @@ mod tests {
     #[test]
     fn empty_terms_list_ok() {
         assert!(parse_terms(r#"{"terms":[]}"#).is_empty());
+    }
+
+    #[test]
+    fn strips_markdown_code_fence() {
+        // Haiku wraps JSON in a ```json fence despite the prompt; must still parse.
+        let fenced = "```json\n{\"terms\": [\"fee simple\", \"attainder\"]}\n```";
+        assert_eq!(
+            parse_terms(fenced),
+            vec!["fee simple".to_string(), "attainder".to_string()]
+        );
+        // Bare ``` fence (no language tag) also stripped.
+        let bare = "```\n{\"terms\":[\"anaphora\"]}\n```";
+        assert_eq!(parse_terms(bare), vec!["anaphora".to_string()]);
     }
 
     #[test]
