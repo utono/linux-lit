@@ -285,15 +285,19 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     state.journal_overlay.set_highlight_color(selection_bg);
     // Overlay `/` regex-search tags: all-matches use the same selection color as
     // the `<hi>` marker; the CURRENT match uses `reader_gloss_cursor` (the
-    // per-theme cursor-block gloss tint), which is a distinct, contrast-guarded
-    // color that visibly stands out from selection_bg. Both overlays share the
-    // same two colors so Ctrl+t recolors the live search in place.
+    // Search highlights are VARIANTS OF THE MAIN CARD's cursor-segment tint
+    // (`phrase_highlight_bg` — the karaoke highlight for the spoken/cursor
+    // phrase), so overlay search reads as the reader's own highlight rather than
+    // the selection blue. Current match = the full phrase tint; other matches =
+    // a lighter/more-transparent variant of the SAME hue (half alpha). Both
+    // overlays share the two colors so Ctrl+t recolors the live search in place.
+    let (search_all, search_current) = theme.search_highlight_colors();
     state
         .gloss_overlay
-        .set_search_colors(selection_bg, &theme.reader_gloss_cursor);
+        .set_search_colors(&search_all, &search_current);
     state
         .journal_overlay
-        .set_search_colors(selection_bg, &theme.reader_gloss_cursor);
+        .set_search_colors(&search_all, &search_current);
     // Page-marker glyph color follows theme dim foreground.
     state.gloss_overlay.set_marker_color(&theme.dim_fg);
     state.journal_overlay.set_marker_color(&theme.dim_fg);

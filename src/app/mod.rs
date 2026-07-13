@@ -1418,6 +1418,14 @@ pub fn build_window(
     gloss_overlay.set_panel_color(&theme.overlay_panel_bg);
     journal_overlay.set_panel_color(&theme.overlay_panel_bg);
     journal_overlay.set_bar_color(&theme.root_color);
+    // Overlay search-highlight tints (variants of the cursor-segment color).
+    // MUST be set here at startup too — apply_theme_to_state (the only other
+    // caller of set_search_colors) does NOT run on a fresh launch, only on
+    // Ctrl+t / SIGUSR1 / snapshot-revert; without this the overlays kept their
+    // hardcoded placeholder yellow/orange until the user cycled the theme.
+    let (search_all, search_current) = theme.search_highlight_colors();
+    gloss_overlay.set_search_colors(&search_all, &search_current);
+    journal_overlay.set_search_colors(&search_all, &search_current);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();

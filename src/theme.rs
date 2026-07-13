@@ -844,6 +844,20 @@ impl Theme {
     pub fn vocab_sentence_bg(&self) -> String {
         dim_rgba_alpha(&self.phrase_highlight_bg, 0.45)
     }
+
+    /// Overlay search-highlight background colors as `(all_matches, current_match)`
+    /// — VARIANTS of the main card's cursor-segment tint (`phrase_highlight_bg`,
+    /// the karaoke highlight), so overlay search reads as the reader's own
+    /// highlight. `all` = the base phrase tint; `current` = the same hue boosted
+    /// (higher alpha) so the active match stands out. `phrase_highlight_bg`'s
+    /// alpha is low (~0.18), so `all` at 1× is a subtle-but-visible tint and
+    /// `current` at ~2.4× is a clearly stronger one (alpha caps at 1.0 in CSS).
+    /// One source of truth for both the startup wiring and `apply_theme_to_state`.
+    pub fn search_highlight_colors(&self) -> (String, String) {
+        let all = self.phrase_highlight_bg.clone();
+        let current = dim_rgba_alpha(&self.phrase_highlight_bg, 2.4);
+        (all, current)
+    }
 }
 
 /// Generate GTK CSS for a theme.
@@ -1353,6 +1367,19 @@ mod tests {
         );
         // Non-rgba strings pass through untouched.
         assert_eq!(dim_rgba_alpha("#ffcc00", 0.45), "#ffcc00");
+    }
+
+    #[test]
+    fn search_highlight_colors_are_same_hue_current_stronger() {
+        let mut t = default_theme();
+        t.phrase_highlight_bg = "rgba(93, 66, 50, 0.18)".to_string();
+        let (all, current) = t.search_highlight_colors();
+        // `all` = the base phrase tint verbatim.
+        assert_eq!(all, "rgba(93, 66, 50, 0.18)");
+        // `current` = same RGB, higher alpha (0.18 * 2.4 = 0.432).
+        assert_eq!(current, "rgba(93, 66, 50, 0.432)");
+        // Same hue: both start with the same RGB triple.
+        assert!(current.starts_with("rgba(93, 66, 50,"));
     }
 
     const CANDIDATES_JSON: &str = r##"{ "meta": {"display": "S", "type": "light"},
