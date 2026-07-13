@@ -109,6 +109,12 @@ pub struct JournalOverlay {
     /// by the app via `set_bar_color` — matching the gloss overlay's theme-wired
     /// bar. (Was a hardcoded pale grey-blue default, the odd one out.)
     bar_color: Rc<RefCell<(f64, f64, f64)>>,
+    /// Overlay-search highlight tags, registered once on `view.buffer()`'s tag
+    /// table in `new` (the buffer is never replaced — `set_text` writes into it
+    /// in place — so registering once here is safe for the view's lifetime).
+    /// Placeholder colors; `set_search_colors` wires them to the theme (Task 5).
+    search_tag: gtk4::TextTag,
+    search_current_tag: gtk4::TextTag,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -407,6 +413,20 @@ impl JournalOverlay {
         // Build markdown tags once against the view's tag table so every
         // render_page call reuses the same registered tags (O(1) apply).
         let md_tags = crate::ui::markdown::MarkdownTags::register(&view.buffer());
+        // Overlay-search highlight tags (Task 2 of the overlay-search feature).
+        // Registered once here — same pattern as md_tags — so later search/step
+        // logic (Task 3) can apply them without re-registering. Placeholder
+        // colors; Task 5 wires these to the theme via `set_search_colors`.
+        let search_tag = gtk4::TextTag::builder()
+            .name("overlay_search")
+            .background("#ffe000")
+            .build();
+        let search_current_tag = gtk4::TextTag::builder()
+            .name("overlay_search_current")
+            .background("#ff9000")
+            .build();
+        view.buffer().tag_table().add(&search_tag);
+        view.buffer().tag_table().add(&search_current_tag);
 
         Self {
             overlay,
@@ -457,6 +477,8 @@ impl JournalOverlay {
             marker_color,
             bar_color,
             panel_color,
+            search_tag,
+            search_current_tag,
         }
     }
 
@@ -859,6 +881,40 @@ impl JournalOverlay {
     pub fn set_highlight_color(&self, color: &str) {
         *self.highlight_bg.borrow_mut() = color.to_string();
         self.apply_hi_color();
+    }
+
+    /// The overlay's TextView buffer (stable for the view's lifetime — never
+    /// replaced by `set_text`), for overlay-search (Task 3) to read/scan.
+    pub fn buffer(&self) -> gtk4::TextBuffer {
+        self.view.buffer()
+    }
+
+    /// The "all matches" search-highlight tag.
+    pub fn search_tag(&self) -> &gtk4::TextTag {
+        &self.search_tag
+    }
+
+    /// The "current match" search-highlight tag (brighter than `search_tag`).
+    pub fn search_current_tag(&self) -> &gtk4::TextTag {
+        &self.search_current_tag
+    }
+
+    /// Set the search-highlight tag colors (theme-wired; see Task 5).
+    pub fn set_search_colors(&self, all: &str, current: &str) {
+        self.search_tag.set_background(Some(all));
+        self.search_current_tag.set_background(Some(current));
+    }
+
+    /// Scroll the view so the given char offset is on-screen. Creates a
+    /// throwaway mark at the offset, scrolls it into view, then deletes it
+    /// (matches the `get_insert`/`scroll_mark_onscreen` idiom used for the vim
+    /// cursor above).
+    pub fn scroll_to_char_offset(&self, off: i32) {
+        let buffer = self.view.buffer();
+        let iter = buffer.iter_at_offset(off);
+        let mark = buffer.create_mark(None, &iter, false);
+        self.view.scroll_mark_onscreen(&mark);
+        buffer.delete_mark(&mark);
     }
 
     /// Set the page-marker glyph's dim color (theme `dim_fg`) and repaint the bar.

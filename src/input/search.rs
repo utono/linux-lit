@@ -354,7 +354,7 @@ fn has_unescaped_uppercase(query: &str) -> bool {
 /// (half-typed `jack(`, unclosed `cade[`) silently falls back to an escaped
 /// literal with identical substring semantics — incremental search must
 /// never error mid-keystroke.
-fn build_matcher(query: &str) -> regex::Regex {
+pub(crate) fn build_matcher(query: &str) -> regex::Regex {
     let insensitive = !has_unescaped_uppercase(query);
     regex::RegexBuilder::new(query)
         .case_insensitive(insensitive)

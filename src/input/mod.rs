@@ -5,6 +5,7 @@ pub mod keymap;
 pub mod keymap_config;
 pub mod nav_test;
 pub mod navigation;
+pub mod overlay_search;
 pub mod page_table;
 pub mod phrase_highlight;
 pub mod picker_dispatch;
