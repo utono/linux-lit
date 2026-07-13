@@ -303,6 +303,16 @@ pub fn find_distinct_terms(conn: &Connection) -> Result<Vec<String>, rusqlite::E
     rows.collect()
 }
 
+/// The distinct terms tagged on a single journal entry, sorted ascending.
+/// Complements `find_pages_by_term` (term→entries): this is entry→terms, used
+/// to ground the improve-question rewrite on what the entry actually explains.
+pub fn terms_for_entry(conn: &Connection, entry_id: i64) -> Result<Vec<String>, rusqlite::Error> {
+    let mut stmt =
+        conn.prepare("SELECT term FROM journal_tags WHERE entry_id = ?1 ORDER BY term ASC")?;
+    let rows = stmt.query_map([entry_id], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 /// Replace this entry's auto-generated tags with `terms` in one transaction:
 /// delete rows whose source is 'backfill' or 'reader-auto', then insert `terms`
 /// with source 'reader-auto'. Tags with any other source (e.g. 'manual') are
@@ -831,6 +841,29 @@ mod tests {
         // A term of only quote chars strips to an empty FTS phrase (MATCH '""'),
         // which matches nothing -> Ok([]), NOT an FTS syntax error/panic.
         assert!(find_pages_by_term(&conn, "\"\"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn terms_for_entry_sorted_and_empty() {
+        let conn = mem();
+        conn.execute(
+            "INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope) \
+             VALUES (9,'Rom',3,1,'q','a','scene')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO journal_tags (entry_id, term) VALUES (9,'quibble'),(9,'fee simple')",
+            [],
+        )
+        .unwrap();
+        // sorted ascending, scoped to the entry
+        assert_eq!(
+            terms_for_entry(&conn, 9).unwrap(),
+            vec!["fee simple".to_string(), "quibble".to_string()]
+        );
+        // untagged entry -> empty
+        assert!(terms_for_entry(&conn, 999).unwrap().is_empty());
     }
 
     #[test]
