@@ -1835,6 +1835,28 @@ pub(crate) fn spawn_retag(
     );
 }
 
+/// The windowed scene/passage text for the current journal band, anchored on the
+/// reader's saved position — the same context `ask_claude` sends to the answer
+/// prompt. Empty for Work/Author bands and unresolvable positions. Factored so
+/// the answer path and the first-ask term extractor build it identically.
+fn current_scene_text(s: &AppState) -> String {
+    let anchor_work_line = s
+        .journal
+        .return_pos
+        .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
+        .unwrap_or(0);
+    match &s.journal_band {
+        JournalBand::Work => String::new(),
+        JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_windowed(
+            s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+        ),
+        JournalBand::Passage { div1, div2, .. } => crate::app::scene_synopsis::scene_text_windowed(
+            s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
+        ),
+        JournalBand::Author(_) => String::new(),
+    }
+}
+
 fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     let (work_title, work_author, work_abbrev, work_type, band, scene_text, model) = {
         let s = state_rc.borrow();
@@ -1849,26 +1871,9 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             None => return,
         };
         // Anchor on the reader's saved position (where the journal overlay was
-        // opened from), mapped to a work line. Falls back to 0 (the division's
-        // first paragraph) when unresolvable — scene_text_windowed clamps.
-        let anchor_work_line = s
-            .journal
-            .return_pos
-            .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
-            .unwrap_or(0);
-        let scene_text = match band {
-            JournalBand::Work => String::new(),
-            JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_text_windowed(
-                &s, d1, d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
-            ),
-            JournalBand::Passage { div1, div2, .. } => {
-                crate::app::scene_synopsis::scene_text_windowed(
-                    &s, div1, div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
-                )
-            }
-            // Author band: no single scene to anchor on.
-            JournalBand::Author(_) => String::new(),
-        };
+        // opened from), mapped to a work line — factored so the first-ask term
+        // extractor builds identical context. Empty for Work/Author bands.
+        let scene_text = current_scene_text(&s);
         (
             title,
             author,
