@@ -2392,13 +2392,23 @@ pub fn build_window(
         });
     }
 
-    // Connect journal Q&A picker search entry filter
+    // Connect journal Q&A picker search entry filter.
+    //
+    // BORROW SAFETY (applies to all four picker filters below): a picker's
+    // `show()`/reset calls `search_entry.set_text("")`, which SYNCHRONOUSLY
+    // emits `changed`. The open path that calls `show()` holds `borrow_mut()`,
+    // so a plain `state.borrow()` here would be a RefCell double-borrow → a
+    // non-unwinding panic inside the GTK callback (the `f` term-box crash).
+    // Use `try_borrow()` and skip on contention: a programmatic clear under the
+    // open path's borrow needs no re-filter (the open path already populated the
+    // list); only genuine user typing (no borrow held) should re-filter.
     let state_for_journal_filter = Rc::clone(&state);
     {
         let s = state.borrow();
         s.journal_picker.search_entry().connect_changed(move |entry| {
-            let filter = entry.text().to_string();
-            state_for_journal_filter.borrow().journal_picker.populate_list(&filter);
+            if let Ok(st) = state_for_journal_filter.try_borrow() {
+                st.journal_picker.populate_list(&entry.text());
+            }
         });
     }
 
@@ -2407,8 +2417,9 @@ pub fn build_window(
     {
         let s = state.borrow();
         s.journal_move_picker.search_entry().connect_changed(move |entry| {
-            let filter = entry.text().to_string();
-            state_for_journal_move_filter.borrow().journal_move_picker.populate_list(&filter);
+            if let Ok(st) = state_for_journal_move_filter.try_borrow() {
+                st.journal_move_picker.populate_list(&entry.text());
+            }
         });
     }
 
@@ -2417,8 +2428,9 @@ pub fn build_window(
     {
         let s = state.borrow();
         s.journal_term_input.search_entry().connect_changed(move |entry| {
-            let filter = entry.text().to_string();
-            state_for_journal_term_filter.borrow().journal_term_input.populate_list(&filter);
+            if let Ok(st) = state_for_journal_term_filter.try_borrow() {
+                st.journal_term_input.populate_list(&entry.text());
+            }
         });
     }
 
@@ -2427,8 +2439,9 @@ pub fn build_window(
     {
         let s = state.borrow();
         s.concordance_picker.search_entry().connect_changed(move |entry| {
-            let text = entry.text();
-            state_for_concordance_filter.borrow().concordance_picker.populate_list(&text);
+            if let Ok(st) = state_for_concordance_filter.try_borrow() {
+                st.concordance_picker.populate_list(&entry.text());
+            }
         });
     }
 
