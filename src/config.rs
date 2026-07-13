@@ -214,6 +214,14 @@ pub struct Config {
     /// save, like `theme` itself (see merge_configs).
     #[serde(default)]
     pub root_variants: HashMap<String, u8>,
+    /// Whether newly-saved journal Q&A entries are automatically tagged by
+    /// the background tagger (Task 4). Default on.
+    #[serde(default = "default_auto_tag_journal")]
+    pub auto_tag_journal: bool,
+    /// Claude model id used for the background journal-tag extraction call.
+    /// A small/cheap model — extraction is not the main gloss/journal chat.
+    #[serde(default = "default_tag_extract_model")]
+    pub tag_extract_model: String,
 }
 
 fn default_font_family() -> String {
@@ -316,6 +324,14 @@ pub fn default_mpv_volume() -> u32 {
     100
 }
 
+fn default_auto_tag_journal() -> bool {
+    true
+}
+
+fn default_tag_extract_model() -> String {
+    "claude-haiku-4-5-20251001".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -350,6 +366,8 @@ impl Default for Config {
             theme: None,
             theme_cycle: None,
             root_variants: HashMap::new(),
+            auto_tag_journal: default_auto_tag_journal(),
+            tag_extract_model: default_tag_extract_model(),
         }
     }
 }
