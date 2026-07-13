@@ -1751,32 +1751,16 @@ impl JournalOverlay {
         self.bar_drawing.queue_draw();
     }
 
-    /// Index of the first block whose end_line is at or below the current
-    /// viewport top — the anchor seed for Shift+V. Falls back to 0.
-    fn topmost_visible_block(&self) -> usize {
-        let top_y = self.scrolled.vadjustment().value();
-        let buffer = self.view.buffer();
-        let blocks = self.blocks.borrow();
-        for (i, b) in blocks.iter().enumerate() {
-            if let Some(iter) = buffer.iter_at_line(b.end_line) {
-                let (y, h) = self.view.line_yrange(&iter);
-                if (y + h) as f64 >= top_y {
-                    return i;
-                }
-            }
-        }
-        0
-    }
-
-    /// Enter visual mode: anchor at the topmost visible block. Returns false
-    /// (no-op) when there are no blocks.
+    /// Enter visual mode: anchor at the CURRENT cursor block (the segment the
+    /// reader is on), so `V` selects that segment — extend from there with j/k.
+    /// Returns false (no-op) when there are no blocks.
     pub fn enter_visual(&self) -> bool {
         let n = self.blocks.borrow().len();
         if n == 0 {
             crate::logging::log("JOURNAL-VISUAL: enter_visual no-op (0 blocks)");
             return false;
         }
-        let seed = self.topmost_visible_block();
+        let seed = self.cursor_block.get().min(n - 1);
         self.visual_anchor.set(Some(seed));
         self.cursor_block.set(seed);
         self.refresh_bar();
