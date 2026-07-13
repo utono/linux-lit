@@ -1,5 +1,6 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
 use crate::ui::journal_move_picker::MoveTargetRow;
+use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -28,6 +29,67 @@ fn titlecase_first(s: &str) -> String {
 /// Prose journal-Q&A context window radius (paragraphs each side of the
 /// reader's anchor). Prose divisions can be the whole book, so cap the context.
 const PROSE_CONTEXT_RADIUS: usize = 10;
+
+/// Parse the improve-question reply: strip a markdown fence + trim. Returns
+/// `original` when the reply is empty/whitespace so the question is never lost.
+fn parse_improved_question(raw: &str, original: &str) -> String {
+    let cleaned = crate::journal_tags::strip_code_fence(raw).trim().to_string();
+    if cleaned.is_empty() {
+        original.to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Fallback prompt for improving a reader's journal question when the
+/// `journal.improve-question` api_prompts row is absent. Returns ONLY the
+/// improved question (one line, no preamble, no JSON).
+const FALLBACK_IMPROVE_QUESTION_PROMPT: &str = "\
+You improve the phrasing of a reader's question about a literary work. Make it \
+clear, specific, and well-formed while PRESERVING the reader's intent and \
+meaning — do not answer it, do not add new sub-questions, do not change what is \
+being asked. Fix grammar, tighten wording, and resolve vague references only as \
+the surrounding intent allows. Return ONLY the improved question as a single \
+line of plain text — no preamble, no quotes, no markdown, no explanation.";
+
+/// Improve a journal question's phrasing via Claude, then hand the improved
+/// question (or the original on empty/error) to `on_done` on the main loop.
+///
+/// BORROW SAFETY: `config.claude_model` is read under a scoped borrow that
+/// drops before `run_claude_request` (which itself borrows `state` for
+/// `tokio_handle`) — mirrors `ask_claude`'s borrow discipline. `on_done` runs
+/// later, inside `run_claude_request`'s on_success/on_error closures on the
+/// main loop, receiving the `&Rc<RefCell<AppState>>` those closures are
+/// handed.
+fn improve_question(
+    state: &Rc<RefCell<AppState>>,
+    question: String,
+    on_done: impl Fn(&Rc<RefCell<AppState>>, String) + 'static,
+) {
+    let model = state.borrow().config.claude_model.clone();
+    let prompt = crate::db::prompts::active_prompt("journal.improve-question")
+        .unwrap_or_else(|| FALLBACK_IMPROVE_QUESTION_PROMPT.to_string());
+    let original = question.clone();
+    let original_err = question.clone();
+    // `on_done` is shared (not Clone) between the two callbacks, so wrap it in
+    // an Rc rather than requiring callers to pass a Clone closure.
+    let on_done = Rc::new(on_done);
+    let on_done_err = Rc::clone(&on_done);
+    crate::input::actions::claude_bridge::run_claude_request(
+        state,
+        prompt,
+        question, // the user message is the raw question
+        model,
+        move |st, reply| {
+            let improved = parse_improved_question(&reply, &original);
+            on_done(st, improved);
+        },
+        move |st, msg| {
+            crate::logging::log(&format!("IMPROVE-Q: call failed ({msg}); keeping original"));
+            on_done_err(st, original_err.clone());
+        },
+    );
+}
 
 /// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
 /// markup (as built by `build_source_header`), for the Q&A picker to show
@@ -1291,6 +1353,173 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
         .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
+/// Body of `begin_rewrite` given an explicit `(id, q, a)`: stash the rewrite
+/// tuple in `journal.vim_rewrite` and open the ask card in INSERT so
+/// `submit_prompt` sends the typed instruction with this (id, q, a). Factored
+/// so the `both` question-improve path opens the instruction card with the
+/// IMPROVED question (not the stale on-screen one).
+///
+/// BORROW SAFETY: the `vim_rewrite` write is under a scoped `borrow_mut` that
+/// drops before the read-only `borrow` used to open the ask card — mirrors
+/// `begin_rewrite`.
+pub(crate) fn begin_rewrite_with(state: &Rc<RefCell<AppState>>, id: i64, q: &str, a: &str) {
+    {
+        let mut s = state.borrow_mut();
+        s.journal.vim_rewrite = Some((id, q.to_string(), a.to_string()));
+    }
+    let s = state.borrow();
+    s.journal_overlay.open_ask_card(
+        "Rewrite instruction",
+        "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+    );
+    let _ = s
+        .journal_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
+}
+
+/// `R` in the journal overlay: open the small target chooser
+/// ("Rewrite: q question · a answer · b both · Esc cancel") and switch to
+/// `InputMode::RewriteTargetChoice`. The single-key handler
+/// (`handle_rewrite_target_key`) then routes to the answer/question/both path.
+/// No-op (toast) when there is nothing displayed to rewrite. Mirrors
+/// `show_delete_confirmation`'s centered amend-dialog box.
+///
+/// BORROW SAFETY: the "nothing to rewrite" check + the overlay-parent lookup are
+/// scoped read borrows dropped before `add_overlay`; the state writes (the two
+/// weakrefs + `input_mode`) happen in a single trailing `borrow_mut`, with no
+/// widget call that re-enters `state` held across it.
+pub(crate) fn open_rewrite_target(state: &Rc<RefCell<AppState>>) {
+    // Nothing displayed → toast and stay in the overlay (no chooser).
+    let has_entry = {
+        let s = state.borrow();
+        displayed_journal_page(&s).is_some()
+    };
+    if !has_entry {
+        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        return;
+    }
+
+    let overlay_parent = {
+        let s = state.borrow();
+        s.action_popup_widget.container.parent()
+    };
+    let overlay_parent = match overlay_parent.and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
+        Some(o) => o,
+        None => return,
+    };
+
+    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    container.set_halign(gtk4::Align::Center);
+    container.set_valign(gtk4::Align::Center);
+    container.set_width_request(400);
+    container.add_css_class("amend-dialog");
+
+    let label = gtk4::Label::new(Some("Rewrite target"));
+    label.add_css_class("amend-title");
+    label.set_halign(gtk4::Align::Start);
+    container.append(&label);
+
+    let hint = gtk4::Label::new(Some(
+        "q = question  \u{00b7}  a = answer  \u{00b7}  b = both  \u{00b7}  Esc = cancel",
+    ));
+    hint.add_css_class("amend-hint");
+    hint.set_halign(gtk4::Align::Center);
+    container.append(&hint);
+
+    overlay_parent.add_overlay(&container);
+
+    let mut s = state.borrow_mut();
+    s.rewrite_target_container = Some(container.downgrade());
+    s.rewrite_target_overlay = Some(overlay_parent.downgrade());
+    s.input_mode = InputMode::RewriteTargetChoice;
+}
+
+/// Tear down the `R` target chooser box and return to the journal overlay.
+///
+/// BORROW SAFETY: single `borrow_mut`; `remove_overlay` operates on the taken
+/// weakref upgrades (no `state` re-entry).
+pub(crate) fn close_rewrite_target(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if let (Some(cw), Some(ow)) = (
+        s.rewrite_target_container.take(),
+        s.rewrite_target_overlay.take(),
+    ) {
+        if let (Some(c), Some(o)) = (cw.upgrade(), ow.upgrade()) {
+            o.remove_overlay(&c);
+        }
+    }
+    s.input_mode = InputMode::JournalOverlay;
+}
+
+/// `R` → question (`both == false`) or both (`both == true`): improve the
+/// DISPLAYED entry's question via Claude, persist the improved question
+/// immediately (answer unchanged), then either open the answer-rewrite
+/// instruction card for the improved question (`both`) or regenerate the answer
+/// afresh with a fixed reword instruction (question-only).
+///
+/// BORROW SAFETY: the displayed page is read under a scoped borrow that drops
+/// before the toast; the toast takes another scoped borrow; `improve_question`
+/// is then called with NO outer borrow held (it borrows `state` itself). Inside
+/// the `on_done` closure: the `update_journal_page` write opens its own
+/// `open_db_rw` conn and reads the model under a scoped `borrow` that drops
+/// before `begin_rewrite_with`/`rewrite_with_claude` (each of which re-borrows
+/// `state`) — no borrow is held across those calls.
+pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
+    let page = {
+        let s = state.borrow();
+        displayed_journal_page(&s)
+    };
+    let Some(page) = page else {
+        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        return;
+    };
+    let id = page.id;
+    let old_q = page.question.trim().to_string();
+    let answer = page.answer.trim().to_string();
+    // Capture the model up-front (like id/q/a) so a navigate during the async
+    // improve-question round-trip can't stamp a different entry's model. Fall
+    // back to the config model when the entry has none (legacy/unstamped rows),
+    // mirroring rewrite_with_claude — else the immediate persist would write an
+    // empty model string.
+    let model = if page.claude_model.is_empty() {
+        state.borrow().config.claude_model.clone()
+    } else {
+        page.claude_model.clone()
+    };
+
+    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Improving question\u{2026}");
+
+    improve_question(state, old_q, move |st, improved_q| {
+        // Persist the improved question immediately with the unchanged answer,
+        // reusing the entry's stored model (captured before the async call).
+        {
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let _ =
+                    crate::db::journal::update_journal_page(&conn, id, &improved_q, &answer, &model);
+            }
+        }
+        // No borrow held here.
+        if both {
+            // Replace the persistent "Improving question…" toast (the else path
+            // clears it via rewrite_with_claude's own toast; the both path opens
+            // the instruction card, which does not, so dismiss it here) before
+            // opening the answer-instruction card for the improved question.
+            crate::ui::toast::show_transient(&st.borrow().chapter_toast, "Question improved", 2);
+            begin_rewrite_with(st, id, &improved_q, &answer);
+        } else {
+            rewrite_with_claude(
+                st,
+                id,
+                &improved_q,
+                &answer,
+                "The question was reworded for clarity; answer this (possibly reworded) question afresh, grounded as before.",
+            );
+        }
+    });
+}
+
 /// Undo the last `e` journal edit (single-level): restore the snapshot in
 /// `journal_undo` (the pre-edit question/answer/model) to its page via
 /// `update_journal_page`, purge that page's cached TTS, re-render the band, land
@@ -1410,7 +1639,13 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     if text.trim().is_empty() {
         return;
     }
-    ask_claude(state, &text);
+    // Show the loading card immediately with the raw text so the UI isn't
+    // dead during the improve-question round-trip; `ask_claude` re-shows it
+    // with the improved phrasing once that call returns.
+    state.borrow().journal_overlay.show_loading(&text);
+    improve_question(state, text, move |st, improved| {
+        ask_claude(st, &improved);
+    });
 }
 
 /// Send a journal Q&A `(question, answer)` plus a rewrite `instruction` to Claude,
@@ -1495,6 +1730,12 @@ fn rewrite_with_claude(
             if in_filter {
                 if let Some(filter) = s.journal.filter.as_mut() {
                     if let Some(m) = filter.matches.get_mut(filter.pos) {
+                        // Sync BOTH q and a: the R→question path passes an
+                        // improved question, so the in-memory match must carry
+                        // it too, else render_filtered_match shows the stale old
+                        // question with the new answer (the DB is already
+                        // correct; this is display-only).
+                        m.page.question = question_owned.clone();
                         m.page.answer = revised.clone();
                     }
                 }
@@ -2202,5 +2443,22 @@ mod tests {
             bands,
             vec![JournalBand::Scene(1, 1), JournalBand::Scene(1, 2), JournalBand::Scene(3, 1)]
         );
+    }
+
+    #[test]
+    fn improved_question_parse_strips_fence_and_falls_back() {
+        // plain
+        assert_eq!(
+            parse_improved_question("What does 'fee simple' mean here?", "orig"),
+            "What does 'fee simple' mean here?"
+        );
+        // fenced (model wrapped it)
+        assert_eq!(
+            parse_improved_question("```\nWhat is a fee simple?\n```", "orig"),
+            "What is a fee simple?"
+        );
+        // empty / whitespace -> keep the original (never lose the question)
+        assert_eq!(parse_improved_question("", "the original q"), "the original q");
+        assert_eq!(parse_improved_question("   \n  ", "the original q"), "the original q");
     }
 }

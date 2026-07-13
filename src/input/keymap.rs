@@ -218,6 +218,7 @@ pub fn handle_key(
             crate::app::InputMode::TranslationOverlay => handle_translation_overlay_key(state, key_name, is_ctrl),
             crate::app::InputMode::DeleteConfirm => handle_delete_confirm_key(state, key_name),
             crate::app::InputMode::UndoConfirm => handle_undo_confirm_key(state, key_name),
+            crate::app::InputMode::RewriteTargetChoice => handle_rewrite_target_key(state, key_name),
             crate::app::InputMode::EchoPicker => handle_echo_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
@@ -1472,12 +1473,11 @@ fn handle_journal_key(
             crate::input::actions::journal::begin_ask(state);
             true
         }
-        // `R` opens the rewrite prompt for the CURRENT Q&A: an ask card that
-        // collects an instruction and sends (question, answer, instruction) to
-        // Claude to revise the answer in place. Works directly from the Q&A view
-        // (no need to enter the `e` editor first).
+        // `R` opens the rewrite TARGET chooser (q question / a answer / b both):
+        // a single key then routes to improve-question, the answer-only rewrite
+        // prompt, or both. Works directly from the Q&A view (no `e` editor).
         "R" => {
-            crate::input::actions::journal::begin_rewrite(state);
+            crate::input::actions::journal::open_rewrite_target(state);
             true
         }
         "e" => {
@@ -2610,6 +2610,38 @@ fn handle_undo_confirm_key(
         }
         "Escape" | "n" => {
             crate::input::actions::gloss::close_undo_confirmation(state);
+            true
+        }
+        _ => true,
+    }
+}
+
+/// The journal `R` target chooser: route a single key to one of the three
+/// rewrite paths, tearing down the chooser box first (which restores the journal
+/// overlay mode). `Esc` and any non-matching key just dismiss the chooser.
+/// Mirrors the delete/undo confirm handlers' close-then-act order.
+fn handle_rewrite_target_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "a" => {
+            crate::input::actions::journal::close_rewrite_target(state);
+            crate::input::actions::journal::begin_rewrite(state);
+            true
+        }
+        "q" => {
+            crate::input::actions::journal::close_rewrite_target(state);
+            crate::input::actions::journal::rewrite_question_path(state, false);
+            true
+        }
+        "b" => {
+            crate::input::actions::journal::close_rewrite_target(state);
+            crate::input::actions::journal::rewrite_question_path(state, true);
+            true
+        }
+        "Escape" => {
+            crate::input::actions::journal::close_rewrite_target(state);
             true
         }
         _ => true,
