@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Entry, ListBox, ListBoxRow, Overlay};
+use gtk4::{Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Overlay};
 
 /// Typed-term box + tag-suggestion list for the journal's cross-work "term
 /// browse" (Task 4 wires this into `AppState`/dispatch/the `f` key). Modeled
@@ -10,6 +10,11 @@ pub struct JournalTermInput {
     picker_box: GtkBox,
     search_entry: Entry,
     list_box: ListBox,
+    /// Live one-line hint stating exactly what Return will do — search the
+    /// highlighted TAG, or the raw typed TERM when nothing matches. Kept in
+    /// sync with `query_term`'s precedence by `update_hint` (called on every
+    /// keystroke via `populate_list`, and after each `move_selection`).
+    hint: Label,
     pub suggestions: Vec<String>,
 }
 
@@ -24,14 +29,19 @@ impl JournalTermInput {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
+        let hint = Label::builder().xalign(0.0).build();
+        hint.add_css_class("picker-item-detail");
+
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
+        picker_box.append(&hint);
 
         JournalTermInput {
             overlay,
             picker_box,
             search_entry,
             list_box,
+            hint,
             suggestions: Vec::new(),
         }
     }
@@ -85,10 +95,33 @@ impl JournalTermInput {
         }
 
         crate::ui::picker_nav::select_first_row(&self.list_box);
+        self.update_hint();
     }
 
     pub fn move_selection(&self, delta: i32) {
         crate::ui::picker_nav::move_selection_clamped(&self.list_box, delta);
+        self.update_hint();
+    }
+
+    /// Refresh the hint line to state exactly what Return will do — must mirror
+    /// `query_term`'s precedence (selected tag wins, else the typed term).
+    pub fn update_hint(&self) {
+        let text = match self.query_term() {
+            Some(term) => {
+                let is_tag = self
+                    .selected_index()
+                    .and_then(|i| self.suggestions.get(i))
+                    .map(|t| *t == term)
+                    .unwrap_or(false);
+                if is_tag {
+                    format!("Return: browse tag \u{201c}{term}\u{201d}")
+                } else {
+                    format!("Return: search \u{201c}{term}\u{201d} (no tag)")
+                }
+            }
+            None => "Type a term or pick a tag".to_string(),
+        };
+        self.hint.set_text(&text);
     }
 
     /// Index into `suggestions` of the selected row (the row's widget_name).
@@ -96,17 +129,25 @@ impl JournalTermInput {
         crate::ui::picker_nav::selected_index(&self.list_box)
     }
 
-    /// The term to search: the typed entry text (trimmed) if non-empty, else
-    /// the highlighted suggestion. This ordering means a freely-typed term
-    /// always wins over a selected row — so the FTS fallback is reachable
-    /// even with zero tags. `None` only when both are empty.
+    /// The term to search. A HIGHLIGHTED SUGGESTION WINS: when the user types a
+    /// prefix the list filters and auto-selects the first match, so typing
+    /// "fee" and pressing Return searches the whole selected tag "fee simple",
+    /// not the prefix "fee" (what the user sees highlighted is what they get).
+    /// Only when the typed text matches NO tag (empty list → no selection) does
+    /// it fall through to the raw typed text — so a freely-typed term still
+    /// reaches the FTS fallback with zero tags. `None` when both are empty.
     pub fn query_term(&self) -> Option<String> {
-        let typed = self.search_entry.text();
-        let trimmed = typed.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-        self.selected_index()
+        if let Some(term) = self
+            .selected_index()
             .and_then(|i| self.suggestions.get(i).cloned())
+        {
+            return Some(term);
+        }
+        let trimmed = self.search_entry.text().trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 }
