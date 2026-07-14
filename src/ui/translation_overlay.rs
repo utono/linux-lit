@@ -87,10 +87,11 @@ struct RenderCtx {
     full_width: i32,
     block_margin_top: i32,
     header_margin_bottom: i32,
-    /// Per-line above/below spacing on every overlay TextView, matching the main
-    /// card's `pixels_above_lines`/`pixels_below_lines`. Without it the cursor
-    /// line's `paragraph_background` band ends flush at the line's logical bottom
-    /// and clips the highlighted line's descenders.
+    /// Per-line BELOW-line spacing on every overlay TextView. Applied below only
+    /// (not above too) so the gap between two adjacent lines is one
+    /// `line_spacing`, matching the main reading card rather than doubling it.
+    /// The below-line room also keeps the cursor line's `paragraph_background`
+    /// band from clipping the highlighted line's descenders.
     line_spacing: i32,
 }
 
@@ -433,7 +434,10 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             // (per user): each stays on one visual row, matching the speech columns.
             // Full-width, so overflow risk is minimal.
             view.set_wrap_mode(gtk4::WrapMode::None);
-            view.set_pixels_above_lines(ctx.line_spacing);
+            // Single-sided spacing (below only) so the gap BETWEEN two lines is
+            // one `line_spacing`, matching the main reading card — not the
+            // doubled `above + below` gap. The band below still clears descenders.
+            view.set_pixels_above_lines(0);
             view.set_pixels_below_lines(ctx.line_spacing);
             view.add_css_class("gloss-text");
             let text = interlude_text(block);
@@ -492,10 +496,10 @@ fn block_for_work_idx(blocks: &[TranslationBlock], work_idx: usize) -> Option<us
 /// block = top margin + header height + header bottom margin + max(orig, trans)
 /// column text height. Interlude = top margin + full-width text height.
 fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
-    // The rendered TextViews add `line_spacing` above AND below every paragraph
-    // (each source line is one paragraph); the standalone `pango::Layout` does
-    // not. Add it back so pagination doesn't over-pack now that lines are taller.
-    let spacing = |paras: usize| 2 * ctx.line_spacing * paras as i32;
+    // The rendered TextViews add `line_spacing` below every paragraph (each
+    // source line is one paragraph); the standalone `pango::Layout` does not.
+    // Add it back so pagination doesn't over-pack now that lines are taller.
+    let spacing = |paras: usize| ctx.line_spacing * paras as i32;
     if block.speaker.is_some() {
         let (orig_text, trans_text) = block_column_texts(block);
         let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
@@ -523,7 +527,7 @@ fn block_chrome_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &Re
 }
 
 /// Rendered height of ONE source line within a block (the taller of its original
-/// / translation column line, plus the per-paragraph above+below spacing). Used
+/// / translation column line, plus the per-paragraph below-line spacing). Used
 /// to split an over-tall block at line boundaries.
 fn line_height(block: &TranslationBlock, i: usize, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
     let (orig, trans) = &block.lines[i];
@@ -534,7 +538,7 @@ fn line_height(block: &TranslationBlock, i: usize, pctx: &pango::Context, ctx: &
     } else {
         measure_text_height(pctx, trans, ctx.body_font_size, &ctx.font_family, width)
     };
-    oh.max(th) + 2 * ctx.line_spacing
+    oh.max(th) + ctx.line_spacing
 }
 
 /// Split any block taller than `page_height` into contiguous sub-blocks that
@@ -633,9 +637,11 @@ fn make_column(width: i32, color: &str, italic: bool, line_spacing: i32) -> Text
     // where verse lines never wrap). `width` is a MINIMUM request, so an
     // overflowing line simply extends past it.
     view.set_wrap_mode(gtk4::WrapMode::None);
-    // Per-line above/below spacing so the cursor line's `paragraph_background`
-    // band has room below the descenders (matches the main reading card).
-    view.set_pixels_above_lines(line_spacing);
+    // Spacing on the below side only: the gap between two adjacent lines is one
+    // `line_spacing`, matching the main reading card (applying it above AND below
+    // would double the gap). The below-line room still lets the cursor line's
+    // `paragraph_background` band clear the descenders.
+    view.set_pixels_above_lines(0);
     view.set_pixels_below_lines(line_spacing);
     view.set_size_request(width, -1);
     view.add_css_class("gloss-text");
