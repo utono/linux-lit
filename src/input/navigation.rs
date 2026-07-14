@@ -2518,6 +2518,43 @@ pub(crate) fn show_chapter_toast(state: &AppState, text: &str) {
     });
 }
 
+/// Show a transient bottom-center message on `label` (a toast widget OTHER than
+/// `chapter_toast` — e.g. `speed_toast`, `search_toast`), and when it expires
+/// bring the persistent act/scene/chapter toast back if it is toggled on. Used
+/// by the sync (`s`/`ss`) and search toasts, which borrow the same bottom strip:
+/// while the message is up the persistent chapter toast is hidden so the two
+/// don't stack, and it is redisplayed the moment the message clears — no cursor
+/// move required. The redisplay is guarded by `chapter_toast_gen` so a rapid
+/// second message (which bumps the generation via its own `show_*` call) cancels
+/// the earlier restore, and a work switch / toggle-off (which also bump/clear)
+/// leave it a no-op. No-op restore when the toast is not persistent.
+pub(crate) fn show_transient_over_chapter_toast(state: &AppState, label: &gtk4::Label, text: &str) {
+    // Hide the chapter toast (persistent OR a still-visible transient scene
+    // toast) so the borrowed message shows alone, not stacked over it.
+    state.chapter_toast.set_visible(false);
+    // Bump the generation and capture it, so the scheduled restore only fires
+    // for the newest message (mirrors show_chapter_toast's stale-timer guard).
+    let gen = state.chapter_toast_gen.get().wrapping_add(1);
+    state.chapter_toast_gen.set(gen);
+    label.set_text(text);
+    label.set_visible(true);
+    let label = label.clone();
+    let toast = state.chapter_toast.clone();
+    let persistent = state.chapter_toast_persistent.clone();
+    let gen_cell = state.chapter_toast_gen.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        label.set_visible(false);
+        // Superseded by a newer toast/message, or toggled off / work-switched:
+        // that owner now controls the strip, so don't resurrect the old toast.
+        if gen_cell.get() != gen {
+            return;
+        }
+        if persistent.get() {
+            toast.set_visible(true);
+        }
+    });
+}
+
 /// Like `show_chapter_toast` but with NO auto-hide timer — the toast stays up
 /// until the persistent flag is toggled off or a work switch clears it. Bumps
 /// `chapter_toast_gen` so any in-flight transient hide-timer becomes a no-op.

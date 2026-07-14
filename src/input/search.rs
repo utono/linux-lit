@@ -98,11 +98,9 @@ pub(crate) fn no_match_toast(state: &AppState) {
     let q = state.search_bar.query();
     let text = format!("No match for \u{201c}{}\u{201d}", display_pattern(&q));
     // The search toast borrows the bottom strip; a persistent chapter toast
-    // yields to it (the next cursor move re-shows the chapter toast).
-    if state.chapter_toast_persistent.get() {
-        state.chapter_toast.set_visible(false);
-    }
-    crate::ui::toast::show_transient(&state.search_toast, &text, 3);
+    // yields to it and is redisplayed the moment the search toast clears.
+    crate::input::navigation::show_transient_over_chapter_toast(
+        state, &state.search_toast, &text);
 }
 
 /// Toggle playback, seeking to the current line's start_time first when
@@ -416,10 +414,8 @@ fn edge_toast(state: &AppState, side: Side, query: &str) {
         Side::Left => format!("No earlier occurrence of \u{201c}{}\u{201d}", p),
         Side::Right => format!("No later occurrence of \u{201c}{}\u{201d}", p),
     };
-    if state.chapter_toast_persistent.get() {
-        state.chapter_toast.set_visible(false);
-    }
-    crate::ui::toast::show_transient(&state.search_toast, &text, 3);
+    crate::input::navigation::show_transient_over_chapter_toast(
+        state, &state.search_toast, &text);
 }
 
 /// Select match `new_idx`, highlight it, and land on its CANONICAL spread —

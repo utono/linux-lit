@@ -2033,11 +2033,12 @@ fn toggle_playback_sync(s: &mut AppState) {
     let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
     crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
     // Bottom-center (same place as the act/scene pill); reset margins in
-    // case a prior corner toast moved the shared widget.
+    // case a prior corner toast moved the shared widget. Redisplays the
+    // persistent act/scene/chapter toast underneath when this clears.
     s.speed_toast.set_halign(gtk4::Align::Center);
     s.speed_toast.set_margin_start(0);
     s.speed_toast.set_margin_end(0);
-    crate::ui::toast::show_transient(&s.speed_toast, label, 3);
+    navigation::show_transient_over_chapter_toast(s, &s.speed_toast, label);
 }
 
 /// Show a transient bottom-center toast (reuses `chapter_toast`, 3s auto-hide).
@@ -3284,11 +3285,16 @@ fn dispatch_action(
         PlaybackSyncTap => {
             // Overloaded s: the single tap only TOASTS the sync state (an
             // accidental press must not silently kill sync); ss toggles
-            // (PendingS check in handle_key_inner).
+            // (PendingS check in handle_key_inner). Uses the centered speed_toast
+            // (not chapter_toast) so the persistent act/scene/chapter toast is
+            // redisplayed underneath when this message clears (if toggled on).
             {
                 let s = state.borrow();
                 let msg = if s.sync_enabled { "Sync: on (ss toggles)" } else { "Sync: off (ss toggles)" };
-                navigation::show_chapter_toast(&s, msg);
+                s.speed_toast.set_halign(gtk4::Align::Center);
+                s.speed_toast.set_margin_start(0);
+                s.speed_toast.set_margin_end(0);
+                navigation::show_transient_over_chapter_toast(&s, &s.speed_toast, msg);
             }
             KeyState::start_chord(key_state, ChordState::PendingS);
         }
