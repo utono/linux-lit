@@ -137,7 +137,8 @@ pub struct Theme {
     pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
     pub overlay_panel_bg: String, // inset prose-overlay panel tint (barely-there)
     pub scrim_bg: String,         // full-bleed overlay matting (dimmed vs root_color)
-    pub root_variant: u8,         // active root-color variant (0 = designed)
+    pub root_variant: u8,         // active root-color variant (index into candidates)
+    pub root_variant_count: u8,   // number of root variants (candidate count, min 1)
 }
 
 fn themes_path() -> PathBuf {
@@ -387,6 +388,7 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
         root_variant: variant,
+        root_variant_count: 1,
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
     theme.scrim_bg = scrim_bg(&theme);
@@ -422,6 +424,7 @@ fn default_theme() -> Theme {
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
         root_variant: 0,
+        root_variant_count: 1,
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
     theme.scrim_bg = scrim_bg(&theme);
