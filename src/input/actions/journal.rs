@@ -1469,7 +1469,7 @@ pub(crate) fn vim_open_rewrite(
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
-        "Type how to change the answer, then Ctrl+Enter.\nCtrl+Enter with NO instruction rewrites the answer afresh under the current prompt.",
+        "Ctrl+Enter with NO instruction\nrewrites the answer afresh under the default prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
@@ -1532,7 +1532,7 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
-        "Type how to change the answer, then Ctrl+Enter.\nCtrl+Enter with NO instruction rewrites the answer afresh under the current prompt.",
+        "Ctrl+Enter with NO instruction\nrewrites the answer afresh under the default prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
@@ -1558,7 +1558,7 @@ pub(crate) fn begin_rewrite_with(state: &Rc<RefCell<AppState>>, id: i64, q: &str
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
-        "Type how to change the answer, then Ctrl+Enter.\nCtrl+Enter with NO instruction rewrites the answer afresh under the current prompt.",
+        "Ctrl+Enter with NO instruction\nrewrites the answer afresh under the default prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
@@ -1604,7 +1604,7 @@ pub(crate) fn open_rewrite_target(state: &Rc<RefCell<AppState>>) {
 
     let label = gtk4::Label::new(Some("Rewrite target"));
     label.add_css_class("amend-title");
-    label.set_halign(gtk4::Align::Start);
+    label.set_halign(gtk4::Align::Center);
     container.append(&label);
 
     let hint = gtk4::Label::new(Some(

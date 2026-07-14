@@ -438,7 +438,7 @@ pub(crate) fn show_delete_confirmation(
 
     let label = gtk4::Label::new(Some(&title));
     label.add_css_class("amend-title");
-    label.set_halign(gtk4::Align::Start);
+    label.set_halign(gtk4::Align::Center);
     container.append(&label);
 
     let hint = gtk4::Label::new(Some("y = confirm  \u{00b7}  Esc = cancel"));
@@ -508,7 +508,7 @@ pub(crate) fn show_undo_confirmation(
 
     let label = gtk4::Label::new(Some("Undo last edit?"));
     label.add_css_class("amend-title");
-    label.set_halign(gtk4::Align::Start);
+    label.set_halign(gtk4::Align::Center);
     container.append(&label);
 
     let hint = gtk4::Label::new(Some("y = confirm  \u{00b7}  Esc = cancel"));

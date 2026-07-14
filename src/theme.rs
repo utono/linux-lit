@@ -935,13 +935,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            padding: 0; border-radius: 12px; border: 1px solid {dim}; \
            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
                        0 2px 6px rgba(0, 0, 0, 0.08); }} \
-         .amend-title {{ font-size: 14px; font-weight: 700; \
+         .amend-title {{ font-size: 18px; font-weight: 700; \
            letter-spacing: 2px; color: {fg}; opacity: 0.75; \
-           padding: 14px 22px 10px; \
-           border-bottom: 1px solid {header_border}; }} \
+           padding: 14px 22px 10px; }} \
          .amend-text {{ font-family: {font}; font-size: {size}pt; \
            color: {fg}; background-color: {bg}; }} \
-         .amend-hint {{ font-size: 12px; letter-spacing: 1.2px; \
+         .amend-hint {{ font-size: 15px; letter-spacing: 1.2px; \
            color: {fg}; opacity: 0.65; \
            padding: 8px 22px 12px; \
            border-top: 1px solid {header_border}; }} \
@@ -1015,11 +1014,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .gloss-position {{ font-size: 14px; color: {dim}; }} \
          .ask-card {{ background-color: alpha({gloss_bg}, 0.82); border-radius: 10px; \
            border: 1px solid {header_border}; transition: opacity 120ms ease; }} \
-         .ask-card .gloss-header {{ margin-top: 0; }} \
+         .ask-card .gloss-header {{ margin-top: 0; font-size: 15px; }} \
          textview.ask-input {{ background-color: transparent; color: {fg}; }} \
          textview.ask-input text {{ background-color: transparent; }} \
-         .ask-hint {{ font-size: 13px; color: {dim}; }} \
-         .ask-legend {{ font-size: 14px; color: {dim}; }} \
+         .ask-hint {{ font-size: 17px; color: {dim}; }} \
+         .ask-legend {{ font-size: 18px; color: {dim}; }} \
          .ask-card.card-focused {{ border-color: {cursor_bg}; \
            border-left: 4px solid {cursor_bg}; \
            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
