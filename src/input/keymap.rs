@@ -2006,13 +2006,24 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         // the new page so the highlight + MPV sync follow.
         "x" => { overlay_page_turn(state, true); true }
         "y" => { overlay_page_turn(state, false); true }
-        // Playback (same as the main card): `a` and Space play from the current
-        // line (no cursor move, so no re-highlight). Tab is dropped by request —
-        // `a` now owns MPV media playback.
+        // Playback (same as the main card): `a` / Space match the main card's
+        // swap. On prose Space plays from the cursor line and `a` pause-toggles;
+        // on poetry/plays the two SWAP (Space pause-toggles, `a` plays from the
+        // cursor line). The translation overlay only opens on verse works, so in
+        // practice Space is the pause toggle here — but resolve the swap the same
+        // way so the two surfaces never diverge. No cursor move → no re-highlight.
+        // Tab is dropped by request.
         "a" | "space" => {
-            let mut s = state.borrow_mut();
-            if !crate::input::timestamps::play_current_line(&mut s) {
-                show_no_timestamp_toast(&s);
+            let swap = reader_swaps_play_and_pause(state);
+            // The swap decides which of the two keys plays from the cursor line.
+            let plays_from_cursor = (key_name == "a") == swap;
+            if plays_from_cursor {
+                let mut s = state.borrow_mut();
+                if !crate::input::timestamps::play_current_line(&mut s) {
+                    show_no_timestamp_toast(&s);
+                }
+            } else {
+                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
             }
             true
         }
