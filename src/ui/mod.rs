@@ -698,6 +698,16 @@ pub(crate) fn recompute_overlay_bottom_clip(
     let adj = scrolled.vadjustment();
     let viewport_h = adj.page_size();
     let clip_h = bottom_clip_height(&display_rows(view), adj.value(), viewport_h, adj.upper());
+    // Clip tripwire (debug only): a clip as tall as (or taller than) the viewport
+    // blanks the whole surface — the "card goes BLANK after a reveal/scroll"
+    // failure (clip-prevention.md #7), typically a paged clip run on a
+    // cursor-scrolled view. Silent in the normal partial-row case. Pure detector.
+    if crate::logging::debug_mode() && viewport_h > 0.0 && (clip_h as f64) >= viewport_h {
+        crate::log_fmt!(
+            "CLIP_WARN: overlay clip_h={} >= viewport_h={:.0} (surface would blank; clip-prevention.md #7)",
+            clip_h, viewport_h
+        );
+    }
     if clip.height_request() != clip_h {
         clip.set_height_request(clip_h);
     }

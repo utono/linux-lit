@@ -589,6 +589,28 @@ When a half line clips at the bottom edge of a scrolled surface:
     rendered TextView's height_request" under "Pagination instead of a mask."
     (`translation_overlay.rs`, 2026-07-14.)
 
+## The CLIP_WARN tripwire (grep this FIRST)
+
+A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
+math diverges into a clip-class failure — so a regression shows up in the log,
+not only by eye. **When any clip bug is reported, `rg CLIP_WARN linux-lit-dev.log`
+before anything else.** It is a pure detector (mutates nothing) and is silent in
+normal operation (verified: an 89-step nav-fuzz over a two-column play fired the
+clip path 104× with zero warnings). It does NOT replace the pixel e2e tests —
+it flags geometry divergence, not cut glyphs — but it points straight at the
+surface and the checklist item. Three sites, all gated on `logging::debug_mode()`:
+
+- **Translation overlay** (`translation_overlay.rs`, `render_page`): idle check
+  comparing each block's ALLOCATED vs MEASURED height → `CLIP_WARN: translation …
+  COLLAPSED …` (#13) or `… OVERFLOW …` (bottom clip).
+- **Overlays — gloss/journal/synopsis** (`ui/mod.rs`,
+  `recompute_overlay_bottom_clip`, the shared path all three funnel through):
+  `CLIP_WARN: overlay clip_h=… >= viewport_h=…` when the clip would blank the
+  surface (#7).
+- **Main reading card** (`input/scroll.rs`, `update_bottom_clip`):
+  `CLIP_WARN: main-card two-col OVERFLOW total=… > widget_h=…` (#12) and
+  `CLIP_WARN: main-card single-col clip=… >= widget_h=…` (#7).
+
 ## Verifying
 
 Real GTK pixel layout is what matters; the headless `cage` + `grim` flow lays

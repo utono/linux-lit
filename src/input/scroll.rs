@@ -946,6 +946,17 @@ fn update_bottom_clip(
             ));
             bottom_clip.set_height_request(clip);
         }
+        // Clip tripwire (debug only): the left column [page_top, end-1] measured
+        // TALLER than the card, so paged_bottom_clip floored to 0 and the
+        // overflowing last line pokes out with nothing to mask it — the stale
+        // play_pages / over-tall-split overflow (clip-prevention.md #12). Its own
+        // decisive tell is `total > widget_h` with `clip=0`.
+        if crate::logging::debug_mode() && widget_height > 0 && total > widget_height {
+            crate::log_fmt!(
+                "CLIP_WARN: main-card two-col OVERFLOW total={} > widget_h={} clip={} page_top={} end={} (clip-prevention.md #12)",
+                total, widget_height, clip, page_top, end
+            );
+        }
         return;
     }
 
@@ -1096,6 +1107,16 @@ fn update_bottom_clip(
         "BOTTOM_CLIP: widget_h={} total_h={} clip={} page_top={} scroll_val={:.1} expected_y={:.1} offset={:.1}",
         widget_height, display_range.total_height, clip, page_top, scroll_val, expected_y, scroll_offset
     ));
+    // Clip tripwire (debug only): a clip as tall as the card blanks it — the
+    // "whole card goes BLANK after a cursor-scrolled reveal" failure, where a
+    // paged clip ran against a scroll value far from page_top so `scroll_offset`
+    // inflated the clip past the viewport (clip-prevention.md #7).
+    if crate::logging::debug_mode() && widget_height > 0 && clip >= widget_height {
+        crate::log_fmt!(
+            "CLIP_WARN: main-card single-col clip={} >= widget_h={} (card would blank; offset={:.0}; clip-prevention.md #7)",
+            clip, widget_height, scroll_offset
+        );
+    }
     bottom_clip.set_height_request(clip);
 }
 
