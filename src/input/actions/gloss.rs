@@ -564,12 +564,18 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     };
     let hint_text = if is_fix_ipa {
         "e.g. `daily /\u{02c8}de\u{026a}li/` or `daily hard a`  \u{00b7}  Ctrl+Enter submit"
-    } else if is_edit {
-        "Ctrl+Enter submit"
     } else if is_inner_monologue {
         "Paste lines from another work  \u{00b7}  Ctrl+Enter submit"
     } else {
         "Ctrl+Enter submit"
+    };
+    // Centered how-to watermark over the empty input (mirrors the journal Q&A
+    // rewrite box). Only the Edit card offers the default-prompt rewrite, so
+    // only it carries a legend; the others opt out with "".
+    let legend_text = if is_edit {
+        "Ctrl+Enter with NO instruction\nrewrites the gloss afresh under the default prompt."
+    } else {
+        ""
     };
 
     // Stack the input as a card below the open gloss (same widget the synopsis
@@ -581,6 +587,7 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         s.gloss_overlay.open_ask_card_with(
             title_text,
             hint_text,
+            legend_text,
             &s.theme.cursor_bg,
             &s.theme.cursor_fg,
         );
@@ -3009,20 +3016,36 @@ mod start_gloss_idx_tests {
     }
 }
 
+/// Substitute for an empty `R` (Edit) instruction: Ctrl+Enter with no text
+/// regenerates the gloss afresh under the default prompt, mirroring the journal
+/// Q&A rewrite (`journal::submit_prompt`). Without this, an empty edit message
+/// would leave the reader-gloss-edit prompt's "additional lines" framing
+/// unanswered.
+const EDIT_GLOSS_DEFAULT_INSTRUCTION: &str =
+    "No further instruction was given; rewrite this gloss afresh under the \
+     standard reader-gloss guidance, grounded in the same passage as before.";
+
 /// Submit the stacked gloss input card: read its text, close it, and route to
-/// `add_gloss` / `edit_gloss` by the active prompt mode. No-op on empty input.
+/// `add_gloss` / `edit_gloss` by the active prompt mode.
+///
+/// Empty input is a no-op for Add/FixIpa (nothing to ask). For Edit (`R`),
+/// empty input means "Ctrl+Enter with no prompt" — regenerate the gloss with
+/// the default instruction rather than doing nothing.
 pub(crate) fn submit_gloss_prompt(state: &Rc<RefCell<AppState>>) {
     let (prompt, mode) = {
         let s = state.borrow();
         (s.gloss_overlay.take_ask_text(), s.gloss_prompt_mode)
     };
     close_gloss_prompt(state);
-    if prompt.trim().is_empty() {
-        return;
-    }
+    let is_empty = prompt.trim().is_empty();
     match mode {
+        crate::app::GlossPromptMode::Add if is_empty => {}
         crate::app::GlossPromptMode::Add => add_gloss(state, &prompt),
+        crate::app::GlossPromptMode::Edit if is_empty => {
+            edit_gloss(state, EDIT_GLOSS_DEFAULT_INSTRUCTION)
+        }
         crate::app::GlossPromptMode::Edit => edit_gloss(state, &prompt),
+        crate::app::GlossPromptMode::FixIpa if is_empty => {}
         crate::app::GlossPromptMode::FixIpa => fix_word_ipa(state, &prompt),
     }
 }

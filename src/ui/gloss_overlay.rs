@@ -223,7 +223,10 @@ impl GlossOverlay {
 
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         container.set_halign(Align::Center);
-        container.set_valign(Align::Center);
+        // Bottom-anchored with a clearance so the ask card's bottom border sits
+        // above the act/scene toast pill (window-anchored) with breathing space.
+        container.set_valign(Align::End);
+        container.set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
         container.set_width_request(column_width as i32);
         container.add_css_class("gloss-overlay");
 
@@ -2531,10 +2534,19 @@ impl GlossOverlay {
     /// gloss add/edit prompts. The host shrinks the scroll viewport so the
     /// synopsis/gloss text ends ABOVE the ask card (the occlusion fix) and
     /// recomputes the clip; apply_font re-fonts the now-visible input.
-    pub fn open_ask_card_with(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
-        // No centered legend on the gloss ask card ("" opts out); it is the
-        // journal Q&A / rewrite boxes that carry the how-to legend.
-        self.ask_host.open(title, hint, "", block_fill, block_fg);
+    pub fn open_ask_card_with(
+        &self,
+        title: &str,
+        hint: &str,
+        legend: &str,
+        block_fill: &str,
+        block_fg: &str,
+    ) {
+        // `legend` is the centered how-to watermark (empty string opts out),
+        // matching the journal Q&A / rewrite boxes. The gloss Edit card uses it
+        // to explain that Ctrl+Enter on an empty box rewrites with the default
+        // prompt.
+        self.ask_host.open(title, hint, legend, block_fill, block_fg);
         self.apply_font();
     }
 
