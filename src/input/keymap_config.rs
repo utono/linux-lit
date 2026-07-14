@@ -206,9 +206,6 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // Page navigation
         (KeyCombo::plain("x"), Action::PageForward),
         (KeyCombo::plain("y"), Action::PageBackward),
-        // Shift+, emits ("less", shift=true) on this layout (verified in the
-        // debug log), NOT ("comma", shift=true) — bind the shifted glyph.
-        (KeyCombo::shift("less"), Action::JumpToPrevDialogue),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
         // Cursor / dialogue
@@ -266,10 +263,8 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("s"), Action::PlaybackSyncTap),
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
         // it is intercepted before dispatch in keymap.rs). `a` is a PURE
-        // pause/resume toggle — no seek (TogglePause). On poetry/plays these
-        // two SWAP: the Reader space/`a` intercepts in keymap.rs
-        // (`reader_swaps_play_and_pause`) make `a` play-from-cursor and Space
-        // the pause toggle, overriding this compiled `a` → TogglePause bind.
+        // pause/resume toggle — no seek (TogglePause). This holds for ALL work
+        // types; poetry/plays no longer swap the two (they match prose).
         (KeyCombo::plain("a"), Action::TogglePause),
         // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
         // the vocab-sentence loop, InputMode::VocabLoop — no jump fallback).
@@ -282,6 +277,9 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("Down"), Action::VolumeDown),
         (KeyCombo::plain("plus"), Action::ShowCurrentChapter),
         (KeyCombo::alt("p"), Action::TogglePhraseHighlight),
+        // Alt+, is the unshifted comma cap (<AD02>) + alt → ("comma", alt=true),
+        // NOT ("less", ...) which is the shifted glyph. Jumps to prev dialogue.
+        (KeyCombo::alt("comma"), Action::JumpToPrevDialogue),
     ]
 }
 
@@ -532,16 +530,15 @@ mod tests {
         // strips the redundant shift, so plain("J") matches.
         assert_eq!(km.lookup("J", false, true, false), Some(Action::JumpToNextSpeaker));
         assert_eq!(km.lookup("K", false, true, false), Some(Action::JumpToPrevSpeaker));
-        // Bare , / q are the speaker jumps; the shifted forms are the
-        // dialogue-line jumps. On this layout Shift+, emits ("less", shift=true)
-        // — NOT ("comma", shift=true) — and Shift+q emits "Q" (uppercase,
-        // shift stripped).
+        // Bare , / q are the speaker jumps; Shift+q emits "Q" (uppercase,
+        // shift stripped) for the next-dialogue jump.
         assert_eq!(km.lookup("comma", false, false, false), Some(Action::JumpToPrevSpeaker));
         assert_eq!(km.lookup("q", false, false, false), Some(Action::JumpToNextSpeaker));
-        assert_eq!(km.lookup("less", false, true, false), Some(Action::JumpToPrevDialogue));
         assert_eq!(km.lookup("Q", false, true, false), Some(Action::JumpToNextDialogue));
         // Ctrl+, opens the settings overlay (mirrors the per-overlay handlers).
         assert_eq!(km.lookup("comma", true, false, false), Some(Action::OpenSettingsOverlay));
+        // Alt+, (unshifted comma cap + alt) jumps to the previous dialogue.
+        assert_eq!(km.lookup("comma", false, false, true), Some(Action::JumpToPrevDialogue));
     }
 
     #[test]

@@ -50,7 +50,7 @@ const BACKSPACE: KeyDef = bare("\u{232b}", "", "ts tap");
 
 const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "prev bkmk", ":: cycle speed", &[]),
-    key(",", "<", "prev speaker", "<: prev dlg", &[("C-,", "settings")]),
+    key(",", "<", "prev speaker", "", &[("M-,", "prev dlg"), ("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl"), ("C-p", "Q&A page \u{25b2}")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
@@ -66,7 +66,7 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set"), ("verse", "swaps with Space")]),
+    key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "2-col translation", "U: undo ts", &[("M-u", "scansion")]),
@@ -303,12 +303,12 @@ on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
 — src/input/visual.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Action::TogglePause — src/input/keymap.rs. On \
-poetry/plays `a` and Space SWAP: `a` plays from the cursor line's \
-timestamp, Space is the pause toggle (reader_swaps_play_and_pause).",
+        "play/pause" => "Action::TogglePause — src/input/keymap.rs. Pure \
+pause/resume toggle for all work types; Space plays from the cursor line's \
+timestamp.",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",
-        "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9) \
+        "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9 -> 0.8) \
 — src/input/keymap.rs",
         "seek −3.5" => "Action::SeekShortBackward — src/input/phrase_highlight.rs, \
 src/input/keymap.rs",
@@ -334,8 +334,8 @@ ChordState::PendingBackspace) — src/input/keymap.rs",
         "nudge −0.2" => "Action::NudgeStartBackward — src/input/timestamps.rs",
         "+0.2" => "Action::NudgeStartForward — src/input/timestamps.rs",
         "play from ts" => "Space intercept -> timestamps::play_current_line \
-— src/input/timestamps.rs. On poetry/plays `a` and Space SWAP: Space is \
-the pause toggle, `a` plays from the cursor line (reader_swaps_play_and_pause).",
+— src/input/timestamps.rs. Plays from the cursor line for all work types; \
+`a` is the pause toggle.",
         "clear AB" => "escape::escape_reader_mode — src/input/actions/escape.rs",
 
         // ── Fonts ──
