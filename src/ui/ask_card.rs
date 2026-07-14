@@ -1,6 +1,6 @@
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{Align, Label, ScrolledWindow, TextView};
+use gtk4::{Align, Label, Overlay, ScrolledWindow, TextView};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -22,6 +22,11 @@ pub struct AskCard {
     /// The scroll wrapping `input`; a host may pin its height (journal Q&A =
     /// 3/4 of the overlay) instead of the default 160..320 natural range.
     scrolled: ScrolledWindow,
+    /// Dimmed, centered how-to-use text floated over the empty input. Passed per
+    /// `open` (each caller gives its own). Shown while the card is open, in
+    /// NORMAL mode, with an empty buffer; cleared the moment the vim engine
+    /// enters INSERT (see `mirror_vim`). Empty legend string → never shown.
+    legend: Label,
     hint: Label,
     /// The static hint passed to `open`, re-shown after the mode indicator.
     base_hint: std::cell::RefCell<String>,
@@ -81,7 +86,23 @@ impl AskCard {
         input.add_css_class("gloss-text");
         input.add_css_class("ask-input");
         scrolled.set_child(Some(&input));
-        container.append(&scrolled);
+
+        // Float a centered, dimmed how-to-use legend over the input. The overlay
+        // wraps the scroll so the legend paints on top of the (empty) TextView,
+        // truly centered, without touching the vim buffer. It ignores pointer
+        // input and is hidden until `open` fills it.
+        let input_overlay = Overlay::new();
+        input_overlay.set_child(Some(&scrolled));
+        let legend = Label::new(Some(""));
+        legend.add_css_class("ask-legend");
+        legend.set_halign(Align::Center);
+        legend.set_valign(Align::Center);
+        legend.set_justify(gtk4::Justification::Center);
+        legend.set_wrap(true);
+        legend.set_can_target(false);
+        legend.set_visible(false);
+        input_overlay.add_overlay(&legend);
+        container.append(&input_overlay);
 
         let hint = Label::new(Some(""));
         hint.add_css_class("ask-hint");
@@ -96,6 +117,7 @@ impl AskCard {
             title,
             input,
             scrolled,
+            legend,
             hint,
             base_hint: std::cell::RefCell::new(String::new()),
             cursor_colors: std::cell::RefCell::new((String::new(), String::new())),
@@ -135,11 +157,23 @@ impl AskCard {
     /// Reveal with heading + hint, clear the field, re-align margins to the
     /// overlay prose column (card_width/5), focus the input (AskFocus::Ask +
     /// card-focused highlight).
-    pub fn open(&self, title: &str, hint: &str, card_width: i32, block_fill: &str, block_fg: &str) {
+    pub fn open(
+        &self,
+        title: &str,
+        hint: &str,
+        legend: &str,
+        card_width: i32,
+        block_fill: &str,
+        block_fg: &str,
+    ) {
         self.title.set_text(title);
         *self.base_hint.borrow_mut() = hint.to_string();
         *self.cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         self.input.buffer().set_text("");
+        // Seed the legend: shown now (fresh card is NORMAL + empty); `mirror_vim`
+        // hides it on INSERT. An empty legend string opts out entirely.
+        self.legend.set_text(legend);
+        self.legend.set_visible(!legend.is_empty());
         if card_width > 0 {
             let margin = crate::ui::prose_column_margin(card_width);
             self.container.set_margin_start(margin);
@@ -215,6 +249,14 @@ impl AskCard {
             crate::ui::paint_block_cursor(&buffer, "ask-vim-block", &fill, &fg, ci);
             self.input.set_cursor_visible(ci >= n_chars);
         }
+        // Legend: shown only while the box is untouched — NORMAL mode AND empty
+        // buffer. Entering INSERT (or any typed text) clears it; returning to
+        // NORMAL with an empty buffer restores it. A blank legend never shows.
+        let untouched = engine.mode() == crate::input::vim::Mode::Normal
+            && engine.buffer().is_empty();
+        self.legend
+            .set_visible(untouched && !self.legend.text().is_empty());
+
         let base = self.base_hint.borrow();
         let mode = match engine.cmdline() {
             Some(cmd) => format!(":{cmd}"),
@@ -451,8 +493,9 @@ impl AskCardHost {
     /// it (the occlusion fix). Open height = pane − fixed chrome − ask-natural;
     /// the toggled footer (if any) is hidden, freeing its slot. Recomputes the
     /// clip now and on the idle tick after the height lands.
-    pub fn open(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
-        self.ask.open(title, hint, self.card_width.get(), block_fill, block_fg);
+    pub fn open(&self, title: &str, hint: &str, legend: &str, block_fill: &str, block_fg: &str) {
+        self.ask
+            .open(title, hint, legend, self.card_width.get(), block_fill, block_fg);
         if let Some(f) = &self.footer {
             f.set_visible(false);
         }

@@ -1196,9 +1196,15 @@ pub(crate) fn begin_passage_ask(
     s.journal_overlay.open_ask_card(
         "Ask a question about this passage",
         "Ctrl+Enter submit",
+        "", // no legend: a new question has no answer, so we drop straight to INSERT
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
+    // No existing answer (brand-new question) → auto-enter INSERT so the reader
+    // types immediately.
+    let _ = s
+        .journal_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
@@ -1213,9 +1219,14 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
     s.journal_overlay.open_ask_card(
         title,
         "Ctrl+Enter submit",
+        "", // no legend: a new question has no answer, so we drop straight to INSERT
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
+    // No existing answer (brand-new question) → auto-enter INSERT.
+    let _ = s
+        .journal_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 /// Build the user message for a Ctrl+Enter rewrite. `context` is the band-aware
@@ -1458,15 +1469,14 @@ pub(crate) fn vim_open_rewrite(
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        "Type how to change the answer, then Ctrl+Enter.\nCtrl+Enter with NO instruction rewrites the answer afresh under the current prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
-    // A rewrite instruction is always typed fresh — skip vim-NORMAL and open
-    // the prompt directly in INSERT (fed through the engine so the mirror and
-    // `-- INSERT --` hint stay truthful).
-    let _ = s
-        .journal_overlay
-        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
+    // Open in NORMAL (do NOT auto-enter INSERT) so the legend — which explains
+    // that an empty Ctrl+Enter regenerates the answer — is readable before the
+    // reader commits to typing an instruction. Press `i` to type; Ctrl+Enter on
+    // the empty box regenerates.
 }
 
 /// `R` in the journal overlay (NOT the vim editor): open the ask card to collect
@@ -1522,15 +1532,12 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        "Type how to change the answer, then Ctrl+Enter.\nCtrl+Enter with NO instruction rewrites the answer afresh under the current prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
-    // A rewrite instruction is always typed fresh — skip vim-NORMAL and open
-    // the prompt directly in INSERT (fed through the engine so the mirror and
-    // `-- INSERT --` hint stay truthful).
-    let _ = s
-        .journal_overlay
-        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
+    // Open in NORMAL so the empty-Ctrl+Enter legend is readable first (see
+    // vim_open_rewrite). Press `i` to type an instruction.
 }
 
 /// Body of `begin_rewrite` given an explicit `(id, q, a)`: stash the rewrite
@@ -1551,12 +1558,11 @@ pub(crate) fn begin_rewrite_with(state: &Rc<RefCell<AppState>>, id: i64, q: &str
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
+        "Type how to change the answer, then Ctrl+Enter.\nCtrl+Enter with NO instruction rewrites the answer afresh under the current prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
     );
-    let _ = s
-        .journal_overlay
-        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
+    // Open in NORMAL so the empty-Ctrl+Enter legend is readable first.
 }
 
 /// `R` in the journal overlay: open the small target chooser

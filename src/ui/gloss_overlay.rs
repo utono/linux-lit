@@ -2532,7 +2532,9 @@ impl GlossOverlay {
     /// synopsis/gloss text ends ABOVE the ask card (the occlusion fix) and
     /// recomputes the clip; apply_font re-fonts the now-visible input.
     pub fn open_ask_card_with(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
-        self.ask_host.open(title, hint, block_fill, block_fg);
+        // No centered legend on the gloss ask card ("" opts out); it is the
+        // journal Q&A / rewrite boxes that carry the how-to legend.
+        self.ask_host.open(title, hint, "", block_fill, block_fg);
         self.apply_font();
     }
 

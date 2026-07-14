@@ -1019,6 +1019,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          textview.ask-input {{ background-color: transparent; color: {fg}; }} \
          textview.ask-input text {{ background-color: transparent; }} \
          .ask-hint {{ font-size: 13px; color: {dim}; }} \
+         .ask-legend {{ font-size: 14px; color: {dim}; }} \
          .ask-card.card-focused {{ border-color: {cursor_bg}; \
            border-left: 4px solid {cursor_bg}; \
            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
