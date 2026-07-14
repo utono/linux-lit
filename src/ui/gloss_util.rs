@@ -157,58 +157,6 @@ pub(crate) fn build_diff_markup(original: &str, corrected: &str, is_original: bo
     result
 }
 
-/// Parse a citation "ABBR.div1.div2.line" into (abbrev, div1, div2, line).
-/// Returns None unless it has the full 4-part shape with numeric tail segments.
-pub(crate) fn parse_citation(c: &str) -> Option<(&str, &str, &str, &str)> {
-    // Split off the trailing three numeric segments; the abbrev may itself
-    // contain dots in principle, so split from the right.
-    let mut it = c.rsplitn(4, '.');
-    let line = it.next()?;
-    let div2 = it.next()?;
-    let div1 = it.next()?;
-    let abbrev = it.next()?;
-    if abbrev.is_empty() || line.is_empty() || div1.is_empty() || div2.is_empty() {
-        return None;
-    }
-    Some((abbrev, div1, div2, line))
-}
-
-/// Format a passage citation range for the footer, collapsing the shared
-/// prefix:
-/// - single line (start == end):            "2H6 1.4.7"
-/// - same act/scene, different line:         "2H6 1.4.7–14"
-/// - spans a scene/act boundary:             "2H6 1.4.7–2.1.3"
-/// Falls back to "start–end" (or "start") when a citation can't be parsed.
-/// Returns None only when there is no usable start citation.
-pub(crate) fn format_citation_range(start: &str, end: &str) -> Option<String> {
-    if start.is_empty() {
-        return None;
-    }
-    let s = parse_citation(start);
-    let e = parse_citation(end);
-    match (s, e) {
-        (Some((sa, s1, s2, sl)), Some((_ea, e1, e2, el))) => {
-            if start == end {
-                Some(format!("{} {}.{}.{}", sa, s1, s2, sl))
-            } else if s1 == e1 && s2 == e2 {
-                // Same act/scene: collapse the end to just its line number.
-                Some(format!("{} {}.{}.{}–{}", sa, s1, s2, sl, el))
-            } else {
-                // Spans a boundary: show the end's act.scene.line (no abbrev).
-                Some(format!("{} {}.{}.{}–{}.{}.{}", sa, s1, s2, sl, e1, e2, el))
-            }
-        }
-        // Unparseable: degrade gracefully to the raw strings.
-        _ => {
-            if end.is_empty() || start == end {
-                Some(start.to_string())
-            } else {
-                Some(format!("{}–{}", start, end))
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod snap_up_tests {
     use super::snap_up_to_row;
@@ -360,45 +308,5 @@ mod cursor_scroll_tests {
             (target - 276.0).abs() < 0.5,
             "should reveal block top (276); got {target}"
         );
-    }
-}
-
-#[cfg(test)]
-mod citation_range_tests {
-    use super::format_citation_range;
-
-    #[test]
-    fn single_line_no_dash() {
-        assert_eq!(format_citation_range("2H6.1.4.7", "2H6.1.4.7").unwrap(), "2H6 1.4.7");
-    }
-
-    #[test]
-    fn same_scene_collapses_end_to_line() {
-        assert_eq!(format_citation_range("2H6.1.4.7", "2H6.1.4.14").unwrap(), "2H6 1.4.7–14");
-    }
-
-    #[test]
-    fn cross_scene_shows_full_end_without_abbrev() {
-        assert_eq!(
-            format_citation_range("2H6.1.4.7", "2H6.2.1.3").unwrap(),
-            "2H6 1.4.7–2.1.3"
-        );
-    }
-
-    #[test]
-    fn empty_start_is_none() {
-        assert_eq!(format_citation_range("", "2H6.1.4.7"), None);
-    }
-
-    #[test]
-    fn unparseable_degrades_to_raw_range() {
-        assert_eq!(format_citation_range("weird", "alsoweird").unwrap(), "weird–alsoweird");
-        assert_eq!(format_citation_range("weird", "weird").unwrap(), "weird");
-    }
-
-    #[test]
-    fn empty_end_uses_raw_start_only() {
-        // Empty end can't be parsed, so we degrade to the raw start string.
-        assert_eq!(format_citation_range("2H6.1.4.7", "").unwrap(), "2H6.1.4.7");
     }
 }

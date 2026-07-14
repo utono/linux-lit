@@ -7,7 +7,7 @@ use crate::ui::gloss_render::{
     populate_gloss_buffer, populate_verse_buffer, BarRange, LineNumber,
 };
 use crate::ui::gloss_util::{
-    build_diff_markup, cursor_scroll_target, format_citation_range, parse_hex_color,
+    build_diff_markup, cursor_scroll_target, parse_hex_color,
     snap_up_to_row, CursorScrollGeom,
 };
 use gtk4::pango;
@@ -223,10 +223,7 @@ impl GlossOverlay {
 
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         container.set_halign(Align::Center);
-        // Bottom-anchored with a clearance so the ask card's bottom border sits
-        // above the act/scene toast pill (window-anchored) with breathing space.
-        container.set_valign(Align::End);
-        container.set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
+        container.set_valign(Align::Center);
         container.set_width_request(column_width as i32);
         container.add_css_class("gloss-overlay");
 
@@ -481,11 +478,15 @@ impl GlossOverlay {
 
         container.append(&gloss_scroll_overlay);
 
-        let footer = crate::ui::footer::build_footer_row(
-            text_margins as i32,
-            "r journal · Ctrl+j/Ctrl+g view jrnl",
-        );
+        // The gloss footer is reduced to JUST the right-aligned page counter:
+        // no divider line, no keybind hint, no work citation (the act/scene pill
+        // identifies the work/scene). Build the row WITHOUT the `gloss-hint`
+        // class (which draws the border-top divider + padding), and leave the
+        // hint blank. The empty `citation_label` stays as the hexpand spacer that
+        // pushes the page counter to the right.
+        let footer = crate::ui::footer::build_footer_row(text_margins as i32, "");
         let footer_box = footer.container;
+        footer_box.remove_css_class("gloss-hint");
         let citation_label = footer.left;
         citation_label.set_visible(false);
         let hint = footer.hint;
@@ -2714,17 +2715,13 @@ impl GlossOverlay {
         }
     }
 
-    /// Show the open passage's citation range in the footer (gloss view only),
-    /// e.g. "2H6 1.4.7–14". Pass the passage's start and end citation strings.
-    /// Hidden when no usable citation is given.
-    pub fn set_citation(&self, start_citation: &str, end_citation: &str) {
-        match format_citation_range(start_citation, end_citation) {
-            Some(text) => {
-                self.citation_label.set_text(&text);
-                self.citation_label.set_visible(true);
-            }
-            None => self.citation_label.set_visible(false),
-        }
+    /// The footer-left work-citation range (e.g. "Cym 2.3.159–168") is no longer
+    /// displayed — the center pill already names the work/scene, matching the
+    /// journal footer which shows only "Q&A n of m". The label is kept blank but
+    /// visible so its `hexpand` still holds the footer row's stretch (see
+    /// `hide_citation`). Retained as a no-op so callers need not change.
+    pub fn set_citation(&self, _start_citation: &str, _end_citation: &str) {
+        self.hide_citation();
     }
 
     /// Hide the footer citation (non-gloss views: synopsis, diff, echoes).
