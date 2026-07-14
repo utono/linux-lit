@@ -312,9 +312,22 @@ impl TranslationOverlay {
         self.current_page.set(page_idx);
 
         let pctx = self.content_vbox.pango_context();
+        let mut measured: Vec<i32> = Vec::new();
         for block in &blocks[page.start..page.end.min(blocks.len())] {
+            measured.push(block_height(block, &pctx, ctx));
             let entry = render_block(&self.content_vbox, block, ctx, &pctx);
             self.block_widgets.borrow_mut().push(entry);
+        }
+
+        // Clip tripwire: after allocation settles (idle), compare each block's
+        // ALLOCATED height against the height pagination MEASURED for it. A block
+        // that allocates much shorter than measured has collapsed (the page-turn
+        // lazy-natural-height clip, checklist #13); a page whose blocks sum TALLER
+        // than the pinned budget will clip at the bottom. Both emit CLIP_WARN so a
+        // clip-class regression is caught in the log, not only by eye. Gated on
+        // debug logging (log_fmt! is a no-op when off), so zero cost in release.
+        if crate::logging::debug_mode() {
+            check_page_clip(&self.content_vbox, &self.scrolled, measured, page_idx);
         }
     }
 
@@ -386,6 +399,54 @@ impl TranslationOverlay {
 /// Extra top gap above a stage-direction (interlude) block, matching the main
 /// card's `stage-direction-gap` tag (`pixels_above_lines(8)`).
 const STAGE_GAP_TOP: i32 = 8;
+
+/// How far a block may allocate SHORTER than its measured height before it counts
+/// as collapsed (allows for measurement/rounding slack; a real collapse is tens
+/// to hundreds of px).
+const CLIP_COLLAPSE_SLACK: i32 = 12;
+
+/// Clip tripwire (debug only). Once the just-rendered page has settled (idle),
+/// walk `content_vbox`'s block children and compare each allocation against the
+/// `measured` height pagination computed for the block at the same index. Emit a
+/// `CLIP_WARN` for any block that allocated far shorter than measured (the
+/// page-turn collapse clip — clip-prevention.md checklist #13) or when the blocks
+/// together overflow the pinned scroll budget (a bottom clip). Never mutates
+/// anything — a pure detector so a clip-class regression shows up in the log.
+fn check_page_clip(
+    content_vbox: &gtk4::Box,
+    scrolled: &gtk4::ScrolledWindow,
+    measured: Vec<i32>,
+    page_idx: usize,
+) {
+    let cv = content_vbox.clone();
+    let sc = scrolled.clone();
+    glib::idle_add_local_once(move || {
+        let budget = sc.height();
+        let mut total = 0i32;
+        let mut idx = 0usize;
+        let mut child = cv.first_child();
+        while let Some(c) = child {
+            let alloc = c.height();
+            total += alloc;
+            if let Some(&want) = measured.get(idx) {
+                if alloc + CLIP_COLLAPSE_SLACK < want {
+                    crate::log_fmt!(
+                        "CLIP_WARN: translation page={} block={} COLLAPSED allocated={} measured={} (clip-prevention.md #13)",
+                        page_idx, idx, alloc, want
+                    );
+                }
+            }
+            idx += 1;
+            child = c.next_sibling();
+        }
+        if budget > 0 && total > budget {
+            crate::log_fmt!(
+                "CLIP_WARN: translation page={} OVERFLOW blocks_total={} > budget={} (bottom clip)",
+                page_idx, total, budget
+            );
+        }
+    });
+}
 
 /// Build one block's widget subtree, append it to `parent`, and return its
 /// `BlockEntry`. Shared by `render_page` for every block on the page. `pctx` is
