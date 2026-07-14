@@ -197,12 +197,13 @@ impl ChatPanel {
 
     // ---- ask-input passthroughs (mirror journal_overlay's ask_host wrappers)
 
-    /// AskCard::open takes (title, hint, card_width, block_fill, block_fg); the
-    /// panel has no card-width-derived margin re-alignment (fixed 0 margin, set
-    /// in `new`), so card_width is passed as 0 (the real `open` no-ops the
-    /// margin re-align when `card_width <= 0`).
+    /// AskCard::open takes (title, hint, legend, card_width, block_fill,
+    /// block_fg); the panel has no card-width-derived margin re-alignment (fixed
+    /// 0 margin, set in `new`), so card_width is passed as 0 (the real `open`
+    /// no-ops the margin re-align when `card_width <= 0`). No legend on the chat
+    /// input ("" opts out).
     pub fn open_input(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
-        self.input.open(title, hint, 0, block_fill, block_fg);
+        self.input.open(title, hint, "", 0, block_fill, block_fg);
     }
     pub fn take_input_text(&self) -> String {
         self.input.take_text()

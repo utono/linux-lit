@@ -978,12 +978,20 @@ impl JournalOverlay {
         self.ask_host.is_open()
     }
 
-    pub fn open_ask_card(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
+    pub fn open_ask_card(
+        &self,
+        title: &str,
+        hint: &str,
+        legend: &str,
+        block_fill: &str,
+        block_fg: &str,
+    ) {
         // The host reveals the ask card (a vim editor, NORMAL by default), hides
         // the nav footer, shrinks the scroll viewport (occlusion fix), recomputes
         // the clip. apply_font re-fonts the now-visible input. block_fill/fg are
-        // the NORMAL-mode block-cursor colors.
-        self.ask_host.open(title, hint, block_fill, block_fg);
+        // the NORMAL-mode block-cursor colors. `legend` is centered how-to text
+        // over the empty box, cleared on INSERT.
+        self.ask_host.open(title, hint, legend, block_fill, block_fg);
         self.apply_font();
 
         // Headless test: emit the scrolled viewport rect WITH the ask card open
