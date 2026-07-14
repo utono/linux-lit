@@ -555,7 +555,7 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
 pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
     let mut s = state.borrow_mut();
     let name = s.theme.name.clone();
-    let count = crate::theme::ROOT_VARIANT_COUNT;
+    let count = s.theme.root_variant_count.max(1);
     let next = if forward {
         (s.theme.root_variant + 1) % count
     } else {
@@ -568,7 +568,7 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
     let _ = std::process::Command::new("notify-send")
         .args(["-t", "1500", "-h",
                "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Root [{}/{}]", next + 1, crate::theme::ROOT_VARIANT_COUNT),
+               &format!("Root [{}/{}]", next + 1, count),
                &s.theme.root_color])
         .spawn();
     // Copy the assigned root color and the vocab popup's rendered text color
