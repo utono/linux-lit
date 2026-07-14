@@ -541,10 +541,11 @@ fn copy_pairing_and_screenshot(theme: &crate::theme::Theme) {
     // last line (the screenshot path, or vocab-fg before grim runs) runs into
     // whatever is pasted after it.
     let copied = format!(
-        "theme {}\nroot {}\nvocab-fg {}\n",
+        "theme {}\nroot {}\nvocab-fg {}\ntoast-bg {}\n",
         theme.name,
         theme.root_color,
-        crate::theme::vocab_popup_fg(theme)
+        crate::theme::vocab_popup_fg(theme),
+        crate::theme::chapter_toast_bg(theme)
     );
     let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
     crate::logging::log(&format!("THEME: copied \"{}\"", copied.trim_end().replace('\n', " / ")));

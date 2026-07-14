@@ -806,7 +806,10 @@ const CHAPTER_TOAST_WHITE_LIFT: f64 = 0.35;
 /// identity but is pulled toward the card and brightened so it reads as a quiet
 /// location label, not the full-strength chip that popped against the page.
 /// `contrast_on` picks the label ink against this background.
-fn chapter_toast_bg(theme: &Theme) -> String {
+///
+/// `pub(crate)` so the theme/root keybinds (`copy_pairing_and_screenshot` in
+/// `input::actions::settings`) can copy the exact pill color to the clipboard.
+pub(crate) fn chapter_toast_bg(theme: &Theme) -> String {
     let tinted = blend_colors(&theme.root_color, &theme.text_bg, CHAPTER_TOAST_ROOT_MIX);
     blend_colors("#ffffff", &tinted, CHAPTER_TOAST_WHITE_LIFT)
 }
