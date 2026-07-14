@@ -2315,11 +2315,30 @@ pub fn jump_to_next_section(state: &mut AppState) {
     } else {
         jump_to_next_chapter(state);
     }
-    // Mirror `;` (ShowCurrentChapter): surface the new act/scene as the same
-    // transient toast after landing. Prose works skip the toast — the chapter
-    // heading the jump lands on already names the destination.
-    if !state.is_prose() {
-        show_current_chapter(state);
+    // Surface the new act/scene after landing. Do NOT call the `+` handler
+    // (`show_current_chapter`) — it is a TOGGLE now, so on a persisting work
+    // with the toast already up it would HIDE the toast. Instead: refresh the
+    // persistent toast to the new scene when it is on, else show the one-off
+    // transient toast (non-persisting verse, or the user hid the persistent one).
+    surface_current_scene_toast(state);
+}
+
+/// Surface the current act/scene toast WITHOUT toggling the persistent
+/// indicator. Use this wherever a non-`+` affordance wants to show/refresh the
+/// scene toast (scene jumps, the overlay `;` mirrors) — calling the `+` handler
+/// `show_current_chapter` there would toggle a shown persistent toast OFF.
+/// When the persistent toast is on, refresh it to the current line; otherwise
+/// show the one-off transient toast. Prose works skip the toast — the chapter
+/// heading already names the destination.
+pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
+    if state.is_prose() {
+        return;
+    }
+    if state.chapter_toast_persistent.get() {
+        refresh_persistent_chapter_toast(state);
+    } else {
+        let text = compute_current_chapter_text(state);
+        show_chapter_toast(state, &text);
     }
 }
 
@@ -2334,12 +2353,8 @@ pub fn jump_to_prev_section(state: &mut AppState) {
     } else {
         jump_to_prev_chapter(state);
     }
-    // Mirror `;` (ShowCurrentChapter): surface the new act/scene as the same
-    // transient toast after landing. Prose works skip the toast — the chapter
-    // heading the jump lands on already names the destination.
-    if !state.is_prose() {
-        show_current_chapter(state);
-    }
+    // Surface the new act/scene without toggling — see surface_current_scene_toast.
+    surface_current_scene_toast(state);
 }
 
 /// Show the act/scene (plays) or chapter (prose) containing the current line as
