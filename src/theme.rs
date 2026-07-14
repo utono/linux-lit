@@ -63,16 +63,15 @@ fn hue_perceptible(hex: &str) -> bool {
 /// Cycled by Ctrl+t; see docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
 pub const ROOT_VARIANT_COUNT: u8 = 5;
 
-/// Root color for `variant` (0-4). Variant 0 = the designed root. The other
-/// four are the alternates — two from dwl.rootcolor_candidates when present
-/// (candidates equal to the designed root are skipped), else computed (25%
-/// toward white + darkened), plus two brighter computed steps (50% and 70%
-/// toward white) — presented in LIGHTEST-to-DARKEST order, so Ctrl+t walks a
-/// predictable brightness ladder. See the design doc.
+/// Root color for `variant` (0-4). All five variants — the designed root plus
+/// four alternates — are ordered together LIGHTEST-to-DARKEST by WCAG relative
+/// luminance, so the designed root falls at its own brightness rank (after any
+/// lighter alternate, before any darker one) and Ctrl+t walks one predictable
+/// brightness ladder. The alternates are two from dwl.rootcolor_candidates when
+/// present (candidates equal to the designed root are skipped), else computed
+/// (25% toward white + darkened), plus two brighter computed steps (50% and
+/// 70% toward white). See the design doc.
 fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
-    if variant == 0 {
-        return designed_root.to_string();
-    }
     let candidates: Vec<String> = val
         .get("dwl")
         .and_then(|d| d.get("rootcolor_candidates"))
@@ -92,7 +91,10 @@ fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
             None => darken_color(designed_root, 0.7),
         }
     };
+    // The designed root joins the alternate pool and is sorted with them, so it
+    // sits after every lighter variant and before every darker one.
     let mut pool = vec![
+        designed_root.to_string(),
         slot(0),
         slot(1),
         blend_colors("#ffffff", designed_root, 0.50),
@@ -103,7 +105,7 @@ fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
             .partial_cmp(&relative_luminance(a))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    pool[(variant - 1) as usize].clone()
+    pool[variant as usize].clone()
 }
 
 /// WCAG relative luminance of a hex color (0.0 = black, 1.0 = white).
@@ -801,6 +803,26 @@ fn overlay_panel_bg(theme: &Theme) -> String {
     gloss_background(theme)
 }
 
+/// Fraction of the root/wallpaper color kept in the toast background; the rest
+/// is the card's own `text_bg`. Below 1.0 the toast reads as a MUTED variant of
+/// the root hue rather than the full-strength wallpaper chip.
+const CHAPTER_TOAST_ROOT_MIX: f64 = 0.30;
+/// After the root/card blend, lift the toast this fraction toward white so the
+/// chip reads lighter/airier than the card while keeping its faint root tint.
+const CHAPTER_TOAST_WHITE_LIFT: f64 = 0.35;
+
+/// Background for the persistent act/scene/chapter toast (and the search toast),
+/// a SOFTER variant of the root/wallpaper color: the root hue blended toward the
+/// reading card's own `text_bg` (see `CHAPTER_TOAST_ROOT_MIX`), then lifted
+/// toward white (`CHAPTER_TOAST_WHITE_LIFT`). It keeps the wallpaper color's
+/// identity but is pulled toward the card and brightened so it reads as a quiet
+/// location label, not the full-strength chip that popped against the page.
+/// `contrast_on` picks the label ink against this background.
+fn chapter_toast_bg(theme: &Theme) -> String {
+    let tinted = blend_colors(&theme.root_color, &theme.text_bg, CHAPTER_TOAST_ROOT_MIX);
+    blend_colors("#ffffff", &tinted, CHAPTER_TOAST_WHITE_LIFT)
+}
+
 /// Matting color for the full-bleed overlay scrim (gloss/journal/synopsis/
 /// translation/echo-keybinds). A subtle (~20%) darkening of `root_color` so the
 /// border area around an overlay card reads as an intentional dimmed frame
@@ -978,11 +1000,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
          .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
-           background-color: {root}; padding: 6px 14px; border-radius: 10px; \
-           box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); opacity: 0.97; }} \
+           background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
+           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} \
          .search-toast {{ font-size: 10px; color: {toast_fg}; \
-           background-color: {root}; padding: 3px 10px; border-radius: 8px; \
-           box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35); opacity: 0.95; }} \
+           background-color: {toast_bg}; padding: 3px 10px; border-radius: 8px; \
+           box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {scrim}; }} \
          .legend-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
@@ -1121,7 +1143,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         gloss_bg = gloss_background(theme),
         fg = theme.text_fg,
         dim = theme.dim_fg,
-        toast_fg = contrast_on(&theme.root_color),
+        toast_bg = chapter_toast_bg(theme),
+        toast_fg = contrast_on(&chapter_toast_bg(theme)),
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
         vocab_popup_fg = vocab_popup_fg(theme),
@@ -1470,33 +1493,36 @@ mod tests {
         "linux-lit": {"cursor_line_bg": "rgba(93, 66, 50, 0.14)"} }"##;
 
     #[test]
-    fn variant_zero_is_identical_to_base_resolution() {
+    fn card_surface_is_identical_across_root_variants() {
+        // Only root_color (and its derivative scrim_bg) vary with the root
+        // variant; the card surface stays byte-identical to the base.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
         let base = resolve_theme("s", &json);
-        let v0 = resolve_theme_variant("s", &json, 0);
-        assert_eq!(base.root_color, v0.root_color);
-        assert_eq!(base.text_bg, v0.text_bg);
-        assert_eq!(base.cursor_line_bg, v0.cursor_line_bg);
-        assert_eq!(base.phrase_highlight_bg, v0.phrase_highlight_bg);
-        assert_eq!(base.scrim_bg, v0.scrim_bg);
-        assert_eq!(base.dim_fg, v0.dim_fg);
-        assert_eq!(v0.root_variant, 0);
+        for variant in 0..ROOT_VARIANT_COUNT {
+            let v = resolve_theme_variant("s", &json, variant);
+            assert_eq!(base.text_bg, v.text_bg);
+            assert_eq!(base.cursor_line_bg, v.cursor_line_bg);
+            assert_eq!(base.phrase_highlight_bg, v.phrase_highlight_bg);
+            assert_eq!(base.dim_fg, v.dim_fg);
+            assert_eq!(v.root_variant, variant);
+        }
     }
 
     #[test]
-    fn candidates_and_brighter_sorted_lightest_to_darkest() {
-        // Pool: candidates #41819b/#286983 (designed #08526b skipped) + the
-        // 50%/70%-toward-white blends (#83a8b5/#b4cbd2), sorted light->dark.
+    fn all_five_roots_sorted_lightest_to_darkest_including_base() {
+        // Pool: designed root #08526b + candidates #41819b/#286983 + the
+        // 50%/70%-toward-white blends (#83a8b5/#b4cbd2), ALL sorted light->dark.
+        // The designed root is the darkest of the five, so it lands last —
+        // after the lighter variants, per the "base after lighter variants" rule.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
-        let v0 = resolve_theme_variant("s", &json, 0);
-        assert_eq!(v0.root_color, "#08526b"); // designed stays slot 0
-        let roots: Vec<String> = (1..=4)
+        let roots: Vec<String> = (0..ROOT_VARIANT_COUNT)
             .map(|i| resolve_theme_variant("s", &json, i).root_color)
             .collect();
         assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
         assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
         assert_eq!(roots[2], "#41819b");
         assert_eq!(roots[3], "#286983");
+        assert_eq!(roots[4], "#08526b"); // designed root — darkest, sorted last
         for w in roots.windows(2) {
             assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
         }
@@ -1509,17 +1535,19 @@ mod tests {
                   "dwl": {"rootcolor": "#08526b"},
                   "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
             .unwrap();
-        let v0 = resolve_theme_variant("s", &json, 0);
-        let roots: Vec<String> = (1..=4)
+        // Pool = base, 25%-lighter, darkened, 50%, 70% — all sorted
+        // lightest->darkest. The base sits after the lighter variants
+        // (70%/50%/25%) and before the darkened step.
+        let roots: Vec<String> = (0..ROOT_VARIANT_COUNT)
             .map(|i| resolve_theme_variant("s", &json, i).root_color)
             .collect();
-        // Pool = 25%-lighter, darkened, 50%, 70% — sorted lightest->darkest.
         assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
         assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
         assert_eq!(roots[2], blend_colors("#ffffff", "#08526b", 0.25));
-        assert_eq!(roots[3], darken_color("#08526b", 0.7));
-        for r in &roots {
-            assert_ne!(*r, v0.root_color);
+        assert_eq!(roots[3], "#08526b"); // designed root, after the lighter three
+        assert_eq!(roots[4], darken_color("#08526b", 0.7));
+        for w in roots.windows(2) {
+            assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
         }
     }
 
@@ -1531,15 +1559,20 @@ mod tests {
                           "rootcolor_candidates": ["#41819b", "#08526b"]},
                   "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
             .unwrap();
-        // One usable candidate (#41819b) + darkened fill + the two brighter
-        // blends, sorted lightest->darkest.
-        let roots: Vec<String> = (1..=4)
+        // Base + one usable candidate (#41819b) + darkened fill + the two
+        // brighter blends, all sorted lightest->darkest. Base sits after the
+        // lighter variants and before the darkened step.
+        let roots: Vec<String> = (0..ROOT_VARIANT_COUNT)
             .map(|i| resolve_theme_variant("s", &json, i).root_color)
             .collect();
         assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
         assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
         assert_eq!(roots[2], "#41819b");
-        assert_eq!(roots[3], darken_color("#08526b", 0.7));
+        assert_eq!(roots[3], "#08526b"); // designed root, after the lighter three
+        assert_eq!(roots[4], darken_color("#08526b", 0.7));
+        for w in roots.windows(2) {
+            assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
+        }
     }
 
     // zenbones-light shape: the ink (#286486) is a mid-luminance saturated
