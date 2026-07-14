@@ -61,22 +61,21 @@ Persistence is enabled for the first two, NOT the third. Add two helpers on
   `show_current_chapter` does — `line_map.chapter_breaks` non-empty, else any
   `work.lines[*].is_chapter`.
 
-Front-matter-only prose and (open question below) non-play verse fall through
-to the unchanged transient 3-second toast.
+Front-matter-only prose and non-play verse fall through to the unchanged
+transient 3-second toast.
 
-**Open question flagged for review:** the user said "play" and "prose with
-chapters." Non-play VERSE (`poem`, `sonnet_sequence`) currently takes the
-`!is_prose()` act/scene branch too. This design does NOT persist for those —
-`is_play()` is exact. If poetry should also persist, widen `is_play()` to the
-`!is_prose()` branch. Left narrow pending the user's call.
+**Decision (settled):** persistence is plays + prose-with-chapters ONLY.
+Non-play verse (`poem`, `sonnet_sequence`) takes the `!is_prose()` act/scene
+branch for its toast text but does NOT persist — `is_play()` is exact. Do not
+widen it to the whole `!is_prose()` branch.
 
 ### 2. Persistent state + `+` becomes a toggle (plays only)
 
 Add `chapter_toast_persistent: Cell<bool>` to `AppState` (default false).
 `show_current_chapter` branches on `chapter_toast_persists()`:
 
-- **Non-persisting work (unchanged):** front-matter-only prose (and, per the
-  open question, non-play verse) — build text, call `show_chapter_toast`
+- **Non-persisting work (unchanged):** front-matter-only prose and non-play
+  verse (`poem` / `sonnet_sequence`) — build text, call `show_chapter_toast`
   (3s transient, generation-guarded) exactly as today.
 - **Persisting work (play or prose-with-chapters) — toggle:**
   - persistent flag ON → turn OFF: set flag false, hide `chapter_toast`.
@@ -142,7 +141,7 @@ Speed/copy toasts (bottom-left) and any center overlay cards do NOT affect it.
   so a persistent indicator never leaks across works.
 - **Persisting → non-persisting work:** the new work never re-arms the flag;
   the reset in `display_work` clears it.
-- **Front-matter-only prose / (per open Q) verse / anthology:** transient 3s
+- **Front-matter-only prose / non-play verse / anthology:** transient 3s
   path fully unchanged.
 - **Rapid `+` presses:** generation bump keeps behavior sane; the toggle reads
   the flag, so two presses = on then off.
@@ -175,8 +174,8 @@ Speed/copy toasts (bottom-left) and any center overlay cards do NOT affect it.
 - **Unit:**
   - `is_play()` true only for `work_type == "play"`.
   - `chapter_toast_persists()` true for a play and for prose with ≥1 chapter
-    marker; false for front-matter-only prose, and (per the open question)
-    `poem` / `sonnet_sequence` / `anthology`.
+    marker; false for front-matter-only prose, `poem`, `sonnet_sequence`,
+    and `anthology`.
 - **Work-switch:** flag resets — after showing the persistent toast, loading
   another work leaves it hidden.
 
@@ -184,7 +183,7 @@ Speed/copy toasts (bottom-left) and any center overlay cards do NOT affect it.
 
 - A general float z-order / suppression system — only the single search-toast
   yield is built.
-- Persistence for front-matter-only prose (no chapter markers), and — pending
-  the open question — non-play verse (`poem`, `sonnet_sequence`) and anthology.
+- Persistence for front-matter-only prose (no chapter markers), non-play verse
+  (`poem`, `sonnet_sequence`), and anthology.
 - A config option for the dismiss timeout or persistence — `+` toggle is the
   chosen control.
