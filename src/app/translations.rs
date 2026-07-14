@@ -629,7 +629,21 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
     let body_font_size = s.config.font_size as i32;
     let font_family = s.config.font_family.clone();
     let cursor_line_bg = s.theme.cursor_line_bg.clone();
-    let line_spacing = s.config.line_spacing as i32;
+    // Mirror the main card's per-line spacing rule (display_work): non-prose
+    // works (plays/poems — the only works with translations) use tight 0px
+    // spacing; only prose uses the configured `line_spacing`. Passing the config
+    // value unconditionally made the overlay looser than the reading card, which
+    // renders verse with no extra per-line spacing.
+    let work_is_prose = s
+        .current_work
+        .as_ref()
+        .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
+        .unwrap_or(false);
+    let line_spacing = if work_is_prose {
+        s.config.line_spacing as i32
+    } else {
+        0
+    };
     let label = synopsis_label(&s, div1, div2);
 
     // Cursor's work index, to pick the block to anchor on.
