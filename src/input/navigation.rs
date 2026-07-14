@@ -2439,17 +2439,22 @@ pub fn show_current_chapter(state: &mut AppState) {
     // keep the transient 3-second toast.
     if state.chapter_toast_persists() {
         if state.chapter_toast_persistent.get() {
-            // Toggle OFF: bump the generation (defensive) and hide.
+            // Toggle OFF: bump the generation (defensive) and hide. Remember
+            // the off state across launches/work switches.
             state.chapter_toast_persistent.set(false);
             state.chapter_toast_gen.set(state.chapter_toast_gen.get().wrapping_add(1));
             state.chapter_toast.set_visible(false);
-            log_fmt!("CHAPTER_TOAST: persistent OFF");
+            state.config.chapter_toast_shown = false;
+            crate::config::save(&state.config);
+            log_fmt!("CHAPTER_TOAST: persistent OFF (remembered)");
             return;
         }
         state.chapter_toast_persistent.set(true);
         let text = compute_current_chapter_text(state);
         show_chapter_toast_persistent(state, &text);
-        log_fmt!("CHAPTER_TOAST: persistent ON text={:?}", text);
+        state.config.chapter_toast_shown = true;
+        crate::config::save(&state.config);
+        log_fmt!("CHAPTER_TOAST: persistent ON text={:?} (remembered)", text);
         return;
     }
 

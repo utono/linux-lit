@@ -3208,8 +3208,10 @@ pub fn display_work_at_with_prepared(
     state.current_work = Some(work);
     crate::input::actions::chat::on_work_switched(state);
 
-    // A persistent chapter toast belongs to one work; never leak it across a
-    // work switch. Clear the flag and hide the pill.
+    // A persistent chapter toast belongs to one work; never leak the previous
+    // work's toast across a switch. Hide it now; the flag is re-derived from
+    // the config preference below (once the new work's line_map exists), so
+    // it can auto-show for the new work if `chapter_toast_shown` is set.
     state.chapter_toast_persistent.set(false);
     state.chapter_toast.set_visible(false);
 
@@ -3754,6 +3756,14 @@ pub fn display_work_at_with_prepared(
     // once geometry settles.
     crate::input::page_table::load_for_work(state);
     crate::input::prose_pages::load_for_prose_work(state);
+
+    // Persistent scene/chapter toast: shown by default for plays and
+    // prose-with-chapters, honoring the remembered `chapter_toast_shown`
+    // preference. The line_map now exists, so `chapter_toast_persists()` is
+    // reliable. Setting the flag here lets the `update_highlight_and_show`
+    // below (which calls refresh_persistent_chapter_toast) paint the toast.
+    state.chapter_toast_persistent
+        .set(state.config.chapter_toast_shown && state.chapter_toast_persists());
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
