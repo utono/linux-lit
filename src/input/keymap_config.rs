@@ -212,6 +212,9 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("j"), Action::CursorNextDialogue),
         (KeyCombo::plain("k"), Action::CursorPrevLine),
         (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
+        // h / t jump to the next / prev line of dialogue (twins of Q / Alt+,).
+        (KeyCombo::plain("h"), Action::JumpToNextDialogue),
+        (KeyCombo::plain("t"), Action::JumpToPrevDialogue),
         (KeyCombo::plain("Up"), Action::CursorPrevLine),
         (KeyCombo::shift("Up"), Action::PageBackwardBottom),
         (KeyCombo::plain("Down"), Action::CursorNextDialogue),
@@ -256,14 +259,13 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        // `@` (`at`, unshifted on RPD <AD12>) toggles playback sync directly.
-        (KeyCombo::plain("at"), Action::TogglePlaybackSync),
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
-        // it is intercepted before dispatch in keymap.rs). `a` and its twin `s`
-        // are a PURE pause/resume toggle — no seek (TogglePause). This holds for
-        // ALL work types; poetry/plays no longer swap the two (they match prose).
+        // it is intercepted before dispatch in keymap.rs). `a` is a PURE
+        // pause/resume toggle — no seek (TogglePause). This holds for ALL work
+        // types; poetry/plays no longer swap the two (they match prose).
         (KeyCombo::plain("a"), Action::TogglePause),
-        (KeyCombo::plain("s"), Action::TogglePause),
+        // `s` toggles playback sync directly (was `@`/`at`; `s` was TogglePause).
+        (KeyCombo::plain("s"), Action::TogglePlaybackSync),
         // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
         // the vocab-sentence loop, InputMode::VocabLoop — no jump fallback).
         (KeyCombo::plain("o"), Action::SeekShortBackward),
@@ -283,7 +285,7 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("h"), Action::ShowSynopsisOverlay),
+        (KeyCombo::ctrl("h"), Action::ShowSynopsisOverlay),
         // `r` is overloaded (Action::VocabPopupTap): a single tap cycles the
         // visible popup's words; rr in quick succession toggles visibility
         // (ChordState::PendingR). HideVocabPopup is unbound — rr covers it.
@@ -350,9 +352,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("dollar"), Action::RootVariantNext),
         (KeyCombo::ctrl_shift("dollar"), Action::RootVariantPrev),
         // u/i plain binds are swapped (2026-07-11): i sets the start time,
-        // u opens the two-column translation. Their modifier families stay
-        // put (Shift+U undo ts, Alt+u end ts; Ctrl+i image, Alt+i scansion).
-        (KeyCombo::plain("u"), Action::ShowTranslationOverlay),
+        // u sets the start timestamp (swapped with i). Their modifier families
+        // stay put (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
+        (KeyCombo::plain("u"), Action::SetStartTime),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         // Authorship moved off Ctrl+a (now AskPassage). plain("A") is the
         // shifted `a` (cf. plain("G") normalization above).
@@ -391,7 +393,7 @@ fn selection_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("i"), Action::SetStartTime),
+        (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::plain("Right"), Action::SetStartTime),
         (KeyCombo::alt("i"), Action::SetEndTime),
         (KeyCombo::plain("c"), Action::ToggleChapterStart),
@@ -467,8 +469,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::AskPassage));
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
-        assert_eq!(m.get(&KeyCombo::plain("u")), Some(&Action::ShowTranslationOverlay));
-        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::SetStartTime));
+        assert_eq!(m.get(&KeyCombo::plain("u")), Some(&Action::SetStartTime));
+        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
         assert_eq!(m.get(&KeyCombo::alt("u")), Some(&Action::CycleScansion));
         assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::SetEndTime));
         assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));

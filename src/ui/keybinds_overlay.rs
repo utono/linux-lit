@@ -60,7 +60,6 @@ const UPPER_ROW: &[KeyDef] = &[
     key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
-    bare("@", "^", "toggle sync"),
     key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
@@ -69,13 +68,13 @@ const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
-    key("u", "U", "2-col translation", "U: undo ts", &[("M-u", "scansion")]),
-    key("i", "I", "start time", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
+    key("u", "U", "start time", "U: undo ts", &[("M-u", "scansion")]),
+    key("i", "I", "2-col translation", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
-    key("h", "H", "synopsis", "H: auto vocab", &[]),
-    key("t", "T", "", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
+    key("h", "H", "next dlg", "H: auto vocab", &[("C-h", "synopsis")]),
+    key("t", "T", "prev dlg", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
     key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}"), ("C-M-n", "nav test")]),
-    bare("s", "S", "play/pause"),
+    bare("s", "S", "toggle sync"),
     key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
@@ -304,8 +303,8 @@ on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
 
         // ── MPV / audio ──
         "play/pause" => "Action::TogglePause — src/input/keymap.rs. Pure \
-pause/resume toggle for all work types; Space plays from the cursor line's \
-timestamp. `a` and `s` are twins — both bound to this action.",
+pause/resume toggle for all work types (bound to `a`); Space plays from the \
+cursor line's timestamp.",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",
         "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9 -> 0.8) \

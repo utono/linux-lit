@@ -174,7 +174,9 @@ pub(crate) fn apply_dialogue_formatting(state: &mut AppState) {
 
     let speaker_gap_tag = gtk4::TextTag::builder()
         .name("speaker-gap")
-        .pixels_above_lines(8)
+        // Extra breathing room above each speaker heading so the dialogue's
+        // speech-turn structure scans faster (larger than the inter-line gap).
+        .pixels_above_lines(14)
         .build();
 
     let stage_gap_tag = gtk4::TextTag::builder()

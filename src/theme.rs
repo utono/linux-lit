@@ -901,7 +901,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \
          .column-divider {{ background-color: {dim}; min-width: 1px; \
-           margin: 24px 8px 56px 8px; opacity: 0.28; }} \
+           margin: 24px 8px 101px 8px; opacity: 0.28; }} \
          textview {{ background-color: {bg}; color: {fg}; }} \
          textview border {{ background-color: {bg}; }} \
          textview border.left {{ background-color: {bg}; }} \
