@@ -247,10 +247,20 @@ pub const FONT_CYCLE: &[&str] = &[
 pub const DEFAULT_THEME: &str = "kindle-sepia";
 
 fn default_theme_cycle() -> Vec<String> {
-    ["kindle-sepia", "kindle-green", "green-light", "green-lightest", "zenbones-light", "zenwritten-light"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "zenbones-light",
+        "zenwritten-light",
+        "papercolor-light",
+        "sepia-lightest",
+        "green-lightest",
+        "sepia-light",
+        "green-light",
+        "kindle-sepia",
+        "kindle-green",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 pub fn default_font_size() -> u32 {
@@ -701,12 +711,15 @@ mod last_gloss_tests {
         assert_eq!(
             config.theme_cycle(),
             vec![
-                "kindle-sepia",
-                "kindle-green",
-                "green-light",
-                "green-lightest",
                 "zenbones-light",
-                "zenwritten-light"
+                "zenwritten-light",
+                "papercolor-light",
+                "sepia-lightest",
+                "green-lightest",
+                "sepia-light",
+                "green-light",
+                "kindle-sepia",
+                "kindle-green"
             ]
         );
     }
