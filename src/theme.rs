@@ -239,13 +239,19 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         }
     });
 
-    let text_fg = str_field(kitty, "active_tab_foreground").unwrap_or_else(|| {
-        if is_light {
-            "#000000".to_string()
-        } else {
-            "#d4be98".to_string()
-        }
-    });
+    // Reader body ink = the kitty theme's font color (`kitty.foreground`), so
+    // the reading card matches the terminal theme. Falls back to
+    // `active_tab_foreground` (the accent some linux-lit-only themes carry
+    // instead of a foreground), then to the light/dark default.
+    let text_fg = str_field(kitty, "foreground")
+        .or_else(|| str_field(kitty, "active_tab_foreground"))
+        .unwrap_or_else(|| {
+            if is_light {
+                "#000000".to_string()
+            } else {
+                "#d4be98".to_string()
+            }
+        });
 
     let designed_root = str_field(dwl, "rootcolor").unwrap_or_else(|| {
         // Dark themes: darken kitty.background by shifting toward black
@@ -1361,6 +1367,31 @@ mod tests {
         // The raw washed-out inputs must NOT survive.
         assert_ne!(t.reader_gloss, "#c4788a");
         assert_ne!(t.reader_gloss_cursor, "#56949f");
+    }
+
+    #[test]
+    fn text_fg_prefers_kitty_foreground_over_active_tab() {
+        // The reader ink matches the kitty theme's font color (kitty.foreground),
+        // not the active_tab_foreground accent. zenbones-light shape: charcoal
+        // foreground, steel-blue active_tab_foreground.
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                 "kitty": {"background": "#f0edec", "foreground": "#2c363c",
+                           "active_tab_foreground": "#286486"} }"##,
+        ).unwrap();
+        let t = resolve_theme("z", &json);
+        assert_eq!(t.text_fg, "#2c363c");
+    }
+
+    #[test]
+    fn text_fg_falls_back_to_active_tab_when_no_foreground() {
+        // Themes without kitty.foreground keep using active_tab_foreground.
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                 "kitty": {"background": "#fdfbf2", "active_tab_foreground": "#5d4232"} }"##,
+        ).unwrap();
+        let t = resolve_theme("s", &json);
+        assert_eq!(t.text_fg, "#5d4232");
     }
 
     #[test]
