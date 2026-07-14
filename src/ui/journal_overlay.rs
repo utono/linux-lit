@@ -366,13 +366,15 @@ impl JournalOverlay {
 
         container.append(&scroll_overlay);
 
-        // Footer rule mirroring the gloss overlay (gloss_overlay.rs footer_box):
-        // current page's work/act/scene on the left, fixed keybind hints on the
-        // right.
+        // Footer mirroring the gloss overlay (gloss_overlay.rs footer_box):
+        // "Q&A n of m" on the left, the bare page counter on the right. Drop the
+        // `gloss-hint` class so there is NO border-top divider (the act/scene
+        // pill already separates the footer visually), matching the gloss footer.
         let footer = crate::ui::footer::build_footer_row(
             text_margins as i32,
             "",
         );
+        footer.container.remove_css_class("gloss-hint");
         let footer_left = footer.left;
         let hint = footer.hint;
         // Right-aligned bare "X / Y" render-page counter, mirroring the gloss
