@@ -146,6 +146,14 @@ pub fn launch_mpv(media_path: &str) -> String {
         // it doesn't cover the reader.
         .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
+        // Detach MPV's stdio from ours. Otherwise the spawned MPV inherits our
+        // stdout/stderr; under a `… 2>&1 | tee` launcher (crll) it holds the
+        // pipe's write end open, so `tee` never sees EOF and the terminal hangs
+        // after the app exits. MPV runs `--no-terminal` and we never read its
+        // output, so null is lossless.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
     {
         Ok(_) => crate::logging::log(&format!("MPV: launched for {} (app-id=mpv-lit)", media_path)),

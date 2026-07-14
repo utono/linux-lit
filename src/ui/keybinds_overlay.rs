@@ -755,9 +755,9 @@ fn draw_row_screen(
     cr.set_font_size(14.0);
     cr.set_source_rgb(0.78, 0.76, 0.82);
     let foot = if jump_mode {
-        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  press a key to jump to its cap  \u{00b7}  \u{2190}/\u{2192} move  \u{00b7}  \u{2191}/\u{2193} rows"
+        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  press a key to jump to its cap  \u{00b7}  Left/Right move  \u{00b7}  Up/Down rows"
     } else {
-        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  n/p or \u{2191}/\u{2193} rows  \u{00b7}  j/k or \u{2190}/\u{2192} move"
+        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  n/p or Up/Down rows  \u{00b7}  j/k or Left/Right move"
     };
     let fe = cr.text_extents(foot).unwrap();
     let _ = cr.move_to((widget_w - fe.width()) / 2.0, widget_h - 28.0);
@@ -922,6 +922,17 @@ impl KeybindsOverlay {
     pub fn toggle_mode(&self) {
         self.jump_mode.set(!self.jump_mode.get());
         self.drawing_area.queue_draw();
+    }
+
+    /// Whether the highlight currently sits on the `Tab` cap (upper row). Used
+    /// by the Tab handler: the first Tab jumps here, a second Tab (already here)
+    /// toggles the mode.
+    pub fn is_on_tab_cap(&self) -> bool {
+        let row = self.row_index.get();
+        let keys = row_keys(row);
+        keys.get(self.selected.get())
+            .map(|d| d.unshifted == "Tab")
+            .unwrap_or(false)
     }
 
     /// Whether the overlay is currently in jump mode (vs nav mode).

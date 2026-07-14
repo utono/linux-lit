@@ -3035,7 +3035,15 @@ fn handle_keybinds_key(
             return true;
         }
         "Tab" => {
-            state.borrow().keybinds_overlay.toggle_mode();
+            // First Tab jumps the highlight to the Tab cap (showing its own
+            // binding); pressing Tab again while already on that cap toggles
+            // JUMP/NAV mode. State-based double-tap — no timer.
+            let s = state.borrow();
+            if s.keybinds_overlay.is_on_tab_cap() {
+                s.keybinds_overlay.toggle_mode();
+            } else {
+                s.keybinds_overlay.jump_to_key("Tab");
+            }
             return true;
         }
         // Arrows navigate in BOTH modes.
