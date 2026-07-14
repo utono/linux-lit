@@ -651,6 +651,21 @@ surface and the checklist item. Three sites, all gated on `logging::debug_mode()
 
 ## Verifying
 
+**First, and after any clip fix, run the pure clip-invariant unit tests — they
+are NOT run automatically (no CI / git hook here), so run them by hand:**
+
+```bash
+cargo test --bins
+```
+
+They compile into the binary (no display, no `cage`, ~seconds) and guard the
+arithmetic invariants a clip fix must not regress — e.g.
+`pinned_view_height_reserves_descender_room_at_zero_spacing` /
+`descender_pad_scales_and_never_collapses` (checklist #14) assert the paginated
+overlay always reserves descender room below the last line. They prove the
+FORMULA is right, not that a specific glyph cleared on screen — that last mile is
+still the pixel e2e + the real display below.
+
 Real GTK pixel layout is what matters; the headless `cage` + `grim` flow lays
 out fonts/metrics differently and can confirm the mechanism RUNS and roughly
 looks right but cannot prove pixel-exact edges. Confirm on the real display:
