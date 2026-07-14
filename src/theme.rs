@@ -1512,6 +1512,53 @@ mod tests {
     }
 
     #[test]
+    fn root_variants_are_the_candidates_verbatim() {
+        // Root variants ARE dwl.rootcolor_candidates, in authored order — no
+        // re-sort, no dedup, no skipping the entry equal to the designed root.
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let want = ["#41819b", "#286983", "#08526b"];
+        for (i, w) in want.iter().enumerate() {
+            let v = resolve_theme_variant("s", &json, i as u8);
+            assert_eq!(v.root_color, *w, "variant {i} root_color");
+            assert_eq!(v.root_variant, i as u8, "variant {i} index");
+        }
+    }
+
+    #[test]
+    fn root_variant_count_matches_candidate_list() {
+        // count = candidate list length (3 here).
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let v = resolve_theme_variant("s", &json, 0);
+        assert_eq!(v.root_variant_count, 3);
+    }
+
+    #[test]
+    fn out_of_range_variant_clamps_to_zero() {
+        // A saved index past the candidate count resets to 0 (first candidate).
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let v = resolve_theme_variant("s", &json, 5);
+        assert_eq!(v.root_color, "#41819b"); // candidates[0]
+        assert_eq!(v.root_variant, 0);
+    }
+
+    #[test]
+    fn no_candidates_falls_back_to_designed_root() {
+        // No rootcolor_candidates → single variant = dwl.rootcolor, count 1.
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"type": "light"},
+                  "dwl": {"rootcolor": "#08526b"},
+                  "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
+            .unwrap();
+        let v0 = resolve_theme_variant("s", &json, 0);
+        assert_eq!(v0.root_color, "#08526b");
+        assert_eq!(v0.root_variant_count, 1);
+        // Any index clamps to the single root.
+        let v3 = resolve_theme_variant("s", &json, 3);
+        assert_eq!(v3.root_color, "#08526b");
+        assert_eq!(v3.root_variant, 0);
+    }
+
+    #[test]
     fn all_five_roots_sorted_lightest_to_darkest_including_base() {
         // Pool: designed root #08526b + candidates #41819b/#286983 + the
         // 50%/70%-toward-white blends (#83a8b5/#b4cbd2), ALL sorted light->dark.
