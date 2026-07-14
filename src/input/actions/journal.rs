@@ -2433,11 +2433,11 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
     let Some(id) = displayed_journal_page(&s).map(|p| p.id) else {
         return;
     };
-    let _ = std::process::Command::new("wl-copy")
-        .arg(id.to_string())
-        .spawn();
-    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Copied id {}", id), 2);
-    crate::logging::log(&format!("JOURNAL: copied id {}", id));
+    // Copy the id prefaced with a label so a paste self-identifies.
+    let copied = format!("Journal Q&A ID: {}", id);
+    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Copied {}", copied), 2);
+    crate::logging::log(&format!("JOURNAL: copied \"{}\"", copied));
 }
 
 #[cfg(test)]
