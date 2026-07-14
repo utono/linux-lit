@@ -2548,13 +2548,6 @@ impl GlossOverlay {
         // to explain that Ctrl+Enter on an empty box rewrites with the default
         // prompt.
         self.ask_host.open(title, hint, legend, block_fill, block_fg);
-        // While the ask card is open, bottom-anchor the overlay column with a
-        // clearance so the card's bottom border sits above the act/scene toast
-        // pill with breathing room. Restored to centered on close so the
-        // reading-only gloss keeps its normal centered layout (no empty band).
-        self.container.set_valign(Align::End);
-        self.container
-            .set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
         self.apply_font();
     }
 
@@ -2562,9 +2555,6 @@ impl GlossOverlay {
     /// restores the scroll's stored closed height and recomputes the clip.
     pub fn close_ask_card(&self) {
         self.ask_host.close();
-        // Restore the centered reading layout (undo the ask-open bottom anchor).
-        self.container.set_valign(Align::Center);
-        self.container.set_margin_bottom(0);
     }
 
     /// Read and clear the ask input's text.
@@ -2693,10 +2683,6 @@ impl GlossOverlay {
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.
         self.ask_host.card().close();
-        // Undo any ask-open bottom anchor so a reopened reading-only gloss is
-        // centered (see `open_ask_card_with` / `close_ask_card`).
-        self.container.set_valign(Align::Center);
-        self.container.set_margin_bottom(0);
     }
 
     pub fn set_position(&self, index: usize, total: usize) {

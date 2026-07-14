@@ -194,10 +194,7 @@ impl JournalOverlay {
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         container.add_css_class("gloss-overlay");
         container.set_halign(gtk4::Align::Center);
-        // Bottom-anchored with a clearance so the ask card's bottom border sits
-        // above the act/scene toast pill (window-anchored) with breathing space.
-        container.set_valign(gtk4::Align::End);
-        container.set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
+        container.set_valign(gtk4::Align::Center);
         container.set_visible(false);
 
         // No title header: the footer already identifies the work + chapter

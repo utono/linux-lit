@@ -40,12 +40,12 @@ const SONNET_BLOCK_SAMPLE: &str = "Then, churls, their thoughts, although their 
 /// it on the card) and `main_card_rect` (the pre-allocation height fallback).
 pub(crate) const CARD_OUTER_MARGIN: i32 = 24;
 
-/// Bottom margin for the gloss/journal reading overlays (which are bottom-
-/// anchored), leaving the act/scene toast pill visible with breathing space
-/// below the overlay's footer/ask card. The pill (`chapter_toast`, window-
-/// anchored) occupies roughly `32` (its own `margin_bottom`) + ~12 (padding) +
-/// ~18 (label height) ≈ 62px from the window bottom; this clears that band plus
-/// a gap so the ask card's bottom border never sits under the pill.
+/// Bottom margin on the shared ask/edit input card (`ui::ask_card`), lifting
+/// its bottom border above the act/scene toast pill with breathing room while
+/// leaving the reading text above the card in place. The pill (`chapter_toast`,
+/// window-anchored) occupies roughly `32` (its own `margin_bottom`) + ~12
+/// (padding) + ~18 (label height) ≈ 62px from the window bottom; this clears
+/// that band plus a gap so the card's bottom border never sits under the pill.
 pub(crate) const OVERLAY_BOTTOM_CLEARANCE: i32 = 80;
 
 /// Pixel width of the sonnet reading block, measured with the text_view's Pango

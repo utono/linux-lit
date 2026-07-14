@@ -53,7 +53,14 @@ impl AskCard {
         container.set_margin_top(14);
         container.set_margin_start(text_margins);
         container.set_margin_end(text_margins);
-        container.set_margin_bottom(14);
+        // Bottom margin lifts the ask card's bottom border above the window-
+        // anchored act/scene toast pill with breathing room. The card lives in a
+        // FIXED-height overlay column (`height_request = card_height`), so this
+        // margin does NOT grow the column — `AskCardHost::open` measures the
+        // card's preferred height (margin included) and shrinks the reading
+        // scroll by exactly that much, so the reading text's top stays put and
+        // only the scroll's bottom (and the card's bottom border) rise.
+        container.set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
 
         let title = Label::new(Some(""));
         title.add_css_class("gloss-header");
