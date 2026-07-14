@@ -719,6 +719,13 @@ pub struct AppState {
     pub input_mode: InputMode,
 }
 
+/// Core of `AppState::is_play`, split out so it is unit-testable without an
+/// `AppState`. A "play" is `work_type == "play"` exactly — NOT the whole
+/// `!is_prose()` set (poem / sonnet_sequence / anthology are excluded).
+pub(crate) fn work_type_is_play(work_type: &str) -> bool {
+    work_type == "play"
+}
+
 impl AppState {
     /// Whether the current work is prose (true) or play/poetry (false).
     /// Returns true when no work is loaded — equivalent to pre-F9 behavior
@@ -751,6 +758,15 @@ impl AppState {
     pub fn is_anthology(&self) -> bool {
         self.current_work.as_ref()
             .map(|w| w.work_type == "anthology")
+            .unwrap_or(false)
+    }
+
+    /// True only for a play (`work_type == "play"`). Distinct from `!is_prose()`,
+    /// which also matches poem / sonnet_sequence / anthology. Used to decide
+    /// whether the `+` chapter toast persists.
+    pub fn is_play(&self) -> bool {
+        self.current_work.as_ref()
+            .map(|w| work_type_is_play(&w.work_type))
             .unwrap_or(false)
     }
 
@@ -4794,6 +4810,23 @@ mod scansion_vocab_tests {
         // "músic" (acute after u) is still one word run.
         let marked = "If m\u{0075}\u{0301}sic be";
         assert_eq!(word_run_count(marked), 3); // If, músic, be
+    }
+}
+
+#[cfg(test)]
+mod is_play_tests {
+    use super::work_type_is_play;
+
+    #[test]
+    fn play_is_play() {
+        assert!(work_type_is_play("play"));
+    }
+
+    #[test]
+    fn non_play_types_are_not_play() {
+        for t in ["poem", "sonnet_sequence", "novel", "prose", "prose_book", "essay_collection", "anthology"] {
+            assert!(!work_type_is_play(t), "{t} must not be a play");
+        }
     }
 }
 
