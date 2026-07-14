@@ -748,11 +748,24 @@ fn sub_block(block: &TranslationBlock, from: usize, to: usize) -> TranslationBlo
 fn set_view_height(view: &TextView, text: &str, ctx: &RenderCtx, pctx: &pango::Context) {
     let paras = text.split('\n').count().max(1) as i32;
     let text_h = measure_text_height(pctx, text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
-    // `+ descender_pad` reserves room below the last line so its descenders aren't
-    // sliced by this pinned height (critical when `line_spacing == 0`; see
-    // `descender_pad`). `block_height`/`line_height` add the same pad so pagination
-    // accounts for the taller view.
-    view.set_height_request(text_h + ctx.line_spacing * paras + descender_pad(ctx.body_font_size));
+    view.set_height_request(pinned_view_height(
+        text_h,
+        ctx.line_spacing,
+        paras,
+        ctx.body_font_size,
+    ));
+}
+
+/// Pure pinned-view-height arithmetic (no pango/GTK), so the descender-room
+/// invariant is unit-testable. The rendered TextView's height is the measured
+/// pango LOGICAL text height plus one `line_spacing` below every paragraph
+/// (matching `block_height`/`line_height`), plus `descender_pad` reserved below
+/// the LAST line so its descenders aren't sliced by this pinned height — critical
+/// when `line_spacing == 0` (verse), where the per-paragraph spacing is zero and
+/// nothing else absorbs the descender overhang. Guaranteed to exceed the bare
+/// `text_h + line_spacing*paras` by at least `descender_pad` (checklist #14).
+fn pinned_view_height(text_h: i32, line_spacing: i32, paras: i32, body_font_size: i32) -> i32 {
+    text_h + line_spacing * paras + descender_pad(body_font_size)
 }
 
 /// Apply an italic style across the whole buffer (stage-direction rendering,
@@ -953,6 +966,40 @@ mod tests {
         assert_eq!(block_for_work_idx(&blocks, 12), Some(0));
         assert_eq!(block_for_work_idx(&blocks, 13), Some(1));
         assert_eq!(block_for_work_idx(&blocks, 99), None);
+    }
+
+    #[test]
+    fn descender_pad_scales_and_never_collapses() {
+        // The pad must always reserve real descender room — a zero pad reintroduces
+        // the last-line clip (checklist #14). It floors at 3px for small fonts and
+        // scales with the body point size for large ones.
+        for size in [1, 8, 12, 20, 48, 96] {
+            assert!(descender_pad(size) >= 3, "pad floored at 3px (size={size})");
+        }
+        // Monotonic non-decreasing in font size (larger text needs more descent).
+        assert!(descender_pad(96) > descender_pad(12));
+        assert!(descender_pad(48) >= descender_pad(20));
+    }
+
+    #[test]
+    fn pinned_view_height_reserves_descender_room_at_zero_spacing() {
+        // The bug: with line_spacing == 0 (verse plays), a view pinned to exactly
+        // the measured text height clips the last line's descenders. The pin MUST
+        // exceed the bare text height by at least descender_pad, at ANY spacing.
+        let text_h = 200;
+        for line_spacing in [0, 3, 5, 8] {
+            for paras in [1, 3, 7] {
+                let bare = text_h + line_spacing * paras;
+                let pinned = pinned_view_height(text_h, line_spacing, paras, 20);
+                assert!(
+                    pinned - bare >= descender_pad(20),
+                    "pinned={pinned} bare={bare} must reserve >= pad (spacing={line_spacing}, paras={paras})",
+                );
+            }
+        }
+        // The zero-spacing case is the one that regressed: the pin is strictly
+        // taller than the measured text height, never equal to it.
+        assert!(pinned_view_height(200, 0, 4, 20) > 200);
     }
 
     #[test]
