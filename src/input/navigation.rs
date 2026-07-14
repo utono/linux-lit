@@ -2315,11 +2315,30 @@ pub fn jump_to_next_section(state: &mut AppState) {
     } else {
         jump_to_next_chapter(state);
     }
-    // Mirror `;` (ShowCurrentChapter): surface the new act/scene as the same
-    // transient toast after landing. Prose works skip the toast — the chapter
-    // heading the jump lands on already names the destination.
-    if !state.is_prose() {
-        show_current_chapter(state);
+    // Surface the new act/scene after landing. Do NOT call the `+` handler
+    // (`show_current_chapter`) — it is a TOGGLE now, so on a persisting work
+    // with the toast already up it would HIDE the toast. Instead: refresh the
+    // persistent toast to the new scene when it is on, else show the one-off
+    // transient toast (non-persisting verse, or the user hid the persistent one).
+    surface_current_scene_toast(state);
+}
+
+/// Surface the current act/scene toast WITHOUT toggling the persistent
+/// indicator. Use this wherever a non-`+` affordance wants to show/refresh the
+/// scene toast (scene jumps, the overlay `;` mirrors) — calling the `+` handler
+/// `show_current_chapter` there would toggle a shown persistent toast OFF.
+/// When the persistent toast is on, refresh it to the current line; otherwise
+/// show the one-off transient toast. Prose works skip the toast — the chapter
+/// heading already names the destination.
+pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
+    if state.is_prose() {
+        return;
+    }
+    if state.chapter_toast_persistent.get() {
+        refresh_persistent_chapter_toast(state);
+    } else {
+        let text = compute_current_chapter_text(state);
+        show_chapter_toast(state, &text);
     }
 }
 
@@ -2334,44 +2353,30 @@ pub fn jump_to_prev_section(state: &mut AppState) {
     } else {
         jump_to_prev_chapter(state);
     }
-    // Mirror `;` (ShowCurrentChapter): surface the new act/scene as the same
-    // transient toast after landing. Prose works skip the toast — the chapter
-    // heading the jump lands on already names the destination.
-    if !state.is_prose() {
-        show_current_chapter(state);
-    }
+    // Surface the new act/scene without toggling — see surface_current_scene_toast.
+    surface_current_scene_toast(state);
 }
 
 /// Show the act/scene (plays) or chapter (prose) containing the current line as
 /// a transient toast.
-pub fn show_current_chapter(state: &mut AppState) {
-    let abbrev = match &state.current_work {
-        Some(w) => w.abbrev.clone(),
-        None => {
-            log_fmt!("SHOW_CHAPTER (;): no current work — nothing to show");
-            return;
-        }
+/// Build the chapter/scene toast text for the current cursor position — the
+/// SAME string a fresh `+` shows. Plays/verse get the authoritative act/scene
+/// label; prose with chapter markers gets "Chapter N of M — title"; prose
+/// front matter gets "Front matter — title"; prose without markers falls back
+/// to the scene label. Boundaries come from `(div1, div2)` metadata, never
+/// from buffer text (see CLAUDE.md → authoritative-boundary principle).
+pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
+    let (abbrev, work) = match &state.current_work {
+        Some(w) => (w.abbrev.clone(), w),
+        None => return String::new(),
     };
-    log_fmt!("SHOW_CHAPTER (;): abbrev={} current_line={} is_prose={}",
-        abbrev, state.current_line, state.is_prose());
 
-    // Plays/verse (anything not prose) show the authoritative act/scene label
-    // derived from the line's (div1, div2) — never inferred from buffer text,
-    // and never the "Chapter N of M" form even when the work happens to carry
-    // chapter_breaks. Prose-vs-verse is decided by work_type, not by whether
-    // chapter markers exist. See CLAUDE.md → authoritative-boundary principle.
+    // Plays/verse: authoritative act/scene label, never "Chapter N of M".
     if !state.is_prose() {
         let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
         let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
-        let text = format!("{} — {}", abbrev, label);
-        show_chapter_toast(state, &text);
-        return;
+        return format!("{} — {}", abbrev, label);
     }
-
-    let work = match &state.current_work {
-        Some(w) => w,
-        None => return,
-    };
 
     let chapter_lines: Vec<usize> = if let Some(ref lm) = state.line_map {
         lm.chapter_breaks.clone()
@@ -2384,14 +2389,11 @@ pub fn show_current_chapter(state: &mut AppState) {
             .collect()
     };
 
-    // Prose work with no chapter markers: fall back to the scene label so the
-    // toast still shows something meaningful rather than nothing.
+    // Prose without chapter markers: scene-label fallback.
     if chapter_lines.is_empty() {
         let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
         let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
-        let text = format!("{} — {}", abbrev, label);
-        show_chapter_toast(state, &text);
-        return;
+        return format!("{} — {}", abbrev, label);
     }
 
     let work_line_text = |bl: usize| -> &str {
@@ -2408,10 +2410,7 @@ pub fn show_current_chapter(state: &mut AppState) {
     let current_bl = state.current_line;
 
     // Chapter number and total come from the authoritative div1 metadata,
-    // never from counting heading lines in the buffer. Counting markers
-    // miscounted whenever front matter (div1 == 0: preface, prologue)
-    // precedes Chapter 1 — the old "implicit first chapter" inference showed
-    // "Chapter 8 of 68" for BH's Chapter VII (67 chapters + prologue).
+    // never from counting heading lines in the buffer.
     let (div1, _) = crate::app::scene_synopsis::current_scene_divs(state);
     let max_div1 = work.lines.iter().map(|l| l.div1).max().unwrap_or(0);
 
@@ -2435,13 +2434,46 @@ pub fn show_current_chapter(state: &mut AppState) {
         }
     };
 
-    let text = match prose_chapter_numbering(div1, max_div1) {
-        Some((num, total)) => {
-            format!("{} — Chapter {} of {} — {}", abbrev, num, total, title)
-        }
+    match prose_chapter_numbering(div1, max_div1) {
+        Some((num, total)) => format!("{} — Chapter {} of {} — {}", abbrev, num, total, title),
         // Front matter (prologue/preface): not a chapter, so no "M of N".
         None => format!("{} — Front matter — {}", abbrev, work.title),
-    };
+    }
+}
+
+pub fn show_current_chapter(state: &mut AppState) {
+    if state.current_work.is_none() {
+        log_fmt!("SHOW_CHAPTER (+): no current work — nothing to show");
+        return;
+    }
+    log_fmt!("SHOW_CHAPTER (+): current_line={} is_prose={} persists={}",
+        state.current_line, state.is_prose(), state.chapter_toast_persists());
+
+    // Persisting works (plays + prose-with-chapters): `+` toggles a live
+    // "you are here" indicator that follows the cursor. Non-persisting works
+    // keep the transient 3-second toast.
+    if state.chapter_toast_persists() {
+        if state.chapter_toast_persistent.get() {
+            // Toggle OFF: bump the generation (defensive) and hide. Remember
+            // the off state across launches/work switches.
+            state.chapter_toast_persistent.set(false);
+            state.chapter_toast_gen.set(state.chapter_toast_gen.get().wrapping_add(1));
+            state.chapter_toast.set_visible(false);
+            state.config.chapter_toast_shown = false;
+            crate::config::save(&state.config);
+            log_fmt!("CHAPTER_TOAST: persistent OFF (remembered)");
+            return;
+        }
+        state.chapter_toast_persistent.set(true);
+        let text = compute_current_chapter_text(state);
+        show_chapter_toast_persistent(state, &text);
+        state.config.chapter_toast_shown = true;
+        crate::config::save(&state.config);
+        log_fmt!("CHAPTER_TOAST: persistent ON text={:?} (remembered)", text);
+        return;
+    }
+
+    let text = compute_current_chapter_text(state);
     show_chapter_toast(state, &text);
 }
 
@@ -2484,6 +2516,30 @@ pub(crate) fn show_chapter_toast(state: &AppState, text: &str) {
         log_fmt!("CHAPTER_TOAST: hide gen={}", gen);
         toast.set_visible(false);
     });
+}
+
+/// Like `show_chapter_toast` but with NO auto-hide timer — the toast stays up
+/// until the persistent flag is toggled off or a work switch clears it. Bumps
+/// `chapter_toast_gen` so any in-flight transient hide-timer becomes a no-op.
+pub(crate) fn show_chapter_toast_persistent(state: &AppState, text: &str) {
+    let gen = state.chapter_toast_gen.get().wrapping_add(1);
+    state.chapter_toast_gen.set(gen);
+    log_fmt!("CHAPTER_TOAST: show persistent gen={} text={:?}", gen, text);
+    state.chapter_toast.set_text(text);
+    state.chapter_toast.set_visible(true);
+}
+
+/// Keep the persistent chapter toast in sync with the cursor: recompute its
+/// text and hold it visible. No-op when the toast is not in persistent mode.
+/// Rides the per-navigation `update_title_bar_scene` sites but is a SEPARATE
+/// call — it must refresh even when the title bar is hidden.
+pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
+    if !state.chapter_toast_persistent.get() {
+        return;
+    }
+    let text = compute_current_chapter_text(state);
+    state.chapter_toast.set_text(&text);
+    state.chapter_toast.set_visible(true);
 }
 
 /// Jump to the next bookmarked line (wraps around).

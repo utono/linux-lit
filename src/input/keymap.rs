@@ -1942,9 +1942,11 @@ fn handle_gloss_key(
             true
         }
         // `;` mirrors the reading card: show the chapter/scene toast for the
-        // source line the overlay was opened from (state.current_line).
+        // source line the overlay was opened from (state.current_line). Use the
+        // non-toggling surface fn — the `+` handler would hide a shown
+        // persistent toast instead of surfacing the scene.
         "semicolon" => {
-            navigation::show_current_chapter(&mut state.borrow_mut());
+            navigation::surface_current_scene_toast(&mut state.borrow_mut());
             true
         }
         _ => true,
@@ -2283,9 +2285,11 @@ fn handle_synopsis_overlay_key(
             true
         }
         // `;` mirrors the reading card: show the chapter/scene toast for the
-        // source line the overlay was opened from (state.current_line).
+        // source line the overlay was opened from (state.current_line). Use the
+        // non-toggling surface fn — the `+` handler would hide a shown
+        // persistent toast instead of surfacing the scene.
         "semicolon" => {
-            navigation::show_current_chapter(&mut state.borrow_mut());
+            navigation::surface_current_scene_toast(&mut state.borrow_mut());
             true
         }
         _ => true,
@@ -2824,9 +2828,11 @@ fn handle_echoes_overlay_key(
             true
         }
         // `;` mirrors the reading card: show the chapter/scene toast for the
-        // source line the overlay was opened from (state.current_line).
+        // source line the overlay was opened from (state.current_line). Use the
+        // non-toggling surface fn — the `+` handler would hide a shown
+        // persistent toast instead of surfacing the scene.
         "semicolon" => {
-            navigation::show_current_chapter(&mut state.borrow_mut());
+            navigation::surface_current_scene_toast(&mut state.borrow_mut());
             true
         }
         "Escape" => {

@@ -184,6 +184,11 @@ pub struct Config {
     pub phrase_highlight_verse: PhraseHighlightMode,
     #[serde(default = "default_title_bar_visible")]
     pub title_bar_visible: bool,
+    /// Whether the persistent `+` scene/chapter toast is shown by default for
+    /// plays and prose-with-chapters. Shown by default; `+` toggles it and the
+    /// off state is remembered here across launches and work switches.
+    #[serde(default = "default_chapter_toast_shown")]
+    pub chapter_toast_shown: bool,
     /// Weight of the sentiment/affect (NRC-VAD) axis in echo re-ranking, in
     /// [0, 1]. Final score = (1 - w) * semantic_cosine + w * affect_cosine.
     /// 0.0 = pure semantic ranking (default; the affect axis is inert).
@@ -304,6 +309,10 @@ fn default_title_bar_visible() -> bool {
     false
 }
 
+fn default_chapter_toast_shown() -> bool {
+    true
+}
+
 fn default_phrase_highlight_prose() -> PhraseHighlightMode {
     PhraseHighlightMode::Phrase
 }
@@ -360,6 +369,7 @@ impl Default for Config {
             phrase_highlight_prose: PhraseHighlightMode::Phrase,
             phrase_highlight_verse: PhraseHighlightMode::Off,
             title_bar_visible: default_title_bar_visible(),
+            chapter_toast_shown: default_chapter_toast_shown(),
             echo_affect_weight: default_echo_affect_weight(),
             system_volume: default_system_volume(),
             mpv_volume: default_mpv_volume(),

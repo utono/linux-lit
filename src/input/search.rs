@@ -97,6 +97,11 @@ pub(crate) fn execute_search_with_query(state: &mut AppState, query: &str) {
 pub(crate) fn no_match_toast(state: &AppState) {
     let q = state.search_bar.query();
     let text = format!("No match for \u{201c}{}\u{201d}", display_pattern(&q));
+    // The search toast borrows the bottom strip; a persistent chapter toast
+    // yields to it (the next cursor move re-shows the chapter toast).
+    if state.chapter_toast_persistent.get() {
+        state.chapter_toast.set_visible(false);
+    }
     crate::ui::toast::show_transient(&state.search_toast, &text, 3);
 }
 
@@ -411,6 +416,9 @@ fn edge_toast(state: &AppState, side: Side, query: &str) {
         Side::Left => format!("No earlier occurrence of \u{201c}{}\u{201d}", p),
         Side::Right => format!("No later occurrence of \u{201c}{}\u{201d}", p),
     };
+    if state.chapter_toast_persistent.get() {
+        state.chapter_toast.set_visible(false);
+    }
     crate::ui::toast::show_transient(&state.search_toast, &text, 3);
 }
 

@@ -667,6 +667,12 @@ pub struct AppState {
     /// by a newer toast) becomes a no-op, so rapid `;` presses can never have an
     /// earlier press's timer cut a later toast short. See show_chapter_toast.
     pub chapter_toast_gen: Rc<Cell<u64>>,
+    /// True while the `+` chapter/scene toast is a PERSISTENT live indicator
+    /// (plays + prose-with-chapters). When true the toast has no auto-hide
+    /// timer, its text is refreshed on every cursor move
+    /// (`navigation::refresh_persistent_chapter_toast`), and it is re-shown
+    /// after a search toast borrows the bottom strip. Reset on work switch.
+    pub chapter_toast_persistent: Rc<Cell<bool>>,
     pub speed_toast: gtk4::Label,
     /// Centered bottom toast for search boundaries ("no earlier/later
     /// occurrence"). Placed like chapter_toast (centered, 32px from the bottom)
@@ -719,6 +725,13 @@ pub struct AppState {
     pub input_mode: InputMode,
 }
 
+/// Core of `AppState::is_play`, split out so it is unit-testable without an
+/// `AppState`. A "play" is `work_type == "play"` exactly — NOT the whole
+/// `!is_prose()` set (poem / sonnet_sequence / anthology are excluded).
+pub(crate) fn work_type_is_play(work_type: &str) -> bool {
+    work_type == "play"
+}
+
 impl AppState {
     /// Whether the current work is prose (true) or play/poetry (false).
     /// Returns true when no work is loaded — equivalent to pre-F9 behavior
@@ -752,6 +765,39 @@ impl AppState {
         self.current_work.as_ref()
             .map(|w| w.work_type == "anthology")
             .unwrap_or(false)
+    }
+
+    /// True only for a play (`work_type == "play"`). Distinct from `!is_prose()`,
+    /// which also matches poem / sonnet_sequence / anthology. Used to decide
+    /// whether the `+` chapter toast persists.
+    pub fn is_play(&self) -> bool {
+        self.current_work.as_ref()
+            .map(|w| work_type_is_play(&w.work_type))
+            .unwrap_or(false)
+    }
+
+    /// True when the `+` chapter toast should PERSIST (live "you are here"
+    /// indicator) instead of auto-dismissing: a play, or prose that actually
+    /// has chapter markers. Front-matter-only prose (no markers), non-play
+    /// verse, and anthology are false — they keep the transient toast. The
+    /// "has chapters" test mirrors `show_current_chapter`: prefer the line
+    /// map's `chapter_breaks`, else scan `is_chapter` on the work lines.
+    pub fn chapter_toast_persists(&self) -> bool {
+        if self.is_play() {
+            return true;
+        }
+        if !self.is_prose() {
+            return false;
+        }
+        let has_chapters = if let Some(ref lm) = self.line_map {
+            !lm.chapter_breaks.is_empty()
+        } else {
+            self.current_work
+                .as_ref()
+                .map(|w| w.lines.iter().any(|l| l.is_chapter))
+                .unwrap_or(false)
+        };
+        has_chapters
     }
 
     pub fn effective_line_count(&self) -> usize {
@@ -1952,6 +1998,7 @@ pub fn build_window(
         word_status_label,
         chapter_toast,
         chapter_toast_gen: Rc::new(Cell::new(0)),
+        chapter_toast_persistent: Rc::new(Cell::new(false)),
         speed_toast,
         search_toast,
         word_cycle: crate::input::actions::word_copy::WordCycleState::default(),
@@ -3161,6 +3208,13 @@ pub fn display_work_at_with_prepared(
     state.current_work = Some(work);
     crate::input::actions::chat::on_work_switched(state);
 
+    // A persistent chapter toast belongs to one work; never leak the previous
+    // work's toast across a switch. Hide it now; the flag is re-derived from
+    // the config preference below (once the new work's line_map exists), so
+    // it can auto-show for the new work if `chapter_toast_shown` is set.
+    state.chapter_toast_persistent.set(false);
+    state.chapter_toast.set_visible(false);
+
     // Build buffer text (with or without sign column)
     state.line_map = None;
     state.dialogue_formatting_active = false;
@@ -3702,6 +3756,14 @@ pub fn display_work_at_with_prepared(
     // once geometry settles.
     crate::input::page_table::load_for_work(state);
     crate::input::prose_pages::load_for_prose_work(state);
+
+    // Persistent scene/chapter toast: shown by default for plays and
+    // prose-with-chapters, honoring the remembered `chapter_toast_shown`
+    // preference. The line_map now exists, so `chapter_toast_persists()` is
+    // reliable. Setting the flag here lets the `update_highlight_and_show`
+    // below (which calls refresh_persistent_chapter_toast) paint the toast.
+    state.chapter_toast_persistent
+        .set(state.config.chapter_toast_shown && state.chapter_toast_persists());
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
@@ -4794,6 +4856,23 @@ mod scansion_vocab_tests {
         // "músic" (acute after u) is still one word run.
         let marked = "If m\u{0075}\u{0301}sic be";
         assert_eq!(word_run_count(marked), 3); // If, músic, be
+    }
+}
+
+#[cfg(test)]
+mod is_play_tests {
+    use super::work_type_is_play;
+
+    #[test]
+    fn play_is_play() {
+        assert!(work_type_is_play("play"));
+    }
+
+    #[test]
+    fn non_play_types_are_not_play() {
+        for t in ["poem", "sonnet_sequence", "novel", "prose", "prose_book", "essay_collection", "anthology"] {
+            assert!(!work_type_is_play(t), "{t} must not be a play");
+        }
     }
 }
 

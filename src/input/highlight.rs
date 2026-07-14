@@ -444,6 +444,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         state.prev_highlight_line.set(Some(state.current_line));
         repaint_reader_gloss_visible(state);
         crate::app::scene_synopsis::update_title_bar_scene(state);
+        crate::input::navigation::refresh_persistent_chapter_toast(state);
         return;
     }
 
@@ -484,6 +485,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
 
     repaint_reader_gloss_visible(state);
     crate::app::scene_synopsis::update_title_bar_scene(state);
+    crate::input::navigation::refresh_persistent_chapter_toast(state);
 }
 
 /// Flush a nav-flash flag that is still armed after its action handler ran.
