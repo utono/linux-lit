@@ -1395,6 +1395,13 @@ fn handle_journal_key(
                 crate::input::actions::gloss::begin_current_journal_block(state);
                 return true;
             }
+            // Ctrl+Space: play/stop the cursor paragraph's TTS (cache hit plays
+            // the stored MP3, miss synthesizes via ElevenLabs). Moved off plain
+            // Space so synthesis requires the Ctrl modifier.
+            "space" => {
+                crate::input::actions::gloss::read_current_journal_block(state);
+                return true;
+            }
             // Ctrl+/ opens the JOURNAL-specific keybind legend (its full keybind
             // set), returning to the journal overlay on close.
             "slash" => {
@@ -1538,13 +1545,6 @@ fn handle_journal_key(
             }
             true
         }
-        // Space: play/stop the cursor paragraph's TTS (cache hit plays the
-        // stored MP3, miss synthesizes via ElevenLabs). Tab/ISO_Left_Tab no
-        // longer synthesize — dropped by request.
-        "space" => {
-            crate::input::actions::gloss::read_current_journal_block(state);
-            true
-        }
         // `a`: toggle play/pause of the cursor block's TTS (starts it only
         // when a cached MP3 exists; never synthesizes).
         "a" => {
@@ -1636,6 +1636,14 @@ fn handle_gloss_key(
     // Shift+Space: batch-synthesize all prose blocks (cache-only).
     if key_name == "space" && is_shift {
         crate::input::actions::gloss::synth_all_prose_blocks(state);
+        return true;
+    }
+
+    // Ctrl+Space: read the cursor block aloud (cache hit plays, miss
+    // synthesizes via ElevenLabs). Moved off plain Space so synthesis requires
+    // the Ctrl modifier.
+    if key_name == "space" && is_ctrl {
+        crate::input::actions::gloss::read_current_block(state);
         return true;
     }
 
@@ -1848,13 +1856,6 @@ fn handle_gloss_key(
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(-1);
             }
-            true
-        }
-        // Space reads the cursor block aloud (cache hit plays, miss
-        // synthesizes). Tab/ISO_Left_Tab no longer synthesize — dropped by
-        // request. The Ctrl+Tab guard above already consumes the chord.
-        "space" => {
-            crate::input::actions::gloss::read_current_block(state);
             true
         }
         // `\`: advance the segment-overlay cycle → synopsis for the lap's
