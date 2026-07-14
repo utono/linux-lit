@@ -525,69 +525,24 @@ pub(crate) fn next_cycle_index(len: usize, current: Option<usize>, forward: bool
 }
 
 /// Alt+t / Alt+Shift+T: cycle through the curated theme list in config.
-pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
-    let mut s = state.borrow_mut();
-    let cycle = s.config.theme_cycle();
-    if cycle.is_empty() {
-        return;
-    }
-    let current = cycle.iter().position(|t| *t == s.theme.name);
-    let next = next_cycle_index(cycle.len(), current, forward);
-    let variant = s.config.root_variant_for(&cycle[next]);
-    let theme = crate::theme::load_theme_with_fallback(&cycle[next], variant);
-    apply_theme_to_state(&mut s, &theme);
-    // Desktop notification, mirroring the font-cycle pattern (font.rs). The
-    // synchronous hint replaces a still-visible previous theme toast instead
-    // of stacking.
-    let position = format!("{}/{}", next + 1, cycle.len());
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Theme [{}]", position), &s.theme.display_name])
-        .spawn();
-}
-
-/// Ctrl+t / Ctrl+Shift+T: cycle the current theme's ROOT-color variant
-/// forward (0 → 1 → ... → 4 → 0) or backward. The index persists per theme
-/// (config.root_variants); the theme is re-resolved so root_color (and its
-/// derivative scrim_bg) follow the new root while the card background and
-/// reading tints stay pinned. See
-/// docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
-pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
-    let mut s = state.borrow_mut();
-    let name = s.theme.name.clone();
-    let count = s.theme.root_variant_count.max(1);
-    let next = if forward {
-        (s.theme.root_variant + 1) % count
-    } else {
-        (s.theme.root_variant + count - 1) % count
-    };
-    // Insert BEFORE apply_theme_to_state — it saves the config snapshot.
-    s.config.root_variants.insert(name.clone(), next);
-    let theme = crate::theme::load_theme_with_fallback(&name, next);
-    apply_theme_to_state(&mut s, &theme);
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h",
-               "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Root [{}/{}]", next + 1, count),
-               &s.theme.root_color])
-        .spawn();
-    // Copy the assigned root color and the vocab popup's rendered text color
-    // to the system clipboard (labeled, newline-separated), so a pairing the
-    // user likes can be pasted straight into a theme/dwl config.
+/// Copy the active theme's root color and the vocab popup's rendered text color
+/// to the system clipboard (labeled, newline-separated), then asynchronously
+/// capture the screen and append the PNG's path — so a color pairing the user
+/// likes pastes as colors AND screenshot in one go. Shared by BOTH the theme
+/// bind (`cycle_theme`, Ctrl+t) and the root-color bind (`cycle_root_variant`,
+/// Ctrl+$) so their clipboard behavior is identical. The screenshot runs off
+/// the main thread after a short sleep so the new colors have painted before
+/// grim captures them; if grim fails the clipboard keeps the colors-only
+/// payload. Screenshots land in ~/Screenshots (same as dwl's screenshot.sh),
+/// pruned to the 20 newest.
+fn copy_pairing_and_screenshot(theme: &crate::theme::Theme) {
     let copied = format!(
         "root {}\nvocab-fg {}",
-        s.theme.root_color,
-        crate::theme::vocab_popup_fg(&s.theme)
+        theme.root_color,
+        crate::theme::vocab_popup_fg(theme)
     );
     let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
-    crate::logging::log(&format!("THEME: root variant {next} — copied \"{}\"", copied.replace('\n', " / ")));
-    // Also capture the screen showing the new variant (same grim flow as
-    // dwl's Super+| screenshot.sh: ~/Screenshots/screenshot-<ts>.png) and
-    // re-copy the payload with the PNG's full path appended, so a pairing
-    // the user likes pastes as colors AND screenshot in one go. Runs off
-    // the main thread after a short sleep so the new root has painted
-    // before grim captures it; if grim fails the clipboard keeps the
-    // colors-only payload above.
+    crate::logging::log(&format!("THEME: copied \"{}\"", copied.replace('\n', " / ")));
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(400));
         let ts = std::process::Command::new("date")
@@ -616,8 +571,8 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
             crate::logging::log(&format!("THEME: screenshot {file} — copied colors + path"));
             // Keep the 20 newest screenshot-*.png — the same prune policy as
             // dwl's screenshot.sh, so both producers honor one cap. `rm -f`
-            // (not the script's `rm --`) because overlapping Ctrl+t presses
-            // run this concurrently and may race to delete the same file.
+            // (not the script's `rm --`) because overlapping presses run this
+            // concurrently and may race to delete the same file.
             let _ = std::process::Command::new("sh")
                 .arg("-c")
                 .arg("ls -1t \"$HOME\"/Screenshots/screenshot-[0-9]*.png 2>/dev/null \
@@ -627,6 +582,60 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
             crate::logging::log("THEME: grim failed — clipboard keeps colors only");
         }
     });
+}
+
+pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
+    let mut s = state.borrow_mut();
+    let cycle = s.config.theme_cycle();
+    if cycle.is_empty() {
+        return;
+    }
+    let current = cycle.iter().position(|t| *t == s.theme.name);
+    let next = next_cycle_index(cycle.len(), current, forward);
+    let variant = s.config.root_variant_for(&cycle[next]);
+    let theme = crate::theme::load_theme_with_fallback(&cycle[next], variant);
+    apply_theme_to_state(&mut s, &theme);
+    // Desktop notification, mirroring the font-cycle pattern (font.rs). The
+    // synchronous hint replaces a still-visible previous theme toast instead
+    // of stacking.
+    let position = format!("{}/{}", next + 1, cycle.len());
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
+               &format!("Theme [{}]", position), &s.theme.display_name])
+        .spawn();
+    // Standard clipboard payload (same as the root-color bind): the new theme's
+    // root/vocab colors plus a screenshot path.
+    copy_pairing_and_screenshot(&s.theme);
+}
+
+/// Ctrl+$ / Ctrl+Shift+$: cycle the current theme's ROOT-color variant forward
+/// or backward through the theme's `dwl.rootcolor_candidates` (wrapping at the
+/// per-theme count). The index persists per theme (config.root_variants); the
+/// theme is re-resolved so root_color (and its derivative scrim_bg) follow the
+/// new root while the card background and reading tints stay pinned. See
+/// docs/superpowers/specs/2026-07-14-root-native-accent-design.md.
+pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
+    let mut s = state.borrow_mut();
+    let name = s.theme.name.clone();
+    let count = s.theme.root_variant_count.max(1);
+    let next = if forward {
+        (s.theme.root_variant + 1) % count
+    } else {
+        (s.theme.root_variant + count - 1) % count
+    };
+    // Insert BEFORE apply_theme_to_state — it saves the config snapshot.
+    s.config.root_variants.insert(name.clone(), next);
+    let theme = crate::theme::load_theme_with_fallback(&name, next);
+    apply_theme_to_state(&mut s, &theme);
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h",
+               "string:x-canonical-private-synchronous:linux-lit-theme",
+               &format!("Root [{}/{}]", next + 1, count),
+               &s.theme.root_color])
+        .spawn();
+    // Standard clipboard payload (same as the theme bind): the new root/vocab
+    // colors plus a screenshot path.
+    copy_pairing_and_screenshot(&s.theme);
 }
 
 #[cfg(test)]
