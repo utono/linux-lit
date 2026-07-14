@@ -385,6 +385,10 @@ impl TranslationOverlay {
     }
 }
 
+/// Extra top gap above a stage-direction (interlude) block, matching the main
+/// card's `stage-direction-gap` tag (`pixels_above_lines(8)`).
+const STAGE_GAP_TOP: i32 = 8;
+
 /// Build one block's widget subtree, append it to `parent`, and return its
 /// `BlockEntry`. Shared by `render_page` for every block on the page.
 fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -> BlockEntry {
@@ -443,6 +447,16 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             let text = interlude_text(block);
             view.buffer().set_text(&text);
             ensure_cursor_tag(&view.buffer(), &ctx.cursor_line_bg);
+            // Stage directions render italic, matching the main card's
+            // `stage-direction-style` tag. Interlude blocks ARE the non-spoken
+            // stage-direction runs, so italic applies to the whole view. Use a
+            // buffer TextTag (like the main card) rather than CSS — the same
+            // reliable mechanism the reading card uses.
+            apply_italic_tag(&view.buffer());
+            // The main card puts an 8px gap above each stage direction
+            // (`stage-direction-gap`). Add it above the interlude block on top of
+            // the standard inter-block margin. `block_chrome_height` mirrors this.
+            block_box.set_margin_top(ctx.block_margin_top + STAGE_GAP_TOP);
             block_box.append(&view);
             (view, None)
         };
@@ -507,8 +521,10 @@ fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx
         let trans_h = measure_text_height(pctx, &trans_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
         ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h) + spacing(block.lines.len())
     } else {
+        // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block).
         let text = interlude_text(block);
         ctx.block_margin_top
+            + STAGE_GAP_TOP
             + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.full_width)
             + spacing(block.lines.len())
     }
@@ -522,7 +538,8 @@ fn block_chrome_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &Re
         let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
         ctx.block_margin_top + header_h + ctx.header_margin_bottom
     } else {
-        ctx.block_margin_top
+        // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block).
+        ctx.block_margin_top + STAGE_GAP_TOP
     }
 }
 
@@ -593,6 +610,22 @@ fn sub_block(block: &TranslationBlock, from: usize, to: usize) -> TranslationBlo
         start_idx: block.start_idx + from,
         end_idx: block.start_idx + to - 1,
     }
+}
+
+/// Apply an italic style across the whole buffer (stage-direction rendering,
+/// matching the main card's `stage-direction-style` tag). Idempotent: reuses the
+/// `italic` tag if already present.
+fn apply_italic_tag(buffer: &gtk4::TextBuffer) {
+    let tag = buffer.tag_table().lookup("italic").unwrap_or_else(|| {
+        let t = gtk4::TextTag::builder()
+            .name("italic")
+            .style(pango::Style::Italic)
+            .build();
+        buffer.tag_table().add(&t);
+        t
+    });
+    let (start, end) = buffer.bounds();
+    buffer.apply_tag(&tag, &start, &end);
 }
 
 /// Ensure the buffer has a `cursor-line` tag painting the paragraph background
