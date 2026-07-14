@@ -45,12 +45,10 @@ pub struct JournalOverlay {
     /// Cursor index within `all_paragraphs` (the whole Q&A). `cursor_block` is its
     /// page-local projection.
     cursor_full: Cell<usize>,
-    /// Footer position state, rebuilt by `update_footer_position`: the band
-    /// identity (`<abbrev> <act>.<scene>`) and the Q&A-ENTRY position in the band
-    /// `(entry_index, entry_count)` (the Ctrl+n/p count). The render-page count
-    /// (`pages`/`page_idx`, the j/k pages) is appended as "page X / Y" when the
-    /// current Q&A spans more than one render page.
-    footer_band: RefCell<String>,
+    /// Footer position state, rebuilt by `update_footer_position`: the Q&A-ENTRY
+    /// position `(entry_index, entry_count)` (the Ctrl+n/p count). The far-left
+    /// footer shows only "Q&A n of m" — the work-citation band was dropped since
+    /// the center pill already names the work/scene.
     entry_pos: Cell<(usize, usize)>,
     text_margins: i32,
     column_width: i32,
@@ -196,7 +194,10 @@ impl JournalOverlay {
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         container.add_css_class("gloss-overlay");
         container.set_halign(gtk4::Align::Center);
-        container.set_valign(gtk4::Align::Center);
+        // Bottom-anchored with a clearance so the ask card's bottom border sits
+        // above the act/scene toast pill (window-anchored) with breathing space.
+        container.set_valign(gtk4::Align::End);
+        container.set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
         container.set_visible(false);
 
         // No title header: the footer already identifies the work + chapter
@@ -450,7 +451,6 @@ impl JournalOverlay {
             pages: RefCell::new(Vec::new()),
             page_idx: Cell::new(0),
             cursor_full: Cell::new(0),
-            footer_band: RefCell::new(String::new()),
             entry_pos: Cell::new((0, 0)),
             text_margins: text_margins as i32,
             column_width: column_width as i32,
@@ -520,7 +520,9 @@ impl JournalOverlay {
 
     pub fn show_page(
         &self,
-        footer_left: &str,
+        // Retained for call-site symmetry; the work-citation band is no longer
+        // displayed (footer shows only "Q&A n of m").
+        _footer_left: &str,
         page_index: usize,
         page_count: usize,
         question: &str,
@@ -539,10 +541,9 @@ impl JournalOverlay {
         // after a Claude Q&A generated). Show it first so the measurement is real.
         self.footer_container.set_visible(true);
         self.size_card(card_width, card_height);
-        // Store the band identity + Q&A-entry position; the footer text is
-        // (re)built by update_footer_position, which also appends the render-page
-        // count once pagination has run / on every page turn.
-        *self.footer_band.borrow_mut() = footer_left.to_string();
+        // Store the Q&A-entry position; the footer text is (re)built by
+        // update_footer_position, which shows "Q&A n of m" (plus the render-page
+        // count once pagination has run / on every page turn).
         self.entry_pos.set((page_index, page_count));
         if page_count == 0 {
             // Empty band: a bare message, no navigable paragraphs.
@@ -693,13 +694,14 @@ impl JournalOverlay {
     /// no accent bar: the render is transient until submit/cancel.
     pub fn show_passage_source(
         &self,
-        footer_left: &str,
+        // Retained for call-site symmetry; the work-citation band is no longer
+        // displayed (footer shows only "Q&A n of m").
+        _footer_left: &str,
         source_doc: &str,
         card_width: i32,
         card_height: i32,
     ) {
         self.size_card(card_width, card_height);
-        *self.footer_band.borrow_mut() = footer_left.to_string();
         self.entry_pos.set((0, 0));
         // Anchor the source tags at the COLUMN edge (left_margin minus the body
         // indent) — the same anchor the gloss passes as `bar_left`, so the
@@ -773,14 +775,14 @@ impl JournalOverlay {
     /// word inline). Call after pagination (page count known) and on every page
     /// turn.
     fn update_footer_position(&self) {
-        let band = self.footer_band.borrow().clone();
         let (entry_idx, entry_count) = self.entry_pos.get();
-        let mut s = band;
-        if entry_count == 0 {
-            s.push_str(" \u{00b7} no Q&A yet");
+        // The far-left footer shows ONLY the Q&A counter; the work-citation band
+        // ("Cym 5.3") is dropped — the center pill already names the work/scene.
+        let s = if entry_count == 0 {
+            "no Q&A yet".to_string()
         } else {
-            s.push_str(&format!(" \u{00b7} Q&A {} of {}", entry_idx + 1, entry_count));
-        }
+            format!("Q&A {} of {}", entry_idx + 1, entry_count)
+        };
         self.footer_left.set_text(&s);
 
         // Right-aligned bare "X / Y" page counter (gloss-consistent), via the
