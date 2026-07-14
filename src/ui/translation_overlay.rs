@@ -84,7 +84,6 @@ struct RenderCtx {
     header_pt: i32,
     side_margin: i32,
     col_width: i32,
-    full_width: i32,
     block_margin_top: i32,
     header_margin_bottom: i32,
     /// Per-line BELOW-line spacing on every overlay TextView. Applied below only
@@ -223,7 +222,6 @@ impl TranslationOverlay {
         // before the clip so it isn't truncated mid-word.
         let side_margin = card_width / 24;
         let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
-        let full_width = (card_width - 2 * side_margin).max(120);
         // Speaker header point size: 0.75 of the body (reader) font, matching the
         // main card's `speaker-name` tag (scale 0.75).
         let header_pt = ((body_font_size as f64) * 0.75).round().max(8.0) as i32;
@@ -237,7 +235,6 @@ impl TranslationOverlay {
             header_pt,
             side_margin,
             col_width,
-            full_width,
             block_margin_top: 14,
             header_margin_bottom: 4,
             line_spacing,
@@ -397,23 +394,19 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
     block_box.set_margin_end(ctx.side_margin);
     block_box.set_margin_top(ctx.block_margin_top);
 
-    let (orig_view, trans_view): (gtk4::TextView, Option<gtk4::TextView>) =
+    // Both branches render TWO parallel columns so the translation column mirrors
+    // the original's structure: speaker labels and stage directions appear in
+    // BOTH columns (stage directions are untranslated, so they're duplicated).
+    let cols = gtk4::Box::new(Orientation::Horizontal, 0);
+    let (orig_view, trans_view): (gtk4::TextView, gtk4::TextView) =
         if let Some(speaker) = &block.speaker {
-            let header = Label::new(None);
-            header.set_halign(Align::Start);
-            // Match the main card's speaker-name tag: the reading-card font family
-            // (Charter) in small-caps.
-            header.set_markup(&format!(
-                "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
-                glib_escape(&ctx.font_family),
-                ctx.text_fg,
-                ctx.header_pt,
-                glib_escape(speaker),
-            ));
-            header.set_margin_bottom(ctx.header_margin_bottom);
-            block_box.append(&header);
+            // Each column is [speaker header] + [dialogue view], so the label sits
+            // above its own column and aligns with that column's lines.
+            let left = gtk4::Box::new(Orientation::Vertical, 0);
+            let right = gtk4::Box::new(Orientation::Vertical, 0);
+            left.append(&speaker_header(speaker, ctx));
+            right.append(&speaker_header(speaker, ctx));
 
-            let cols = gtk4::Box::new(Orientation::Horizontal, 0);
             let orig = make_column(ctx.col_width, &ctx.text_fg, false, ctx.line_spacing);
             let trans = make_column(ctx.col_width, &ctx.dim_fg, true, ctx.line_spacing);
             let (orig_text, trans_text) = block_column_texts(block);
@@ -422,52 +415,80 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
             ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
 
-            // No visible divider between columns. Preserve the inter-column gap
-            // (formerly the divider's 12px+12px margins) as a left margin on the
-            // translation column so the two columns keep the same spacing.
+            left.append(&orig);
+            right.append(&trans);
+            // No visible divider between columns. Preserve the inter-column gap as
+            // a left margin on the right column so the two keep the same spacing.
+            right.set_margin_start(24);
+            cols.append(&left);
+            cols.append(&right);
+            (orig, trans)
+        } else {
+            // Stage direction / scene header: the SAME untranslated text in both
+            // columns, so the two columns stay row-for-row parallel.
+            let orig = make_interlude_view(ctx);
+            let trans = make_interlude_view(ctx);
+            let text = interlude_text(block);
+            orig.buffer().set_text(&text);
+            trans.buffer().set_text(&text);
+            ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
+            ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
+            // Stage directions render italic, matching the main card's
+            // `stage-direction-style` tag (a buffer TextTag, like the reading card,
+            // rather than CSS — the reliable mechanism here).
+            apply_italic_tag(&orig.buffer());
+            apply_italic_tag(&trans.buffer());
             trans.set_margin_start(24);
-
             cols.append(&orig);
             cols.append(&trans);
-            block_box.append(&cols);
-            (orig, Some(trans))
-        } else {
-            let view = TextView::new();
-            crate::ui::set_view_readonly(&view);
-            // No wrapping for interludes (stage directions / scene headers) either
-            // (per user): each stays on one visual row, matching the speech columns.
-            // Full-width, so overflow risk is minimal.
-            view.set_wrap_mode(gtk4::WrapMode::None);
-            // Single-sided spacing (below only) so the gap BETWEEN two lines is
-            // one `line_spacing`, matching the main reading card — not the
-            // doubled `above + below` gap. The band below still clears descenders.
-            view.set_pixels_above_lines(0);
-            view.set_pixels_below_lines(ctx.line_spacing);
-            view.add_css_class("gloss-text");
-            let text = interlude_text(block);
-            view.buffer().set_text(&text);
-            ensure_cursor_tag(&view.buffer(), &ctx.cursor_line_bg);
-            // Stage directions render italic, matching the main card's
-            // `stage-direction-style` tag. Interlude blocks ARE the non-spoken
-            // stage-direction runs, so italic applies to the whole view. Use a
-            // buffer TextTag (like the main card) rather than CSS — the same
-            // reliable mechanism the reading card uses.
-            apply_italic_tag(&view.buffer());
             // The main card puts an 8px gap above each stage direction
-            // (`stage-direction-gap`). Add it above the interlude block on top of
-            // the standard inter-block margin. `block_chrome_height` mirrors this.
+            // (`stage-direction-gap`). Add it above the block on top of the
+            // standard inter-block margin. `block_chrome_height` mirrors this.
             block_box.set_margin_top(ctx.block_margin_top + STAGE_GAP_TOP);
-            block_box.append(&view);
-            (view, None)
+            (orig, trans)
         };
 
+    block_box.append(&cols);
     parent.append(&block_box);
     BlockEntry {
         start_idx: block.start_idx,
         end_idx: block.end_idx,
         orig: orig_view,
-        trans: trans_view,
+        trans: Some(trans_view),
     }
+}
+
+/// A speaker-name label matching the main card's `speaker-name` tag: the
+/// reading-card font family (Charter) in small-caps, at the header point size.
+fn speaker_header(speaker: &str, ctx: &RenderCtx) -> Label {
+    let header = Label::new(None);
+    header.set_halign(Align::Start);
+    header.set_markup(&format!(
+        "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+        glib_escape(&ctx.font_family),
+        ctx.text_fg,
+        ctx.header_pt,
+        glib_escape(speaker),
+    ));
+    header.set_margin_bottom(ctx.header_margin_bottom);
+    header
+}
+
+/// A no-wrap, single-sided-spacing TextView for an interlude (stage-direction)
+/// column. Same spacing model as `make_column`.
+fn make_interlude_view(ctx: &RenderCtx) -> TextView {
+    let view = TextView::new();
+    crate::ui::set_view_readonly(&view);
+    // No wrapping: each stage-direction line stays on one visual row, matching
+    // the speech columns. Full-width per column.
+    view.set_wrap_mode(gtk4::WrapMode::None);
+    // Below-only spacing so the inter-line gap is one `line_spacing`, matching
+    // the main reading card (see make_column).
+    view.set_pixels_above_lines(0);
+    view.set_pixels_below_lines(ctx.line_spacing);
+    view.set_size_request(ctx.col_width, -1);
+    view.add_css_class("gloss-text");
+    view
 }
 
 /// `(orig, trans)` column text for a speech block: one source/translation line
@@ -521,11 +542,12 @@ fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx
         let trans_h = measure_text_height(pctx, &trans_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
         ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h) + spacing(block.lines.len())
     } else {
-        // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block).
+        // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block) and
+        // now render per-column (duplicated left+right), so measure at col_width.
         let text = interlude_text(block);
         ctx.block_margin_top
             + STAGE_GAP_TOP
-            + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.full_width)
+            + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.col_width)
             + spacing(block.lines.len())
     }
 }
@@ -548,7 +570,8 @@ fn block_chrome_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &Re
 /// to split an over-tall block at line boundaries.
 fn line_height(block: &TranslationBlock, i: usize, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
     let (orig, trans) = &block.lines[i];
-    let width = if block.speaker.is_some() { ctx.col_width } else { ctx.full_width };
+    // Both speech and interlude blocks now render at col_width per column.
+    let width = ctx.col_width;
     let oh = measure_text_height(pctx, orig, ctx.body_font_size, &ctx.font_family, width);
     let th = if trans.is_empty() {
         0
