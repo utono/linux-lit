@@ -400,6 +400,22 @@ impl TranslationOverlay {
 /// card's `stage-direction-gap` tag (`pixels_above_lines(8)`).
 const STAGE_GAP_TOP: i32 = 8;
 
+/// Descender allowance (px) reserved below the LAST line of every column view so
+/// its glyph descenders (`y`, `g`, `p`, a trailing comma) are never sliced by the
+/// view's pinned `height_request`. `measure_text_height` returns pango's LOGICAL
+/// height (`Layout::pixel_size().1`), which rounds down to the whole pixel at the
+/// baseline+descent boundary; a GTK `TextView` paints the final line's descender
+/// ink to the font's full descent, one or two px past that logical bottom. With
+/// `line_spacing == 0` (verse plays — the common translation case) there is no
+/// below-line spacing to absorb it, so a view pinned to exactly `text_h` clips the
+/// last line ("By your leave." lost its descenders). The pad scales with the body
+/// font (≈15% of the point size, floored at 3px) so it tracks larger fonts. It is
+/// added ONCE per view (the bottom edge is the only place descenders can clip) and
+/// mirrored into the pagination height accounting so pages don't over-pack.
+fn descender_pad(body_font_size: i32) -> i32 {
+    ((body_font_size as f64 * 0.15).round() as i32).max(3)
+}
+
 /// How far a block may allocate SHORTER than its measured height before it counts
 /// as collapsed (allows for measurement/rounding slack; a real collapse is tens
 /// to hundreds of px).
@@ -615,12 +631,16 @@ fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx
     // source line is one paragraph); the standalone `pango::Layout` does not.
     // Add it back so pagination doesn't over-pack now that lines are taller.
     let spacing = |paras: usize| ctx.line_spacing * paras as i32;
+    // Each rendered column view reserves one `descender_pad` below its last line
+    // (see `set_view_height`); the block's height gains it once (both columns are
+    // the same height class, so the taller one sets the block height).
+    let pad = descender_pad(ctx.body_font_size);
     if block.speaker.is_some() {
         let (orig_text, trans_text) = block_column_texts(block);
         let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
         let orig_h = measure_text_height(pctx, &orig_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
         let trans_h = measure_text_height(pctx, &trans_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
-        ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h) + spacing(block.lines.len())
+        ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h) + spacing(block.lines.len()) + pad
     } else {
         // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block) and
         // now render per-column (duplicated left+right), so measure at col_width.
@@ -629,6 +649,7 @@ fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx
             + STAGE_GAP_TOP
             + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.col_width)
             + spacing(block.lines.len())
+            + pad
     }
 }
 
@@ -682,7 +703,10 @@ fn split_oversize_blocks(
             continue;
         }
         // Greedily pack this block's lines into sub-blocks that fit the budget.
-        let chrome = block_chrome_height(block, pctx, ctx);
+        // Seed each sub-block's accumulator with the fixed chrome PLUS the one
+        // `descender_pad` every rendered sub-block reserves below its last line
+        // (see `block_height`), so the split budget matches the rendered height.
+        let chrome = block_chrome_height(block, pctx, ctx) + descender_pad(ctx.body_font_size);
         let mut seg_start = 0usize; // index into block.lines of the current sub-block
         let mut acc = chrome;
         for i in 0..block.lines.len() {
@@ -724,7 +748,11 @@ fn sub_block(block: &TranslationBlock, from: usize, to: usize) -> TranslationBlo
 fn set_view_height(view: &TextView, text: &str, ctx: &RenderCtx, pctx: &pango::Context) {
     let paras = text.split('\n').count().max(1) as i32;
     let text_h = measure_text_height(pctx, text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
-    view.set_height_request(text_h + ctx.line_spacing * paras);
+    // `+ descender_pad` reserves room below the last line so its descenders aren't
+    // sliced by this pinned height (critical when `line_spacing == 0`; see
+    // `descender_pad`). `block_height`/`line_height` add the same pad so pagination
+    // accounts for the taller view.
+    view.set_height_request(text_h + ctx.line_spacing * paras + descender_pad(ctx.body_font_size));
 }
 
 /// Apply an italic style across the whole buffer (stage-direction rendering,
