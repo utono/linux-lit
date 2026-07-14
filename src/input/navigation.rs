@@ -2509,6 +2509,19 @@ pub(crate) fn show_chapter_toast_persistent(state: &AppState, text: &str) {
     state.chapter_toast.set_visible(true);
 }
 
+/// Keep the persistent chapter toast in sync with the cursor: recompute its
+/// text and hold it visible. No-op when the toast is not in persistent mode.
+/// Rides the per-navigation `update_title_bar_scene` sites but is a SEPARATE
+/// call — it must refresh even when the title bar is hidden.
+pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
+    if !state.chapter_toast_persistent.get() {
+        return;
+    }
+    let text = compute_current_chapter_text(state);
+    state.chapter_toast.set_text(&text);
+    state.chapter_toast.set_visible(true);
+}
+
 /// Jump to the next bookmarked line (wraps around).
 /// Jump to the next bookmarked line after the cursor. Does NOT wrap: if there is
 /// no bookmark past the current line, the cursor stays put.
