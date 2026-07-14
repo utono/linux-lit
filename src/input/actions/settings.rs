@@ -525,10 +525,11 @@ pub(crate) fn next_cycle_index(len: usize, current: Option<usize>, forward: bool
 }
 
 /// Alt+t / Alt+Shift+T: cycle through the curated theme list in config.
-/// Copy the active theme's root color and the vocab popup's rendered text color
-/// to the system clipboard (labeled, newline-separated), then asynchronously
-/// capture the screen and append the PNG's path — so a color pairing the user
-/// likes pastes as colors AND screenshot in one go. Shared by BOTH the theme
+/// Copy the active theme's name, root color, and the vocab popup's rendered
+/// text color to the system clipboard (labeled, newline-separated), then
+/// asynchronously capture the screen and append the PNG's path — so a color
+/// pairing the user likes pastes as name + colors AND screenshot in one go.
+/// Shared by BOTH the theme
 /// bind (`cycle_theme`, Ctrl+t) and the root-color bind (`cycle_root_variant`,
 /// Ctrl+$) so their clipboard behavior is identical. The screenshot runs off
 /// the main thread after a short sleep so the new colors have painted before
@@ -536,13 +537,17 @@ pub(crate) fn next_cycle_index(len: usize, current: Option<usize>, forward: bool
 /// payload. Screenshots land in ~/Screenshots (same as dwl's screenshot.sh),
 /// pruned to the 20 newest.
 fn copy_pairing_and_screenshot(theme: &crate::theme::Theme) {
+    // Trailing newline so a paste ends cleanly on its own line — without it the
+    // last line (the screenshot path, or vocab-fg before grim runs) runs into
+    // whatever is pasted after it.
     let copied = format!(
-        "root {}\nvocab-fg {}",
+        "theme {}\nroot {}\nvocab-fg {}\n",
+        theme.name,
         theme.root_color,
         crate::theme::vocab_popup_fg(theme)
     );
     let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
-    crate::logging::log(&format!("THEME: copied \"{}\"", copied.replace('\n', " / ")));
+    crate::logging::log(&format!("THEME: copied \"{}\"", copied.trim_end().replace('\n', " / ")));
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(400));
         let ts = std::process::Command::new("date")
@@ -565,8 +570,10 @@ fn copy_pairing_and_screenshot(theme: &crate::theme::Theme) {
             .map(|st| st.success())
             .unwrap_or(false);
         if ok {
+            // `copied` already ends in a newline; append the path + its own
+            // trailing newline so the clipboard ends cleanly after the path.
             let _ = std::process::Command::new("wl-copy")
-                .arg(format!("{copied}\n{file}"))
+                .arg(format!("{copied}{file}\n"))
                 .status();
             crate::logging::log(&format!("THEME: screenshot {file} — copied colors + path"));
             // Keep the 20 newest screenshot-*.png — the same prune policy as
