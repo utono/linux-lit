@@ -667,6 +667,12 @@ pub struct AppState {
     /// by a newer toast) becomes a no-op, so rapid `;` presses can never have an
     /// earlier press's timer cut a later toast short. See show_chapter_toast.
     pub chapter_toast_gen: Rc<Cell<u64>>,
+    /// True while the `+` chapter/scene toast is a PERSISTENT live indicator
+    /// (plays + prose-with-chapters). When true the toast has no auto-hide
+    /// timer, its text is refreshed on every cursor move
+    /// (`navigation::refresh_persistent_chapter_toast`), and it is re-shown
+    /// after a search toast borrows the bottom strip. Reset on work switch.
+    pub chapter_toast_persistent: Rc<Cell<bool>>,
     pub speed_toast: gtk4::Label,
     /// Centered bottom toast for search boundaries ("no earlier/later
     /// occurrence"). Placed like chapter_toast (centered, 32px from the bottom)
@@ -1992,6 +1998,7 @@ pub fn build_window(
         word_status_label,
         chapter_toast,
         chapter_toast_gen: Rc::new(Cell::new(0)),
+        chapter_toast_persistent: Rc::new(Cell::new(false)),
         speed_toast,
         search_toast,
         word_cycle: crate::input::actions::word_copy::WordCycleState::default(),
@@ -3200,6 +3207,11 @@ pub fn display_work_at_with_prepared(
     state.vocab_highlight_visible = work.vocab_highlight;
     state.current_work = Some(work);
     crate::input::actions::chat::on_work_switched(state);
+
+    // A persistent chapter toast belongs to one work; never leak it across a
+    // work switch. Clear the flag and hide the pill.
+    state.chapter_toast_persistent.set(false);
+    state.chapter_toast.set_visible(false);
 
     // Build buffer text (with or without sign column)
     state.line_map = None;
