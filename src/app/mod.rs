@@ -770,6 +770,30 @@ impl AppState {
             .unwrap_or(false)
     }
 
+    /// True when the `+` chapter toast should PERSIST (live "you are here"
+    /// indicator) instead of auto-dismissing: a play, or prose that actually
+    /// has chapter markers. Front-matter-only prose (no markers), non-play
+    /// verse, and anthology are false — they keep the transient toast. The
+    /// "has chapters" test mirrors `show_current_chapter`: prefer the line
+    /// map's `chapter_breaks`, else scan `is_chapter` on the work lines.
+    pub fn chapter_toast_persists(&self) -> bool {
+        if self.is_play() {
+            return true;
+        }
+        if !self.is_prose() {
+            return false;
+        }
+        let has_chapters = if let Some(ref lm) = self.line_map {
+            !lm.chapter_breaks.is_empty()
+        } else {
+            self.current_work
+                .as_ref()
+                .map(|w| w.lines.iter().any(|l| l.is_chapter))
+                .unwrap_or(false)
+        };
+        has_chapters
+    }
+
     pub fn effective_line_count(&self) -> usize {
         if let Some(ref lm) = self.line_map {
             lm.buffer_to_work.len()
