@@ -84,13 +84,13 @@ struct RenderCtx {
     header_pt: i32,
     side_margin: i32,
     col_width: i32,
-    full_width: i32,
     block_margin_top: i32,
     header_margin_bottom: i32,
-    /// Per-line above/below spacing on every overlay TextView, matching the main
-    /// card's `pixels_above_lines`/`pixels_below_lines`. Without it the cursor
-    /// line's `paragraph_background` band ends flush at the line's logical bottom
-    /// and clips the highlighted line's descenders.
+    /// Per-line BELOW-line spacing on every overlay TextView. Applied below only
+    /// (not above too) so the gap between two adjacent lines is one
+    /// `line_spacing`, matching the main reading card rather than doubling it.
+    /// The below-line room also keeps the cursor line's `paragraph_background`
+    /// band from clipping the highlighted line's descenders.
     line_spacing: i32,
 }
 
@@ -222,7 +222,6 @@ impl TranslationOverlay {
         // before the clip so it isn't truncated mid-word.
         let side_margin = card_width / 24;
         let col_width = ((card_width - 2 * side_margin) / 2 - 12).max(120);
-        let full_width = (card_width - 2 * side_margin).max(120);
         // Speaker header point size: 0.75 of the body (reader) font, matching the
         // main card's `speaker-name` tag (scale 0.75).
         let header_pt = ((body_font_size as f64) * 0.75).round().max(8.0) as i32;
@@ -236,7 +235,6 @@ impl TranslationOverlay {
             header_pt,
             side_margin,
             col_width,
-            full_width,
             block_margin_top: 14,
             header_margin_bottom: 4,
             line_spacing,
@@ -313,9 +311,23 @@ impl TranslationOverlay {
         };
         self.current_page.set(page_idx);
 
+        let pctx = self.content_vbox.pango_context();
+        let mut measured: Vec<i32> = Vec::new();
         for block in &blocks[page.start..page.end.min(blocks.len())] {
-            let entry = render_block(&self.content_vbox, block, ctx);
+            measured.push(block_height(block, &pctx, ctx));
+            let entry = render_block(&self.content_vbox, block, ctx, &pctx);
             self.block_widgets.borrow_mut().push(entry);
+        }
+
+        // Clip tripwire: after allocation settles (idle), compare each block's
+        // ALLOCATED height against the height pagination MEASURED for it. A block
+        // that allocates much shorter than measured has collapsed (the page-turn
+        // lazy-natural-height clip, checklist #13); a page whose blocks sum TALLER
+        // than the pinned budget will clip at the bottom. Both emit CLIP_WARN so a
+        // clip-class regression is caught in the log, not only by eye. Gated on
+        // debug logging (log_fmt! is a no-op when off), so zero cost in release.
+        if crate::logging::debug_mode() {
+            check_page_clip(&self.content_vbox, &self.scrolled, measured, page_idx);
         }
     }
 
@@ -384,31 +396,86 @@ impl TranslationOverlay {
     }
 }
 
+/// Extra top gap above a stage-direction (interlude) block, matching the main
+/// card's `stage-direction-gap` tag (`pixels_above_lines(8)`).
+const STAGE_GAP_TOP: i32 = 8;
+
+/// How far a block may allocate SHORTER than its measured height before it counts
+/// as collapsed (allows for measurement/rounding slack; a real collapse is tens
+/// to hundreds of px).
+const CLIP_COLLAPSE_SLACK: i32 = 12;
+
+/// Clip tripwire (debug only). Once the just-rendered page has settled (idle),
+/// walk `content_vbox`'s block children and compare each allocation against the
+/// `measured` height pagination computed for the block at the same index. Emit a
+/// `CLIP_WARN` for any block that allocated far shorter than measured (the
+/// page-turn collapse clip — clip-prevention.md checklist #13) or when the blocks
+/// together overflow the pinned scroll budget (a bottom clip). Never mutates
+/// anything — a pure detector so a clip-class regression shows up in the log.
+fn check_page_clip(
+    content_vbox: &gtk4::Box,
+    scrolled: &gtk4::ScrolledWindow,
+    measured: Vec<i32>,
+    page_idx: usize,
+) {
+    let cv = content_vbox.clone();
+    let sc = scrolled.clone();
+    glib::idle_add_local_once(move || {
+        let budget = sc.height();
+        let mut total = 0i32;
+        let mut idx = 0usize;
+        let mut child = cv.first_child();
+        while let Some(c) = child {
+            let alloc = c.height();
+            total += alloc;
+            if let Some(&want) = measured.get(idx) {
+                if alloc + CLIP_COLLAPSE_SLACK < want {
+                    crate::log_fmt!(
+                        "CLIP_WARN: translation page={} block={} COLLAPSED allocated={} measured={} (clip-prevention.md #13)",
+                        page_idx, idx, alloc, want
+                    );
+                }
+            }
+            idx += 1;
+            child = c.next_sibling();
+        }
+        if budget > 0 && total > budget {
+            crate::log_fmt!(
+                "CLIP_WARN: translation page={} OVERFLOW blocks_total={} > budget={} (bottom clip)",
+                page_idx, total, budget
+            );
+        }
+    });
+}
+
 /// Build one block's widget subtree, append it to `parent`, and return its
-/// `BlockEntry`. Shared by `render_page` for every block on the page.
-fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -> BlockEntry {
+/// `BlockEntry`. Shared by `render_page` for every block on the page. `pctx` is
+/// used to pin each column view's `height_request` to its measured text height —
+/// see the `set_view_height` calls below.
+fn render_block(
+    parent: &gtk4::Box,
+    block: &TranslationBlock,
+    ctx: &RenderCtx,
+    pctx: &pango::Context,
+) -> BlockEntry {
     let block_box = gtk4::Box::new(Orientation::Vertical, 0);
     block_box.set_margin_start(ctx.side_margin);
     block_box.set_margin_end(ctx.side_margin);
     block_box.set_margin_top(ctx.block_margin_top);
 
-    let (orig_view, trans_view): (gtk4::TextView, Option<gtk4::TextView>) =
+    // Both branches render TWO parallel columns so the translation column mirrors
+    // the original's structure: speaker labels and stage directions appear in
+    // BOTH columns (stage directions are untranslated, so they're duplicated).
+    let cols = gtk4::Box::new(Orientation::Horizontal, 0);
+    let (orig_view, trans_view): (gtk4::TextView, gtk4::TextView) =
         if let Some(speaker) = &block.speaker {
-            let header = Label::new(None);
-            header.set_halign(Align::Start);
-            // Match the main card's speaker-name tag: the reading-card font family
-            // (Charter) in small-caps.
-            header.set_markup(&format!(
-                "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
-                glib_escape(&ctx.font_family),
-                ctx.text_fg,
-                ctx.header_pt,
-                glib_escape(speaker),
-            ));
-            header.set_margin_bottom(ctx.header_margin_bottom);
-            block_box.append(&header);
+            // Each column is [speaker header] + [dialogue view], so the label sits
+            // above its own column and aligns with that column's lines.
+            let left = gtk4::Box::new(Orientation::Vertical, 0);
+            let right = gtk4::Box::new(Orientation::Vertical, 0);
+            left.append(&speaker_header(speaker, ctx));
+            right.append(&speaker_header(speaker, ctx));
 
-            let cols = gtk4::Box::new(Orientation::Horizontal, 0);
             let orig = make_column(ctx.col_width, &ctx.text_fg, false, ctx.line_spacing);
             let trans = make_column(ctx.col_width, &ctx.dim_fg, true, ctx.line_spacing);
             let (orig_text, trans_text) = block_column_texts(block);
@@ -416,40 +483,92 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             trans.buffer().set_text(&trans_text);
             ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
             ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
+            // Pin each view's height to its MEASURED text height. A re-rendered
+            // (page-turn) TextView otherwise reports a collapsed natural height
+            // (0/one-row) before its pango layout runs, so the block squeezes into
+            // a thin band and the lines clip. The measured height is the same
+            // synchronous pango measurement pagination already uses, so it is exact.
+            set_view_height(&orig, &orig_text, ctx, pctx);
+            set_view_height(&trans, &trans_text, ctx, pctx);
 
-            // No visible divider between columns. Preserve the inter-column gap
-            // (formerly the divider's 12px+12px margins) as a left margin on the
-            // translation column so the two columns keep the same spacing.
+            left.append(&orig);
+            right.append(&trans);
+            // No visible divider between columns. Preserve the inter-column gap as
+            // a left margin on the right column so the two keep the same spacing.
+            right.set_margin_start(24);
+            cols.append(&left);
+            cols.append(&right);
+            (orig, trans)
+        } else {
+            // Stage direction / scene header: the SAME untranslated text in both
+            // columns, so the two columns stay row-for-row parallel.
+            let orig = make_interlude_view(ctx);
+            let trans = make_interlude_view(ctx);
+            let text = interlude_text(block);
+            orig.buffer().set_text(&text);
+            trans.buffer().set_text(&text);
+            ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
+            ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
+            // Pin the height to the measured text height (see the speech branch).
+            set_view_height(&orig, &text, ctx, pctx);
+            set_view_height(&trans, &text, ctx, pctx);
+            // Stage directions render italic, matching the main card's
+            // `stage-direction-style` tag (a buffer TextTag, like the reading card,
+            // rather than CSS — the reliable mechanism here).
+            apply_italic_tag(&orig.buffer());
+            apply_italic_tag(&trans.buffer());
             trans.set_margin_start(24);
-
             cols.append(&orig);
             cols.append(&trans);
-            block_box.append(&cols);
-            (orig, Some(trans))
-        } else {
-            let view = TextView::new();
-            crate::ui::set_view_readonly(&view);
-            // No wrapping for interludes (stage directions / scene headers) either
-            // (per user): each stays on one visual row, matching the speech columns.
-            // Full-width, so overflow risk is minimal.
-            view.set_wrap_mode(gtk4::WrapMode::None);
-            view.set_pixels_above_lines(ctx.line_spacing);
-            view.set_pixels_below_lines(ctx.line_spacing);
-            view.add_css_class("gloss-text");
-            let text = interlude_text(block);
-            view.buffer().set_text(&text);
-            ensure_cursor_tag(&view.buffer(), &ctx.cursor_line_bg);
-            block_box.append(&view);
-            (view, None)
+            // The main card puts an 8px gap above each stage direction
+            // (`stage-direction-gap`). Add it above the block on top of the
+            // standard inter-block margin. `block_chrome_height` mirrors this.
+            block_box.set_margin_top(ctx.block_margin_top + STAGE_GAP_TOP);
+            (orig, trans)
         };
 
+    block_box.append(&cols);
     parent.append(&block_box);
+
     BlockEntry {
         start_idx: block.start_idx,
         end_idx: block.end_idx,
         orig: orig_view,
-        trans: trans_view,
+        trans: Some(trans_view),
     }
+}
+
+/// A speaker-name label matching the main card's `speaker-name` tag: the
+/// reading-card font family (Charter) in small-caps, at the header point size.
+fn speaker_header(speaker: &str, ctx: &RenderCtx) -> Label {
+    let header = Label::new(None);
+    header.set_halign(Align::Start);
+    header.set_markup(&format!(
+        "<span face='{}' foreground='{}' font_variant='small-caps' font_weight='normal' size='{}pt'>{}</span>",
+        glib_escape(&ctx.font_family),
+        ctx.text_fg,
+        ctx.header_pt,
+        glib_escape(speaker),
+    ));
+    header.set_margin_bottom(ctx.header_margin_bottom);
+    header
+}
+
+/// A no-wrap, single-sided-spacing TextView for an interlude (stage-direction)
+/// column. Same spacing model as `make_column`.
+fn make_interlude_view(ctx: &RenderCtx) -> TextView {
+    let view = TextView::new();
+    crate::ui::set_view_readonly(&view);
+    // No wrapping: each stage-direction line stays on one visual row, matching
+    // the speech columns. Full-width per column.
+    view.set_wrap_mode(gtk4::WrapMode::None);
+    // Below-only spacing so the inter-line gap is one `line_spacing`, matching
+    // the main reading card (see make_column).
+    view.set_pixels_above_lines(0);
+    view.set_pixels_below_lines(ctx.line_spacing);
+    view.set_size_request(ctx.col_width, -1);
+    view.add_css_class("gloss-text");
+    view
 }
 
 /// `(orig, trans)` column text for a speech block: one source/translation line
@@ -492,10 +611,10 @@ fn block_for_work_idx(blocks: &[TranslationBlock], work_idx: usize) -> Option<us
 /// block = top margin + header height + header bottom margin + max(orig, trans)
 /// column text height. Interlude = top margin + full-width text height.
 fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
-    // The rendered TextViews add `line_spacing` above AND below every paragraph
-    // (each source line is one paragraph); the standalone `pango::Layout` does
-    // not. Add it back so pagination doesn't over-pack now that lines are taller.
-    let spacing = |paras: usize| 2 * ctx.line_spacing * paras as i32;
+    // The rendered TextViews add `line_spacing` below every paragraph (each
+    // source line is one paragraph); the standalone `pango::Layout` does not.
+    // Add it back so pagination doesn't over-pack now that lines are taller.
+    let spacing = |paras: usize| ctx.line_spacing * paras as i32;
     if block.speaker.is_some() {
         let (orig_text, trans_text) = block_column_texts(block);
         let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
@@ -503,9 +622,12 @@ fn block_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &RenderCtx
         let trans_h = measure_text_height(pctx, &trans_text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
         ctx.block_margin_top + header_h + ctx.header_margin_bottom + orig_h.max(trans_h) + spacing(block.lines.len())
     } else {
+        // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block) and
+        // now render per-column (duplicated left+right), so measure at col_width.
         let text = interlude_text(block);
         ctx.block_margin_top
-            + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.full_width)
+            + STAGE_GAP_TOP
+            + measure_text_height(pctx, &text, ctx.body_font_size, &ctx.font_family, ctx.col_width)
             + spacing(block.lines.len())
     }
 }
@@ -518,23 +640,25 @@ fn block_chrome_height(block: &TranslationBlock, pctx: &pango::Context, ctx: &Re
         let header_h = measure_text_height(pctx, "Mg", ctx.header_pt, &ctx.font_family, ctx.col_width);
         ctx.block_margin_top + header_h + ctx.header_margin_bottom
     } else {
-        ctx.block_margin_top
+        // Interludes carry the extra `STAGE_GAP_TOP` above (see render_block).
+        ctx.block_margin_top + STAGE_GAP_TOP
     }
 }
 
 /// Rendered height of ONE source line within a block (the taller of its original
-/// / translation column line, plus the per-paragraph above+below spacing). Used
+/// / translation column line, plus the per-paragraph below-line spacing). Used
 /// to split an over-tall block at line boundaries.
 fn line_height(block: &TranslationBlock, i: usize, pctx: &pango::Context, ctx: &RenderCtx) -> i32 {
     let (orig, trans) = &block.lines[i];
-    let width = if block.speaker.is_some() { ctx.col_width } else { ctx.full_width };
+    // Both speech and interlude blocks now render at col_width per column.
+    let width = ctx.col_width;
     let oh = measure_text_height(pctx, orig, ctx.body_font_size, &ctx.font_family, width);
     let th = if trans.is_empty() {
         0
     } else {
         measure_text_height(pctx, trans, ctx.body_font_size, &ctx.font_family, width)
     };
-    oh.max(th) + 2 * ctx.line_spacing
+    oh.max(th) + ctx.line_spacing
 }
 
 /// Split any block taller than `page_height` into contiguous sub-blocks that
@@ -591,6 +715,34 @@ fn sub_block(block: &TranslationBlock, from: usize, to: usize) -> TranslationBlo
     }
 }
 
+/// Pin a column view's `height_request` to the exact height it will render at:
+/// the measured text height plus the per-paragraph below-line spacing (one
+/// `line_spacing` per source line, matching `block_height`/`line_height`). This
+/// makes the block's height independent of GTK's lazy TextView natural-height
+/// measurement, which reports a collapsed value on a page-turn re-render (before
+/// the pango layout runs) and squeezes the whole page into a thin clipped band.
+fn set_view_height(view: &TextView, text: &str, ctx: &RenderCtx, pctx: &pango::Context) {
+    let paras = text.split('\n').count().max(1) as i32;
+    let text_h = measure_text_height(pctx, text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
+    view.set_height_request(text_h + ctx.line_spacing * paras);
+}
+
+/// Apply an italic style across the whole buffer (stage-direction rendering,
+/// matching the main card's `stage-direction-style` tag). Idempotent: reuses the
+/// `italic` tag if already present.
+fn apply_italic_tag(buffer: &gtk4::TextBuffer) {
+    let tag = buffer.tag_table().lookup("italic").unwrap_or_else(|| {
+        let t = gtk4::TextTag::builder()
+            .name("italic")
+            .style(pango::Style::Italic)
+            .build();
+        buffer.tag_table().add(&t);
+        t
+    });
+    let (start, end) = buffer.bounds();
+    buffer.apply_tag(&tag, &start, &end);
+}
+
 /// Ensure the buffer has a `cursor-line` tag painting the paragraph background
 /// with the theme's cursor-line color. Idempotent (lookup before add).
 fn ensure_cursor_tag(buffer: &gtk4::TextBuffer, cursor_line_bg: &str) {
@@ -633,9 +785,11 @@ fn make_column(width: i32, color: &str, italic: bool, line_spacing: i32) -> Text
     // where verse lines never wrap). `width` is a MINIMUM request, so an
     // overflowing line simply extends past it.
     view.set_wrap_mode(gtk4::WrapMode::None);
-    // Per-line above/below spacing so the cursor line's `paragraph_background`
-    // band has room below the descenders (matches the main reading card).
-    view.set_pixels_above_lines(line_spacing);
+    // Spacing on the below side only: the gap between two adjacent lines is one
+    // `line_spacing`, matching the main reading card (applying it above AND below
+    // would double the gap). The below-line room still lets the cursor line's
+    // `paragraph_background` band clear the descenders.
+    view.set_pixels_above_lines(0);
     view.set_pixels_below_lines(line_spacing);
     view.set_size_request(width, -1);
     view.add_css_class("gloss-text");

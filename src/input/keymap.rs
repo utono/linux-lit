@@ -122,17 +122,12 @@ pub fn handle_key(
             return false; // type a literal space in the text field
         }
         if !gloss_open && mode == crate::app::InputMode::Reader {
-            // Prose: space plays from the cursor line's start time; `a` is the
-            // pure pause/resume toggle. Poetry/plays SWAP the two, so on those
-            // works space is the pause toggle and `a` plays from the cursor
-            // line (the `a` swap is handled in the Reader `a` intercept below).
-            if reader_swaps_play_and_pause(state) {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
-            } else {
-                let mut s = state.borrow_mut();
-                if !crate::input::timestamps::play_current_line(&mut s) {
-                    show_no_timestamp_toast(&s);
-                }
+            // All work types: space plays from the cursor line's start time and
+            // `a` is the pure pause/resume toggle (the `a` → TogglePause table
+            // bind). Poetry/plays no longer swap the two — they behave like prose.
+            let mut s = state.borrow_mut();
+            if !crate::input::timestamps::play_current_line(&mut s) {
+                show_no_timestamp_toast(&s);
             }
             return true;
         }
@@ -140,24 +135,8 @@ pub fn handle_key(
         // to mode dispatch so the overlay's own space arm runs.
     }
 
-    // Reader `a`: mirror of the space swap above. On prose, `a` is the pure
-    // pause/resume toggle (handled by the TogglePause table bind → dispatch).
-    // On poetry/plays, `a` instead plays from the cursor line's start time
-    // (space takes the pause toggle). Intercepted here, before table dispatch,
-    // so the swapped meaning wins over the compiled `a` → TogglePause bind.
-    if key_name == "a"
-        && !is_ctrl
-        && !is_shift
-        && !is_alt
-        && state.borrow().input_mode == crate::app::InputMode::Reader
-        && reader_swaps_play_and_pause(state)
-    {
-        let mut s = state.borrow_mut();
-        if !crate::input::timestamps::play_current_line(&mut s) {
-            show_no_timestamp_toast(&s);
-        }
-        return true;
-    }
+    // Reader `a` is the pure pause/resume toggle for ALL work types, handled by
+    // the compiled `a` → TogglePause table bind (no swap intercept needed).
 
     // Global theme cycling — works in EVERY overlay, not just reader mode.
     // Ctrl+t / Ctrl+Shift+t cycle the reader theme regardless of the active
@@ -2006,25 +1985,23 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         // the new page so the highlight + MPV sync follow.
         "x" => { overlay_page_turn(state, true); true }
         "y" => { overlay_page_turn(state, false); true }
-        // Playback (same as the main card): `a` / Space match the main card's
-        // swap. On prose Space plays from the cursor line and `a` pause-toggles;
-        // on poetry/plays the two SWAP (Space pause-toggles, `a` plays from the
-        // cursor line). The translation overlay only opens on verse works, so in
-        // practice Space is the pause toggle here — but resolve the swap the same
-        // way so the two surfaces never diverge. No cursor move → no re-highlight.
-        // Tab is dropped by request.
-        "a" | "space" => {
-            let swap = reader_swaps_play_and_pause(state);
-            // The swap decides which of the two keys plays from the cursor line.
-            let plays_from_cursor = (key_name == "a") == swap;
-            if plays_from_cursor {
-                let mut s = state.borrow_mut();
-                if !crate::input::timestamps::play_current_line(&mut s) {
-                    show_no_timestamp_toast(&s);
-                }
-            } else {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+        // [ / { jump to the prev / next scene (same as the main card's
+        // JumpToPrevScene / JumpToNextScene). sync_translation_overlay sees the
+        // scene change and rebuilds the overlay for the new scene.
+        "bracketleft" => { overlay_nav(state, navigation::jump_to_prev_scene); true }
+        "braceleft" => { overlay_nav(state, navigation::jump_to_next_scene); true }
+        // Playback (same as the main card): Space plays from the cursor line's
+        // start time and `a` is the pause toggle, for all work types (no swap).
+        // No cursor move → no re-highlight. Tab is dropped by request.
+        "space" => {
+            let mut s = state.borrow_mut();
+            if !crate::input::timestamps::play_current_line(&mut s) {
+                show_no_timestamp_toast(&s);
             }
+            true
+        }
+        "a" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
             true
         }
         // Tab/ISO_Left_Tab: dropped — consumed no-op so they don't leak.
@@ -2067,17 +2044,6 @@ fn show_no_timestamp_toast(s: &AppState) {
     crate::ui::toast::show_transient(&s.chapter_toast, "No timestamp on this line", 3);
 }
 
-/// Whether the current work swaps the main-card `a` / Space media binds.
-/// Prose keeps the default (Space plays from the cursor line, `a` pause-toggles);
-/// poetry/plays (any non-prose work type) swap them so `a` plays from the cursor
-/// line and Space pause-toggles. False when no work is loaded.
-fn reader_swaps_play_and_pause(state: &Rc<RefCell<AppState>>) -> bool {
-    let s = state.borrow();
-    s.current_work
-        .as_ref()
-        .is_some_and(|w| !crate::db::line_types::is_prose_work(&w.work_type))
-}
-
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
 /// `after_page_change`), then re-highlight and follow in the translation overlay.
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
@@ -2088,23 +2054,35 @@ fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
 
 /// Turn the translation overlay's page forward/backward (x/y), moving the reader
 /// cursor onto the FIRST line of the adjacent overlay page so the highlight and
-/// MPV sync follow. No-op at the first/last page. The overlay owns its own
-/// pagination, so it computes the target work line; we move the real cursor there
-/// (via `jump_to_line`, which seeks MPV) and then let `sync_translation_overlay`
-/// re-page + re-highlight the overlay.
+/// MPV sync follow. At the first/last page there is no adjacent page, so fall
+/// through to the prev/next SCENE (like the main card's x/y at a scene edge):
+/// `sync_translation_overlay` then rebuilds the overlay for the new scene. The
+/// overlay owns its own pagination, so it computes the target work line; we move
+/// the real cursor there (via `jump_to_line`, which seeks MPV) and then let
+/// `sync_translation_overlay` re-page + re-highlight the overlay.
 fn overlay_page_turn(state: &Rc<RefCell<AppState>>, forward: bool) {
     let target_work_idx = state.borrow().translation_overlay.page_turn_target(forward);
-    let Some(work_idx) = target_work_idx else { return };
     let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
-    {
-        let mut s = state.borrow_mut();
-        // work index -> buffer line (line_map present for plays; identity otherwise).
-        let buffer_line = match s.line_map.as_ref() {
-            Some(lm) => lm.work_to_buffer.get(work_idx).copied(),
-            None => Some(work_idx),
-        };
-        if let Some(bl) = buffer_line {
-            navigation::jump_to_line(&mut s, bl);
+    match target_work_idx {
+        Some(work_idx) => {
+            let mut s = state.borrow_mut();
+            // work index -> buffer line (line_map present for plays; identity else).
+            let buffer_line = match s.line_map.as_ref() {
+                Some(lm) => lm.work_to_buffer.get(work_idx).copied(),
+                None => Some(work_idx),
+            };
+            if let Some(bl) = buffer_line {
+                navigation::jump_to_line(&mut s, bl);
+            }
+        }
+        // Already at the first/last page: advance to the adjacent scene.
+        None => {
+            let mut s = state.borrow_mut();
+            if forward {
+                navigation::jump_to_next_scene(&mut s);
+            } else {
+                navigation::jump_to_prev_scene(&mut s);
+            }
         }
     }
     crate::app::translations::sync_translation_overlay(state, scene_before);
@@ -3750,12 +3728,14 @@ fn dispatch_action(
 }
 
 /// Playback-speed cycle for TogglePlaybackSpeed (keyboard and gamepad):
-/// 1.0 → 1.3 → 0.9 → 1.0. Any off-cycle value snaps back to 1.0.
+/// 1.0 → 1.3 → 0.9 → 0.8 → 1.0. Any off-cycle value snaps back to 1.0.
 pub(crate) fn next_playback_speed(current: f64) -> f64 {
     if current == 1.0 {
         1.3
     } else if current == 1.3 {
         0.9
+    } else if current == 0.9 {
+        0.8
     } else {
         1.0
     }
