@@ -606,9 +606,10 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
     // synchronous hint replaces a still-visible previous theme toast instead
     // of stacking.
     let position = format!("{}/{}", next + 1, cycle.len());
+    let body = format!("{}\n{}", s.theme.display_name, s.theme.root_color);
     let _ = std::process::Command::new("notify-send")
         .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Theme [{}]", position), &s.theme.display_name])
+               &format!("Theme [{}]", position), &body])
         .spawn();
     // Standard clipboard payload (same as the root-color bind): the new theme's
     // root/vocab colors plus a screenshot path.
@@ -634,11 +635,12 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
     s.config.root_variants.insert(name.clone(), next);
     let theme = crate::theme::load_theme_with_fallback(&name, next);
     apply_theme_to_state(&mut s, &theme);
+    let body = format!("{}\n{}", s.theme.display_name, s.theme.root_color);
     let _ = std::process::Command::new("notify-send")
         .args(["-t", "1500", "-h",
                "string:x-canonical-private-synchronous:linux-lit-theme",
                &format!("Root [{}/{}]", next + 1, count),
-               &s.theme.root_color])
+               &body])
         .spawn();
     // Standard clipboard payload (same as the theme bind): the new root/vocab
     // colors plus a screenshot path.
