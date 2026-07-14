@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design doc: `docs/plans/2026-06-30-journal-vim-edit-design.md` (authoritative).
+- Design doc: `docs/superpowers/specs/2026-06-30-journal-vim-edit-design.md` (authoritative).
 - Engine modules under `src/input/vim/` MUST NOT import `gtk4` — they operate on `String` + char-index cursor only. This is what makes them unit-testable.
 - Cursor is a **char index** into the buffer (`buffer.chars().count()` is the max), NOT a byte offset. All motions/edits convert via char indices; use `buffer.chars()` / build new strings, never byte slicing on multibyte text.
 - Buffer line model: lines are `'\n'`-separated; the buffer never ends edits with a forced trailing newline unless the text has one.
@@ -98,7 +98,7 @@ Create `src/input/vim/mod.rs`:
 ```rust
 //! Pure modal-vim editor engine for the journal in-place editor. ZERO gtk4
 //! deps — operates on a `String` buffer + char-index cursor so the full verb
-//! set is unit-testable. See docs/plans/2026-06-30-journal-vim-edit-design.md.
+//! set is unit-testable. See docs/superpowers/specs/2026-06-30-journal-vim-edit-design.md.
 
 pub mod buffer;
 pub mod motion;
@@ -1591,7 +1591,7 @@ Edit `journal_keybinds_overlay.rs` GROUPS: change the `e` row to "edit (vim)"; a
 
 The journal `e` edit card (`JournalEditCard`) was REMOVED in favor of in-place
 modal vim editing on the journal page. See
-`docs/plans/2026-06-30-journal-vim-edit-design.md`. This file is kept as a
+`docs/superpowers/specs/2026-06-30-journal-vim-edit-design.md`. This file is kept as a
 tombstone so links don't 404.
 ```
 

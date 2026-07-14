@@ -117,7 +117,7 @@ pub struct GlossOverlay {
     /// ranges over it, the current page, and the cursor's GLOBAL index across all
     /// pages (`cursor_block` is its page-local projection). Empty/0 in echo +
     /// glossing-loading modes (those don't paginate). See
-    /// docs/plans/2026-06-28-gloss-overlay-pagination-design.md.
+    /// docs/superpowers/specs/2026-06-28-gloss-overlay-pagination-design.md.
     all_blocks: RefCell<Vec<GlossBlock>>,
     pages: RefCell<Vec<crate::ui::pagination::Page>>,
     page_idx: Cell<usize>,

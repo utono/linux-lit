@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, GTK4 (gtk4-rs), serde_json, SQLite (rusqlite). Pure-logic tests via `cargo test --bins`.
 
-**Design doc:** `docs/plans/2026-06-29-overlay-paragraph-retention-and-gloss-cursor-color-design.md`
+**Design doc:** `docs/superpowers/specs/2026-06-29-overlay-paragraph-retention-and-gloss-cursor-color-design.md`
 
 ## Global Constraints
 

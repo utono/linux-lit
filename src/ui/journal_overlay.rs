@@ -69,7 +69,7 @@ pub struct JournalOverlay {
     /// The in-place vim editor's engine, `Some` while the `e` editor is open.
     /// The page `view` mirrors its buffer/cursor; `enter_edit_buffer` seeds it,
     /// `feed_edit_key` drives it, `exit_edit_buffer` drops it. See
-    /// docs/plans/2026-06-30-journal-vim-edit-design.md.
+    /// docs/superpowers/specs/2026-06-30-journal-vim-edit-design.md.
     vim_engine: RefCell<Option<crate::input::vim::VimEngine>>,
     /// The buffer the editor was seeded with, for dirty-check on cancel.
     vim_seed: RefCell<String>,

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, GTK4. Repo: linux-lit, worktree `~/utono/linux-lit-wt/feat-backslash-overlay-cycle`, branch `feat/backslash-overlay-cycle`.
 
-**Spec:** `docs/plans/2026-07-12-backslash-overlay-cycle-design.md` (same directory).
+**Spec:** `docs/superpowers/specs/2026-07-12-backslash-overlay-cycle-design.md` (same directory).
 
 ## Global Constraints
 

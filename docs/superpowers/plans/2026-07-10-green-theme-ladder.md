@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design doc: `docs/plans/2026-07-10-green-theme-ladder-design.md`.
+- Design doc: `docs/superpowers/specs/2026-07-10-green-theme-ladder-design.md`.
 - Cycle insert position: immediately AFTER `kindle-green`.
 - Default theme stays `kindle-sepia` (compiled) / whatever configs hold — do not change `DEFAULT_THEME`.
 - Config files must be edited while NO linux-lit instance runs (`pgrep -af linux-lit` first).

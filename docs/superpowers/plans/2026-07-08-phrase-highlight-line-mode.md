@@ -4,7 +4,7 @@
 
 **Goal:** Add a LINE mode to the karaoke narration highlight — Alt+p cycles Off → Phrase → Line per work class; Line tints the whole verse line (plays/poetry) or the current sentence (prose) instead of the spoken phrase span.
 
-**Architecture:** A `PhraseHighlightMode` enum replaces the two config booleans in-place with legacy-bool-compatible deserialization. The driver (`update_phrase_highlight`) keeps all of today's gating, spoken-line resolution, and phrase-span caching; only the applied character range widens in Line mode, via a pure `tint_range()` + `sentence_bounds()` pair. Spec: `docs/plans/2026-07-08-phrase-highlight-line-mode-design.md`.
+**Architecture:** A `PhraseHighlightMode` enum replaces the two config booleans in-place with legacy-bool-compatible deserialization. The driver (`update_phrase_highlight`) keeps all of today's gating, spoken-line resolution, and phrase-span caching; only the applied character range widens in Line mode, via a pure `tint_range()` + `sentence_bounds()` pair. Spec: `docs/superpowers/specs/2026-07-08-phrase-highlight-line-mode-design.md`.
 
 **Tech Stack:** Rust, GTK4 (`gtk4::TextBuffer` tags), serde/serde_json.
 

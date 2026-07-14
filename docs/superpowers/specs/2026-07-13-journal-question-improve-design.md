@@ -1,7 +1,7 @@
 # Journal question-improve (create + R target Q/A/both) — Design
 
 > Design/spec. Next: `superpowers:writing-plans` → implementation plan under
-> `docs/plans/`.
+> `docs/superpowers/plans/`.
 
 ## Goal
 

@@ -187,7 +187,7 @@ pub struct Config {
     /// Weight of the sentiment/affect (NRC-VAD) axis in echo re-ranking, in
     /// [0, 1]. Final score = (1 - w) * semantic_cosine + w * affect_cosine.
     /// 0.0 = pure semantic ranking (default; the affect axis is inert).
-    /// See docs/plans/2026-05-30-semantic-echo-search-design.md.
+    /// See docs/superpowers/specs/2026-05-30-semantic-echo-search-design.md.
     #[serde(default = "default_echo_affect_weight")]
     pub echo_affect_weight: f32,
     /// System output sink volume (percent) applied once on startup via

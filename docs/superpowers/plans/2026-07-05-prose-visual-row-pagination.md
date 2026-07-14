@@ -17,7 +17,7 @@ crossing times (char-fraction interpolation fallback).
 (lit.db at `~/utono/litdb/data/lit.db`), Python (litdb scripts), hot repo
 schema (SQL + Python mirror).
 
-**Spec:** `docs/plans/2026-07-05-prose-visual-row-pagination-design.md`
+**Spec:** `docs/superpowers/specs/2026-07-05-prose-visual-row-pagination-design.md`
 
 ## Global Constraints
 
@@ -353,7 +353,7 @@ Create `src/db/prose_pages.rs`. Copy the structure of
 ```rust
 //! Persisted visual-row prose pages, keyed by citation (`line_mapping` ids)
 //! + pixel row offsets, and the layout fingerprint they were generated at.
-//! See docs/plans/2026-07-05-prose-visual-row-pagination-design.md.
+//! See docs/superpowers/specs/2026-07-05-prose-visual-row-pagination-design.md.
 
 use rusqlite::{params, Connection, OptionalExtension};
 

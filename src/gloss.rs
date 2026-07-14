@@ -39,7 +39,7 @@ const APPEND_IPA: bool = false;
 /// density) and stay in each prompt's own rule list.
 ///
 /// Add new OP features HERE, once — every prompt picks them up via `concat!`.
-/// See docs/plans/2026-06-10-richer-op-ipa-conventions-design.md.
+/// See docs/superpowers/specs/2026-06-10-richer-op-ipa-conventions-design.md.
 ///
 /// It is a `macro_rules!` returning a single string literal (not a `const`) so
 /// it can be `concat!`'d into the other prompt `const`s at compile time without

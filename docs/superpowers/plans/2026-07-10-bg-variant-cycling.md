@@ -17,7 +17,7 @@ computed blend toward white. A per-theme index persists in
 **Tech Stack:** Rust, GTK4 (untouched — all changes are pure color math +
 existing apply funnel), serde_json.
 
-**Spec:** `docs/plans/2026-07-10-bg-variant-cycling-design.md`
+**Spec:** `docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md`
 
 ## Global Constraints
 
@@ -179,7 +179,7 @@ other `Theme { ... }` literal the compiler flags.
 
 ```rust
 /// Number of background variants every theme has (index 0 = designed bg).
-/// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
+/// Cycled by Ctrl+t; see docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
 pub const BG_VARIANT_COUNT: u8 = 3;
 
 /// Blend fraction toward #ffffff for computed variants 1 and 2.
@@ -510,7 +510,7 @@ line:
 /// The index persists per theme (config.bg_variants); the theme is
 /// re-resolved so every bg-derived color (karaoke, panels, guards)
 /// follows the new background. See
-/// docs/plans/2026-07-10-bg-variant-cycling-design.md.
+/// docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
 pub(crate) fn cycle_bg_variant(state: &Rc<RefCell<crate::app::AppState>>) {
     let mut s = state.borrow_mut();
     let name = s.theme.name.clone();

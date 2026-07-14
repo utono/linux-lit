@@ -6,7 +6,7 @@
 
 **Architecture:** The card's position moves via an asymmetric-margin branch in `apply_card_sizing`; the panel is an `add_overlay` layer on the window's outer overlay, sized from `main_card_rect`. The input box embeds the existing `AskCard` vim host routed through the shared `ask_vim_intercept`. Multi-turn requests go through a new `send_chat` beside `send_message` and a `run_claude_chat_request` bridge. Saves/updates reuse `save_passage_page` / `update_journal_page`; block discovery reuses the structure-aware bounds from the ask-passage branch.
 
-**Tech Stack:** Rust, GTK4/sourceview5, reqwest+tokio via the existing glib bridge, rusqlite (lit.db). Spec: `docs/plans/2026-07-10-chat-layout-design.md`.
+**Tech Stack:** Rust, GTK4/sourceview5, reqwest+tokio via the existing glib bridge, rusqlite (lit.db). Spec: `docs/superpowers/specs/2026-07-10-chat-layout-design.md`.
 
 ## Global Constraints
 

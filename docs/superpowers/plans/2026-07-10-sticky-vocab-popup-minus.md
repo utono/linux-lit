@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design doc: `docs/plans/2026-07-10-sticky-vocab-popup-minus-design.md`.
+- Design doc: `docs/superpowers/specs/2026-07-10-sticky-vocab-popup-minus-design.md`.
 - `#` keeps `VocabPopupPrev`; `H` keeps `ToggleVocabPopup`; both become sticky too (auto-hide is removed popup-wide).
 - Keybind changes must land in all four surfaces in the SAME change: `keymap_config.rs`, `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` (silently overrides compiled defaults otherwise), `keybinds_overlay.rs` KeyDefs + `describe()`, RPD sanity (key name `minus` already proven in the current map).
 - `HideVocabPopup` must be idempotent (no-op when popup hidden).

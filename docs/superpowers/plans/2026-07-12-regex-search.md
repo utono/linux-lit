@@ -6,7 +6,7 @@
 
 **Architecture:** All changes live in `src/input/search.rs`. The query is compiled once per search into a `regex::Regex` (smart-case via the `case_insensitive` builder flag; compile failure retries with `regex::escape`, which always compiles). `collect_line` collapses to one `find_iter` loop over the original line text, which also fixes the latent non-ASCII byte-offset bug in the old lowercasing path. Zero-width matches are skipped.
 
-**Tech Stack:** Rust, `regex = "1"` (already in Cargo.toml). Spec: `docs/plans/2026-07-12-regex-search-design.md`.
+**Tech Stack:** Rust, `regex = "1"` (already in Cargo.toml). Spec: `docs/superpowers/specs/2026-07-12-regex-search-design.md`.
 
 ## Global Constraints
 

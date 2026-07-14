@@ -4,7 +4,7 @@
 //!
 //! Pure helpers here are unit-tested; the impure enter/activate/advance/exit
 //! functions (added in a later task) drive AppState, MPV, and the tags.
-//! Design: docs/plans/2026-07-09-vocab-sentence-loop-design.md
+//! Design: docs/superpowers/specs/2026-07-09-vocab-sentence-loop-design.md
 
 use crate::app::VocabMatch;
 use crate::db::queries::PhraseSpan;

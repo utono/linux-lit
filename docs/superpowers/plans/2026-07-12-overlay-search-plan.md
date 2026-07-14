@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design: `docs/plans/2026-07-12-overlay-search-design.md`. Binding decisions:
+- Design: `docs/superpowers/specs/2026-07-12-overlay-search-design.md`. Binding decisions:
 - ONE active pattern; set by `f` (journal term → also loads the set) OR `/` (regex for the current view). Last-set-wins; the set pattern becomes MRU.
 - `n`/`N` step matches WITHIN the current entry (scroll the overlay to each, clamp no-wrap). `Ctrl+n`/`Ctrl+p` stay between-entry (existing `nav_page` filter branch — do NOT change).
 - The term is highlighted in each entry AS SHOWN (re-applied on every entry render).

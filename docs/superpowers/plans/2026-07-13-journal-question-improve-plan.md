@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design: `docs/plans/2026-07-13-journal-question-improve-design.md`.
+- Design: `docs/superpowers/specs/2026-07-13-journal-question-improve-design.md`.
 - Separate `improve_question` call (Option B). Do NOT restructure `journal_qa_prompt` into JSON.
 - `improve_question` returns ONLY the improved question text; fence-stripped, trimmed; **falls back to the original question on empty/error — never lose the question.**
 - `R` target chooser: question | answer | both. answer → existing flow; question → improve Q + regenerate answer; both → improve Q + free-instruction answer rewrite.

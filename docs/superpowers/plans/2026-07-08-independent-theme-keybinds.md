@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, GTK4/sourceview5, serde. Build with `cargo build`; test with `cargo test`.
 
-**Design doc:** `docs/plans/2026-07-08-independent-theme-keybinds-design.md`
+**Design doc:** `docs/superpowers/specs/2026-07-08-independent-theme-keybinds-design.md`
 
 ## Global Constraints
 
@@ -149,7 +149,7 @@ Place directly under the existing `load_theme`:
 /// Load `name` from themes-unified.json; if absent fall back to the app
 /// default theme name, then to the hardcoded default_theme(). linux-lit's
 /// theme is independent of the system-wide .current_theme (see
-/// docs/plans/2026-07-08-independent-theme-keybinds-design.md).
+/// docs/superpowers/specs/2026-07-08-independent-theme-keybinds-design.md).
 pub fn load_theme_with_fallback(name: &str) -> Theme {
     let path = themes_path();
     let data: Value = match std::fs::read_to_string(&path)

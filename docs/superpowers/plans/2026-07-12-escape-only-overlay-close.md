@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, GTK4. Repo: linux-lit, worktree `~/utono/linux-lit-wt/feat-escape-only-overlay-close`, branch `feat/escape-only-overlay-close` (base master @ 648029a).
 
-**Spec:** `docs/plans/2026-07-12-escape-only-overlay-close-design.md`.
+**Spec:** `docs/superpowers/specs/2026-07-12-escape-only-overlay-close-design.md`.
 
 ## Global Constraints
 

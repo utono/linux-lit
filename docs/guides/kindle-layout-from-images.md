@@ -231,7 +231,7 @@ Data (`~/utono/literature/BCP/`):
 - `cummings-brian/<year>/TEI/NN-slug.xml` — per-rite TEI (source of truth).
 - `cummings-brian/<year>/TEI/bcp-<year>.txt` — rendered whole-book display file.
 
-Related specs (`docs/plans/`): `2026-06-17-tei-to-text-render.md`,
+Related specs (`docs/superpowers/plans/`): `2026-06-17-tei-to-text-render.md`,
 `2026-06-16-bcp1549-modern-tei-design.md`; in linux-lit:
 `2026-06-18-whole-1549-tei-kindle-design.md`,
 `2026-06-16-bcp-decorative-typography-design.md`.

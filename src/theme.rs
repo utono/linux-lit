@@ -60,7 +60,7 @@ fn hue_perceptible(hex: &str) -> bool {
 }
 
 /// Number of root-color variants every theme has (index 0 = designed root).
-/// Cycled by Ctrl+t; see docs/plans/2026-07-10-bg-variant-cycling-design.md.
+/// Cycled by Ctrl+t; see docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
 pub const ROOT_VARIANT_COUNT: u8 = 5;
 
 /// Root color for `variant` (0-4). Variant 0 = the designed root. The other
@@ -209,7 +209,7 @@ pub fn load_theme(name: &str) -> Theme {
 /// Load `name` from themes-unified.json; if absent fall back to the app
 /// default theme name, then to the hardcoded default_theme(). linux-lit's
 /// theme is independent of the system-wide .current_theme (see
-/// docs/plans/2026-07-08-independent-theme-keybinds-design.md).
+/// docs/superpowers/specs/2026-07-08-independent-theme-keybinds-design.md).
 pub fn load_theme_with_fallback(name: &str, variant: u8) -> Theme {
     let path = themes_path();
     let data: Value = match std::fs::read_to_string(&path)

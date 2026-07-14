@@ -9,7 +9,7 @@ Q&A, and renders the answer inside the vocab popup — paginated via
 `Ctrl+n`/`Ctrl+p` with the word + definition pinned at the bottom of every
 page.
 
-**Spec:** `docs/plans/2026-07-11-vocab-journal-qa-design.md` (read it first).
+**Spec:** `docs/superpowers/specs/2026-07-11-vocab-journal-qa-design.md` (read it first).
 
 **Architecture:** Mirrors the journal overlay's `ask_claude` shape (prompt →
 API → immediate DB insert → repaint) via `claude_bridge::run_claude_request`.

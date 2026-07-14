@@ -221,7 +221,7 @@ Key files: `src/input/page_table.rs` (`validate_spreads`, `layout_fingerprint`,
 `revalidate_on_resize`, `active_page_table`, `spread_for_top`, `table_top_for`,
 `page_for_line`), `src/db/play_pages.rs` (rw layer, per-edition abbrev key),
 `src/app/font.rs` (font-change revalidation), `src/app/mod.rs` (resize-tick
-revalidation), `docs/plans/2026-07-04-pinned-play-pagination-design.md`.
+revalidation), `docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md`.
 
 ## Prose over-tall paragraph (sub-line paging)
 
@@ -1210,7 +1210,7 @@ heights from a known `page_top` to a column-split/section boundary, with
 strategy from the free-scroll partial-row mask above; merging them would change
 behavior. Likewise the gloss vs journal `snap_value_to_line` are different
 algorithms (per-`display_rows`-row snap vs uniform `row_step` rounding), not
-duplicates. See `docs/plans/2026-06-25-clip-prevention-design.md`.
+duplicates. See `docs/superpowers/specs/2026-06-25-clip-prevention-design.md`.
 
 **Lesson: any overlay clipping a multi-row prose buffer must use per-row geometry
 — never a uniform row-step — or the last line's descenders clip.**

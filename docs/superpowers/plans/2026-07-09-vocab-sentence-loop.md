@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, GTK4 (TextTag/TextBuffer), MPV IPC (existing command channel), SQLite (`phrase_timestamps` via existing `phrase_spans_for_line`).
 
-**Spec:** `docs/plans/2026-07-09-vocab-sentence-loop-design.md` (approved).
+**Spec:** `docs/superpowers/specs/2026-07-09-vocab-sentence-loop-design.md` (approved).
 
 ## Global Constraints
 
@@ -49,7 +49,7 @@ Create `src/input/vocab_loop.rs`:
 //!
 //! Pure helpers here are unit-tested; the impure enter/activate/advance/exit
 //! functions (added in a later task) drive AppState, MPV, and the tags.
-//! Design: docs/plans/2026-07-09-vocab-sentence-loop-design.md
+//! Design: docs/superpowers/specs/2026-07-09-vocab-sentence-loop-design.md
 
 use crate::app::VocabMatch;
 use crate::db::queries::PhraseSpan;

@@ -4,7 +4,7 @@
 
 **Goal:** Karaoke-style highlight of the phrase currently being narrated by MPV, driven by `phrase_timestamps` char ranges — on by default for prose, off by default for plays/poetry, toggled by Alt+p.
 
-**Architecture:** A new `src/input/phrase_highlight.rs` module holds the pure lookup logic (span-at-time with gap-hold, spoken-line resolution near the sync cursor) plus the runtime update fn called from the existing `MpvEvent::TimePos` handler in `src/main.rs`. Phrase spans are lazily queried per `(line_mapping_id, media_id)` and cached in `AppState`; a `phrase-highlight` TextTag (span `background`, not `paragraph_background`) paints the range. Spec: `docs/plans/2026-07-05-phrase-highlight-design.md`.
+**Architecture:** A new `src/input/phrase_highlight.rs` module holds the pure lookup logic (span-at-time with gap-hold, spoken-line resolution near the sync cursor) plus the runtime update fn called from the existing `MpvEvent::TimePos` handler in `src/main.rs`. Phrase spans are lazily queried per `(line_mapping_id, media_id)` and cached in `AppState`; a `phrase-highlight` TextTag (span `background`, not `paragraph_background`) paints the range. Spec: `docs/superpowers/specs/2026-07-05-phrase-highlight-design.md`.
 
 **Tech Stack:** Rust, GTK4 TextTag/TextIter, rusqlite against `~/utono/litdb/data/lit.db`, serde config.
 

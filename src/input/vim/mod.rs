@@ -1,6 +1,6 @@
 //! Pure modal-vim editor engine for the journal in-place editor. ZERO gtk4
 //! deps — operates on a `String` buffer + char-index cursor so the full verb
-//! set is unit-testable. See docs/plans/2026-06-30-journal-vim-edit-design.md.
+//! set is unit-testable. See docs/superpowers/specs/2026-06-30-journal-vim-edit-design.md.
 
 pub mod buffer;
 pub mod motion;

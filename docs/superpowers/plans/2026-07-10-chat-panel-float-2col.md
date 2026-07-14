@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design doc: `docs/plans/2026-07-10-chat-panel-float-2col-design.md`.
+- Design doc: `docs/superpowers/specs/2026-07-10-chat-panel-float-2col-design.md`.
 - Column boundaries come from `active_page_table`/`column_split` — never re-inferred from buffer text.
 - Panel stays an overlay child; nothing enters the size-bearing widget chain.
 - Side is session-only; no config persistence.

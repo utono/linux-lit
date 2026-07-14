@@ -1,8 +1,8 @@
 # Journal Auto-Tagging (linux-lit reader) — Design
 
 > Design/spec. Next step is `superpowers:writing-plans` → an implementation
-> plan under `docs/plans/`. Canonical location per repo convention is
-> `docs/plans/` (this file), NOT `docs/superpowers/specs/`.
+> plan under `docs/superpowers/plans/`. Canonical location per repo convention is
+> `docs/superpowers/plans/` (this file), NOT `docs/superpowers/specs/`.
 
 ## Goal
 

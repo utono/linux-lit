@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Design doc: `docs/plans/2026-07-12-journal-auto-tag-design.md`. Binding decisions:
+- Design doc: `docs/superpowers/specs/2026-07-12-journal-auto-tag-design.md`. Binding decisions:
 - Reuse the SAME extraction prompt as litdb: `crate::db::prompts::active_prompt("journal.extract-terms")`. Do NOT invent a new prompt.
 - `parse_terms`: lowercase, trim, dedupe (order-preserving), cap at 8; tolerant (empty Vec on missing `"terms"` key or non-list) — mirrors litdb `tag_journal.py::parse_terms_result`.
 - Re-tag policy: DELETE `journal_tags` rows `WHERE entry_id=? AND source IN ('backfill','reader-auto')`, then INSERT the fresh terms with `source='reader-auto'`. Rows with any OTHER source (e.g. `'manual'`) are preserved.

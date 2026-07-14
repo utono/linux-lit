@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let `crll` open two or more linux-lit instances, each with its own MPV player(s), per the approved design in `docs/plans/2026-07-09-multi-instance-crll-design.md`.
+**Goal:** Let `crll` open two or more linux-lit instances, each with its own MPV player(s), per the approved design in `docs/superpowers/specs/2026-07-09-multi-instance-crll-design.md`.
 
 **Architecture:** A new `src/instance.rs` module flock-assigns each process a slot number (1, 2, ...) at startup. The slot namespaces MPV socket names, the app log filename, and the window title. GTK gets the `NON_UNIQUE` flag so a second process actually launches. `config::save()` becomes read-merge-write so concurrent instances stop clobbering each other's per-work state.
 
@@ -438,7 +438,7 @@ cd ~/utono/linux-lit && git add src/main.rs src/app/mod.rs && git commit -m "fea
 
 - Modify: `src/config.rs` (statics + `mark_work_dirty` + `push_recent_work` + `merge_configs` + `save`)
 - Modify: `src/app/mod.rs:2782-2790` (work-switch position save), `src/app/mod.rs:~3940-3949` (current-work position save), `src/app/mod.rs:~867-877` (`record_last_gloss`)
-- Modify: `docs/plans/2026-07-09-multi-instance-crll-design.md` (addendum, Step 7)
+- Modify: `docs/superpowers/specs/2026-07-09-multi-instance-crll-design.md` (addendum, Step 7)
 - Test: unit tests in `src/config.rs`
 
 **Interfaces:**
@@ -737,7 +737,7 @@ Expected: no new warnings in `config.rs` / `instance.rs` / `discovery.rs` / the 
 
 - [ ] **Step 7: Design-doc addendum**
 
-In `docs/plans/2026-07-09-multi-instance-crll-design.md`, section "5. Config merge-on-save", after the first bullet, append this bullet:
+In `docs/superpowers/specs/2026-07-09-multi-instance-crll-design.md`, section "5. Config merge-on-save", after the first bullet, append this bullet:
 
 ```markdown
 - **Implementation addendum (2026-07-09):** positions live in THREE per-work
@@ -749,7 +749,7 @@ In `docs/plans/2026-07-09-multi-instance-crll-design.md`, section "5. Config mer
 - [ ] **Step 8: Commit**
 
 ```bash
-cd ~/utono/linux-lit && git add src/config.rs src/app/mod.rs docs/plans/2026-07-09-multi-instance-crll-design.md && git commit -m "feat: config merge-on-save — concurrent instances stop clobbering per-work state"
+cd ~/utono/linux-lit && git add src/config.rs src/app/mod.rs docs/superpowers/specs/2026-07-09-multi-instance-crll-design.md && git commit -m "feat: config merge-on-save — concurrent instances stop clobbering per-work state"
 ```
 
 ---
@@ -875,5 +875,5 @@ crll
 - [ ] **Step 5: Commit the plan checkboxes / any doc touch-ups**
 
 ```bash
-cd ~/utono/linux-lit && git add docs/plans/2026-07-09-multi-instance-crll.md && git commit -m "docs: multi-instance implementation plan"
+cd ~/utono/linux-lit && git add docs/superpowers/plans/2026-07-09-multi-instance-crll.md && git commit -m "docs: multi-instance implementation plan"
 ```

@@ -1,7 +1,7 @@
 # In-Overlay Regex Search + `f`-Term Highlighting — Design
 
 > Design/spec. Next step: `superpowers:writing-plans` → an implementation plan
-> under `docs/plans/`. Canonical location is `docs/plans/` (this file).
+> under `docs/superpowers/plans/`. Canonical location is `docs/superpowers/plans/` (this file).
 
 ## Goal
 

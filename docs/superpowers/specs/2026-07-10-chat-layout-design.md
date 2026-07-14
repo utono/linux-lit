@@ -4,7 +4,7 @@ Date: 2026-07-10
 Status: approved (brainstormed with visual mockups; treatment C selected)
 Mockups: `.superpowers/brainstorm/979386-1783729919/content/layout*.html`
 Updated 2026-07-10 after the `ask-passage` branch landed (Ctrl+a block-select →
-ask card, `docs/plans/2026-07-10-ask-passage-keybind-design.md`) — notes marked
+ask card, `docs/superpowers/specs/2026-07-10-ask-passage-keybind-design.md`) — notes marked
 **[ask-passage]** reflect what that branch built or discovered.
 
 ## Overview

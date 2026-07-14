@@ -15,7 +15,7 @@ existing live engine's forward walk once, validates, stores), and the runtime
 engine untouched. A read-only `validate-play-pages` skill audits stored
 tables via SQL.
 
-**Design doc:** `docs/plans/2026-07-04-pinned-play-pagination-design.md`.
+**Design doc:** `docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md`.
 One amendment made here: tables are keyed by `(work_abbrev,
 layout_fingerprint)` — not abbrev alone — so a headless test generation
 (1280×720) can never clobber the production (1920×1200) rows.
@@ -170,7 +170,7 @@ Add above the test module in `src/db/play_pages.rs`:
 ```rust
 //! Persisted page spreads for two-column plays, keyed by citation
 //! (`line_mapping` ids) and the layout fingerprint they were generated at.
-//! See docs/plans/2026-07-04-pinned-play-pagination-design.md.
+//! See docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md.
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -1591,7 +1591,7 @@ Audit stored tables with the validate-play-pages skill.
 ```markdown
 **Pinned play pagination:** two-column plays at the pinned layout read their
 spreads from lit.db `play_pages` (generated in-app, invariant-gated — see
-`src/input/page_table.rs` and `docs/plans/2026-07-04-pinned-play-pagination-design.md`).
+`src/input/page_table.rs` and `docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md`).
 `PAGES: table hit/fallback/generated` log lines say which engine is active.
 Test flags: `LIT_NO_PAGE_TABLE=1` forces the live engine;
 `LIT_GEN_PAGE_TABLE=1` forces generation at the current (e.g. headless)

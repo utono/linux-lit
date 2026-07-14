@@ -1,6 +1,6 @@
 //! Persisted page spreads for two-column plays, keyed by citation
 //! (`line_mapping` ids) and the layout fingerprint they were generated at.
-//! See docs/plans/2026-07-04-pinned-play-pagination-design.md.
+//! See docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md.
 
 use rusqlite::{params, Connection, OptionalExtension};
 

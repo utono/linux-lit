@@ -6,7 +6,7 @@
 
 **Architecture:** A pure `block_bounds` helper finds the blank-line-delimited block; a new `enter_visual_block_mode` enters the EXISTING visual mode with that block pre-selected and a `pending_ask` flag on `SelectionState`. The visual-mode key handler gains a `Ctrl+a` confirm arm and a flag-aware `Return` arm, both funneling into the existing `action_journal_qa` → `begin_passage_ask` pipeline (untouched).
 
-**Tech Stack:** Rust, GTK4/sourceview5. Spec: `docs/plans/2026-07-10-ask-passage-keybind-design.md`.
+**Tech Stack:** Rust, GTK4/sourceview5. Spec: `docs/superpowers/specs/2026-07-10-ask-passage-keybind-design.md`.
 
 ## Global Constraints
 

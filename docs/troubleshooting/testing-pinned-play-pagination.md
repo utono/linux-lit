@@ -1,8 +1,8 @@
 # Testing Pinned Play Pagination
 
 How page-navigation testing works once the pinned play page tables land
-(design: `docs/plans/2026-07-04-pinned-play-pagination-design.md`; plan:
-`docs/plans/2026-07-04-pinned-play-pagination.md`). The short version:
+(design: `docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md`; plan:
+`docs/superpowers/plans/2026-07-04-pinned-play-pagination.md`). The short version:
 testing moves below the GUI — the slow headless fuzz becomes the last line of
 defense instead of the primary proof.
 

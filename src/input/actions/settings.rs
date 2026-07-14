@@ -551,7 +551,7 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
 /// (config.root_variants); the theme is re-resolved so root_color (and its
 /// derivative scrim_bg) follow the new root while the card background and
 /// reading tints stay pinned. See
-/// docs/plans/2026-07-10-bg-variant-cycling-design.md.
+/// docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
 pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forward: bool) {
     let mut s = state.borrow_mut();
     let name = s.theme.name.clone();
