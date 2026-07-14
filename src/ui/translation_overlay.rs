@@ -311,8 +311,9 @@ impl TranslationOverlay {
         };
         self.current_page.set(page_idx);
 
+        let pctx = self.content_vbox.pango_context();
         for block in &blocks[page.start..page.end.min(blocks.len())] {
-            let entry = render_block(&self.content_vbox, block, ctx);
+            let entry = render_block(&self.content_vbox, block, ctx, &pctx);
             self.block_widgets.borrow_mut().push(entry);
         }
     }
@@ -387,8 +388,15 @@ impl TranslationOverlay {
 const STAGE_GAP_TOP: i32 = 8;
 
 /// Build one block's widget subtree, append it to `parent`, and return its
-/// `BlockEntry`. Shared by `render_page` for every block on the page.
-fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -> BlockEntry {
+/// `BlockEntry`. Shared by `render_page` for every block on the page. `pctx` is
+/// used to pin each column view's `height_request` to its measured text height —
+/// see the `set_view_height` calls below.
+fn render_block(
+    parent: &gtk4::Box,
+    block: &TranslationBlock,
+    ctx: &RenderCtx,
+    pctx: &pango::Context,
+) -> BlockEntry {
     let block_box = gtk4::Box::new(Orientation::Vertical, 0);
     block_box.set_margin_start(ctx.side_margin);
     block_box.set_margin_end(ctx.side_margin);
@@ -414,6 +422,13 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             trans.buffer().set_text(&trans_text);
             ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
             ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
+            // Pin each view's height to its MEASURED text height. A re-rendered
+            // (page-turn) TextView otherwise reports a collapsed natural height
+            // (0/one-row) before its pango layout runs, so the block squeezes into
+            // a thin band and the lines clip. The measured height is the same
+            // synchronous pango measurement pagination already uses, so it is exact.
+            set_view_height(&orig, &orig_text, ctx, pctx);
+            set_view_height(&trans, &trans_text, ctx, pctx);
 
             left.append(&orig);
             right.append(&trans);
@@ -433,6 +448,9 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
             trans.buffer().set_text(&text);
             ensure_cursor_tag(&orig.buffer(), &ctx.cursor_line_bg);
             ensure_cursor_tag(&trans.buffer(), &ctx.cursor_line_bg);
+            // Pin the height to the measured text height (see the speech branch).
+            set_view_height(&orig, &text, ctx, pctx);
+            set_view_height(&trans, &text, ctx, pctx);
             // Stage directions render italic, matching the main card's
             // `stage-direction-style` tag (a buffer TextTag, like the reading card,
             // rather than CSS — the reliable mechanism here).
@@ -450,6 +468,7 @@ fn render_block(parent: &gtk4::Box, block: &TranslationBlock, ctx: &RenderCtx) -
 
     block_box.append(&cols);
     parent.append(&block_box);
+
     BlockEntry {
         start_idx: block.start_idx,
         end_idx: block.end_idx,
@@ -633,6 +652,18 @@ fn sub_block(block: &TranslationBlock, from: usize, to: usize) -> TranslationBlo
         start_idx: block.start_idx + from,
         end_idx: block.start_idx + to - 1,
     }
+}
+
+/// Pin a column view's `height_request` to the exact height it will render at:
+/// the measured text height plus the per-paragraph below-line spacing (one
+/// `line_spacing` per source line, matching `block_height`/`line_height`). This
+/// makes the block's height independent of GTK's lazy TextView natural-height
+/// measurement, which reports a collapsed value on a page-turn re-render (before
+/// the pango layout runs) and squeezes the whole page into a thin clipped band.
+fn set_view_height(view: &TextView, text: &str, ctx: &RenderCtx, pctx: &pango::Context) {
+    let paras = text.split('\n').count().max(1) as i32;
+    let text_h = measure_text_height(pctx, text, ctx.body_font_size, &ctx.font_family, ctx.col_width);
+    view.set_height_request(text_h + ctx.line_spacing * paras);
 }
 
 /// Apply an italic style across the whole buffer (stage-direction rendering,

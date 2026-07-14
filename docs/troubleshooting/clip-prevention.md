@@ -103,6 +103,23 @@ highlight paints immediately. The bottom-clip machinery it used to need
 (`attach_custom`/`Custom` guard, a per-row translation mask) was deleted. See
 `docs/plans/2026-06-27-paginated-translation-overlay-design.md`.
 
+**Pin every rendered TextView's `height_request` to its MEASURED height — do
+not trust GTK's lazy natural height.** A paginated surface rebuilds its content
+widgets on every page turn (`render_page` swaps fresh `TextView`s into the
+already-mapped `content_vbox`). A freshly-built `TextView` reports a COLLAPSED
+natural height (0px, or one row) until its pango layout runs on a later pass —
+so on a page-turn re-render GTK can allocate the new blocks at that collapsed
+height and paint BEFORE the real layout settles. The whole page then squeezes
+into a thin band at the top of the card, the first line half-cut, the rest blank
+— and it is **timing-dependent** ("sometimes clips, sometimes not"), because some
+turns settle in time and some don't. `queue_resize()` does NOT reliably fix it
+(the race is that the natural-height measurement itself hasn't run). The durable
+fix is to `set_height_request(measured_h)` on each column view from the SAME
+synchronous `measure_text_height` the pagination already computes
+(`set_view_height` in `translation_overlay.rs`): `measured_text_h + line_spacing
+* num_paragraphs`. With an explicit height the block can never collapse,
+independent of when GTK lazily measures. See failure checklist #13.
+
 **Per-row geometry is mandatory for prose, never a uniform row-step.** The
 synopsis/gloss/journal buffers join paragraphs into single multi-row buffer
 lines with per-tag `pixels_above_lines`/`scale`, so rows are NOT uniform.
@@ -549,6 +566,28 @@ When a half line clips at the bottom edge of a scrolled surface:
     automatically. (`Cym-Arkangel`, 2026-07-13: table generated 2026-07-04 with
     `end=3941`/`total=1148`; regenerated to `end=3937`/`total=1034`/`clip=73` at
     the same `1920x1200` fingerprint.)
+
+13. **A PAGINATED overlay (translation overlay) squeezes a whole page into a thin
+    band at the top on a page turn — the first line half-cut, the rest of the card
+    blank, and INTERMITTENT ("sometimes clips, sometimes not").** NOT a viewport
+    clip, a highlight-band clip, or a stale table — a LAYOUT/ALLOCATION race.
+    `render_page` swaps fresh `TextView`s into the already-mapped `content_vbox`;
+    a fresh TextView reports a COLLAPSED natural height (0px / one row) until its
+    pango layout runs on a later pass, so GTK can allocate the new blocks at that
+    collapsed height and paint before layout settles. Tell (from an idle-deferred
+    geometry log): the block `TextView`s allocate `h=0`/`h=26` and the
+    `content_vbox` height is a small varying value (40, 62, 186…) while the pinned
+    `scrolled` stays at its full `min==max content_height` — i.e. the SCROLL is
+    pinned but the CONTENT collapsed. Reproduces most on short pages and pages
+    whose first block is a stage-direction interlude, and via any re-render path
+    (`x`/`y` page turn, `[`/`{` scene jump, cursor sync). `queue_resize()` does
+    NOT reliably fix it — the natural-height measurement itself hasn't run.
+    **Fix: pin each column view's `height_request` to its measured text height**
+    (`set_view_height` = `measure_text_height(...) + line_spacing * paragraphs`,
+    the same synchronous pango measurement pagination already uses), so a block
+    can never collapse regardless of GTK's lazy-measure timing. See "Pin every
+    rendered TextView's height_request" under "Pagination instead of a mask."
+    (`translation_overlay.rs`, 2026-07-14.)
 
 ## Verifying
 

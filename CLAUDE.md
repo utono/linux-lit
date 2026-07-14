@@ -51,6 +51,12 @@ result contradicts the logged clip value, launch with
 is pixel-level: verify on the real display or the `line_clipping` /
 `overlay_clipping` e2e invariants, never from logs alone.
 
+**After addressing ANY clipping bug, UPDATE
+`docs/troubleshooting/clip-prevention.md`** — add the new failure mode to the
+frequency-ordered checklist (and a surface note if relevant) with its tell,
+root cause, and fix, so the next occurrence is diagnosed from the doc, not
+re-derived. This is required, not optional.
+
 ## Build & Run
 
 Verify with `cargo build`; do NOT run the app — the user runs `cargo run`
@@ -206,6 +212,9 @@ is not enough.
 
 ## Keybinds
 
+- **The spacebar is `"space"`.** The Rust code binds it by that keysym name,
+  so refer to it as `"space"` — never `"Space"` or `"spacebar"`. When the user
+  asks to change the space bind, respond using `"space"`.
 - **Layout is Real Programmers Dvorak (RPD)**, defined in `~/utono/rpd`.
   Always check it when adding/changing binds — the GTK key name a physical
   key emits is not obvious (`(` → `parenleft`, `'` → `apostrophe`).
