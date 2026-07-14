@@ -16,6 +16,11 @@ clip — a different algorithm, see "Not the same as the paged clip" below.)
 > cursor line (mid-page, room below it), it is NOT a viewport clip at all — it is
 > the highlight `paragraph_background` band lacking `pixels_below_lines`. See
 > "A different clip: the HIGHLIGHT band cutting descenders" and checklist #9.
+>
+> **On a two-column PLAY, also check the log for `PAGES: table hit` + a
+> `BOTTOM_CLIP_EXACT` line whose `total` exceeds `widget_h` (clip=0).** That is a
+> STALE pinned `play_pages` split rendering over-tall for the current card — a
+> data bug fixed by regenerating the table, not a clip-math bug. See checklist #12.
 
 ## The two edges, two mechanisms
 
@@ -503,6 +508,47 @@ When a half line clips at the bottom edge of a scrolled surface:
     position-restore paths set `page_top_line` only); prose targets get their
     offset re-derived by `resnap_prose_to_table`. If it recurs, check for a
     new path that sets `page_top_line` without the offset.
+
+12. **MAIN CARD, two-column play — the LAST line of the LEFT column is half-cut
+    with NO clip band below it, and the RIGHT column is nearly empty. A STALE
+    `play_pages` TABLE split, not a clip-math bug.** Tell: `linux-lit-dev.log`
+    shows `PAGES: table hit` for this work AND a
+    `BOTTOM_CLIP_EXACT: … total=T clip=0 page_top=P end=E` whose `total >
+    widget_h` (the left column [P, E-1] sums TALLER than the viewport — e.g.
+    `total=1148 widget_h=1112 clip=0`). The clip math is correct — `paged_bottom_clip`
+    can't clip a negative, so `clip=0` and the overflowing last line pokes out
+    with nothing to mask it. Reproduces on STARTUP onto that spread and via any
+    nav that lands on it (journal-close→`{`, `x`/`y`, `G`); the journal/scene
+    step is NOT the cause, just how you first land there. **Root cause:** the
+    pinned table stored a left-column `split` that fit at the geometry it was
+    GENERATED at, but the current reader **card** height is smaller, so the split
+    now overflows. The layout fingerprint
+    (`v1|family|size|ascent|descent|charw|WxH|spacing|margins|cols`) keys on the
+    **toplevel WINDOW** size (`state.window.width()/height()`), NOT the card's
+    `text_view.height()` — so a change that shrinks the CARD without moving any
+    fingerprint input (a reader-clip/margin/spacing tweak whose effect on the
+    card isn't a fingerprint field, or a table generated before the card settled
+    to its final height) leaves the stale table a valid `table hit`. Confirm by
+    comparing the stored table's `end` against a LIVE `column_split` at the real
+    card height: a fresh `column_split` fits (`total < usable`, `clip > 0`) while
+    the stored `end` is one line too far. **Fix: regenerate the table** (the data
+    IS the bug — do NOT patch the reader). Close nothing; deleting the rows is
+    safe (`DELETE FROM play_pages WHERE work_abbrev='<ABBR>'; DELETE FROM
+    play_pages_meta WHERE work_abbrev='<ABBR>';`) and the app regenerates at the
+    true current geometry on next load — `record_spreads`→`column_split` respects
+    `usable = widget_h − guard − BASE_BOTTOM_MARGIN` and `validate_spreads` fit-
+    checks each left column, so a fresh table cannot overflow. `validate-play-pages`
+    reports **PASS** for this bug (it checks structure — overlaps/gaps/ordering —
+    not fit against the CURRENT card), so a PASS does not rule it out; the
+    `total > widget_h` log line is the decisive tell. **Latent recurrence:** the
+    fingerprint not distinguishing card height from window height means this can
+    reappear for any play whose table predates a card-height change under an
+    unchanged fingerprint — if it recurs across many works at once, the durable
+    fix is to fold the card's `text_view.height()` (or the `usable` it derives)
+    into `layout_fingerprint` so a card-height change invalidates stale tables
+    automatically. (`Cym-Arkangel`, 2026-07-13: table generated 2026-07-04 with
+    `end=3941`/`total=1148`; regenerated to `end=3937`/`total=1034`/`clip=73` at
+    the same `1920x1200` fingerprint.)
 
 ## Verifying
 
