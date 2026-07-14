@@ -117,8 +117,26 @@ turns settle in time and some don't. `queue_resize()` does NOT reliably fix it
 fix is to `set_height_request(measured_h)` on each column view from the SAME
 synchronous `measure_text_height` the pagination already computes
 (`set_view_height` in `translation_overlay.rs`): `measured_text_h + line_spacing
-* num_paragraphs`. With an explicit height the block can never collapse,
-independent of when GTK lazily measures. See failure checklist #13.
+* num_paragraphs + descender_pad`. With an explicit height the block can never
+collapse, independent of when GTK lazily measures. See failure checklist #13.
+
+**That pinned height MUST include a descender allowance, or the last line clips
+when `line_spacing == 0`.** `measure_text_height` returns pango's LOGICAL height
+(`Layout::pixel_size().1`), which rounds down to the whole pixel at the
+baseline+descent boundary — but a GTK `TextView` paints the final line's
+descender ink to the font's full descent, one or two px past that logical bottom.
+When there is below-line spacing (`line_spacing > 0`, prose) that spacing absorbs
+the overhang; but **verse plays pass `line_spacing == 0`** (the reading card
+renders verse tight — see `rebuild_translation_overlay`), so a view pinned to
+exactly `text_h` slices the last line's descenders (`y`/`g`/`p`/trailing comma).
+The tell: the OVERLAY's bottom-most line (e.g. "By your leave.") shows cut
+descenders even though the page ends well ABOVE the card's bottom edge — so it is
+NOT a page-fill/bottom-cap clip, it is the last line's own pinned view boundary
+mid-card. Fix: add `descender_pad(body_font_size)` (≈15% of the point size,
+floored at 3px) to the pinned height in `set_view_height`, AND mirror the same
+pad into the pagination height accounting (`block_height`, and the split-budget
+seed in `split_oversize_blocks`) so pages don't over-pack now that each view is
+taller. See failure checklist #14. (`translation_overlay.rs`, 2026-07-14.)
 
 **Per-row geometry is mandatory for prose, never a uniform row-step.** The
 synopsis/gloss/journal buffers join paragraphs into single multi-row buffer
@@ -588,6 +606,26 @@ When a half line clips at the bottom edge of a scrolled surface:
     can never collapse regardless of GTK's lazy-measure timing. See "Pin every
     rendered TextView's height_request" under "Pagination instead of a mask."
     (`translation_overlay.rs`, 2026-07-14.)
+
+14. **A PAGINATED overlay's BOTTOM-MOST line has its descenders sliced, even
+    though the page ends well ABOVE the card's bottom edge (whitespace below).**
+    NOT a page-fill/bottom-cap clip (#12) and NOT the collapse race (#13): the
+    last line is cut at its OWN pinned view boundary mid-card. Cause: each column
+    view is pinned to `set_height_request(measure_text_height(...) + line_spacing
+    * paras)`, and `measure_text_height` returns pango's LOGICAL height
+    (`Layout::pixel_size().1`, rounded down at the baseline+descent boundary) while
+    a GTK TextView paints the final line's descender ink to the font's full
+    descent — 1–2px past that logical bottom. With `line_spacing > 0` the below-
+    line spacing absorbs it, but **verse plays pass `line_spacing == 0`** (verse
+    renders tight, mirroring the reading card), so the pin equals `text_h` exactly
+    and the last line's `y`/`g`/`p`/comma tails clip. Tell: the OVERLAY's last line
+    (e.g. "By your leave." in the 2-col translation overlay) shows cut descenders
+    with clear whitespace beneath the block. Fix: add a `descender_pad(body_font_
+    size)` (≈15% of the point, floored 3px) to the pinned view height AND to the
+    pagination height accounting (`block_height` + the split-budget seed) so pages
+    don't over-pack. Diagnose with `LIT_DEBUG_CLIP_COLOR` for the page-edge clips,
+    but this one is font-metric rounding — the pixel e2e / real display is the
+    proof. (`translation_overlay.rs`, 2026-07-14.)
 
 ## The CLIP_WARN tripwire (grep this FIRST)
 
