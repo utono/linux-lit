@@ -418,10 +418,11 @@ impl Config {
         }
     }
 
-    /// Saved root-color-variant index for `theme_name`, wrapped into range.
+    /// Saved root-color-variant index for `theme_name` (0 if none). Returned
+    /// verbatim — `resolve_theme_variant` clamps an out-of-range index to 0
+    /// against the theme's own candidate count.
     pub fn root_variant_for(&self, theme_name: &str) -> u8 {
         self.root_variants.get(theme_name).copied().unwrap_or(0)
-            % crate::theme::ROOT_VARIANT_COUNT
     }
 }
 
@@ -732,13 +733,15 @@ mod last_gloss_tests {
     }
 
     #[test]
-    fn root_variant_for_defaults_to_zero_and_wraps() {
+    fn root_variant_for_returns_saved_index_unclamped() {
         let mut c: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(c.root_variant_for("kindle-sepia"), 0);
         c.root_variants.insert("kindle-sepia".into(), 2);
         assert_eq!(c.root_variant_for("kindle-sepia"), 2);
-        c.root_variants.insert("kindle-sepia".into(), 7); // malformed config
-        assert_eq!(c.root_variant_for("kindle-sepia"), 2); // 7 % 5
+        // A large saved index is returned verbatim — resolve_theme_variant
+        // clamps out-of-range indices to 0 against the theme's candidate count.
+        c.root_variants.insert("kindle-sepia".into(), 7);
+        assert_eq!(c.root_variant_for("kindle-sepia"), 7);
     }
 
     #[test]

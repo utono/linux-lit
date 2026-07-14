@@ -59,19 +59,13 @@ fn hue_perceptible(hex: &str) -> bool {
     relative_luminance(hex) >= INK_HUE_PERCEPTIBLE_MIN_LUM && s >= INK_HUE_PERCEPTIBLE_MIN_SAT
 }
 
-/// Number of root-color variants every theme has (index 0 = designed root).
-/// Cycled by Ctrl+t; see docs/superpowers/specs/2026-07-10-bg-variant-cycling-design.md.
-pub const ROOT_VARIANT_COUNT: u8 = 5;
-
-/// Root color for `variant` (0-4). All five variants — the designed root plus
-/// four alternates — are ordered together LIGHTEST-to-DARKEST by WCAG relative
-/// luminance, so the designed root falls at its own brightness rank (after any
-/// lighter alternate, before any darker one) and Ctrl+t walks one predictable
-/// brightness ladder. The alternates are two from dwl.rootcolor_candidates when
-/// present (candidates equal to the designed root are skipped), else computed
-/// (25% toward white + darkened), plus two brighter computed steps (50% and
-/// 70% toward white). See the design doc.
-fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
+/// The ordered root-color variants for a theme: `dwl.rootcolor_candidates`
+/// used VERBATIM (authored order — the dwl-mlj tooling already builds a
+/// hue-locked, sorted native-accent family). When a theme defines no
+/// candidates, the sole variant is the designed `dwl.rootcolor`. Never
+/// synthesizes colors and never re-sorts. See
+/// docs/superpowers/specs/2026-07-14-root-native-accent-design.md.
+fn root_variants(val: &Value, designed_root: &str) -> Vec<String> {
     let candidates: Vec<String> = val
         .get("dwl")
         .and_then(|d| d.get("rootcolor_candidates"))
@@ -79,33 +73,15 @@ fn root_variant_color(val: &Value, designed_root: &str, variant: u8) -> String {
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str())
-                .filter(|s| !s.eq_ignore_ascii_case(designed_root))
                 .map(str::to_string)
                 .collect()
         })
         .unwrap_or_default();
-    let slot = |i: usize| -> String {
-        match candidates.get(i) {
-            Some(c) => c.clone(),
-            None if i == 0 => blend_colors("#ffffff", designed_root, 0.25),
-            None => darken_color(designed_root, 0.7),
-        }
-    };
-    // The designed root joins the alternate pool and is sorted with them, so it
-    // sits after every lighter variant and before every darker one.
-    let mut pool = vec![
-        designed_root.to_string(),
-        slot(0),
-        slot(1),
-        blend_colors("#ffffff", designed_root, 0.50),
-        blend_colors("#ffffff", designed_root, 0.70),
-    ];
-    pool.sort_by(|a, b| {
-        relative_luminance(b)
-            .partial_cmp(&relative_luminance(a))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    pool[variant as usize].clone()
+    if candidates.is_empty() {
+        vec![designed_root.to_string()]
+    } else {
+        candidates
+    }
 }
 
 /// WCAG relative luminance of a hex color (0.0 = black, 1.0 = white).
@@ -137,7 +113,8 @@ pub struct Theme {
     pub reader_gloss_cursor: String, // glossed line that is ALSO the cursor block
     pub overlay_panel_bg: String, // inset prose-overlay panel tint (barely-there)
     pub scrim_bg: String,         // full-bleed overlay matting (dimmed vs root_color)
-    pub root_variant: u8,         // active root-color variant (0 = designed)
+    pub root_variant: u8,         // active root-color variant (index into candidates)
+    pub root_variant_count: u8,   // number of root variants (candidate count, min 1)
 }
 
 fn themes_path() -> PathBuf {
@@ -279,8 +256,11 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // lines covered by a reader-gloss passage. Falls back to the text fg.
     let focus_color = str_field(dwl, "focuscolor").unwrap_or_else(|| text_fg.clone());
 
-    let variant = variant % ROOT_VARIANT_COUNT;
-    let root_color = root_variant_color(val, &designed_root, variant);
+    let variants = root_variants(val, &designed_root);
+    let count = variants.len().max(1) as u8;
+    // Out-of-range saved index resets to 0 (first candidate).
+    let variant = if (variant as usize) < variants.len() { variant } else { 0 };
+    let root_color = variants[variant as usize].clone();
 
     let lit = val.get("linux-lit").unwrap_or(&Value::Null);
     let cursor_line_bg = str_field(lit, "cursor_line_bg")
@@ -387,6 +367,7 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
         root_variant: variant,
+        root_variant_count: count,
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
     theme.scrim_bg = scrim_bg(&theme);
@@ -422,6 +403,7 @@ fn default_theme() -> Theme {
         overlay_panel_bg: String::new(),
         scrim_bg: String::new(),
         root_variant: 0,
+        root_variant_count: 1,
     };
     theme.overlay_panel_bg = overlay_panel_bg(&theme);
     theme.scrim_bg = scrim_bg(&theme);
@@ -1498,7 +1480,8 @@ mod tests {
         // variant; the card surface stays byte-identical to the base.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
         let base = resolve_theme("s", &json);
-        for variant in 0..ROOT_VARIANT_COUNT {
+        let count = resolve_theme_variant("s", &json, 0).root_variant_count;
+        for variant in 0..count {
             let v = resolve_theme_variant("s", &json, variant);
             assert_eq!(base.text_bg, v.text_bg);
             assert_eq!(base.cursor_line_bg, v.cursor_line_bg);
@@ -1509,70 +1492,50 @@ mod tests {
     }
 
     #[test]
-    fn all_five_roots_sorted_lightest_to_darkest_including_base() {
-        // Pool: designed root #08526b + candidates #41819b/#286983 + the
-        // 50%/70%-toward-white blends (#83a8b5/#b4cbd2), ALL sorted light->dark.
-        // The designed root is the darkest of the five, so it lands last —
-        // after the lighter variants, per the "base after lighter variants" rule.
+    fn root_variants_are_the_candidates_verbatim() {
+        // Root variants ARE dwl.rootcolor_candidates, in authored order — no
+        // re-sort, no dedup, no skipping the entry equal to the designed root.
         let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
-        let roots: Vec<String> = (0..ROOT_VARIANT_COUNT)
-            .map(|i| resolve_theme_variant("s", &json, i).root_color)
-            .collect();
-        assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
-        assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
-        assert_eq!(roots[2], "#41819b");
-        assert_eq!(roots[3], "#286983");
-        assert_eq!(roots[4], "#08526b"); // designed root — darkest, sorted last
-        for w in roots.windows(2) {
-            assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
+        let want = ["#41819b", "#286983", "#08526b"];
+        for (i, w) in want.iter().enumerate() {
+            let v = resolve_theme_variant("s", &json, i as u8);
+            assert_eq!(v.root_color, *w, "variant {i} root_color");
+            assert_eq!(v.root_variant, i as u8, "variant {i} index");
         }
     }
 
     #[test]
-    fn computed_fallback_without_candidates() {
+    fn root_variant_count_matches_candidate_list() {
+        // count = candidate list length (3 here).
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let v = resolve_theme_variant("s", &json, 0);
+        assert_eq!(v.root_variant_count, 3);
+    }
+
+    #[test]
+    fn out_of_range_variant_clamps_to_zero() {
+        // A saved index past the candidate count resets to 0 (first candidate).
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let v = resolve_theme_variant("s", &json, 5);
+        assert_eq!(v.root_color, "#41819b"); // candidates[0]
+        assert_eq!(v.root_variant, 0);
+    }
+
+    #[test]
+    fn no_candidates_falls_back_to_designed_root() {
+        // No rootcolor_candidates → single variant = dwl.rootcolor, count 1.
         let json: serde_json::Value = serde_json::from_str(
             r##"{ "meta": {"type": "light"},
                   "dwl": {"rootcolor": "#08526b"},
                   "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
             .unwrap();
-        // Pool = base, 25%-lighter, darkened, 50%, 70% — all sorted
-        // lightest->darkest. The base sits after the lighter variants
-        // (70%/50%/25%) and before the darkened step.
-        let roots: Vec<String> = (0..ROOT_VARIANT_COUNT)
-            .map(|i| resolve_theme_variant("s", &json, i).root_color)
-            .collect();
-        assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
-        assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
-        assert_eq!(roots[2], blend_colors("#ffffff", "#08526b", 0.25));
-        assert_eq!(roots[3], "#08526b"); // designed root, after the lighter three
-        assert_eq!(roots[4], darken_color("#08526b", 0.7));
-        for w in roots.windows(2) {
-            assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
-        }
-    }
-
-    #[test]
-    fn short_candidate_list_fills_remaining_computed() {
-        let json: serde_json::Value = serde_json::from_str(
-            r##"{ "meta": {"type": "light"},
-                  "dwl": {"rootcolor": "#08526b",
-                          "rootcolor_candidates": ["#41819b", "#08526b"]},
-                  "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"} }"##)
-            .unwrap();
-        // Base + one usable candidate (#41819b) + darkened fill + the two
-        // brighter blends, all sorted lightest->darkest. Base sits after the
-        // lighter variants and before the darkened step.
-        let roots: Vec<String> = (0..ROOT_VARIANT_COUNT)
-            .map(|i| resolve_theme_variant("s", &json, i).root_color)
-            .collect();
-        assert_eq!(roots[0], blend_colors("#ffffff", "#08526b", 0.70));
-        assert_eq!(roots[1], blend_colors("#ffffff", "#08526b", 0.50));
-        assert_eq!(roots[2], "#41819b");
-        assert_eq!(roots[3], "#08526b"); // designed root, after the lighter three
-        assert_eq!(roots[4], darken_color("#08526b", 0.7));
-        for w in roots.windows(2) {
-            assert!(relative_luminance(&w[0]) >= relative_luminance(&w[1]));
-        }
+        let v0 = resolve_theme_variant("s", &json, 0);
+        assert_eq!(v0.root_color, "#08526b");
+        assert_eq!(v0.root_variant_count, 1);
+        // Any index clamps to the single root.
+        let v3 = resolve_theme_variant("s", &json, 3);
+        assert_eq!(v3.root_color, "#08526b");
+        assert_eq!(v3.root_variant, 0);
     }
 
     // zenbones-light shape: the ink (#286486) is a mid-luminance saturated
@@ -1590,7 +1553,8 @@ mod tests {
     fn colorful_ink_vocab_tint_is_hue_distinct_on_every_variant() {
         let json: serde_json::Value = serde_json::from_str(COLORFUL_INK_JSON).unwrap();
         assert!(hue_perceptible("#286486"), "fixture ink must be hue-perceptible");
-        for variant in 0..ROOT_VARIANT_COUNT {
+        let count = resolve_theme_variant("z", &json, 0).root_variant_count;
+        for variant in 0..count {
             let v = resolve_theme_variant("z", &json, variant);
             assert!(
                 hue_distance(&v.vocab_fg, &v.text_fg) >= 40.0,
@@ -1682,27 +1646,6 @@ mod tests {
         assert_eq!(v0.overlay_panel_bg, v2.overlay_panel_bg);
         // scrim_bg DIFFERS between v0 and v1 — it follows root.
         assert_ne!(v0.scrim_bg, v1.scrim_bg);
-    }
-
-    #[test]
-    fn card_surface_pinned_on_extended_slots() {
-        // The two extra slots (3-4) pin the card surface like slots 1-2 do.
-        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
-        let v0 = resolve_theme_variant("s", &json, 0);
-        for i in 3..=4 {
-            let v = resolve_theme_variant("s", &json, i);
-            assert_eq!(v0.text_bg, v.text_bg);
-            assert_eq!(v0.cursor_line_bg, v.cursor_line_bg);
-            assert_eq!(v0.phrase_highlight_bg, v.phrase_highlight_bg);
-        }
-    }
-
-    #[test]
-    fn variant_index_wraps_modulo_count() {
-        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
-        let v5 = resolve_theme_variant("s", &json, 5);
-        let v0 = resolve_theme_variant("s", &json, 0);
-        assert_eq!(v5.root_color, v0.root_color); // 5 % 5 = 0
     }
 
     #[test]
