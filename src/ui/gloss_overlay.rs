@@ -2687,6 +2687,17 @@ impl GlossOverlay {
 
     pub fn set_position(&self, index: usize, total: usize) {
         self.gloss_pos.set((index, total));
+        // Footer-LEFT label: the cross-gloss counter "Gloss N of M" for the
+        // current passage, mirroring the journal Q&A footer's "Q&A n of m".
+        // Kept visible (blank when total is 0) so its hexpand pins the
+        // right-aligned page counter to the right.
+        if total > 0 {
+            self.citation_label
+                .set_text(&format!("Gloss {} of {}", index + 1, total));
+        } else {
+            self.citation_label.set_text("");
+        }
+        self.citation_label.set_visible(true);
         self.update_position_label();
     }
 
@@ -2716,13 +2727,11 @@ impl GlossOverlay {
     }
 
     /// The footer-left work-citation range (e.g. "Cym 2.3.159–168") is no longer
-    /// displayed — the center pill already names the work/scene, matching the
-    /// journal footer which shows only "Q&A n of m". The label is kept blank but
-    /// visible so its `hexpand` still holds the footer row's stretch (see
-    /// `hide_citation`). Retained as a no-op so callers need not change.
-    pub fn set_citation(&self, _start_citation: &str, _end_citation: &str) {
-        self.hide_citation();
-    }
+    /// displayed — the center pill already names the work/scene. The footer-left
+    /// label now carries the "Gloss N of M" counter set by `set_position`, so
+    /// this is a NO-OP (it must NOT blank the label, since callers invoke it
+    /// right after `set_position` and would otherwise erase the counter).
+    pub fn set_citation(&self, _start_citation: &str, _end_citation: &str) {}
 
     /// Hide the footer citation (non-gloss views: synopsis, diff, echoes).
     ///
