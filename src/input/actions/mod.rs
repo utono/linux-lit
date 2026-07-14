@@ -88,10 +88,6 @@ pub enum Action {
 
     // MPV / media
     TogglePlaybackSync,
-    /// Overloaded `s`: single tap only toasts the sync state; ss in quick
-    /// succession toggles it (ChordState::PendingS) — guards against an
-    /// accidental press silently killing sync.
-    PlaybackSyncTap,
     /// Seek to the cursor line's start timestamp, THEN toggle pause. Used by the
     /// gamepad button and the translation overlay; the reader card uses
     /// `PlayCurrentLine` (always-resume) and `TogglePause` (no-seek toggle).
@@ -208,6 +204,9 @@ pub enum Action {
     ToggleAuthorship,
     PickAttributionSet,
     ShowFontInfo,
+    /// Ctrl+Alt+t: desktop notification of the current theme name and root
+    /// color (read-only; does not cycle). Sibling of the theme/root cycle binds.
+    ShowThemeInfo,
     ShowCurrentChapter,
 
     // Timestamps
@@ -269,7 +268,6 @@ impl Action {
 
             // Media
             Action::TogglePlaybackSync
-            | Action::PlaybackSyncTap
             | Action::TogglePlaybackFromTimestamp
             | Action::TogglePause
             | Action::SeekShortBackward
@@ -334,6 +332,7 @@ impl Action {
             | Action::ToggleAuthorship
             | Action::PickAttributionSet
             | Action::ShowFontInfo
+            | Action::ShowThemeInfo
             | Action::ShowCurrentChapter
             | Action::ToggleTranslations
             | Action::ToggleSynopsis
@@ -418,7 +417,6 @@ impl Action {
             Action::OpenSearch => "OpenSearch",
             Action::OpenSearchBackward => "OpenSearchBackward",
             Action::TogglePlaybackSync => "TogglePlaybackSync",
-            Action::PlaybackSyncTap => "PlaybackSyncTap",
             Action::TogglePlaybackFromTimestamp => "TogglePlaybackFromTimestamp",
             Action::TogglePause => "TogglePause",
             Action::SeekShortBackward => "SeekShortBackward",
@@ -487,6 +485,7 @@ impl Action {
             Action::ToggleAuthorship => "ToggleAuthorship",
             Action::PickAttributionSet => "PickAttributionSet",
             Action::ShowFontInfo => "ShowFontInfo",
+            Action::ShowThemeInfo => "ShowThemeInfo",
             Action::ShowCurrentChapter => "ShowCurrentChapter",
             Action::SetStartTime => "SetStartTime",
             Action::SetEndTime => "SetEndTime",

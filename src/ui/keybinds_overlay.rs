@@ -40,8 +40,8 @@ const NUMBER_ROW: &[KeyDef] = &[
     ub("&", "5"),
     ub("=", "6"),
     ub(")", "7"),
-    bare("}", "8", "prev ch"),
-    bare("]", "9", "next ch"),
+    ub("}", "8"),
+    ub("]", "9"),
     key("*", "0", "", "reset font", &[]),
     key("!", "%", "", "", &[("C-!", "font \u{2212}")]),
     key("|", "`", "", "", &[("C-|", "font +")]),
@@ -60,7 +60,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
-    ub("@", "^"),
+    bare("@", "^", "toggle sync"),
     key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
 const TAB_KEY: KeyDef = key("Tab", "", "chat layout", "", &[("C-Tab", "last overlay")]);
@@ -73,9 +73,9 @@ const HOME_ROW: &[KeyDef] = &[
     key("i", "I", "start time", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "H", "synopsis", "H: auto vocab", &[]),
-    key("t", "T", "", "", &[("C-t", "theme next"), ("S-C-T", "theme prev")]),
+    key("t", "T", "", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
     key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}"), ("C-M-n", "nav test")]),
-    bare("s", "S", "sync tap"),
+    bare("s", "S", "play/pause"),
     key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
@@ -305,7 +305,7 @@ on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
         // ── MPV / audio ──
         "play/pause" => "Action::TogglePause — src/input/keymap.rs. Pure \
 pause/resume toggle for all work types; Space plays from the cursor line's \
-timestamp.",
+timestamp. `a` and `s` are twins — both bound to this action.",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",
         "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9 -> 0.8) \
@@ -318,8 +318,8 @@ src/input/keymap.rs",
         "+60" => "Action::SeekLongForward — src/input/keymap.rs",
         "volume +" => "Action::VolumeUp — src/input/keymap.rs",
         "volume −" => "Action::VolumeDown — src/input/keymap.rs",
-        "sync tap" => "Action::PlaybackSyncTap (toast only; ss toggles sync \
-via ChordState::PendingS) — src/input/keymap.rs",
+        "toggle sync" => "Action::TogglePlaybackSync (toggle MPV playback \
+sync) — src/input/keymap.rs",
 
         // ── Timestamps ──
         "start time" | "set start time" => "Action::SetStartTime — src/input/timestamps.rs",
@@ -360,6 +360,7 @@ opens the ask card, j/k extend, Esc cancels) — src/input/visual.rs",
         "root variant" => "Action::RootVariantNext — src/input/actions/settings.rs",
         "theme next" => "Action::ThemeNext — src/input/actions/settings.rs",
         "theme prev" => "Action::ThemePrev — src/input/actions/settings.rs",
+        "theme info" => "Action::ShowThemeInfo — src/input/actions/settings.rs",
         "scansion" => "Action::CycleScansion — src/input/keymap.rs",
         "2-col translation" => "Action::ShowTranslationOverlay — src/app.rs",
         "inline translation" => "Action::ToggleTranslations — src/app.rs",
@@ -430,7 +431,7 @@ fn expand_action(label: &str) -> String {
         "auto vocab" => "toggle auto-vocab popup",
         "toggle signs" => "toggle sign column",
         "chat side" => "flip chat panel column",
-        "sync tap" => "sync state (ss toggles)",
+        "toggle sync" => "toggle playback sync",
         "bkmk tap" => "bookmark (.. opens picker)",
         "dim tog" => "toggle dim",
         "debug log" => "toggle debug log",

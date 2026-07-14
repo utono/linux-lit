@@ -1649,7 +1649,7 @@ pub fn build_window(
     speed_toast.set_halign(gtk4::Align::Start);
     speed_toast.set_margin_bottom(32);
     speed_toast.set_margin_start(24);
-    speed_toast.add_css_class("chapter-toast");
+    speed_toast.add_css_class("center-toast");
     speed_toast.set_visible(false);
 
     // Search boundary toast: centered horizontally, sitting in the thin strip

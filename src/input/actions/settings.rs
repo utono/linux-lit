@@ -647,6 +647,18 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
     copy_pairing_and_screenshot(&s.theme);
 }
 
+/// Ctrl+Alt+t: desktop notification of the current theme name and root color,
+/// without cycling. The two-line body matches the theme/root cycle binds
+/// (display name, then root color); the title reads `Theme` with no counter.
+pub(crate) fn show_theme_info(state: &Rc<RefCell<crate::app::AppState>>) {
+    let s = state.borrow();
+    let body = format!("{}\n{}", s.theme.display_name, s.theme.root_color);
+    let _ = std::process::Command::new("notify-send")
+        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
+               "Theme", &body])
+        .spawn();
+}
+
 #[cfg(test)]
 mod tests {
     use super::next_cycle_index;

@@ -227,12 +227,10 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // 2/3 shifted. Scene jumps sit on BOTH glyphs of each key: `[`/Shift+`[`
         // jump to the current scene's first line (thereafter the previous
         // scene); `{`/Shift+`{` jump to the next scene's first line.
-        // Chapter jumps live solely on `}`/`]` (braceright/bracketright on RPD).
-        // The former number-row duplicates (`4`/`5`, `2`/`3`, shifted forms) and
+        // `}`/`]` (braceright/bracketright) chapter jumps were dropped. The
+        // former number-row duplicates (`4`/`5`, `2`/`3`, shifted forms) and
         // the AE04/AE05 symbol binds (`(`/`&`) were dropped as redundant; bookmarks
         // moved fully to the `;`/`'` home-region pair below.
-        (KeyCombo::plain("braceright"), Action::JumpToPrevChapter),
-        (KeyCombo::plain("bracketright"), Action::JumpToNextChapter),
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
@@ -258,14 +256,14 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        // `s` is overloaded (Action::PlaybackSyncTap): single tap toasts the
-        // sync state; ss toggles — an accidental press can't kill sync.
-        (KeyCombo::plain("s"), Action::PlaybackSyncTap),
+        // `@` (`at`, unshifted on RPD <AD12>) toggles playback sync directly.
+        (KeyCombo::plain("at"), Action::TogglePlaybackSync),
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
-        // it is intercepted before dispatch in keymap.rs). `a` is a PURE
-        // pause/resume toggle — no seek (TogglePause). This holds for ALL work
-        // types; poetry/plays no longer swap the two (they match prose).
+        // it is intercepted before dispatch in keymap.rs). `a` and its twin `s`
+        // are a PURE pause/resume toggle — no seek (TogglePause). This holds for
+        // ALL work types; poetry/plays no longer swap the two (they match prose).
         (KeyCombo::plain("a"), Action::TogglePause),
+        (KeyCombo::plain("s"), Action::TogglePause),
         // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
         // the vocab-sentence loop, InputMode::VocabLoop — no jump fallback).
         (KeyCombo::plain("o"), Action::SeekShortBackward),
@@ -361,6 +359,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("A"), Action::ToggleAuthorship),
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
+        (KeyCombo::ctrl_alt("t"), Action::ShowThemeInfo),
         (KeyCombo::ctrl_alt("i"), Action::ToggleTranslations),
         (KeyCombo::ctrl("i"), Action::ToggleImageView),
         (KeyCombo::ctrl_shift("I"), Action::EnterPageCalibration),
@@ -575,10 +574,10 @@ mod tests {
             km.lookup("bracketleft", false, false, false),
             Some(Action::JumpToPrevScene),
         );
-        // Chapter jumps now live SOLELY on `}`/`]` (braceright/bracketright);
-        // the number-row (`2`/`3`/`4`/`5`) and `(`/`&` duplicates were dropped.
-        assert_eq!(km.lookup("braceright", false, false, false), Some(Action::JumpToPrevChapter));
-        assert_eq!(km.lookup("bracketright", false, false, false), Some(Action::JumpToNextChapter));
+        // Chapter jumps on `}`/`]` (braceright/bracketright) were dropped, along
+        // with the number-row (`2`/`3`/`4`/`5`) and `(`/`&` duplicates.
+        assert_eq!(km.lookup("braceright", false, false, false), None);
+        assert_eq!(km.lookup("bracketright", false, false, false), None);
         assert_eq!(km.lookup("2", false, true, false), None);
         assert_eq!(km.lookup("3", false, true, false), None);
         assert_eq!(km.lookup("4", false, false, false), None);

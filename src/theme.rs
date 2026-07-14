@@ -811,6 +811,19 @@ fn chapter_toast_bg(theme: &Theme) -> String {
     blend_colors("#ffffff", &tinted, CHAPTER_TOAST_WHITE_LIFT)
 }
 
+/// Extra white-lift for the transient CENTER toast (`.center-toast`,
+/// the `speed_toast` widget: sync/speed/volume messages) on top of the
+/// chapter-toast background. The center toast pops over the reading text, so it
+/// reads lighter/airier than the persistent location chip to be less
+/// distracting.
+const CENTER_TOAST_WHITE_LIFT: f64 = 0.45;
+
+/// Background for the transient center toast: the chapter-toast background
+/// lifted further toward white so it reads as a quiet, non-distracting flash.
+fn center_toast_bg(theme: &Theme) -> String {
+    blend_colors("#ffffff", &chapter_toast_bg(theme), CENTER_TOAST_WHITE_LIFT)
+}
+
 /// Matting color for the full-bleed overlay scrim (gloss/journal/synopsis/
 /// translation/echo-keybinds). A subtle (~20%) darkening of `root_color` so the
 /// border area around an overlay card reads as an intentional dimmed frame
@@ -990,6 +1003,9 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
            background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} \
+         .center-toast {{ font-size: 13px; color: {center_toast_fg}; \
+           background-color: {center_toast_bg}; padding: 6px 14px; border-radius: 10px; \
+           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14); opacity: 0.97; }} \
          .search-toast {{ font-size: 10px; color: {toast_fg}; \
            background-color: {toast_bg}; padding: 3px 10px; border-radius: 8px; \
            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); opacity: 0.95; }} \
@@ -1133,6 +1149,8 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         dim = theme.dim_fg,
         toast_bg = chapter_toast_bg(theme),
         toast_fg = contrast_on(&chapter_toast_bg(theme)),
+        center_toast_bg = center_toast_bg(theme),
+        center_toast_fg = contrast_on(&center_toast_bg(theme)),
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
         vocab_popup_fg = vocab_popup_fg(theme),

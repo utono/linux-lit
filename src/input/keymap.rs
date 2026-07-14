@@ -20,9 +20,6 @@ pub enum ChordState {
     /// First tap of the overloaded `.`: a second `.` reverts the bookmark
     /// toggle and opens the picker. See Action::BookmarkTap.
     PendingPeriod,
-    /// First tap of the overloaded `s`: a second `s` toggles playback sync
-    /// (the single tap only toasts). See Action::PlaybackSyncTap.
-    PendingS,
     /// First tap of the overloaded BackSpace: a second one deletes the
     /// line's timestamp (the single tap only toasts). See
     /// Action::DeleteTimestampTap.
@@ -139,10 +136,11 @@ pub fn handle_key(
     // the compiled `a` → TogglePause table bind (no swap intercept needed).
 
     // Global theme cycling — works in EVERY overlay, not just reader mode.
-    // Ctrl+t / Ctrl+Shift+t cycle the reader theme regardless of the active
-    // overlay. Resolved through the keymap so keymap.json overrides still apply;
-    // scoped to the Theme* actions ONLY (we do NOT leak every reader bind into
-    // overlays). No overlay handler binds these chords, so there is no conflict.
+    // Ctrl+t / Ctrl+Shift+t cycle the reader theme, and Ctrl+Alt+t reports the
+    // current theme/root, regardless of the active overlay. Resolved through the
+    // keymap so keymap.json overrides still apply; scoped to the Theme*/ShowThemeInfo
+    // actions ONLY (we do NOT leak every reader bind into overlays). No overlay
+    // handler binds these chords, so there is no conflict.
     // The vim editors (JournalEdit/GlossEdit/SegmentVim) are intercepted above
     // this point, so typing in them is unaffected.
     {
@@ -153,7 +151,9 @@ pub fn handle_key(
         // double-borrow → non-unwinding abort (mirrors the reader path at the
         // main keymap.lookup dispatch below).
         let theme_action = state.borrow().keymap.lookup(key_name, is_ctrl, is_shift, is_alt);
-        if let Some(action @ (Action::ThemeNext | Action::ThemePrev)) = theme_action {
+        if let Some(action @ (Action::ThemeNext | Action::ThemePrev | Action::ShowThemeInfo)) =
+            theme_action
+        {
             dispatch_action(state, action, key_state, tokio_handle);
             return true;
         }
@@ -262,16 +262,6 @@ pub fn handle_key(
         if key_name == "period" && !is_ctrl && !is_shift && !is_alt {
             crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle);
             crate::input::actions::pickers::open_bookmark_picker(state, tokio_handle);
-            return true;
-        }
-    }
-
-    // ss sequence check: the single `s` only toasted the sync state
-    // (Action::PlaybackSyncTap); the second quick `s` performs the toggle.
-    if key_state.borrow().chord == ChordState::PendingS {
-        key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "s" && !is_ctrl && !is_shift && !is_alt {
-            toggle_playback_sync(&mut state.borrow_mut());
             return true;
         }
     }
@@ -3282,22 +3272,6 @@ fn dispatch_action(
 
         // MPV / media
         TogglePlaybackSync => toggle_playback_sync(&mut state.borrow_mut()),
-        PlaybackSyncTap => {
-            // Overloaded s: the single tap only TOASTS the sync state (an
-            // accidental press must not silently kill sync); ss toggles
-            // (PendingS check in handle_key_inner). Uses the centered speed_toast
-            // (not chapter_toast) so the persistent act/scene/chapter toast is
-            // redisplayed underneath when this message clears (if toggled on).
-            {
-                let s = state.borrow();
-                let msg = if s.sync_enabled { "Sync: on (ss toggles)" } else { "Sync: off (ss toggles)" };
-                s.speed_toast.set_halign(gtk4::Align::Center);
-                s.speed_toast.set_margin_start(0);
-                s.speed_toast.set_margin_end(0);
-                navigation::show_transient_over_chapter_toast(&s, &s.speed_toast, msg);
-            }
-            KeyState::start_chord(key_state, ChordState::PendingS);
-        }
         TogglePlaybackFromTimestamp => {
             crate::input::search::toggle_playback_from_timestamp(&mut state.borrow_mut())
         }
@@ -3548,6 +3522,7 @@ fn dispatch_action(
             crate::config::save(&s.config);
         }
         ShowFontInfo => crate::app::font::show_font_info(&state.borrow()),
+        ShowThemeInfo => crate::input::actions::settings::show_theme_info(state),
         ShowCurrentChapter => navigation::show_current_chapter(&mut state.borrow_mut()),
 
         // Timestamps
