@@ -937,10 +937,10 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border: 1px solid {dim}; }} \
          .card-top {{ background-color: {bg}; border-radius: 12px 12px 0 0; }} \
          .running-head {{ padding: 0 40px; }} \
-         .running-head-work {{ color: {dim}; font-size: 14px; \
-           font-variant: small-caps; letter-spacing: 1px; opacity: 0.85; }} \
-         .running-head-scene {{ color: {dim}; font-size: 14px; \
-           font-variant: small-caps; letter-spacing: 1px; opacity: 0.85; }} \
+         .running-head-work {{ color: {fg}; font-size: 14px; \
+           font-variant: small-caps; letter-spacing: 1px; opacity: 0.72; }} \
+         .running-head-scene {{ color: {fg}; font-size: 14px; \
+           font-variant: small-caps; letter-spacing: 1px; opacity: 0.72; }} \
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \
          .column-divider {{ background-color: {dim}; min-width: 1px; \
