@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the bottom-center act/scene toast with an always-visible, book-style running-head strip across the top of the reading card — work abbrev at top-left, act/scene at top-right, with a hairline rule beneath it.
+**Goal:** Replace the bottom-center act/scene toast with an always-visible, book-style running-head strip across the top of the reading card, on ALL works — work abbrev at top-left, position (act/scene for plays, chapter for prose) at top-right, with a hairline rule beneath it.
 
-**Architecture:** The card's existing `top_spacer` (a 40px full-width box already sitting above both columns, with the `card-top` background and rounded top corners) becomes a horizontal container holding two labels. It updates from a new `update_running_heads(state)` function called at the same two `update_highlight` exit points that already call `update_title_bar_scene`, plus on work load. The old bottom `chapter_toast` widget stays in place for transient system messages (Sync:, Rewriting…, copy toasts) but is no longer used for the persistent act/scene indicator on plays.
+**Architecture:** The card's existing `top_spacer` (a 40px full-width box already sitting above both columns, with the `card-top` background and rounded top corners) becomes a horizontal container holding two labels. Both labels are fed by a new `update_running_heads(state)` function called at the same two `update_highlight` exit points that already call `update_title_bar_scene`, plus on work load. The position label reuses the existing `compute_current_chapter_text` (which already produces `Act N, Scene M` for plays and `Chapter N of M — title` / `Front matter — title` for prose) by splitting off its leading `"{abbrev} — "` prefix — one source of truth, no re-derivation. The old bottom `chapter_toast` widget stays in place for transient system messages (Sync:, Rewriting…, copy toasts) but is no longer used as the persistent act/scene or chapter indicator.
 
-**Tech Stack:** Rust, GTK4 (gtk4-rs), existing `scene_synopsis::scene_label_for` / `compute_current_chapter_text` helpers, CSS in `theme.rs::generate_css`.
+**Tech Stack:** Rust, GTK4 (gtk4-rs), existing `scene_synopsis::scene_label_for` / `navigation::compute_current_chapter_text` helpers, CSS in `theme.rs::generate_css`.
 
 ## Global Constraints
 
@@ -14,8 +14,8 @@
 - Do NOT run `cargo run` — build only (`cargo build`); the user launches the app.
 - Boundaries are authoritative metadata: derive act/scene from `current_scene_divs` / `scene_label_for`, never by parsing buffer text.
 - Reader theme is independent of the system theme; all CSS lives in `src/theme.rs`.
-- The running head shows on **plays/verse only** (works where `is_prose()` is false). Prose keeps its existing chapter-heading behavior and shows an empty strip (or the work + chapter label — see Task 6).
-- Head text sources: left = `work.abbrev`; right = `scene_label_for(state, div1, div2)` (e.g. `Act 5, Scene 4`). Do NOT reuse the em-dash-joined single string.
+- The running head shows on **ALL works** — plays, verse, AND prose. It is blank only when no work is loaded.
+- Head text sources: left = `work.abbrev`; right = the position string from `compute_current_chapter_text` with its leading `"{abbrev} — "` prefix stripped (plays → `Act 5, Scene 4`; prose → `Chapter 3 of 67 — In Chancery` or `Front matter — <title>`). Reuse that function; do NOT re-derive act/scene or chapter numbering independently.
 
 ---
 
@@ -48,10 +48,11 @@ In `src/app/mod.rs`, immediately after the `pub top_spacer: gtk4::Box,` field (l
 ```rust
     pub top_spacer: gtk4::Box,
     /// Running-head strip labels living inside `top_spacer` (the card's top
-    /// band). `running_head_work` is the work abbrev (left, set on work load);
-    /// `running_head_scene` is the act/scene label (right, refreshed on every
-    /// cursor move via `scene_synopsis::update_running_heads`). Plays/verse
-    /// only — blanked for prose. Replaces the bottom-center act/scene toast.
+    /// band). `running_head_work` is the work abbrev (left); `running_head_scene`
+    /// is the position label (right) — act/scene for plays, chapter for prose.
+    /// Both are refreshed on every cursor move and on work load via
+    /// `scene_synopsis::update_running_heads`, on ALL works. Blank only when no
+    /// work is loaded. Replaces the persistent bottom-center position toast.
     pub running_head_work: gtk4::Label,
     pub running_head_scene: gtk4::Label,
 ```
@@ -72,8 +73,9 @@ with:
 
 ```rust
     // Top spacer — one line height, rounded top corners only. Doubles as the
-    // running-head strip: work abbrev at the start, act/scene at the end, with
-    // a hairline rule (CSS border-bottom) separating it from the reading text.
+    // running-head strip: work abbrev at the start, position (act/scene or
+    // chapter) at the end, with a hairline rule (CSS border-bottom) separating
+    // it from the reading text.
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_hexpand(true);
     top_spacer.set_height_request(TOP_SPACER_HEIGHT);
@@ -168,51 +170,58 @@ git commit -m "feat(running-heads): style the head strip (small-caps, hairline r
 
 ---
 
-### Task 3: Add `update_running_heads` (right-label refresh)
+### Task 3: Add `update_running_heads` (feeds both labels, all works)
 
 **Files:**
 - Modify: `src/app/scene_synopsis.rs:566-577` (add a sibling function to `update_title_bar_scene`)
 
 **Interfaces:**
-- Consumes: `AppState`, `state.current_work`, `state.is_prose()`, `current_scene_divs`, `scene_label_for` — all already in scope in this module (`update_title_bar_scene` uses them).
-- Produces: `pub fn update_running_heads(state: &AppState)` — sets `running_head_scene` text (act/scene) for plays; blanks it for prose or when no work is loaded. Called by highlight.rs (Task 4) and display_work (Task 5).
+- Consumes: `AppState`, `state.current_work`, `navigation::compute_current_chapter_text(state) -> String` (already exists — returns `"{abbrev} — <position>"`, e.g. `Cym-Arkangel — Act 5, Scene 4` or `Bleak-House — Chapter 3 of 67 — In Chancery`; returns `""` when no work).
+- Produces: `pub fn update_running_heads(state: &AppState)` — sets BOTH `running_head_work` (abbrev, left) and `running_head_scene` (position, right) for ALL works; blanks both when no work is loaded. Called by highlight.rs (Task 4) and display_work (Task 5).
 
 - [ ] **Step 1: Write the function**
 
 In `src/app/scene_synopsis.rs`, immediately after `update_title_bar_scene` (after line ~577), add:
 
 ```rust
-/// Refresh the running-head strip's act/scene label (right side) from the
-/// cursor's authoritative `(div1, div2)`. Plays/verse only; prose and the
-/// no-work state blank it. The left (work) label is set once on work load
-/// (see display_work), so this only touches the scene side. Rides the same
-/// per-navigation sites as `update_title_bar_scene`.
+/// Refresh the running-head strip from the cursor's authoritative position.
+/// Left label = work abbrev; right label = the position string (act/scene for
+/// plays, `Chapter N of M — title` / `Front matter — title` for prose). Both
+/// come from `navigation::compute_current_chapter_text`, which already encodes
+/// the play-vs-prose distinction from authoritative `(div1, div2)` metadata —
+/// we split off its leading `"{abbrev} — "` so the work and position sit on
+/// opposite ends of the strip. Blanks both labels when no work is loaded.
+/// Runs on every cursor move (see highlight.rs) AND on work load.
 pub fn update_running_heads(state: &AppState) {
-    let is_play = state
-        .current_work
-        .as_ref()
-        .map(|_| !state.is_prose())
-        .unwrap_or(false);
-    if !is_play {
-        state.running_head_scene.set_text("");
-        return;
-    }
-    let (div1, div2) = current_scene_divs(state);
-    let label = scene_label_for(state, div1, div2);
-    state.running_head_scene.set_text(&label);
+    let abbrev = match state.current_work.as_ref() {
+        Some(w) => w.abbrev.clone(),
+        None => {
+            state.running_head_work.set_text("");
+            state.running_head_scene.set_text("");
+            return;
+        }
+    };
+    // `compute_current_chapter_text` returns "{abbrev} — <position>". Strip the
+    // "{abbrev} — " prefix to get just the position for the right label; the
+    // separator is " — " (space, em-dash U+2014, space).
+    let full = crate::input::navigation::compute_current_chapter_text(state);
+    let prefix = format!("{} — ", abbrev);
+    let position = full.strip_prefix(&prefix).unwrap_or(full.as_str());
+    state.running_head_work.set_text(&abbrev);
+    state.running_head_scene.set_text(position);
 }
 ```
 
 - [ ] **Step 2: Build to verify it compiles**
 
 Run: `cargo build`
-Expected: compiles, with a `function is never used` dead-code warning for `update_running_heads` (removed in Task 4 when call sites are added). The warning is acceptable at this task boundary.
+Expected: compiles, with a `function is never used` dead-code warning for `update_running_heads` (removed in Task 4 when call sites are added). The warning is acceptable at this task boundary. If `compute_current_chapter_text` is not `pub(crate)`-visible from this module, widen its visibility to `pub(crate)` (it is currently `pub(crate)` per navigation.rs — confirm and, if narrower, widen it in this same commit).
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add src/app/scene_synopsis.rs
-git commit -m "feat(running-heads): add update_running_heads scene-label refresh"
+git commit -m "feat(running-heads): add update_running_heads (both labels, all works)"
 ```
 
 ---
@@ -275,38 +284,32 @@ git commit -m "feat(running-heads): refresh the scene head on every cursor move"
 
 ---
 
-### Task 5: Set the work (left) label on work load
+### Task 5: Populate the running head on work load
 
 **Files:**
 - Modify: `src/app/mod.rs` (display_work path — locate where the current work becomes active)
 
 **Interfaces:**
-- Consumes: `AppState.running_head_work`, `state.current_work`, `state.is_prose()`.
+- Consumes: `scene_synopsis::update_running_heads(state)` (Task 3) — sets both labels for the now-current work.
 
-- [ ] **Step 1: Find the display_work assignment point**
+**Why:** `update_running_heads` already fills BOTH labels for all works (Task 3). The cursor-move path (Task 4) keeps them fresh thereafter, but the FIRST paint after a work loads happens before any cursor move, so call it once at load so the strip is correct immediately (and so a work with no subsequent nav still shows its head).
 
-Run: `rg -n "fn display_work\b|current_work = Some|self.current_work = |state.current_work = " src/app/mod.rs`
-Expected: identifies the function and the line where `current_work` is set to the loaded work. The left label must be set AFTER `current_work` is assigned (so `is_prose()` is accurate).
+- [ ] **Step 1: Find the display_work render/finish point**
 
-- [ ] **Step 2: Set the work label after the work becomes current**
+Run: `rg -n "fn display_work\b|current_work = Some|self.current_work = |state.current_work = |update_title_bar_scene" src/app/mod.rs`
+Expected: identifies `display_work` and where `current_work` becomes the loaded work. The call must go AFTER `current_work` is assigned (so `is_prose()` inside `update_running_heads` is accurate) and after the buffer/line state is set (so `compute_current_chapter_text` reads the right cursor line). If `display_work` already calls `update_title_bar_scene` or `update_highlight` near its end, place the new call right beside that — same lifecycle point.
 
-Immediately after `current_work` is assigned in `display_work` (exact line from Step 1), add:
+- [ ] **Step 2: Call update_running_heads once at load**
+
+Immediately after the point identified in Step 1 (after `current_work` is set and the initial cursor/line state is established), add:
 
 ```rust
-    // Running-head left label: work abbrev for plays/verse; blank for prose
-    // (prose keeps its in-text chapter heading).
-    if let Some(w) = self.current_work.as_ref() {
-        if !self.is_prose() {
-            self.running_head_work.set_text(&w.abbrev);
-        } else {
-            self.running_head_work.set_text("");
-        }
-    } else {
-        self.running_head_work.set_text("");
-    }
+    // Populate the running-head strip for the freshly-loaded work (both labels).
+    // Cursor-move updates keep it fresh afterward; this covers the first paint.
+    crate::app::scene_synopsis::update_running_heads(self);
 ```
 
-Adjust `self.` vs `state.` to match the receiver name in `display_work` (check the function signature from Step 1 — it may be a free function taking `state: &mut AppState`, in which case use `state.`).
+Adjust `self` vs `state` to match the receiver in `display_work` (check the signature from Step 1 — a free function takes `state: &mut AppState`, so use `state`). If the surrounding code holds a `&AppState` (not `&mut`), `update_running_heads` takes `&AppState` so either works.
 
 - [ ] **Step 3: Build to verify it compiles**
 
@@ -317,83 +320,96 @@ Expected: compiles clean.
 
 ```bash
 git add src/app/mod.rs
-git commit -m "feat(running-heads): set the work-abbrev head label on work load"
+git commit -m "feat(running-heads): populate the head strip on work load"
 ```
 
 ---
 
-### Task 6: Stop the bottom toast from showing the persistent act/scene on plays
+### Task 6: Retire the persistent bottom toast (the running head replaces it)
 
 **Files:**
 - Modify: `src/input/navigation.rs` (`surface_current_scene_toast`, `show_current_chapter`, `refresh_persistent_chapter_toast`)
 
-**Rationale:** With the running head always visible for plays, the bottom-center persistent act/scene toast is now redundant on plays. The bottom `chapter_toast` widget must remain for transient system messages (Sync:, copy toasts, Rewriting…) via the borrow mechanism — do NOT delete the widget. Only stop it from being used as the *persistent act/scene indicator on plays*. Prose (chapter toasts) is unaffected.
+**Rationale:** The running head is now the always-visible position indicator for exactly the works that previously drove the persistent bottom toast — `chapter_toast_persists()` is true for plays AND prose-with-chapters (confirmed: `AppState::chapter_toast_persists` at `src/app/mod.rs:799` returns true for `is_play()` and for prose with chapter markers). So the persistent bottom toast is now fully redundant and must be retired for all those works. The bottom `chapter_toast` **widget must remain** — transient system messages (Sync:, copy toasts, Rewriting…) still borrow it via `show_transient_over_chapter_toast` / the borrow mechanism. Only its use as the *persistent position indicator* goes away. Works that never persisted the toast (front-matter-only prose, non-play verse, anthology — `chapter_toast_persists()` false) are unchanged: they still get their transient one-off toast, which is harmless alongside the head.
 
 **Interfaces:**
-- Consumes: `state.is_prose()`, existing toast functions.
+- Consumes: `state.chapter_toast_persists()`, `state.chapter_toast_persistent` (Cell<bool>), existing toast functions.
 
-- [ ] **Step 1: Confirm the play-vs-prose split in the toast path**
+- [ ] **Step 1: Read the three functions and confirm the flow**
 
-Run: `rg -n "fn surface_current_scene_toast|fn show_current_chapter|fn refresh_persistent_chapter_toast|chapter_toast_persists" src/input/navigation.rs`
-Expected: shows the three functions and the `chapter_toast_persists()` predicate. Read `chapter_toast_persists` and `refresh_persistent_chapter_toast` to confirm plays currently drive the persistent toast.
+Run: `rg -n "fn surface_current_scene_toast|fn show_current_chapter|fn refresh_persistent_chapter_toast" src/input/navigation.rs`
+Then read all three plus `AppState::chapter_toast_persists` (`src/app/mod.rs:799`) and the `chapter_toast_persistent` field docs. Confirm: the persistent indicator is gated on `chapter_toast_persistent.get()`, set true only in `show_current_chapter`'s persist branch, and refreshed by `refresh_persistent_chapter_toast` on cursor move. Retiring it = never setting that flag true + making the refresh a no-op.
 
-- [ ] **Step 2: Make `surface_current_scene_toast` a no-op for plays**
+- [ ] **Step 2: Make `show_current_chapter`'s persist branch a no-op (never arm the flag)**
 
-In `src/input/navigation.rs`, in `surface_current_scene_toast` (line ~2384), change the early prose guard so plays ALSO return early (the running head now covers plays), leaving only prose-without-chapters to fall through if it ever used this path:
+In `show_current_chapter` (line ~2495), the persist branch (`if state.chapter_toast_persists() { ... }`) toggles `chapter_toast_persistent`. Replace that whole branch so persisting works do nothing on `+` (the running head already shows position), while non-persisting works keep falling through to the transient toast below. Change:
 
 ```rust
-pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
-    // Plays/verse: the running-head strip is the always-visible act/scene
-    // indicator, so the bottom toast no longer surfaces act/scene here.
-    // Prose keeps its chapter-heading behavior; nothing to surface.
-    if state.is_prose() || !state.is_prose() {
+    if state.chapter_toast_persists() {
+        // ... existing toggle-on / toggle-off body ...
         return;
     }
-    // (unreachable) retained shape for future non-play, non-prose works
+
     let text = compute_current_chapter_text(state);
     show_chapter_toast(state, &text);
-}
 ```
 
-NOTE: `state.is_prose() || !state.is_prose()` is always true — this is a deliberate "return unconditionally" written so the intent (both branches covered) is explicit. If clippy flags it (`logic_bug`/`nonminimal_bool`), replace the whole body with a single `return;` and a comment. Run `cargo clippy` in Step 4 and apply whichever form clippy accepts.
-
-- [ ] **Step 3: Neutralize the persistent-toast toggle for plays in `show_current_chapter`**
-
-In `show_current_chapter` (line ~2495), the `+` key toggles the persistent toast. For plays this is now redundant. Wrap the persistent branch so plays skip it (prose-with-chapters keeps it). Change the `if state.chapter_toast_persists() {` block to first check prose:
+to:
 
 ```rust
-    // Plays/verse now show act/scene in the always-on running head, so `+`
-    // has nothing to toggle for them. Prose-with-chapters keeps the toggle.
-    if state.chapter_toast_persists() && state.is_prose() {
+    // The running-head strip is now the always-visible position indicator for
+    // every work that used to persist the bottom toast (plays + prose-with-
+    // chapters). `+` therefore has nothing to toggle for them — no-op. Works
+    // that never persisted (front matter, bare verse, anthology) still get the
+    // one-off transient toast below.
+    if state.chapter_toast_persists() {
+        log_fmt!("SHOW_CHAPTER (+): no-op — running head shows position");
+        return;
+    }
+
+    let text = compute_current_chapter_text(state);
+    show_chapter_toast(state, &text);
 ```
 
-Verify `chapter_toast_persists()` returns true for both plays and prose-with-chapters before this change (Step 1) — if it is play-only, this `&& state.is_prose()` would disable it entirely, which is wrong; in that case instead make the whole `show_current_chapter` return early for plays. Decide based on the Step 1 reading and note which you did in the commit message.
+(Delete the old toggle-on/off body entirely — `chapter_toast_persistent` is never armed now. Keep the `log_fmt!` import already used in this file.)
 
-- [ ] **Step 4: Verify the persistent-refresh path also skips plays**
+- [ ] **Step 3: Make `refresh_persistent_chapter_toast` a no-op**
 
-Read `refresh_persistent_chapter_toast` (line ~2693). If it recomputes and re-shows the act/scene toast for plays, add a guard at its top so plays are a no-op (the running head handles them):
+In `refresh_persistent_chapter_toast` (line ~2693), the body re-shows the persistent toast when `chapter_toast_persistent.get()` is true. Since Step 2 means that flag is never armed, this is already dead in practice — but make it explicit and cheap by returning early:
 
 ```rust
 pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
-    // Plays/verse use the running head; only prose-with-chapters refreshes here.
-    if !state.is_prose() {
-        return;
-    }
-    // ... existing body ...
+    // Retired: the running-head strip replaced the persistent bottom toast.
+    // The transient-toast borrow mechanism no longer needs this refresh.
+    let _ = state;
+}
 ```
 
-Only add this guard if the existing body would otherwise show the play act/scene. If it already gates on `chapter_toast_persistent.get()` and that flag is never set for plays after Step 3, this guard is belt-and-suspenders but harmless.
+Keep the function (it is called from `highlight.rs` and the toast-restore path); just neuter its body. If removing the body causes an "unused import"/"unused variable" warning elsewhere in the file, resolve it minimally.
 
-- [ ] **Step 5: Build and clippy**
+- [ ] **Step 4: Make `surface_current_scene_toast` a no-op**
 
-Run: `cargo build && cargo clippy 2>&1 | rg "running|chapter_toast|nonminimal" || echo "clippy clean of relevant warnings"`
-Expected: compiles; no new clippy warnings tied to these functions (fix per Step 2 note if flagged).
+In `surface_current_scene_toast` (line ~2384) — called from scene/chapter jumps — the persistent works now show position in the head and the non-persistent transient toast is not wanted here either (jumps already move the head). Replace the body:
+
+```rust
+pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
+    // Retired: the running-head strip shows the current position for every
+    // work. Scene/chapter jumps update the head via the cursor-move path, so
+    // there is nothing to surface as a bottom toast.
+    let _ = state;
+}
+```
+
+- [ ] **Step 5: Build, tests, clippy**
+
+Run: `cargo build && cargo test --bins 2>&1 | tail -5 && cargo clippy 2>&1 | rg "chapter_toast|surface_current|refresh_persistent|unused" || echo "clippy clean of relevant warnings"`
+Expected: compiles; tests pass (a pre-existing `db::queries` hamlet failure, if present, is not this branch's fault — note it, don't fix it); no new clippy warnings on the touched functions. If `chapter_toast_shown` in config / the `chapter_toast_gen`/`chapter_toast_saved`/`chapter_toast_persistent` fields become dead as a result, do NOT delete them in this task (transient-toast borrow still uses gen/saved/borrowed; `persistent`/`shown` going unused is acceptable and flagged for the final review).
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/input/navigation.rs
-git commit -m "feat(running-heads): retire the bottom act/scene toast for plays"
+git commit -m "feat(running-heads): retire the persistent bottom toast (head replaces it)"
 ```
 
 ---
@@ -425,7 +441,7 @@ Confirm on screen:
 - Top-right shows the act/scene (`ACT 5, SCENE 4`), small-caps, faint.
 - A hairline rule sits under the strip, above both columns.
 - The reading text starts below the strip with no overlap and no clipping.
-- The bottom-center area no longer shows the act/scene toast (transient Sync:/copy toasts still work).
+- The bottom-center area no longer shows the persistent position toast (transient Sync:/copy toasts still work).
 
 Quote the on-screen text in the report.
 
@@ -433,9 +449,9 @@ Quote the on-screen text in the report.
 
 If the head labels don't align with the text columns' left/right edges, adjust `.running-head` `padding` in `src/theme.rs` to match the text-column margins observed on screen, rebuild, re-screenshot. Do not change anything else.
 
-- [ ] **Step 4: Confirm prose shows an empty strip (no stray label)**
+- [ ] **Step 4: Confirm prose shows its own running head (chapter position)**
 
-Repeat Step 1 with a prose work (e.g. `LIT_START_WORK=<a prose abbrev>`), screenshot, confirm the head strip is blank (no abbrev, no scene) and the in-text chapter heading is unaffected.
+Repeat Step 1 with a prose work (e.g. `LIT_START_WORK=Bleak-House`, or another prose abbrev — list with `rg -n` on a works dump if unsure), screenshot, and confirm the head strip shows the work abbrev top-left and the chapter position top-right (e.g. `CHAPTER 3 OF 67 — IN CHANCERY`, or `FRONT MATTER — <title>` in the opening). Confirm the in-text chapter heading is unaffected and there is no bottom position toast. Quote the on-screen text.
 
 - [ ] **Step 5: Cleanup and commit any tuning**
 
@@ -453,7 +469,9 @@ If Step 2/3 surfaced any clipping between the new strip and the text, append the
 
 ## Self-Review Notes
 
-- **Spec coverage:** always-visible (Task 1 packs into the always-present `top_spacer`; Tasks 3-5 keep it fed) ✓; reserved strip above both columns (Task 1 uses `top_spacer`, already above `columns_hbox`) ✓; work top-left + act/scene top-right (Task 1 halign Start/End) ✓; hairline rule (Task 2 border-bottom) ✓; plays only, prose blank (Tasks 3, 5) ✓; retire bottom toast for plays (Task 6) ✓; visual verification (Task 7) ✓.
+- **Spec coverage:** always-visible on ALL works (Task 1 packs into the always-present `top_spacer`; Tasks 3-5 keep both labels fed on plays AND prose) ✓; reserved strip above both columns (Task 1 uses `top_spacer`, already above `columns_hbox`) ✓; work top-left + position top-right (Task 1 halign Start/End) ✓; hairline rule (Task 2 border-bottom) ✓; single source of truth for the position string via `compute_current_chapter_text` (Task 3) ✓; retire the persistent bottom toast that the head replaces (Task 6) ✓; visual verification on both a play and a prose work (Task 7) ✓.
+- **Scope change (user, 2026-07-14):** running head applies to ALL works including prose (prose right label = chapter position), NOT plays-only. Tasks 3, 5, 6, 7 reflect this.
 - **No new keybinds**, so overlay legends and keymap.json are untouched — correct per scope.
-- **Open decision for the implementer (Task 6, Step 3):** confirm from the code reading whether `chapter_toast_persists()` is play+prose or play-only; the guard differs. The task tells them how to decide and what to write either way.
-- **`top_spacer` height:** stays `TOP_SPACER_HEIGHT` (40px) — already reserved, so no reading-height regression beyond what exists today; the "cost ~24px" from the design discussion is already spent by the current empty spacer.
+- **`chapter_toast_persists()` confirmed** (src/app/mod.rs:799) to be true for plays + prose-with-chapters — exactly the works the head now covers, so Task 6 retires the persistent toast for all of them without a play/prose branch.
+- **Field naming:** `running_head_scene` holds the position for all works (act/scene OR chapter); the `scene` name is historical/cosmetic and not worth a rename churn. Doc comment says "position".
+- **`top_spacer` height:** stays `TOP_SPACER_HEIGHT` (40px) — already reserved, so no reading-height regression beyond what exists today; that space is already spent by the current empty spacer.
