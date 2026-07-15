@@ -971,6 +971,10 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
+    // Closing the overlay must not leave a stale diff-highlight for the next
+    // open session (Task 7); a revision browse (Task 8) drops with it.
+    state.borrow().journal_overlay.clear_rewrite_diff();
+    state.borrow_mut().rewrite_browse = None;
     if state.borrow().input_mode == InputMode::JournalOverlay {
         toggle_overlay(state);
     }
@@ -1027,6 +1031,11 @@ fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
 /// Q&A of the next band; `Ctrl+p` symmetrically. Clamped at the work's first /
 /// last Q&A (no wrap). Was previously a within-band clamp.
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
+    // Moving to a different Q&A page invalidates any diff-highlight from a
+    // custom-prompt rewrite on the page we're leaving (Task 7); a revision
+    // browse (Task 8) drops with it.
+    state.borrow().journal_overlay.clear_rewrite_diff();
+    state.borrow_mut().rewrite_browse = None;
     // Filtered subset walk: step within the term matches, render read-only,
     // and skip the unfiltered work-wide logic entirely.
     {
@@ -1072,6 +1081,10 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
 /// scene with pages, delta<0 on the last (the Work band sorts before scenes).
 pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
+    // Moving to a different scene invalidates any diff-highlight from a
+    // custom-prompt rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     let work_abbrev = current_work_abbrev(&s);
     let scenes = crate::db::queries::open_db()
         .ok()
@@ -1109,6 +1122,10 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
 /// Switch to the Work band (whole-work pages) and render it.
 pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Switching bands invalidates any diff-highlight from a custom-prompt
+    // rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     if s.journal_band == JournalBand::Work {
         return;
     }
@@ -1124,6 +1141,10 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
 /// position's scene without closing and reopening the overlay.
 pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Switching bands invalidates any diff-highlight from a custom-prompt
+    // rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     if s.current_work.is_none() {
         return;
     }
@@ -1142,6 +1163,10 @@ pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
 /// # nav_to_author_band verified via e2e (needs GTK AppState)
 pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Switching bands invalidates any diff-highlight from a custom-prompt
+    // rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     let author = s
         .current_work
         .as_ref()
@@ -1481,7 +1506,7 @@ pub(crate) fn vim_open_rewrite(
 /// match (`f`-opened cross-work entry) when a filter is set, else the current
 /// band page. Rewrite/edit paths must read THIS, not `journal.pages[page_index]`
 /// (which is the origin band and holds the wrong entry under a filter).
-fn displayed_journal_page(s: &AppState) -> Option<crate::db::journal::JournalPage> {
+pub(crate) fn displayed_journal_page(s: &AppState) -> Option<crate::db::journal::JournalPage> {
     if let Some(filter) = s.journal.filter.as_ref() {
         return filter.matches.get(filter.pos).map(|m| m.page.clone());
     }
@@ -1803,6 +1828,15 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     });
 }
 
+/// Char length of the "Q: …\n\n" prefix the journal body renders before the
+/// answer, so answer-relative diff offsets can be shifted into buffer offsets.
+/// Mirror the rendered body `format!("{}\n\n{}", prefix_question(question), answer)`
+/// exactly, so an idempotent `prefix_question` (question already starting "Q:")
+/// cannot desync the offset base. +2 for the "\n\n".
+fn answer_prefix_chars(question: &str) -> i32 {
+    (crate::ui::journal_overlay::prefix_question(question).chars().count() + 2) as i32
+}
+
 /// Send a journal Q&A `(question, answer)` plus a rewrite `instruction` to Claude,
 /// save the revised answer to row `id`, and re-render. Factored from
 /// `submit_edit_rewrite` so the vim editor's `R` path reuses the exact grounding
@@ -1854,6 +1888,7 @@ fn rewrite_with_claude(
         (model, context, work_type, p.question.clone(), p.answer.clone())
     };
     let question_owned = question.to_string();
+    let instruction_owned = instruction.to_string();
     let model_for_db = model.clone();
     let user_msg = rewrite_user_message(&context, question, answer, instruction);
 
@@ -1865,6 +1900,7 @@ fn rewrite_with_claude(
         user_msg,
         model,
         move |st, revised| {
+            let prev_answer_for_diff = prev_answer.clone();
             st.borrow_mut().journal_undo = Some((
                 id,
                 prev_question.clone(),
@@ -1872,6 +1908,17 @@ fn rewrite_with_claude(
                 model_for_db.clone(),
             ));
             if let Ok(conn) = crate::db::queries::open_db_rw() {
+                if let Err(e) = crate::db::journal::append_revision(
+                    &conn,
+                    "journal",
+                    id,
+                    Some(&prev_question),
+                    &prev_answer,
+                    &model_for_db,
+                    Some(&instruction_owned),
+                ) {
+                    crate::logging::log(&format!("REVISION: append failed: {}", e));
+                }
                 if let Err(e) = crate::db::journal::update_journal_page(
                     &conn, id, &question_owned, &revised, &model_for_db,
                 ) {
@@ -1910,6 +1957,15 @@ fn rewrite_with_claude(
                 render_current(&mut s);
                 land_on_current_band_id(&mut s, id);
             }
+            let base = answer_prefix_chars(&question_owned);
+            let ranges: Vec<(i32, i32)> = crate::input::rewrite_diff::changed_ranges(
+                &prev_answer_for_diff,
+                &revised,
+            )
+            .into_iter()
+            .map(|(a, b)| (a + base, b + base))
+            .collect();
+            s.journal_overlay.apply_rewrite_diff(&ranges);
             crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
         },
         move |st, msg| {
@@ -2444,6 +2500,19 @@ mod tests {
         let line = super::improve_terms_line(&["fee simple".to_string(), "quibble".to_string()]);
         assert!(line.contains("fee simple, quibble"), "names terms: {line}");
         assert!(line.to_lowercase().contains("preserve"), "guidance present: {line}");
+    }
+
+    #[test]
+    fn answer_prefix_chars_matches_rendered_body() {
+        // Body is `format!("{}\n\n{}", prefix_question(question), answer)` where
+        // prefix_question(q) = "Q: {q}" (journal_overlay.rs). The prefix length
+        // must exactly match where the answer begins in that rendered string.
+        let question = "What does Prospero mean here?";
+        let answer = "He means the isle is full of noises.";
+        let body = format!("Q: {}\n\n{}", question, answer);
+        let base = super::answer_prefix_chars(question) as usize;
+        assert_eq!(&body[..base], format!("Q: {}\n\n", question));
+        assert_eq!(&body[base..], answer);
     }
 
     #[test]

@@ -623,6 +623,11 @@ pub struct AppState {
     /// journal edit-save / edit-rewrite paths before they update the row; `u`
     /// restores it via `update_journal_page`. Cleared once consumed.
     pub journal_undo: Option<(i64, String, String, String)>,
+    /// Active read-only revision browse (Ctrl+Shift+n/p), if the user is
+    /// stepping a journal Q&A or gloss entry's stored `rewrite_revisions`.
+    /// View-only: browsing never writes the DB or mutates the live row; only
+    /// `browse_restore` (Ctrl+Shift+r) writes. Dropped on Escape/nav/close.
+    pub rewrite_browse: Option<crate::input::actions::rewrite_history::RewriteBrowse>,
     /// Which overlay a pending `UndoConfirm` belongs to, so `y` runs the right
     /// overlay's undo and returns to the right mode. Set when `u` opens the
     /// confirm; cleared when it closes.
@@ -1536,6 +1541,10 @@ pub fn build_window(
     let (search_all, search_current) = theme.search_highlight_colors();
     gloss_overlay.set_search_colors(&search_all, &search_current);
     journal_overlay.set_search_colors(&search_all, &search_current);
+    // Ephemeral rewrite diff-highlight tint follows the same "all matches"
+    // search color (Task 4 of the rewrite-revision-history feature).
+    gloss_overlay.set_rewrite_diff_color(&search_all);
+    journal_overlay.set_rewrite_diff_color(&search_all);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();
@@ -1981,6 +1990,7 @@ pub fn build_window(
         rewrite_target_overlay: None,
         gloss_undo: None,
         journal_undo: None,
+        rewrite_browse: None,
         undo_confirm_origin: None,
         undo_confirm_container: None,
         undo_confirm_overlay: None,
@@ -3041,6 +3051,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
             let _ = crate::db::queries::ensure_vocab_highlight_column(&conn);
             let _ = crate::db::journal::ensure_journal_table(&conn);
+            let _ = crate::db::journal::ensure_rewrite_revisions_table(&conn);
             let _ = crate::db::queries::ensure_canonical_artifact_abbrevs(&conn);
         }
     });
