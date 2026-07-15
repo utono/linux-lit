@@ -11,6 +11,7 @@ pub mod phrase_highlight;
 pub mod picker_dispatch;
 pub mod picker_keys;
 pub mod prose_pages;
+pub mod rewrite_diff;
 pub mod scroll;
 pub mod search;
 pub mod segments;
