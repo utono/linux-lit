@@ -955,35 +955,41 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          textview border * {{ background-color: {bg}; background: {bg}; }} \
          textview text {{ background-color: {bg}; color: {fg}; \
            font-family: {font}; font-size: {size}pt; }} \
-         .library-picker {{ background-color: {bg}; color: {fg}; \
+         .library-picker {{ background-color: {root}; color: {fg}; \
            padding: 0; border-radius: 12px; border: 1px solid {dim}; \
            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
                        0 2px 6px rgba(0, 0, 0, 0.08); }} \
          .library-picker-header {{ padding: 14px 22px 10px; \
            border-bottom: 1px solid {header_border}; }} \
          .library-picker-title {{ font-size: 14px; font-weight: 700; \
-           letter-spacing: 2px; color: {fg}; opacity: 0.75; }} \
-         .library-picker-crumb {{ font-size: 13px; color: {fg}; \
-           opacity: 0.65; }} \
+           letter-spacing: 2px; color: {vocab_popup_fg}; opacity: 0.85; }} \
+         .library-picker-crumb {{ font-size: 13px; color: {vocab_popup_fg}; \
+           opacity: 0.75; }} \
          .library-picker entry {{ margin: 12px 18px 8px; \
            padding: 8px 12px; border: 1px solid {dim}; \
            border-radius: 8px; background-color: {bg}; color: {fg}; }} \
          .library-picker entry:focus {{ \
            box-shadow: 0 0 0 3px {focus_ring}; }} \
-         .library-picker scrolledwindow {{ padding: 4px 8px 10px; }} \
+         .library-picker scrolledwindow {{ padding: 4px 8px 10px; \
+           background-color: transparent; }} \
+         .library-picker list {{ background-color: transparent; }} \
          .library-picker row {{ padding: 8px 14px; \
-           border-radius: 6px; }} \
+           border-radius: 6px; background-color: transparent; \
+           color: {vocab_popup_fg}; }} \
+         .library-picker row label {{ color: {vocab_popup_fg}; }} \
          .library-picker row label.picker-item-detail {{ \
            font-variant-numeric: tabular-nums; min-width: 32px; \
-           font-size: 15px; color: {fg}; opacity: 0.7; }} \
+           font-size: 15px; color: {vocab_popup_fg}; opacity: 0.7; }} \
          .library-picker row:selected {{ \
-           background-color: {picker_selection_bg}; color: {cursor_fg}; }} \
+           background-color: alpha({vocab_popup_fg}, 0.18); \
+           color: {vocab_popup_fg}; }} \
+         .library-picker row:selected label {{ color: {vocab_popup_fg}; }} \
          .library-picker row:selected label.picker-item-detail {{ \
-           color: {cursor_fg}; opacity: 1.0; }} \
+           color: {vocab_popup_fg}; opacity: 0.85; }} \
          .library-picker-footer {{ padding: 8px 22px 12px; \
            border-top: 1px solid {header_border}; \
            font-size: 12px; letter-spacing: 1.2px; \
-           color: {fg}; opacity: 0.65; }} \
+           color: {vocab_popup_fg}; opacity: 0.75; }} \
          .library-picker-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
@@ -1120,12 +1126,20 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            border-top: 1px solid {vocab_popup_border}; padding-top: 8px; margin-top: 12px; }} \
          .vocab-popup .journal-pin {{ border-top: 1px solid {vocab_popup_border}; \
            padding-top: 10px; margin-top: 12px; }} \
-         .concordance-picker {{ background-color: {bg}; color: {fg}; \
+         .concordance-picker {{ background-color: {root}; color: {vocab_popup_fg}; \
            padding: 16px; border-radius: 12px; border: 1px solid {dim}; }} \
-         .concordance-picker entry {{ margin-bottom: 8px; }} \
-         .concordance-picker row:selected {{ background-color: {cursor_bg}; color: {cursor_fg}; }} \
-         .concordance-picker .settings-title {{ border-bottom: 1px solid {dim}; }} \
-         .concordance-picker .settings-footer {{ color: {dim}; }} \
+         .concordance-picker entry {{ margin-bottom: 8px; \
+           background-color: {bg}; color: {fg}; }} \
+         .concordance-picker list {{ background-color: transparent; }} \
+         .concordance-picker row {{ background-color: transparent; \
+           color: {vocab_popup_fg}; }} \
+         .concordance-picker row label {{ color: {vocab_popup_fg}; }} \
+         .concordance-picker row:selected {{ \
+           background-color: alpha({vocab_popup_fg}, 0.18); color: {vocab_popup_fg}; }} \
+         .concordance-picker row:selected label {{ color: {vocab_popup_fg}; }} \
+         .concordance-picker .settings-title {{ color: {vocab_popup_fg}; \
+           border-bottom: 1px solid alpha({vocab_popup_fg}, 0.3); }} \
+         .concordance-picker .settings-footer {{ color: {vocab_popup_fg}; opacity: 0.75; }} \
          .concordance-bar {{ background-color: {root}; padding: 4px 12px; }} \
          .concordance-bar-word {{ color: {dim}; font-size: 12px; }} \
          .concordance-bar-position {{ color: {dim}; font-size: 14px; }} \
@@ -1173,8 +1187,11 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            background-color: alpha({cursor_bg}, 0.12); \
            box-shadow: 0 0 0 2px alpha({cursor_bg}, 0.30); \
            transition: none; }} \
-         .picker-box {{ background-color: rgba(40, 40, 40, 0.95); color: white; \
+         .picker-box {{ background-color: {root}; color: {vocab_popup_fg}; \
            padding: 16px; border-radius: 8px; }} \
+         .picker-box list {{ background-color: transparent; }} \
+         .picker-box row {{ background-color: transparent; color: {vocab_popup_fg}; }} \
+         .picker-box row label {{ color: {vocab_popup_fg}; }} \
          .legend-box {{ background-color: {bg}; color: {fg}; \
            padding: 32px 40px; border-radius: 12px; border: 1px solid {dim}; \
            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
@@ -1189,11 +1206,13 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            color: {cursor_bg}; padding: 2px 0; }} \
          .legend-action {{ font-family: {font}; font-size: 16px; color: {fg}; \
            opacity: 0.72; padding: 2px 0; }} \
-         .picker-entry {{ margin-bottom: 8px; }} \
-         .picker-list row:selected {{ background-color: rgba(100, 140, 200, 0.8); }} \
+         .picker-entry {{ margin-bottom: 8px; background-color: {bg}; color: {fg}; }} \
+         .picker-list row:selected {{ background-color: alpha({vocab_popup_fg}, 0.18); \
+           color: {vocab_popup_fg}; }} \
+         .picker-list row:selected label {{ color: {vocab_popup_fg}; }} \
          .picker-item-title {{ }} \
          .picker-item-detail {{ opacity: 0.6; }} \
-         .picker-header {{ font-size: 14px; font-weight: bold; }} \
+         .picker-header {{ font-size: 14px; font-weight: bold; color: {vocab_popup_fg}; }} \
 ",
         root = theme.root_color,
         scrim = theme.scrim_bg,
@@ -1212,7 +1231,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
             &vocab_popup_ink(theme), &theme.root_color, 0.55, VOCAB_POPUP_DIM_MIN_CONTRAST),
         vocab_popup_border = blend_colors(&vocab_popup_ink(theme), &theme.root_color, 0.30),
         focus_ring = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.4),
-        picker_selection_bg = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.5),
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
