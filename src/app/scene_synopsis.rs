@@ -578,12 +578,14 @@ pub fn update_title_bar_scene(state: &AppState) {
 
 /// Refresh the running-head strip from the cursor's authoritative position.
 /// Left label = work abbrev; right label = the position string (act/scene for
-/// plays, `Chapter N of M — title` / `Front matter — title` for prose). Both
-/// come from `navigation::compute_current_chapter_text`, which already encodes
-/// the play-vs-prose distinction from authoritative `(div1, div2)` metadata —
-/// we split off its leading `"{abbrev} — "` so the work and position sit on
-/// opposite ends of the strip. Blanks both labels when no work is loaded.
-/// Runs on every cursor move (see highlight.rs) AND on work load.
+/// plays, `Chapter N` for prose). Both come from
+/// `navigation::compute_current_chapter_text`, which encodes the play-vs-prose
+/// distinction from authoritative `(div1, div2)` metadata — we split off its
+/// leading `"{abbrev} — "` so the work and position sit on opposite ends of
+/// the strip, then shorten the prose position (`compute_current_chapter_text`
+/// yields `Chapter N of M — title` / `Front matter — title`) to just
+/// `Chapter N` / `Front matter` for the head. Blanks both labels when no work
+/// is loaded. Runs on every cursor move (see highlight.rs) AND on work load.
 pub fn update_running_heads(state: &AppState) {
     let abbrev = match state.current_work.as_ref() {
         Some(w) => w.abbrev.clone(),
@@ -599,6 +601,16 @@ pub fn update_running_heads(state: &AppState) {
     let full = crate::input::navigation::compute_current_chapter_text(state);
     let prefix = format!("{} — ", abbrev);
     let position = full.strip_prefix(&prefix).unwrap_or(full.as_str());
+    // Prose head: keep only the terse leading token — `Chapter N of M — title`
+    // becomes `Chapter N`, and `Front matter — title` becomes `Front matter`.
+    // Plays (`Act N, Scene M`) contain no " of "/" — " and pass through intact.
+    let position = position
+        .split(" of ")
+        .next()
+        .unwrap_or(position)
+        .split(" — ")
+        .next()
+        .unwrap_or(position);
     state.running_head_work.set_text(&abbrev);
     state.running_head_scene.set_text(position);
 }
