@@ -83,10 +83,8 @@ fn step_pos(pos: usize, len: usize, forward: bool) -> usize {
 /// HEAD after a step-from-HEAD forward (a no-op clamp) nothing changes.
 pub fn browse_step(state: &Rc<RefCell<AppState>>, forward: bool) {
     // Lazily open the session if none is active.
-    if state.borrow().rewrite_browse.is_none() {
-        if !open_browse(state) {
-            return; // toast already shown (no revisions / no entry)
-        }
+    if state.borrow().rewrite_browse.is_none() && !open_browse(state) {
+        return; // toast already shown (no revisions / no entry)
     }
 
     // Step within the virtual list (clamped).

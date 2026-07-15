@@ -686,11 +686,6 @@ impl GlossOverlay {
         self.search_current_tag.set_background(Some(current));
     }
 
-    /// The ephemeral rewrite diff-highlight tag.
-    pub fn rewrite_diff_tag(&self) -> &gtk4::TextTag {
-        &self.rewrite_diff_tag
-    }
-
     /// True while a rewrite diff highlight is currently applied.
     pub fn rewrite_diff_active(&self) -> bool {
         self.rewrite_diff_active.get()
