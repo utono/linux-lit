@@ -1046,8 +1046,13 @@ pub const TWO_COLUMN_DIALOGUE_INDENT: i32 = 20;
 /// "blank line between sentences" layout. Tunable.
 pub const BCP_SENTENCE_GAP: i32 = 12;
 
-/// Fixed height for the top spacer above the first text line.
-pub const TOP_SPACER_HEIGHT: i32 = 40;
+/// Fixed height for the top spacer above the first text line. Doubles as the
+/// running-head strip: tall enough to hold the head labels AND leave clear
+/// padding between them and the first line of text below. Increasing this
+/// shrinks the columns' usable height, so the live pagination engine fits one
+/// fewer row per page — the pinned play_pages/prose_pages tables must be
+/// regenerated at the new geometry to match (LIT_GEN_PAGE_TABLE / re-import).
+pub const TOP_SPACER_HEIGHT: i32 = 64;
 
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
