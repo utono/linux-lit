@@ -675,11 +675,12 @@ pub struct AppState {
     /// by a newer toast) becomes a no-op, so rapid `;` presses can never have an
     /// earlier press's timer cut a later toast short. See show_chapter_toast.
     pub chapter_toast_gen: Rc<Cell<u64>>,
-    /// True while the `+` chapter/scene toast is a PERSISTENT live indicator
-    /// (plays + prose-with-chapters). When true the toast has no auto-hide
-    /// timer, its text is refreshed on every cursor move
-    /// (`navigation::refresh_persistent_chapter_toast`), and it is re-shown
-    /// after a search toast borrows the bottom strip. Reset on work switch.
+    /// Legacy flag for the retired persistent bottom act/scene toast. The
+    /// always-visible running-head strip replaced that toast, so this now stays
+    /// `false` for the app's lifetime; it is only read by the transient-toast
+    /// borrow logic (`begin_chapter_toast_borrow`), where `false` means "no
+    /// pill to restore — hide the strip when the transient clears". Kept rather
+    /// than deleted to avoid churning the shared borrow-state struct.
     pub chapter_toast_persistent: Rc<Cell<bool>>,
     /// True while a transient bottom-center toast is borrowing the act/scene
     /// strip (a "Sync: on" / search / "Copied" / etc. message). While set,
@@ -3253,10 +3254,9 @@ pub fn display_work_at_with_prepared(
     state.current_work = Some(work);
     crate::input::actions::chat::on_work_switched(state);
 
-    // A persistent chapter toast belongs to one work; never leak the previous
-    // work's toast across a switch. Hide it now; the flag is re-derived from
-    // the config preference below (once the new work's line_map exists), so
-    // it can auto-show for the new work if `chapter_toast_shown` is set.
+    // The persistent bottom toast is retired (the running head replaced it),
+    // so this flag stays false for the app's lifetime. Reset it here alongside
+    // the borrow state so a work switch never leaves stale borrow bookkeeping.
     state.chapter_toast_persistent.set(false);
     state.chapter_toast_borrowed.set(false);
     *state.chapter_toast_saved.borrow_mut() = None;

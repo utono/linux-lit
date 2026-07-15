@@ -2366,21 +2366,15 @@ pub fn jump_to_next_section(state: &mut AppState) {
     } else {
         jump_to_next_chapter(state);
     }
-    // Surface the new act/scene after landing. Do NOT call the `+` handler
-    // (`show_current_chapter`) — it is a TOGGLE now, so on a persisting work
-    // with the toast already up it would HIDE the toast. Instead: refresh the
-    // persistent toast to the new scene when it is on, else show the one-off
-    // transient toast (non-persisting verse, or the user hid the persistent one).
+    // The running-head strip already tracks the landed scene (via the
+    // cursor-move refresh), so there is no bottom toast to surface here.
     surface_current_scene_toast(state);
 }
 
-/// Surface the current act/scene toast WITHOUT toggling the persistent
-/// indicator. Use this wherever a non-`+` affordance wants to show/refresh the
-/// scene toast (scene jumps, the overlay `;` mirrors) — calling the `+` handler
-/// `show_current_chapter` there would toggle a shown persistent toast OFF.
-/// When the persistent toast is on, refresh it to the current line; otherwise
-/// show the one-off transient toast. Prose works skip the toast — the chapter
-/// heading already names the destination.
+/// Retired no-op, kept for its call sites (scene/chapter jumps). The
+/// always-visible running-head strip replaced the bottom act/scene toast, and
+/// the head is refreshed by the cursor-move path, so scene jumps need nothing
+/// surfaced here.
 pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
     // Retired: the running-head strip shows the current position for every
     // work. Scene/chapter jumps update the head via the cursor-move path, so
