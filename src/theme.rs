@@ -943,8 +943,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            font-variant: small-caps; letter-spacing: 1px; opacity: 0.72; }} \
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \
+         /* Divider spans the full text band: top = the column top where the
+            first line can appear (text_view top_margin = 0); bottom = 40px up,
+            matching the views' bottom_margin so it ends at the last possible
+            line. Horizontal 8px keeps the gutter gap. */ \
          .column-divider {{ background-color: {dim}; min-width: 1px; \
-           margin: 24px 8px 101px 8px; opacity: 0.28; }} \
+           margin: 0px 8px 40px 8px; opacity: 0.28; }} \
          textview {{ background-color: {bg}; color: {fg}; }} \
          textview border {{ background-color: {bg}; }} \
          textview border.left {{ background-color: {bg}; }} \
