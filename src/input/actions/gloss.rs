@@ -1034,9 +1034,11 @@ fn update_and_render_gloss_in_place(
     // (every block's verse/answer may have changed, so drop all of it).
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         if let (Some(prev), Some((_, prompt))) = (prev_raw.as_ref(), diff) {
-            let _ = crate::db::journal::append_revision(
+            if let Err(e) = crate::db::journal::append_revision(
                 &conn, "gloss", gloss_id, None, prev, model_for_db, prompt,
-            );
+            ) {
+                crate::logging::log(&format!("REVISION: append failed: {}", e));
+            }
         }
         let _ = crate::db::queries::update_gloss(&conn, gloss_id, full_gloss, model_for_db);
         let _ = crate::db::queries::delete_gloss_audio(&conn, gloss_id);

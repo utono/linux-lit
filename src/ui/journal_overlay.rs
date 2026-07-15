@@ -135,7 +135,7 @@ fn paragraph_texts(full: &str) -> Vec<String> {
 /// Prefix a journal Q&A question with `Q: ` for display (the answer follows
 /// below). Idempotent: a question already starting with `Q:` is returned as-is,
 /// so a stored/re-rendered question isn't double-prefixed.
-fn prefix_question(question: &str) -> String {
+pub(crate) fn prefix_question(question: &str) -> String {
     if question.trim_start().starts_with("Q:") {
         question.to_string()
     } else {

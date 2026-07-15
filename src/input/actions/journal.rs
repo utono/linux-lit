@@ -1830,8 +1830,11 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
 
 /// Char length of the "Q: …\n\n" prefix the journal body renders before the
 /// answer, so answer-relative diff offsets can be shifted into buffer offsets.
+/// Mirror the rendered body `format!("{}\n\n{}", prefix_question(question), answer)`
+/// exactly, so an idempotent `prefix_question` (question already starting "Q:")
+/// cannot desync the offset base. +2 for the "\n\n".
 fn answer_prefix_chars(question: &str) -> i32 {
-    ("Q: ".chars().count() + question.chars().count() + 2) as i32
+    (crate::ui::journal_overlay::prefix_question(question).chars().count() + 2) as i32
 }
 
 /// Send a journal Q&A `(question, answer)` plus a rewrite `instruction` to Claude,
@@ -1905,7 +1908,7 @@ fn rewrite_with_claude(
                 model_for_db.clone(),
             ));
             if let Ok(conn) = crate::db::queries::open_db_rw() {
-                let _ = crate::db::journal::append_revision(
+                if let Err(e) = crate::db::journal::append_revision(
                     &conn,
                     "journal",
                     id,
@@ -1913,7 +1916,9 @@ fn rewrite_with_claude(
                     &prev_answer,
                     &model_for_db,
                     Some(&instruction_owned),
-                );
+                ) {
+                    crate::logging::log(&format!("REVISION: append failed: {}", e));
+                }
                 if let Err(e) = crate::db::journal::update_journal_page(
                     &conn, id, &question_owned, &revised, &model_for_db,
                 ) {

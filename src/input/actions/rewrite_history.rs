@@ -134,8 +134,11 @@ pub fn browse_restore(state: &Rc<RefCell<AppState>>) {
     };
 
     // Append the CURRENT head as a revision, then write the viewed body live.
+    // Captures the restored journal question (written to DB) so `rerender_live`
+    // can patch an active filter match's in-memory copy to match.
+    let mut restored_journal_question = String::new();
     if let Ok(conn) = crate::db::queries::open_db_rw() {
-        let _ = crate::db::journal::append_revision(
+        if let Err(e) = crate::db::journal::append_revision(
             &conn,
             kind,
             entry_id,
@@ -143,12 +146,15 @@ pub fn browse_restore(state: &Rc<RefCell<AppState>>) {
             &head_body,
             &model,
             None,
-        );
+        ) {
+            crate::logging::log(&format!("REVISION: append failed: {}", e));
+        }
         match kind {
             "journal" => {
                 let q = view_question.unwrap_or_default();
                 let _ =
                     crate::db::journal::update_journal_page(&conn, entry_id, &q, &view_body, &model);
+                restored_journal_question = q;
             }
             "gloss" => {
                 let _ = crate::db::queries::update_gloss(&conn, entry_id, &view_body, &model);
@@ -171,7 +177,7 @@ pub fn browse_restore(state: &Rc<RefCell<AppState>>) {
 
     // End browse and re-render the LIVE entry (which is now the restored body).
     state.borrow_mut().rewrite_browse = None;
-    rerender_live(state);
+    rerender_live(state, entry_id, &restored_journal_question, &view_body);
     let s = state.borrow();
     crate::input::navigation::show_chapter_toast_secs(&s, "Restored", 2);
 }
@@ -248,17 +254,27 @@ fn open_browse_journal(s: &AppState) -> Option<RewriteBrowse> {
 /// live entry is re-rendered normally (leaving browse intact so a further step
 /// back re-enters history).
 fn render_position(state: &Rc<RefCell<AppState>>, pos: usize) {
-    // HEAD position: render the live entry (the current in-memory row).
-    let (kind, is_head) = {
+    // HEAD position: render the live entry (the current in-memory row). Nothing
+    // was written to the DB here (this is a browse step, not a restore), so the
+    // head question/body passed to `rerender_live` are the entry's UNCHANGED
+    // current values — patching a filter match with them is a no-op, just like
+    // rendering it would already show.
+    let (kind, is_head, entry_id, head_question, head_body) = {
         let s = state.borrow();
         match s.rewrite_browse.as_ref() {
-            Some(b) => (b.kind, b.is_head()),
+            Some(b) => (
+                b.kind,
+                b.is_head(),
+                b.entry_id,
+                b.head_question.clone().unwrap_or_default(),
+                b.head_body.clone(),
+            ),
             None => return,
         }
     };
 
     if is_head {
-        rerender_live(state);
+        rerender_live(state, entry_id, &head_question, &head_body);
         show_cue(state);
         return;
     }
@@ -360,15 +376,23 @@ fn render_journal_position(state: &Rc<RefCell<AppState>>, pos: usize) {
 }
 
 /// Char length of the "Q: …\n\n" prefix the journal body renders before the
-/// answer (mirrors `journal::answer_prefix_chars`, which is private).
+/// answer. Derives from the SAME `prefix_question` the renderer uses (mirrors
+/// `journal::answer_prefix_chars`, which is private to that module), so an
+/// idempotent prefix (question already starting "Q:") cannot desync the offset
+/// base. +2 for the "\n\n".
 fn journal_answer_prefix_chars(question: &str) -> i32 {
-    ("Q: ".chars().count() + question.chars().count() + 2) as i32
+    (crate::ui::journal_overlay::prefix_question(question).chars().count() + 2) as i32
 }
 
 /// Re-render the LIVE entry (HEAD) so the user is back on the current row. Clears
 /// any browse diff-highlight (the live rewrite path re-applies its own if one is
 /// pending, but here we simply show the current row with no diff).
-fn rerender_live(state: &Rc<RefCell<AppState>>) {
+///
+/// `entry_id`/`question`/`answer` are the just-restored journal entry's DB-written
+/// values (unused for the gloss arm, which patches `gloss_list` separately in
+/// `browse_restore`); they let the journal arm patch an active term-filter
+/// match's in-memory copy before rendering it (see below).
+fn rerender_live(state: &Rc<RefCell<AppState>>, entry_id: i64, question: &str, answer: &str) {
     let mode = state.borrow().input_mode;
     match mode {
         crate::app::InputMode::GlossOverlay => {
@@ -380,7 +404,30 @@ fn rerender_live(state: &Rc<RefCell<AppState>>) {
         crate::app::InputMode::JournalOverlay => {
             let mut s = state.borrow_mut();
             s.journal_overlay.clear_rewrite_diff();
-            crate::input::actions::journal::render_current(&mut s);
+            // Under an active term filter the displayed entry is a cross-work
+            // filter match, not a band page — `render_current` would repaint the
+            // wrong (origin-band) entry. Patch the in-memory match (which is what
+            // `render_filtered_match` actually reads — it does not re-query the
+            // DB) with the restored id/question/answer, then render the filtered
+            // view. Mirrors the live rewrite closure (journal.rs:1931-1954).
+            let in_filter = s
+                .journal
+                .filter
+                .as_ref()
+                .and_then(|f| f.matches.get(f.pos))
+                .map(|m| m.page.id == entry_id)
+                .unwrap_or(false);
+            if in_filter {
+                if let Some(filter) = s.journal.filter.as_mut() {
+                    if let Some(m) = filter.matches.get_mut(filter.pos) {
+                        m.page.question = question.to_string();
+                        m.page.answer = answer.to_string();
+                    }
+                }
+                crate::input::actions::journal::render_filtered_match(&mut s);
+            } else {
+                crate::input::actions::journal::render_current(&mut s);
+            }
         }
         _ => {}
     }
