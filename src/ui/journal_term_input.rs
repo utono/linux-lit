@@ -37,6 +37,9 @@ impl JournalTermInput {
         let hint = Label::builder().xalign(0.0).margin_start(22).build();
         hint.add_css_class("picker-item-detail");
 
+        let (header_box, _header_title) =
+            crate::ui::picker_nav::build_picker_header("JOURNAL TERMS");
+        picker_box.append(&header_box);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
         picker_box.append(&hint);

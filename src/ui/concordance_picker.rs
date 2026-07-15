@@ -20,8 +20,8 @@ impl ConcordancePicker {
             .spacing(4)
             .halign(gtk4::Align::Center)
             .valign(gtk4::Align::Center)
-            .width_request(400)
-            .height_request(400)
+            .width_request(500)
+            .height_request(500)
             .build();
         picker_box.add_css_class("concordance-picker");
 

@@ -18,7 +18,7 @@ impl ConcordanceWordPicker {
         picker_box.set_halign(Align::Center);
         picker_box.set_valign(Align::Start);
         picker_box.set_margin_top(40);
-        picker_box.set_width_request(450);
+        picker_box.set_width_request(560);
         picker_box.add_css_class("picker-box");
 
         let search_entry = Entry::new();
@@ -28,7 +28,7 @@ impl ConcordanceWordPicker {
 
         let scrolled = ScrolledWindow::new();
         scrolled.set_vexpand(true);
-        scrolled.set_max_content_height(400);
+        scrolled.set_max_content_height(500);
         scrolled.set_propagate_natural_height(true);
 
         let list_box = ListBox::new();

@@ -17,8 +17,8 @@ impl ConcordanceWorksPicker {
             .spacing(0)
             .halign(Align::Center)
             .valign(Align::Center)
-            .width_request(360)
-            .height_request(280)
+            .width_request(450)
+            .height_request(350)
             .build();
         container.add_css_class("library-picker");
         container.set_visible(false);

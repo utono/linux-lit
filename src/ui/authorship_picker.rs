@@ -15,7 +15,7 @@ impl AuthorshipPicker {
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         container.set_halign(gtk4::Align::Center);
         container.set_valign(gtk4::Align::Center);
-        container.set_width_request(400);
+        container.set_width_request(500);
         container.add_css_class("library-picker");
 
         let title = gtk4::Label::new(Some("Attribution Sets"));

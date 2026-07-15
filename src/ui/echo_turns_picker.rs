@@ -24,8 +24,8 @@ impl EchoTurnsPicker {
             .spacing(0)
             .halign(Align::Center)
             .valign(Align::Center)
-            .width_request(640)
-            .height_request(520)
+            .width_request(800)
+            .height_request(650)
             .build();
         picker_box.add_css_class("library-picker");
 

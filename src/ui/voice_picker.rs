@@ -27,7 +27,7 @@ impl VoicePicker {
         picker_box.set_halign(Align::Center);
         picker_box.set_valign(Align::Start);
         picker_box.set_margin_top(40);
-        picker_box.set_width_request(450);
+        picker_box.set_width_request(560);
         // Use the shared themed picker style (cream card, themed entry/rows),
         // matching the library/media/gloss pickers — not the old dark picker-box.
         picker_box.add_css_class("library-picker");
@@ -35,11 +35,14 @@ impl VoicePicker {
 
         let search_entry = Entry::new();
         search_entry.set_placeholder_text(Some("Search voices..."));
+        let (header_box, _header_title) =
+            crate::ui::picker_nav::build_picker_header("VOICES");
+        picker_box.append(&header_box);
         picker_box.append(&search_entry);
 
         let scrolled = ScrolledWindow::new();
         scrolled.set_vexpand(true);
-        scrolled.set_max_content_height(400);
+        scrolled.set_max_content_height(500);
         scrolled.set_propagate_natural_height(true);
 
         let list_box = ListBox::new();

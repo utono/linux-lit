@@ -25,6 +25,9 @@ impl GlossPicker {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
+        let (header_box, _header_title) =
+            crate::ui::picker_nav::build_picker_header("GLOSSES");
+        picker_box.append(&header_box);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
 

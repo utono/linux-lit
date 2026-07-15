@@ -924,8 +924,135 @@ impl Theme {
     }
 }
 
+/// Visual skin for the overlay card pickers (`.library-picker`). Flip
+/// `PICKER_SKIN` to switch every card picker between directions; the rest of the
+/// theme CSS is unaffected. This is the one-line revert knob.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PickerSkin {
+    /// Direction A: the whole card is the root/wallpaper color, rows sit
+    /// transparently on it with light on-root ink, selection is a translucent
+    /// wash. No titled header band.
+    RootFill,
+    /// Direction F: a titled root header band over a cream body. Root earns a
+    /// job (naming the picker); the list keeps the reading-card surface and the
+    /// selection is a soft tint with a root rail.
+    HeaderBand,
+}
+
+/// The active picker skin. Change this single line to switch directions
+/// (`PickerSkin::RootFill` = A, `PickerSkin::HeaderBand` = F).
+const PICKER_SKIN: PickerSkin = PickerSkin::HeaderBand;
+
+/// The `.library-picker*` CSS block for the active [`PickerSkin`]. Returns a
+/// fully-resolved CSS string (real color values, no `{}` placeholders) so it can
+/// be spliced into `generate_css`'s outer `format!` as a plain `{picker_css}`
+/// argument. `.library-picker-scrim` is emitted by the caller (skin-independent).
+fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
+    let font = font_family;
+    let size = font_size;
+    let root = &theme.root_color;
+    let bg = &theme.text_bg;
+    let fg = &theme.text_fg;
+    let dim = &theme.dim_fg;
+    let on_root = vocab_popup_fg(theme);
+    let header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5);
+    let focus_ring = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.4);
+    // HeaderBand selection: reuse the reading card's own current-line highlight
+    // so the row about to open matches the cursor-line band in the main card
+    // exactly (same rgba tint over the same cream ground). Plus a root rail.
+    let sel_tint = &theme.cursor_line_bg;
+    let card_border = blend_colors(dim, bg, 0.3);
+
+    match PICKER_SKIN {
+        // ── Direction A: root fill, transparent light rows ──────────────
+        PickerSkin::RootFill => format!(
+            ".library-picker {{ background-color: {root}; color: {fg}; \
+               padding: 0; border-radius: 12px; border: 1px solid {dim}; \
+               box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
+                           0 2px 6px rgba(0, 0, 0, 0.08); }} \
+             .library-picker-header {{ padding: 14px 22px 10px; \
+               border-bottom: 1px solid {header_border}; }} \
+             .library-picker-title {{ font-size: 14px; font-weight: 700; \
+               letter-spacing: 2px; color: {on_root}; opacity: 0.85; }} \
+             .library-picker-crumb {{ font-size: 13px; color: {on_root}; \
+               opacity: 0.75; }} \
+             .library-picker entry {{ margin: 12px 18px 8px; \
+               padding: 8px 12px; border: 1px solid {dim}; \
+               border-radius: 8px; background-color: {bg}; color: {fg}; \
+               font-family: {font}; font-size: {size}pt; }} \
+             .library-picker entry:focus {{ \
+               box-shadow: 0 0 0 3px {focus_ring}; }} \
+             .library-picker scrolledwindow {{ padding: 4px 8px 10px; \
+               background-color: transparent; }} \
+             .library-picker list {{ background-color: transparent; }} \
+             .library-picker row {{ padding: 8px 14px; \
+               border-radius: 6px; background-color: transparent; \
+               color: {on_root}; }} \
+             .library-picker row label {{ color: {on_root}; \
+               font-family: {font}; font-size: {size}pt; }} \
+             .library-picker row label.picker-item-detail {{ \
+               font-variant-numeric: tabular-nums; min-width: 32px; \
+               font-family: {font}; font-size: {size}pt; color: {on_root}; opacity: 0.7; }} \
+             .library-picker row:selected {{ \
+               background-color: alpha({on_root}, 0.18); \
+               color: {on_root}; }} \
+             .library-picker row:selected label {{ color: {on_root}; }} \
+             .library-picker row:selected label.picker-item-detail {{ \
+               color: {on_root}; opacity: 0.85; }} \
+             .library-picker-footer {{ padding: 8px 22px 12px; \
+               border-top: 1px solid {header_border}; \
+               font-size: 12px; letter-spacing: 1.2px; \
+               color: {on_root}; opacity: 0.75; }} \
+             "
+        ),
+        // ── Direction F: root header band over a cream body ─────────────
+        PickerSkin::HeaderBand => format!(
+            ".library-picker {{ background-color: {bg}; color: {fg}; \
+               padding: 0; border-radius: 12px; border: 1px solid {card_border}; \
+               box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
+                           0 2px 6px rgba(0, 0, 0, 0.08); }} \
+             .library-picker-header {{ padding: 11px 20px; \
+               background-color: {root}; \
+               border-radius: 11px 11px 0 0; }} \
+             .library-picker-title {{ font-size: 12px; font-weight: 700; \
+               letter-spacing: 2px; color: {on_root}; opacity: 0.95; }} \
+             .library-picker-crumb {{ font-size: 13px; color: {on_root}; \
+               opacity: 0.8; }} \
+             .library-picker entry {{ margin: 12px 18px 8px; \
+               padding: 8px 12px; border: 1px solid {dim}; \
+               border-radius: 8px; background-color: {bg}; color: {fg}; \
+               font-family: {font}; font-size: {size}pt; }} \
+             .library-picker entry:focus {{ \
+               box-shadow: 0 0 0 3px {focus_ring}; }} \
+             .library-picker scrolledwindow {{ padding: 4px 8px 10px; \
+               background-color: {bg}; }} \
+             .library-picker list {{ background-color: {bg}; }} \
+             .library-picker row {{ padding: 8px 14px; \
+               border-radius: 6px; background-color: transparent; \
+               color: {fg}; }} \
+             .library-picker row label {{ color: {fg}; \
+               font-family: {font}; font-size: {size}pt; }} \
+             .library-picker row label.picker-item-detail {{ \
+               font-variant-numeric: tabular-nums; min-width: 32px; \
+               font-family: {font}; font-size: {size}pt; color: {fg}; opacity: 0.7; }} \
+             .library-picker row:selected {{ \
+               background-color: {sel_tint}; color: {fg}; \
+               box-shadow: inset 3px 0 0 {root}; }} \
+             .library-picker row:selected label {{ color: {fg}; }} \
+             .library-picker row:selected label.picker-item-detail {{ \
+               color: {fg}; opacity: 0.85; }} \
+             .library-picker-footer {{ padding: 8px 22px 12px; \
+               border-top: 1px solid {header_border}; \
+               font-size: 12px; letter-spacing: 1.2px; \
+               color: {fg}; opacity: 0.65; }} \
+             "
+        ),
+    }
+}
+
 /// Generate GTK CSS for a theme.
 pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
+    let picker_css = picker_css(theme, font_family, font_size);
     let css = format!(
         "window {{ background-color: {root}; \
            font-family: {font}; font-size: 10pt; }} \
@@ -955,41 +1082,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          textview border * {{ background-color: {bg}; background: {bg}; }} \
          textview text {{ background-color: {bg}; color: {fg}; \
            font-family: {font}; font-size: {size}pt; }} \
-         .library-picker {{ background-color: {root}; color: {fg}; \
-           padding: 0; border-radius: 12px; border: 1px solid {dim}; \
-           box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), \
-                       0 2px 6px rgba(0, 0, 0, 0.08); }} \
-         .library-picker-header {{ padding: 14px 22px 10px; \
-           border-bottom: 1px solid {header_border}; }} \
-         .library-picker-title {{ font-size: 14px; font-weight: 700; \
-           letter-spacing: 2px; color: {vocab_popup_fg}; opacity: 0.85; }} \
-         .library-picker-crumb {{ font-size: 13px; color: {vocab_popup_fg}; \
-           opacity: 0.75; }} \
-         .library-picker entry {{ margin: 12px 18px 8px; \
-           padding: 8px 12px; border: 1px solid {dim}; \
-           border-radius: 8px; background-color: {bg}; color: {fg}; }} \
-         .library-picker entry:focus {{ \
-           box-shadow: 0 0 0 3px {focus_ring}; }} \
-         .library-picker scrolledwindow {{ padding: 4px 8px 10px; \
-           background-color: transparent; }} \
-         .library-picker list {{ background-color: transparent; }} \
-         .library-picker row {{ padding: 8px 14px; \
-           border-radius: 6px; background-color: transparent; \
-           color: {vocab_popup_fg}; }} \
-         .library-picker row label {{ color: {vocab_popup_fg}; }} \
-         .library-picker row label.picker-item-detail {{ \
-           font-variant-numeric: tabular-nums; min-width: 32px; \
-           font-size: 15px; color: {vocab_popup_fg}; opacity: 0.7; }} \
-         .library-picker row:selected {{ \
-           background-color: alpha({vocab_popup_fg}, 0.18); \
-           color: {vocab_popup_fg}; }} \
-         .library-picker row:selected label {{ color: {vocab_popup_fg}; }} \
-         .library-picker row:selected label.picker-item-detail {{ \
-           color: {vocab_popup_fg}; opacity: 0.85; }} \
-         .library-picker-footer {{ padding: 8px 22px 12px; \
-           border-top: 1px solid {header_border}; \
-           font-size: 12px; letter-spacing: 1.2px; \
-           color: {vocab_popup_fg}; opacity: 0.75; }} \
+         {picker_css}\
          .library-picker-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
@@ -1230,7 +1323,6 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         vocab_popup_dim = vocab_popup_tier(
             &vocab_popup_ink(theme), &theme.root_color, 0.55, VOCAB_POPUP_DIM_MIN_CONTRAST),
         vocab_popup_border = blend_colors(&vocab_popup_ink(theme), &theme.root_color, 0.30),
-        focus_ring = blend_colors(&theme.cursor_bg, &theme.text_bg, 0.4),
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
