@@ -94,7 +94,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test --lib rewrite_diff`
+Run: `cargo test --bins rewrite_diff`
 Expected: FAIL — `changed_ranges` not found (won't compile).
 
 - [ ] **Step 3: Implement the core**
@@ -198,7 +198,7 @@ pub mod rewrite_diff;
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cargo test --lib rewrite_diff`
+Run: `cargo test --bins rewrite_diff`
 Expected: PASS (7 tests).
 
 - [ ] **Step 6: Commit**
@@ -281,7 +281,7 @@ fn ensure_rewrite_revisions_table_is_idempotent() {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cargo test --lib ensure_rewrite_revisions_table_is_idempotent`
+Run: `cargo test --bins ensure_rewrite_revisions_table_is_idempotent`
 Expected: FAIL — `ensure_rewrite_revisions_table` not found.
 
 - [ ] **Step 4: Implement the ensure fn**
@@ -321,7 +321,7 @@ In `src/app/mod.rs`, immediately after the `ensure_journal_table` call (mod.rs:3
 
 - [ ] **Step 6: Run test + build to verify**
 
-Run: `cargo test --lib ensure_rewrite_revisions_table_is_idempotent && cargo build`
+Run: `cargo test --bins ensure_rewrite_revisions_table_is_idempotent && cargo build`
 Expected: test PASS; build succeeds.
 
 - [ ] **Step 7: Commit**
@@ -374,7 +374,7 @@ fn append_and_list_revisions_in_order() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test --lib append_and_list_revisions_in_order`
+Run: `cargo test --bins append_and_list_revisions_in_order`
 Expected: FAIL — `append_revision` / `list_revisions` / `Revision` not found.
 
 - [ ] **Step 3: Implement**
@@ -441,7 +441,7 @@ pub fn list_revisions(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test --lib append_and_list_revisions_in_order`
+Run: `cargo test --bins append_and_list_revisions_in_order`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
