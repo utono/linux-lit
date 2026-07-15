@@ -972,8 +972,9 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
 
 pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
     // Closing the overlay must not leave a stale diff-highlight for the next
-    // open session (Task 7).
+    // open session (Task 7); a revision browse (Task 8) drops with it.
     state.borrow().journal_overlay.clear_rewrite_diff();
+    state.borrow_mut().rewrite_browse = None;
     if state.borrow().input_mode == InputMode::JournalOverlay {
         toggle_overlay(state);
     }
@@ -1031,8 +1032,10 @@ fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
 /// last Q&A (no wrap). Was previously a within-band clamp.
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
     // Moving to a different Q&A page invalidates any diff-highlight from a
-    // custom-prompt rewrite on the page we're leaving (Task 7).
+    // custom-prompt rewrite on the page we're leaving (Task 7); a revision
+    // browse (Task 8) drops with it.
     state.borrow().journal_overlay.clear_rewrite_diff();
+    state.borrow_mut().rewrite_browse = None;
     // Filtered subset walk: step within the term matches, render read-only,
     // and skip the unfiltered work-wide logic entirely.
     {
@@ -1081,6 +1084,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     // Moving to a different scene invalidates any diff-highlight from a
     // custom-prompt rewrite on the entry we're leaving (Task 7).
     s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     let work_abbrev = current_work_abbrev(&s);
     let scenes = crate::db::queries::open_db()
         .ok()
@@ -1121,6 +1125,7 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     // Switching bands invalidates any diff-highlight from a custom-prompt
     // rewrite on the entry we're leaving (Task 7).
     s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     if s.journal_band == JournalBand::Work {
         return;
     }
@@ -1139,6 +1144,7 @@ pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
     // Switching bands invalidates any diff-highlight from a custom-prompt
     // rewrite on the entry we're leaving (Task 7).
     s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     if s.current_work.is_none() {
         return;
     }
@@ -1160,6 +1166,7 @@ pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
     // Switching bands invalidates any diff-highlight from a custom-prompt
     // rewrite on the entry we're leaving (Task 7).
     s.journal_overlay.clear_rewrite_diff();
+    s.rewrite_browse = None;
     let author = s
         .current_work
         .as_ref()
@@ -1499,7 +1506,7 @@ pub(crate) fn vim_open_rewrite(
 /// match (`f`-opened cross-work entry) when a filter is set, else the current
 /// band page. Rewrite/edit paths must read THIS, not `journal.pages[page_index]`
 /// (which is the origin band and holds the wrong entry under a filter).
-fn displayed_journal_page(s: &AppState) -> Option<crate::db::journal::JournalPage> {
+pub(crate) fn displayed_journal_page(s: &AppState) -> Option<crate::db::journal::JournalPage> {
     if let Some(filter) = s.journal.filter.as_ref() {
         return filter.matches.get(filter.pos).map(|m| m.page.clone());
     }

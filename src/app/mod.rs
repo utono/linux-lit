@@ -623,6 +623,11 @@ pub struct AppState {
     /// journal edit-save / edit-rewrite paths before they update the row; `u`
     /// restores it via `update_journal_page`. Cleared once consumed.
     pub journal_undo: Option<(i64, String, String, String)>,
+    /// Active read-only revision browse (Ctrl+Shift+n/p), if the user is
+    /// stepping a journal Q&A or gloss entry's stored `rewrite_revisions`.
+    /// View-only: browsing never writes the DB or mutates the live row; only
+    /// `browse_restore` (Ctrl+Shift+r) writes. Dropped on Escape/nav/close.
+    pub rewrite_browse: Option<crate::input::actions::rewrite_history::RewriteBrowse>,
     /// Which overlay a pending `UndoConfirm` belongs to, so `y` runs the right
     /// overlay's undo and returns to the right mode. Set when `u` opens the
     /// confirm; cleared when it closes.
@@ -1980,6 +1985,7 @@ pub fn build_window(
         rewrite_target_overlay: None,
         gloss_undo: None,
         journal_undo: None,
+        rewrite_browse: None,
         undo_confirm_origin: None,
         undo_confirm_container: None,
         undo_confirm_overlay: None,

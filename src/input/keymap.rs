@@ -214,7 +214,7 @@ pub fn handle_key(
             | crate::app::InputMode::JournalPicker
             | crate::app::InputMode::JournalMovePicker
             | crate::app::InputMode::JournalTermInput
-            | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_alt, tokio_handle, mode),
+            | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_shift, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VocabLoop => handle_vocab_loop_key(state, key_name, is_ctrl),
             crate::app::InputMode::VoicePicker => handle_voice_picker_key(state, key_name, is_ctrl),
@@ -222,7 +222,7 @@ pub fn handle_key(
             crate::app::InputMode::OverlaySearchInput => handle_overlay_search_input_key(state, key_name),
             crate::app::InputMode::GlossOverlay => handle_gloss_key(state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle),
             crate::app::InputMode::GlossVisual => handle_block_visual_key(state, key_state, key_name, &GLOSS_VISUAL_CFG),
-            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, key_char, is_ctrl, is_alt),
+            crate::app::InputMode::JournalOverlay => handle_journal_key(state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt),
             // JournalEdit is intercepted at the top of handle_key (before the
             // global guards), so it never reaches this match.
             crate::app::InputMode::JournalEdit => unreachable!("JournalEdit handled before mode dispatch"),
@@ -478,6 +478,7 @@ fn handle_picker_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_shift: bool,
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
     mode: crate::app::InputMode,
@@ -485,7 +486,10 @@ fn handle_picker_key(
     use crate::app::InputMode;
     use crate::input::picker_keys::{resolve_picker_key, PickerAction};
 
-    match resolve_picker_key(key_name, is_ctrl) {
+    // Ctrl+Shift+n/p is the revision-browse chord (gloss/journal overlays); it
+    // must not be consumed as picker up/down navigation, so drop the Ctrl
+    // modifier for resolution when Shift is held.
+    match resolve_picker_key(key_name, is_ctrl && !is_shift) {
         PickerAction::Hide => {
             let mut s = state.borrow_mut();
             match mode {
@@ -1366,6 +1370,7 @@ fn handle_journal_key(
     key_name: &str,
     key_char: Option<char>,
     is_ctrl: bool,
+    is_shift: bool,
     is_alt: bool,
 ) -> bool {
     // The `e` editor is an in-place vim mode (InputMode::JournalEdit, handled at
@@ -1452,6 +1457,27 @@ fn handle_journal_key(
     }
 
     if is_ctrl {
+        // Ctrl+Shift+n/p/r: browse (view-only) / restore the displayed Q&A's
+        // stored rewrite revisions. Handled before the plain Ctrl+n/p band-nav
+        // arms below so the chord is not swallowed as page navigation. Shifted
+        // letters arrive as the uppercase glyph; match both forms.
+        if is_shift {
+            match key_name {
+                "n" | "N" => {
+                    crate::input::actions::rewrite_history::browse_step(state, true);
+                    return true;
+                }
+                "p" | "P" => {
+                    crate::input::actions::rewrite_history::browse_step(state, false);
+                    return true;
+                }
+                "r" | "R" => {
+                    crate::input::actions::rewrite_history::browse_restore(state);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         match key_name {
             "n" => {
                 crate::input::actions::journal::nav_page(state, 1);
@@ -1680,6 +1706,9 @@ fn handle_journal_key(
         // in the overlay); else an active overlay search clears (stay); else an
         // active term filter clears (stay); else close.
         "Escape" => {
+            // A revision browse always drops on Escape (view-only state must
+            // not leak into the next open); Task 7 clears the diff-highlight.
+            state.borrow_mut().rewrite_browse = None;
             if state.borrow().journal_overlay.rewrite_diff_active() {
                 state.borrow().journal_overlay.clear_rewrite_diff();
             } else if crate::input::actions::journal::clear_overlay_search(state) {
@@ -1787,6 +1816,27 @@ fn handle_gloss_key(
         }
     }
     if is_ctrl {
+        // Ctrl+Shift+n/p/r: browse (view-only) / restore this gloss's stored
+        // rewrite revisions. Handled before the plain Ctrl+n/p passage-nav arms
+        // below so the chord is not swallowed as passage navigation. Shifted
+        // letters arrive as the uppercase glyph; match both forms.
+        if is_shift {
+            match key_name {
+                "n" | "N" => {
+                    crate::input::actions::rewrite_history::browse_step(state, true);
+                    return true;
+                }
+                "p" | "P" => {
+                    crate::input::actions::rewrite_history::browse_step(state, false);
+                    return true;
+                }
+                "r" | "R" => {
+                    crate::input::actions::rewrite_history::browse_restore(state);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         match key_name {
             "n" => {
                 // Silence audio on passage nav (pause MPV + stop TTS), like j/k.
@@ -1970,6 +2020,9 @@ fn handle_gloss_key(
         // without a reload; falls back to the pre-open page). Gloss has no
         // journal-style term filter, so the precedence is simpler.
         "Escape" => {
+            // A revision browse always drops on Escape (view-only state must
+            // not leak into the next open); Task 7 clears the diff-highlight.
+            state.borrow_mut().rewrite_browse = None;
             if state.borrow().gloss_overlay.rewrite_diff_active() {
                 state.borrow().gloss_overlay.clear_rewrite_diff();
             } else if crate::input::actions::gloss::clear_overlay_search(state) {
@@ -2303,11 +2356,11 @@ fn handle_synopsis_overlay_key(
         // overlay-to-overlay navigation). Consumed no-op.
         "j" if is_ctrl => true,
         // (Font-size adjust removed: overlays are locked to GLOSS_DEFAULT_FONT_SIZE.)
-        "n" if is_ctrl => {
+        "n" if is_ctrl && !is_shift => {
             crate::app::scene_synopsis::cycle_synopsis(state, 1);
             true
         }
-        "p" if is_ctrl => {
+        "p" if is_ctrl && !is_shift => {
             crate::app::scene_synopsis::cycle_synopsis(state, -1);
             true
         }
