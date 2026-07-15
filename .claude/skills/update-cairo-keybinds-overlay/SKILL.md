@@ -51,15 +51,14 @@ the Space cap, symbols to their symbol caps, `Tab` to the Tab cap, `j`/`k` to th
 `key_name_to_glyph`), so digit keys (`1`..`0`) and modified combos
 (Ctrl/Alt/Shift chords) are NOT jump targets — only the bare unshifted glyph
 printed on the cap is; those caps are reached by pressing a neighbour and reading
-across, or via the `n`/`p` row overload.
+across, or via the `Ctrl+n`/`Ctrl+p` row navigation.
 
-The one overload: **`n`/`p` navigate rows on a double-tap.** A first `n` jumps to
-the `n` cap; pressing `n` again while already on it advances to the next row
-(`p` symmetrically retreats; the gamepad overlay is the 6th screen). State-based
-double-tap via `is_on_cap("n")` — no timer. `Esc` closes.
+**Row navigation is `Ctrl+n` (next row) / `Ctrl+p` (previous row)** — the gamepad
+overlay is the 6th screen, reached past the last/first row. Every UNMODIFIED key
+still jumps to its own cap. `Esc` closes.
 
-Key routing lives in `handle_keybinds_key` (`src/input/keymap.rs`);
-`jump_to_key` / `is_on_cap` / `next_row` / `prev_row` live on `KeybindsOverlay`.
+Key routing lives in `handle_keybinds_key` (`src/input/keymap.rs`, which takes
+`is_ctrl`); `jump_to_key` / `next_row` / `prev_row` live on `KeybindsOverlay`.
 
 ### `row_keys(idx)`
 

@@ -202,7 +202,7 @@ pub fn handle_key(
             crate::app::InputMode::EchoTurnsPicker => handle_echo_turns_picker_key(state, key_name, tokio_handle),
             crate::app::InputMode::EchoesOverlay => handle_echoes_overlay_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::GamepadOverlay => handle_gamepad_key(state, key_name),
-            crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name),
+            crate::app::InputMode::KeybindsOverlay => handle_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::EchoKeybindsOverlay => handle_echo_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::GlossKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Gloss),
             crate::app::InputMode::SynopsisKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Synopsis),
@@ -2975,6 +2975,7 @@ fn handle_vocab_loop_key(
 fn handle_keybinds_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
+    is_ctrl: bool,
 ) -> bool {
     // Advance a row; past the last keyboard row hands off to the gamepad screen.
     fn next_row_or_gamepad(state: &Rc<RefCell<AppState>>) {
@@ -2999,42 +3000,28 @@ fn handle_keybinds_key(
         }
     }
 
-    match key_name {
-        "Escape" => {
-            state.borrow().keybinds_overlay.hide();
-            let back = state.borrow().keybinds_return_mode;
-            crate::input::actions::pickers::restore_mode_after_keybinds(state, back);
-            return true;
-        }
-        // Every key jumps to its own cap so its detail shows (arrows → ↑↓←→,
-        // Space → Space, symbols → symbol caps, Tab → Tab, j/k → j/k caps).
-        // The one overload: `n`/`p` navigate rows on a DOUBLE-tap — a first
-        // press jumps to the n (or p) cap; pressing it again while already on
-        // that cap advances/retreats a row. State-based double-tap, no timer.
-        "n" => {
-            let s = state.borrow();
-            if s.keybinds_overlay.is_on_cap("n") {
-                drop(s);
-                next_row_or_gamepad(state);
-            } else {
-                s.keybinds_overlay.jump_to_key("n");
-            }
-        }
-        "p" => {
-            let s = state.borrow();
-            if s.keybinds_overlay.is_on_cap("p") {
-                drop(s);
-                prev_row_or_gamepad(state);
-            } else {
-                s.keybinds_overlay.jump_to_key("p");
-            }
-        }
-        // Any other key jumps to its matching cap (no-op if none matches —
-        // find_cap returns None).
-        _ => {
-            state.borrow().keybinds_overlay.jump_to_key(key_name);
-        }
+    if key_name == "Escape" {
+        state.borrow().keybinds_overlay.hide();
+        let back = state.borrow().keybinds_return_mode;
+        crate::input::actions::pickers::restore_mode_after_keybinds(state, back);
+        return true;
     }
+
+    // Row navigation: Ctrl+n → next row, Ctrl+p → previous row (the gamepad
+    // overlay is the 6th screen, reached past the last/first row).
+    if is_ctrl {
+        match key_name {
+            "n" => next_row_or_gamepad(state),
+            "p" => prev_row_or_gamepad(state),
+            _ => {}
+        }
+        return true;
+    }
+
+    // Every other (unmodified) key jumps the highlight to its own cap so its
+    // detail shows — arrows → ↑↓←→, Space → Space, symbols → symbol caps,
+    // Tab → Tab, n/p/j/k → their caps. No-op if no cap matches (find_cap None).
+    state.borrow().keybinds_overlay.jump_to_key(key_name);
     true // consume all keys while the keybinds overlay is visible
 }
 

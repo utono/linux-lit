@@ -902,16 +902,6 @@ impl KeybindsOverlay {
         }
     }
 
-    /// Whether the highlight currently sits on the cap whose unshifted glyph is
-    /// `glyph`. Used for the `n`/`p` double-tap: a first press jumps to the
-    /// n/p cap, a second press (already on it) navigates a row.
-    pub fn is_on_cap(&self, glyph: &str) -> bool {
-        let row = self.row_index.get();
-        let keys = row_keys(row);
-        keys.get(self.selected.get())
-            .map(|d| d.unshifted == glyph)
-            .unwrap_or(false)
-    }
 
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
