@@ -298,6 +298,14 @@ pub struct AppState {
     pub page_turn_overlay: gtk4::Overlay,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
+    /// Running-head strip labels living inside `top_spacer` (the card's top
+    /// band). `running_head_work` is the work abbrev (left); `running_head_scene`
+    /// is the position label (right) — act/scene for plays, chapter for prose.
+    /// Both are refreshed on every cursor move and on work load via
+    /// `scene_synopsis::update_running_heads`, on ALL works. Blank only when no
+    /// work is loaded. Replaces the persistent bottom-center position toast.
+    pub running_head_work: gtk4::Label,
+    pub running_head_scene: gtk4::Label,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     /// Left-column container. Carries the divider-hug left margin in two-column
@@ -1389,11 +1397,30 @@ pub fn build_window(
     columns_hbox.append(&right_scrolled_overlay);
     right_scrolled_overlay.set_visible(false);
 
-    // Top spacer — one line height, rounded top corners only
+    // Top spacer — one line height, rounded top corners only. Doubles as the
+    // running-head strip: work abbrev at the start, position (act/scene or
+    // chapter) at the end, with a hairline rule (CSS border-bottom) separating
+    // it from the reading text.
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_hexpand(true);
     top_spacer.set_height_request(TOP_SPACER_HEIGHT);
     top_spacer.add_css_class("card-top");
+    top_spacer.add_css_class("running-head");
+
+    let running_head_work = gtk4::Label::new(None);
+    running_head_work.set_halign(gtk4::Align::Start);
+    running_head_work.set_valign(gtk4::Align::Center);
+    running_head_work.set_hexpand(true);
+    running_head_work.add_css_class("running-head-work");
+
+    let running_head_scene = gtk4::Label::new(None);
+    running_head_scene.set_halign(gtk4::Align::End);
+    running_head_scene.set_valign(gtk4::Align::Center);
+    running_head_scene.set_hexpand(true);
+    running_head_scene.add_css_class("running-head-scene");
+
+    top_spacer.append(&running_head_work);
+    top_spacer.append(&running_head_scene);
 
     // Vertical card assembly: top spacer + scrolled area. No bottom spacer —
     // the scrolled area's card-bottom CSS provides the rounded bottom.
@@ -1806,6 +1833,8 @@ pub fn build_window(
         page_turn_overlay: page_turn_overlay.clone(),
         bottom_clip,
         top_spacer,
+        running_head_work,
+        running_head_scene,
         card_vbox,
         scrolled_window: scrolled,
         scrolled_overlay,
