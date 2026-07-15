@@ -217,9 +217,8 @@ pub(crate) fn open_overlay_search(state: &Rc<RefCell<AppState>>) {
 /// gloss MRU. Mirrors `journal::confirm_overlay_search`.
 ///
 /// BORROW SAFETY: read `query()` and `hide()` under scoped borrows dropped
-/// before the mutating `borrow_mut`. The tags are cloned into locals and the
-/// buffer taken by value BEFORE building/applying, so no `&s` getter borrow is
-/// held across the `set_from_text` write to `s.gloss_search`.
+/// before the mutating `borrow_mut`, so no `&s` getter borrow is held across the
+/// `set_search_matches` write to `s.gloss_search`.
 pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
     let query = {
         let s = state.borrow();
@@ -235,15 +234,23 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
         return;
     }
     let mut s = state.borrow_mut();
-    let buffer = s.gloss_overlay.buffer();
-    let tag = s.gloss_overlay.search_tag().clone();
-    let ctag = s.gloss_overlay.search_current_tag().clone();
-    let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, pattern);
+    // Collect over the WHOLE gloss (every page), not just the rendered buffer, so
+    // a match on another page of a paginated gloss is found. Offsets are into the
+    // whole-gloss rendered basis (`whole_entry_text` == `full_rendered_gloss_text`,
+    // the same basis `page_char_span` measures); `jump_to_whole_offset` turns to
+    // the match's page and `set_search_matches` paints whatever falls on it.
+    let text = s.gloss_overlay.whole_entry_text();
+    let search = crate::input::overlay_search::OverlaySearch {
+        pattern: pattern.to_string(),
+        matches: crate::input::overlay_search::collect(&text, pattern),
+        current: 0,
+    };
     if search.matches.is_empty() {
         crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
     } else if let Some((off, _)) = search.matches.first() {
-        s.gloss_overlay.scroll_to_char_offset(*off);
+        s.gloss_overlay.jump_to_whole_offset(*off as usize);
     }
+    s.gloss_overlay.set_search_matches(&search);
     s.gloss_last_pattern = Some(pattern.to_string());
     s.gloss_search = Some(search);
 }
@@ -260,23 +267,27 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
 pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) {
     let mut s = state.borrow_mut();
     if s.gloss_search.is_none() {
-        // Revive the MRU pattern (post-Escape n/N).
+        // Revive the MRU pattern (post-Escape n/N). Collect over the WHOLE gloss
+        // so revived stepping also crosses page boundaries.
         let Some(pat) = s.gloss_last_pattern.clone() else {
             return;
         };
-        let buffer = s.gloss_overlay.buffer();
-        let tag = s.gloss_overlay.search_tag().clone();
-        let ctag = s.gloss_overlay.search_current_tag().clone();
-        let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, &pat);
+        let text = s.gloss_overlay.whole_entry_text();
+        let search = crate::input::overlay_search::OverlaySearch {
+            pattern: pat.clone(),
+            matches: crate::input::overlay_search::collect(&text, &pat),
+            current: 0,
+        };
         if search.matches.is_empty() {
             crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
             return;
         }
+        if let Some((off, _)) = search.matches.first() {
+            s.gloss_overlay.jump_to_whole_offset(*off as usize);
+        }
+        s.gloss_overlay.set_search_matches(&search);
         s.gloss_search = Some(search);
     }
-    let buffer = s.gloss_overlay.buffer();
-    let tag = s.gloss_overlay.search_tag().clone();
-    let ctag = s.gloss_overlay.search_current_tag().clone();
     let scroll_to = {
         let search = s.gloss_search.as_mut().unwrap();
         match crate::input::overlay_search::step(search.current, search.matches.len(), forward) {
@@ -287,13 +298,15 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
             None => None,
         }
     };
-    if let Some(search) = s.gloss_search.as_ref() {
-        crate::input::overlay_search::apply(&buffer, &tag, &ctag, search);
-    }
+    // Jump to the match's page (whole-body offset) and re-paint the highlights on
+    // whatever page is now shown. Clone is a cheap snapshot to satisfy the borrow
+    // checker (set_search_matches takes &self while s.gloss_search is borrowed).
     if let Some(off) = scroll_to {
-        // Move the accent bar to the block holding the match, then scroll.
-        s.gloss_overlay.cursor_to_char_offset(off);
-        s.gloss_overlay.scroll_to_char_offset(off);
+        let search = s.gloss_search.clone().unwrap();
+        s.gloss_overlay.set_search_matches(&search);
+        s.gloss_overlay.jump_to_whole_offset(off as usize);
+    } else if let Some(search) = s.gloss_search.clone() {
+        s.gloss_overlay.set_search_matches(&search);
     }
 }
 
@@ -309,10 +322,7 @@ pub(crate) fn clear_overlay_search(state: &Rc<RefCell<AppState>>) -> bool {
     if s.gloss_search.is_none() {
         return false;
     }
-    let buffer = s.gloss_overlay.buffer();
-    let tag = s.gloss_overlay.search_tag().clone();
-    let ctag = s.gloss_overlay.search_current_tag().clone();
-    crate::input::overlay_search::clear(&buffer, &tag, &ctag);
+    s.gloss_overlay.clear_search_tags();
     s.gloss_search = None;
     true
 }
@@ -930,17 +940,19 @@ fn render_gloss_row(s: &mut AppState, new_idx: usize) {
     s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
     recolor_cached_blocks(s);
     // Re-apply any active overlay search so a `/`-typed pattern keeps
-    // highlighting across gloss/passage stepping (same locals-first borrow
-    // discipline as journal's render_current: tags cloned + buffer taken into
-    // locals BEFORE borrowing `s.gloss_search` mutably, so no `s.gloss_overlay`
-    // getter borrow overlaps the mutable use — `reapply` re-collects spans
-    // against the new buffer text and re-tags).
+    // highlighting across gloss/passage stepping. Re-collect against the NEW
+    // gloss's WHOLE rendered text (every page), not the rendered buffer, so a
+    // match on a later page is found too, then store + paint the current page.
     if s.gloss_search.is_some() {
-        let buffer = s.gloss_overlay.buffer();
-        let tag = s.gloss_overlay.search_tag().clone();
-        let ctag = s.gloss_overlay.search_current_tag().clone();
-        let search = s.gloss_search.as_mut().unwrap();
-        crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
+        let text = s.gloss_overlay.whole_entry_text();
+        if let Some(search) = s.gloss_search.as_mut() {
+            search.matches = crate::input::overlay_search::collect(&text, &search.pattern);
+            if search.current >= search.matches.len() {
+                search.current = search.matches.len().saturating_sub(1);
+            }
+        }
+        let search = s.gloss_search.clone().unwrap();
+        s.gloss_overlay.set_search_matches(&search);
     }
     // Show the diff vs this gloss's last stored revision (or clear if none), so
     // landing on a gloss always highlights what its last rewrite changed.
@@ -2824,6 +2836,25 @@ pub(crate) fn open_gloss_overlay(
     s.input_mode = crate::app::InputMode::GlossOverlay;
     recolor_cached_blocks(s);
 
+    // Re-apply / clear the overlay-search highlight for the NEWLY shown gloss.
+    // Cross-passage Ctrl+n/p keeps `gloss_search` active but shows a different
+    // gloss, so re-collect the pattern against this gloss's whole rendered text
+    // (every page). When no search is active, clear the overlay's stored spans so
+    // a prior passage's matches don't re-paint on this render.
+    if s.gloss_search.is_some() {
+        let text = s.gloss_overlay.whole_entry_text();
+        if let Some(search) = s.gloss_search.as_mut() {
+            search.matches = crate::input::overlay_search::collect(&text, &search.pattern);
+            if search.current >= search.matches.len() {
+                search.current = search.matches.len().saturating_sub(1);
+            }
+        }
+        let search = s.gloss_search.clone().unwrap();
+        s.gloss_overlay.set_search_matches(&search);
+    } else {
+        s.gloss_overlay.clear_search_tags();
+    }
+
     // Stamp the most-recent reference from the gloss now displayed.
     s.record_last_gloss(&shown_type);
 }
@@ -2842,8 +2873,10 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     s.gloss_overlay.hide();
     s.gloss_opened_from_picker = false;
     // Drop any overlay search + MRU so neither leaks into the next gloss overlay
-    // session (the buffer is re-rendered on the next open regardless). Mirrors
-    // the journal overlay's close-branch cleanup.
+    // session. Clear the overlay's stored whole-body match spans too, or the next
+    // open's render_gloss_page would re-paint them. Mirrors the journal overlay's
+    // close-branch cleanup.
+    s.gloss_overlay.clear_search_tags();
     s.gloss_search = None;
     s.gloss_last_pattern = None;
     crate::app::return_to_reader_mode(&mut s);

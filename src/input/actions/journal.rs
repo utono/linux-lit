@@ -509,18 +509,34 @@ pub(crate) fn render_current(s: &mut AppState) {
     // entry id resolves).
     crate::input::actions::gloss::recolor_journal_cached_blocks(s);
     // Re-apply any active overlay search so a `/`-typed pattern keeps
-    // highlighting across Ctrl+n/p band navigation (same locals-first borrow
-    // discipline as render_filtered_match).
-    if s.journal.search.is_some() {
-        let buffer = s.journal_overlay.buffer();
-        let tag = s.journal_overlay.search_tag().clone();
-        let ctag = s.journal_overlay.search_current_tag().clone();
-        let search = s.journal.search.as_mut().unwrap();
-        crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
-    }
+    // highlighting across Ctrl+n/p band navigation. Re-collect against the NEW
+    // entry's WHOLE-entry text (not the rendered buffer), so matches on later
+    // pages are found too, then store + paint the current page.
+    reapply_overlay_search_whole_entry(s);
     // Show the diff vs the entry's last stored revision (or clear if none), so
     // landing on an entry always highlights what its last rewrite changed.
     refresh_entry_diff_highlight(s);
+}
+
+/// Re-collect the active overlay search's pattern against the CURRENT entry's
+/// whole-entry text (every page), store the whole-body matches on
+/// `s.journal.search`, and paint whatever falls on the shown page via
+/// `set_search_matches`. No-op when no search is active. Used after landing on a
+/// new entry (band nav / filter step) so a `/`-typed or seeded pattern keeps
+/// highlighting across the stepped set AND finds cross-page matches.
+fn reapply_overlay_search_whole_entry(s: &mut AppState) {
+    if s.journal.search.is_none() {
+        return;
+    }
+    let text = s.journal_overlay.whole_entry_text();
+    if let Some(search) = s.journal.search.as_mut() {
+        search.matches = crate::input::overlay_search::collect(&text, &search.pattern);
+        if search.current >= search.matches.len() {
+            search.current = search.matches.len().saturating_sub(1);
+        }
+    }
+    let search = s.journal.search.clone().unwrap();
+    s.journal_overlay.set_search_matches(&search);
 }
 
 /// Render the filter's current match in the overlay WITHOUT switching
@@ -553,17 +569,9 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     s.journal_overlay
         .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, cw, h);
     // Re-apply the overlay search against the just-rendered entry so the seeded
-    // term (or a `/`-typed pattern) lights up in every stepped match. The tags
-    // are cloned + buffer taken into locals BEFORE borrowing `s.journal.search`
-    // mutably, so no `s.journal_overlay` getter borrow overlaps the mutable use
-    // (`reapply` re-collects spans against the new buffer text and re-tags).
-    if s.journal.search.is_some() {
-        let buffer = s.journal_overlay.buffer();
-        let tag = s.journal_overlay.search_tag().clone();
-        let ctag = s.journal_overlay.search_current_tag().clone();
-        let search = s.journal.search.as_mut().unwrap();
-        crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
-    }
+    // term (or a `/`-typed pattern) lights up in every stepped match. Re-collect
+    // against the whole-entry text (every page) so a later-page match is found.
+    reapply_overlay_search_whole_entry(s);
     // Show the diff vs the filtered entry's last stored revision (displayed_journal_page
     // reads the filter match), so cross-work matches also highlight their last change.
     refresh_entry_diff_highlight(s);
@@ -588,14 +596,18 @@ pub(crate) fn activate_filter(state: &Rc<RefCell<AppState>>, term: &str) -> bool
     });
     render_filtered_match(&mut s);
     // Seed the overlay search from the browsed term so it highlights in every
-    // stepped entry (re-collected on each render by render_filtered_match's
-    // reapply block). Tags cloned + buffer taken into locals first so no getter
-    // borrow of `s` overlaps writing `s.journal.search`.
+    // stepped entry. Collect over the whole-entry text (every page) so a term on
+    // a later page of the first match still lights up. render_filtered_match
+    // already ran above (which called reapply_overlay_search_whole_entry when a
+    // search was set) — but the search is only set here, so paint it now.
     {
-        let buffer = s.journal_overlay.buffer();
-        let tag = s.journal_overlay.search_tag().clone();
-        let ctag = s.journal_overlay.search_current_tag().clone();
-        let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, term);
+        let text = s.journal_overlay.whole_entry_text();
+        let search = crate::input::overlay_search::OverlaySearch {
+            pattern: term.to_string(),
+            matches: crate::input::overlay_search::collect(&text, term),
+            current: 0,
+        };
+        s.journal_overlay.set_search_matches(&search);
         s.journal.last_pattern = Some(term.to_string());
         s.journal.search = Some(search);
     }
@@ -609,9 +621,11 @@ pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
         return;
     }
     s.journal.filter = None;
-    // Clear any search seeded by the filter (e.g. the f-term); the buffer's
-    // tags are removed on the next render. Keep last_pattern so post-clear n/N
-    // can still revive it.
+    // Clear any search seeded by the filter (e.g. the f-term). Drop the stored
+    // whole-body match spans on the overlay too, or the next render_page would
+    // re-paint them (the highlights survive page turns by re-tagging from
+    // search_full). Keep last_pattern so post-clear n/N can still revive it.
+    s.journal_overlay.clear_search_tags();
     s.journal.search = None;
     render_current(&mut s); // restore the band the user was in
 }
@@ -690,9 +704,8 @@ pub(crate) fn open_overlay_search(state: &Rc<RefCell<AppState>>) {
 /// no-op (search stays whatever it was). Stores the pattern as the MRU.
 ///
 /// BORROW SAFETY: read `query()` and `hide()` under scoped borrows dropped
-/// before the mutating `borrow_mut`. The tags are cloned into locals and the
-/// buffer taken by value BEFORE building/applying, so no `&s` borrow is held
-/// across the `set_from_text` write.
+/// before the mutating `borrow_mut`, so no `&s` borrow is held across the
+/// `set_search_matches` write.
 pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
     let query = {
         let s = state.borrow();
@@ -708,15 +721,24 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
         return;
     }
     let mut s = state.borrow_mut();
-    let buffer = s.journal_overlay.buffer();
-    let tag = s.journal_overlay.search_tag().clone();
-    let ctag = s.journal_overlay.search_current_tag().clone();
-    let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, pattern);
+    // Collect over the WHOLE entry (every page), not just the rendered buffer, so
+    // a match on another page of a paginated Q&A is found. Match offsets are into
+    // the whole-entry char basis (`whole_entry_text` == the paragraph basis
+    // `page_char_span` measures); `jump_to_whole_offset` turns to the match's page
+    // and `set_search_matches` paints whatever falls on the shown page.
+    let text = s.journal_overlay.whole_entry_text();
+    let search = crate::input::overlay_search::OverlaySearch {
+        pattern: pattern.to_string(),
+        matches: crate::input::overlay_search::collect(&text, pattern),
+        current: 0,
+    };
     if search.matches.is_empty() {
         crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
     } else if let Some((off, _)) = search.matches.first() {
-        s.journal_overlay.scroll_to_char_offset(*off);
+        // Turn to the page holding the first match before painting it.
+        s.journal_overlay.jump_to_whole_offset(*off as usize);
     }
+    s.journal_overlay.set_search_matches(&search);
     s.journal.last_pattern = Some(pattern.to_string());
     s.journal.search = Some(search);
 }
@@ -732,23 +754,27 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
 pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) {
     let mut s = state.borrow_mut();
     if s.journal.search.is_none() {
-        // Revive the MRU pattern (post-Escape n/N).
+        // Revive the MRU pattern (post-Escape n/N). Collect over the WHOLE entry
+        // so revived stepping also crosses page boundaries.
         let Some(pat) = s.journal.last_pattern.clone() else {
             return;
         };
-        let buffer = s.journal_overlay.buffer();
-        let tag = s.journal_overlay.search_tag().clone();
-        let ctag = s.journal_overlay.search_current_tag().clone();
-        let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, &pat);
+        let text = s.journal_overlay.whole_entry_text();
+        let search = crate::input::overlay_search::OverlaySearch {
+            pattern: pat.clone(),
+            matches: crate::input::overlay_search::collect(&text, &pat),
+            current: 0,
+        };
         if search.matches.is_empty() {
             crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
             return;
         }
+        if let Some((off, _)) = search.matches.first() {
+            s.journal_overlay.jump_to_whole_offset(*off as usize);
+        }
+        s.journal_overlay.set_search_matches(&search);
         s.journal.search = Some(search);
     }
-    let buffer = s.journal_overlay.buffer();
-    let tag = s.journal_overlay.search_tag().clone();
-    let ctag = s.journal_overlay.search_current_tag().clone();
     let scroll_to = {
         let search = s.journal.search.as_mut().unwrap();
         match crate::input::overlay_search::step(search.current, search.matches.len(), forward) {
@@ -759,17 +785,18 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
             None => None,
         }
     };
-    // Re-apply current-tag position (search is now immutable; locals hold the
-    // GTK objects, so no getter re-borrow of `s` overlaps).
-    if let Some(search) = s.journal.search.as_ref() {
-        crate::input::overlay_search::apply(&buffer, &tag, &ctag, search);
-    }
+    // Jump to the match's page (whole-body offset) and re-paint the highlights on
+    // whatever page is now shown. The clone is a cheap snapshot to satisfy the
+    // borrow checker (set_search_matches takes &self while s.journal.search is
+    // borrowed).
     if let Some(off) = scroll_to {
-        // Move the accent bar to the block holding the match, then scroll.
-        // (cursor_to_char_offset may turn the page; scroll after so the match
-        // is on-screen within it.)
-        s.journal_overlay.cursor_to_char_offset(off);
-        s.journal_overlay.scroll_to_char_offset(off);
+        let search = s.journal.search.clone().unwrap();
+        s.journal_overlay.set_search_matches(&search);
+        // Turn to the match's page (updates cursor bar + scrolls it on-screen).
+        s.journal_overlay.jump_to_whole_offset(off as usize);
+    } else if let Some(search) = s.journal.search.clone() {
+        // At an edge (no move): just re-assert the current highlight in place.
+        s.journal_overlay.set_search_matches(&search);
     }
 }
 
@@ -784,10 +811,7 @@ pub(crate) fn clear_overlay_search(state: &Rc<RefCell<AppState>>) -> bool {
     if s.journal.search.is_none() {
         return false;
     }
-    let buffer = s.journal_overlay.buffer();
-    let tag = s.journal_overlay.search_tag().clone();
-    let ctag = s.journal_overlay.search_current_tag().clone();
-    crate::input::overlay_search::clear(&buffer, &tag, &ctag);
+    s.journal_overlay.clear_search_tags();
     s.journal.search = None;
     true
 }
@@ -911,7 +935,9 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         // stale match list and the first Esc "clear" a filter never set.
         s.journal.filter = None;
         // Also drop any overlay search + MRU so neither leaks into the next
-        // overlay session (the buffer is torn down on close regardless).
+        // overlay session. Clear the overlay's stored whole-body match spans too,
+        // or the next open's render_page would re-paint them.
+        s.journal_overlay.clear_search_tags();
         s.journal.search = None;
         s.journal.last_pattern = None;
         return;
@@ -963,6 +989,9 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     // is a close route that bypasses toggle_overlay — resetting at every open covers
     // it regardless of how the previous session ended.
     s.journal.filter = None;
+    // Drop the overlay's stored whole-body search spans too, so a prior session's
+    // matches don't re-paint on this open's first render_page.
+    s.journal_overlay.clear_search_tags();
     s.journal.search = None;
     s.journal.last_pattern = None;
     s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));

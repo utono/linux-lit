@@ -206,6 +206,13 @@ pub struct GlossOverlay {
     /// glosses paginate — a change on page 2+ would otherwise be lost, since the
     /// buffer holds only one page). Mirrors the journal overlay.
     rewrite_diff_full: RefCell<Vec<(usize, usize)>>,
+    /// Overlay-search match spans as char offsets into the WHOLE gloss's RENDERED
+    /// text (`full_rendered_gloss_text` basis) + the current-match index, so `/`
+    /// search survives page turns WITHIN a paginated gloss: `render_gloss_page`
+    /// clips these to the current page's char span and re-tags them (mirrors
+    /// `rewrite_diff_full`). Empty when no search is active.
+    search_full: RefCell<Vec<(i32, i32)>>,
+    search_full_current: Cell<usize>,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -635,6 +642,8 @@ impl GlossOverlay {
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
+            search_full: RefCell::new(Vec::new()),
+            search_full_current: Cell::new(0),
         }
     }
 
@@ -664,21 +673,11 @@ impl GlossOverlay {
         self.apply_hi_color();
     }
 
-    /// The overlay's TextView buffer (stable for the view's lifetime — never
-    /// replaced by `set_text`/populate), for overlay-search (Task 3) to read/scan.
-    pub fn buffer(&self) -> gtk4::TextBuffer {
+    /// The overlay's TextView buffer (stable for the view's lifetime). Used
+    /// internally by `cursor_to_char_offset` (search jump maps a page-local offset
+    /// to a block).
+    fn buffer(&self) -> gtk4::TextBuffer {
         self.gloss_view.buffer()
-    }
-
-
-    /// The "all matches" search-highlight tag.
-    pub fn search_tag(&self) -> &gtk4::TextTag {
-        &self.search_tag
-    }
-
-    /// The "current match" search-highlight tag (brighter than `search_tag`).
-    pub fn search_current_tag(&self) -> &gtk4::TextTag {
-        &self.search_current_tag
     }
 
     /// Set the search-highlight tag colors (theme-wired; see Task 5).
@@ -751,6 +750,15 @@ impl GlossOverlay {
     /// Only meaningful for the paginated Gloss mode (the only mode
     /// `apply_rewrite_diff` is used on); returns `(0, 0)` otherwise.
     fn current_page_char_span(&self) -> (usize, usize) {
+        self.page_char_span(self.page_idx.get())
+    }
+
+    /// Char span (start offset into the whole gloss's rendered text, char length)
+    /// of the page at `page_idx`, in the `full_rendered_gloss_text` basis.
+    /// Generalizes `current_page_char_span` to an ARBITRARY page so
+    /// `page_for_whole_offset` can locate which page holds a match. Returns
+    /// `(0, 0)` for non-Gloss (synopsis) mode or an out-of-range index.
+    fn page_char_span(&self, page_idx: usize) -> (usize, usize) {
         if self.paginated_mode.get() != PaginatedMode::Gloss {
             return (0, 0);
         }
@@ -765,7 +773,7 @@ impl GlossOverlay {
             let gloss = self.current_gloss.borrow();
             return (0, rendered_len(&gloss));
         }
-        let pidx = self.page_idx.get().min(n_pages.saturating_sub(1));
+        let pidx = page_idx.min(n_pages.saturating_sub(1));
         let Some(page) = pages.get(pidx).copied() else {
             return (0, 0);
         };
@@ -798,6 +806,124 @@ impl GlossOverlay {
     pub fn full_rendered_gloss_text(gloss_markup: &str) -> String {
         let joined = crate::ui::gloss_block::gloss_block_markups(gloss_markup).join("\n");
         crate::ui::gloss_render::rendered_verse_text(&joined)
+    }
+
+    /// The WHOLE current entry's rendered search text. In paginated Gloss mode
+    /// this is `full_rendered_gloss_text` of the current gloss markup — the SAME
+    /// basis `page_char_span` measures, so a match's whole-body offset maps onto a
+    /// page via `page_for_whole_offset`. Outside Gloss mode (synopsis) there is no
+    /// cross-page gloss basis, so this falls back to the CURRENT buffer text and
+    /// the search stays single-page (page_char_span returns the single-page span),
+    /// preserving the pre-pagination-search behavior instead of finding nothing.
+    pub fn whole_entry_text(&self) -> String {
+        if self.paginated_mode.get() != PaginatedMode::Gloss {
+            let b = self.gloss_view.buffer();
+            let (s, e) = b.bounds();
+            return b.text(&s, &e, false).to_string();
+        }
+        Self::full_rendered_gloss_text(&self.current_gloss.borrow())
+    }
+
+    /// The page index whose char span (in the whole-gloss rendered basis) contains
+    /// the whole-body char offset `off`. Clamps to the last page if past the end;
+    /// returns 0 when there are no pages. Mirrors the journal overlay's
+    /// `page_for_whole_offset` so overlay search can turn to the page of a match.
+    pub fn page_for_whole_offset(&self, off: usize) -> usize {
+        let n_pages = self.pages.borrow().len();
+        if n_pages == 0 {
+            return 0;
+        }
+        for i in 0..n_pages {
+            let (start, len) = self.page_char_span(i);
+            if off >= start && off < start + len {
+                return i;
+            }
+        }
+        n_pages - 1
+    }
+
+    /// Turn to the page containing whole-body char offset `off` (search jump),
+    /// re-mark the accent bar on that page, and scroll the match on-screen. Unlike
+    /// the journal overlay's version, gloss `cursor_to_char_offset` does not turn
+    /// the page, so this sets `page_idx` + re-renders first, then converts `off`
+    /// to a page-local offset and marks/scrolls it. No-op basis for single-page /
+    /// synopsis (the buffer already holds the whole thing — just scroll to `off`).
+    pub fn jump_to_whole_offset(&self, off: usize) {
+        if self.paginated_mode.get() != PaginatedMode::Gloss
+            || self.pages.borrow().len() <= 1
+        {
+            self.scroll_to_char_offset(off as i32);
+            return;
+        }
+        let target_page = self.page_for_whole_offset(off);
+        if target_page != self.page_idx.get() {
+            self.page_idx.set(target_page);
+            self.render_current_page();
+        }
+        let (page_start, _) = self.page_char_span(target_page);
+        let local = off.saturating_sub(page_start) as i32;
+        self.cursor_to_char_offset(local);
+        self.scroll_to_char_offset(local);
+    }
+
+    /// Store `search`'s WHOLE-body match spans + current index so
+    /// `render_gloss_page` can re-tag whatever falls on the shown page (survives
+    /// page turns within a paginated gloss). Paints the current page immediately.
+    /// Mirrors `apply_rewrite_diff`.
+    pub fn set_search_matches(&self, search: &crate::input::overlay_search::OverlaySearch) {
+        *self.search_full.borrow_mut() = search.matches.clone();
+        self.search_full_current.set(search.current);
+        self.reapply_search();
+    }
+
+    /// Drop the stored search spans and remove both search tags over the buffer
+    /// (Escape clears the search). Mirrors the journal overlay.
+    pub fn clear_search_tags(&self) {
+        self.search_full.borrow_mut().clear();
+        let buffer = self.gloss_view.buffer();
+        let (bs, be) = buffer.bounds();
+        buffer.remove_tag(&self.search_tag, &bs, &be);
+        buffer.remove_tag(&self.search_current_tag, &bs, &be);
+    }
+
+    /// Re-tag the stored WHOLE-body search match spans onto the CURRENT page's
+    /// buffer, clipping each to the page's char span and shifting to page-local
+    /// offsets (mirrors `reapply_rewrite_diff`). The current match gets the
+    /// brighter `search_current_tag` when it falls on this page. Called from
+    /// `render_gloss_page` so search highlights survive page turns.
+    fn reapply_search(&self) {
+        let buffer = self.gloss_view.buffer();
+        let (bs, be) = buffer.bounds();
+        buffer.remove_tag(&self.search_tag, &bs, &be);
+        buffer.remove_tag(&self.search_current_tag, &bs, &be);
+        let matches = self.search_full.borrow();
+        if matches.is_empty() {
+            return;
+        }
+        // Synopsis mode searches the buffer directly (whole_entry_text == buffer
+        // text), so stored spans are buffer-local: use the whole buffer as the
+        // "page". Gloss mode clips whole-body spans to the rendered-basis page.
+        let (page_start, page_len) = if self.paginated_mode.get() != PaginatedMode::Gloss {
+            (0usize, buffer.char_count() as usize)
+        } else {
+            self.current_page_char_span()
+        };
+        let page_end = page_start + page_len;
+        let paint = |a: i32, b: i32, tag: &gtk4::TextTag| {
+            let s = (a as usize).max(page_start);
+            let e = (b as usize).min(page_end);
+            if s < e {
+                let si = buffer.iter_at_offset((s - page_start) as i32);
+                let ei = buffer.iter_at_offset((e - page_start) as i32);
+                buffer.apply_tag(tag, &si, &ei);
+            }
+        };
+        for (a, b) in matches.iter() {
+            paint(*a, *b, &self.search_tag);
+        }
+        if let Some((a, b)) = matches.get(self.search_full_current.get()) {
+            paint(*a, *b, &self.search_current_tag);
+        }
     }
 
     /// Remove the diff-highlight tag over the whole buffer and forget the stored
@@ -2303,6 +2429,10 @@ impl GlossOverlay {
         // glosses paginate — a change on page 2+ would otherwise be lost). No-op
         // when no rewrite diff is active.
         self.reapply_rewrite_diff();
+        // Re-paint the overlay-search highlights for THIS page (whole-body match
+        // spans clipped to the page's char span), so `/` matches on page 2+
+        // survive page turns within the gloss (mirrors reapply_rewrite_diff).
+        self.reapply_search();
 
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);

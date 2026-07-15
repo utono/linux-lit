@@ -127,6 +127,14 @@ pub struct JournalOverlay {
     /// re-tags them (mirrors how `hi_ranges` is re-derived per page). Empty when
     /// no rewrite highlight is active.
     rewrite_diff_full: RefCell<Vec<(usize, usize)>>,
+    /// Overlay-search match spans as char offsets into the WHOLE-entry body (the
+    /// `whole_entry_text` basis) + the current-match index, so `/` search survives
+    /// page turns WITHIN a paginated entry: `render_page` clips these to the
+    /// current page's char span and re-tags them (mirrors `rewrite_diff_full`).
+    /// Empty when no search is active. Set by `set_search_matches`, cleared by
+    /// `clear_search_tags`.
+    search_full: RefCell<Vec<(i32, i32)>>,
+    search_full_current: Cell<usize>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -503,6 +511,8 @@ impl JournalOverlay {
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
+            search_full: RefCell::new(Vec::new()),
+            search_full_current: Cell::new(0),
         }
     }
 
@@ -909,22 +919,6 @@ impl JournalOverlay {
         self.apply_hi_color();
     }
 
-    /// The overlay's TextView buffer (stable for the view's lifetime — never
-    /// replaced by `set_text`), for overlay-search (Task 3) to read/scan.
-    pub fn buffer(&self) -> gtk4::TextBuffer {
-        self.view.buffer()
-    }
-
-    /// The "all matches" search-highlight tag.
-    pub fn search_tag(&self) -> &gtk4::TextTag {
-        &self.search_tag
-    }
-
-    /// The "current match" search-highlight tag (brighter than `search_tag`).
-    pub fn search_current_tag(&self) -> &gtk4::TextTag {
-        &self.search_current_tag
-    }
-
     /// Set the search-highlight tag colors (theme-wired; see Task 5).
     pub fn set_search_colors(&self, all: &str, current: &str) {
         self.search_tag.set_background(Some(all));
@@ -986,9 +980,19 @@ impl JournalOverlay {
     /// and of the whole-body diff ranges. The page body is
     /// `paras[start..end].join("\n\n")` (2 join chars between blocks).
     fn current_page_char_span(&self) -> (usize, usize) {
+        self.page_char_span(self.page_idx.get())
+    }
+
+    /// Char span (start offset into the whole-entry body, char length) of the
+    /// page at `page_idx`, in the same cleaned (`<hi>`-stripped) basis as
+    /// `whole_entry_text` / `render_page`'s `body`. Generalizes
+    /// `current_page_char_span` to an ARBITRARY page so `page_for_whole_offset`
+    /// can locate which page holds a whole-body offset. Returns `(0, 0)` when the
+    /// page index is out of range.
+    fn page_char_span(&self, page_idx: usize) -> (usize, usize) {
         let paras = self.all_paragraphs.borrow();
         let pages = self.pages.borrow();
-        let Some(page) = pages.get(self.page_idx.get()) else {
+        let Some(page) = pages.get(page_idx) else {
             return (0, 0);
         };
         let clean_chars = |raw: &str| -> usize {
@@ -1009,6 +1013,131 @@ impl JournalOverlay {
             len += clean_chars(p);
         }
         (start, len)
+    }
+
+    /// The WHOLE current entry's search text: for a Q&A, every paragraph
+    /// `<hi>`-stripped and joined by `"\n\n"` — the SAME cleaned basis
+    /// `page_char_span` measures, so a match's char offset maps cleanly onto a
+    /// page via `page_for_whole_offset`. For a note page (Markdown-planned, not
+    /// the paragraph basis) this falls back to the CURRENT buffer text, so search
+    /// stays page-local for notes (the pre-pagination-search behavior) instead of
+    /// finding nothing; `jump_to_whole_offset` treats note offsets as buffer-local.
+    pub fn whole_entry_text(&self) -> String {
+        if self.page_is_note.get() {
+            let b = self.view.buffer();
+            let (s, e) = b.bounds();
+            return b.text(&s, &e, false).to_string();
+        }
+        let paras = self.all_paragraphs.borrow();
+        paras
+            .iter()
+            .map(|p| crate::ui::gloss_block::strip_hi_spans(p).0)
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// The page index whose char span (in the whole-entry basis) contains the
+    /// whole-body char offset `off`. Clamps to the last page if `off` is past the
+    /// end; returns 0 when there are no pages. Mirrors
+    /// `pagination::page_containing_block` but over char spans, so overlay search
+    /// can turn to the page holding a match. No-op basis for note pages (returns
+    /// current page) — callers gate on `whole_entry_text` being non-empty first.
+    pub fn page_for_whole_offset(&self, off: usize) -> usize {
+        let n_pages = self.pages.borrow().len();
+        if n_pages == 0 {
+            return 0;
+        }
+        for i in 0..n_pages {
+            let (start, len) = self.page_char_span(i);
+            if off >= start && off < start + len {
+                return i;
+            }
+        }
+        n_pages - 1
+    }
+
+    /// Turn to the page containing whole-body char offset `off` (search jump),
+    /// re-mark the accent bar on that page, and scroll the match on-screen. Turns
+    /// the page via `page_idx` + `render_page` when `off` is on a different page.
+    /// Then converts `off` to a page-local offset and scrolls to it. No-op for
+    /// note pages / empty entries (the buffer already holds the whole thing).
+    pub fn jump_to_whole_offset(&self, off: usize) {
+        if self.page_is_note.get() || self.all_paragraphs.borrow().is_empty() {
+            // Note / empty: the buffer is the whole entry, so `off` is already a
+            // buffer offset — just scroll to it.
+            self.scroll_to_char_offset(off as i32);
+            return;
+        }
+        let target_page = self.page_for_whole_offset(off);
+        if target_page != self.page_idx.get() {
+            self.page_idx.set(target_page);
+            self.render_page();
+            self.update_footer_position();
+        }
+        let (page_start, _) = self.page_char_span(target_page);
+        let local = off.saturating_sub(page_start) as i32;
+        self.cursor_to_char_offset(local);
+        self.scroll_to_char_offset(local);
+    }
+
+    /// Store `search`'s WHOLE-body match spans + current index so `render_page`
+    /// can re-tag whatever falls on the shown page (survives page turns within a
+    /// paginated entry). Paints the current page immediately. Mirrors
+    /// `apply_rewrite_diff` — the spans are page-clipped, not buffer offsets.
+    pub fn set_search_matches(&self, search: &crate::input::overlay_search::OverlaySearch) {
+        *self.search_full.borrow_mut() = search.matches.clone();
+        self.search_full_current.set(search.current);
+        self.reapply_search();
+    }
+
+    /// Drop the stored search spans and remove both search tags over the buffer
+    /// (Escape clears the search). After this a page turn no longer re-paints it.
+    pub fn clear_search_tags(&self) {
+        self.search_full.borrow_mut().clear();
+        let buffer = self.view.buffer();
+        let (bs, be) = buffer.bounds();
+        buffer.remove_tag(&self.search_tag, &bs, &be);
+        buffer.remove_tag(&self.search_current_tag, &bs, &be);
+    }
+
+    /// Re-tag the stored WHOLE-body search match spans onto the CURRENT page's
+    /// buffer, clipping each to the page's char span and shifting to page-local
+    /// offsets (mirrors `reapply_rewrite_diff`). The current match gets the
+    /// brighter `search_current_tag` when it falls on this page. Called from
+    /// `render_page` so search highlights survive page turns within an entry.
+    fn reapply_search(&self) {
+        let buffer = self.view.buffer();
+        let (bs, be) = buffer.bounds();
+        buffer.remove_tag(&self.search_tag, &bs, &be);
+        buffer.remove_tag(&self.search_current_tag, &bs, &be);
+        let matches = self.search_full.borrow();
+        if matches.is_empty() {
+            return;
+        }
+        // Note pages search the buffer directly (whole_entry_text == buffer text),
+        // so the stored spans are already buffer-local: use the full buffer as the
+        // "page" span. Q&A pages clip whole-body spans to the paragraph-basis page.
+        let (page_start, page_len) = if self.page_is_note.get() {
+            (0usize, buffer.char_count() as usize)
+        } else {
+            self.current_page_char_span()
+        };
+        let page_end = page_start + page_len;
+        let paint = |a: i32, b: i32, tag: &gtk4::TextTag| {
+            let s = (a as usize).max(page_start);
+            let e = (b as usize).min(page_end);
+            if s < e {
+                let si = buffer.iter_at_offset((s - page_start) as i32);
+                let ei = buffer.iter_at_offset((e - page_start) as i32);
+                buffer.apply_tag(tag, &si, &ei);
+            }
+        };
+        for (a, b) in matches.iter() {
+            paint(*a, *b, &self.search_tag);
+        }
+        if let Some((a, b)) = matches.get(self.search_full_current.get()) {
+            paint(*a, *b, &self.search_current_tag);
+        }
     }
 
     /// Remove the diff-highlight tag over the whole buffer and forget the stored
@@ -1533,6 +1662,10 @@ impl JournalOverlay {
         // Re-paint the rewrite diff-highlight for THIS page (clipped to the
         // page's char span), so a change on page 2+ survives page turns.
         self.reapply_rewrite_diff();
+        // Re-paint the overlay-search highlights for THIS page (whole-body match
+        // spans clipped to the page's char span), so `/` matches on page 2+
+        // survive page turns within the entry (mirrors reapply_rewrite_diff).
+        self.reapply_search();
         // The leading `Q:` line renders as PLAIN body text — no header tag. It
         // used to get a bold/0.9-scale/dim header treatment, but the tag only
         // landed on the first render (page turns skipped it), and the user
