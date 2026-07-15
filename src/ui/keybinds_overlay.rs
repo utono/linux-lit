@@ -178,6 +178,10 @@ fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
         // The spacebar reports the keyval name "space"; its cap glyph is "Space"
         // (SPACE_KEY in the bottom row). Maps so pressing Space jumps to it.
         "space" => "Space",
+        // Backspace reports the keyval name "BackSpace"; its cap glyph is the
+        // ⌫ (U+232B) BACKSPACE cap on the number/symbol row. Maps so pressing
+        // Backspace jumps to it.
+        "BackSpace" => "\u{232b}",
         // Arrow keys have caps on the MODIFIERS & SEQUENCES row; map their GTK
         // keyval names to those cap glyphs so a press jumps to them. (`g` is
         // left to identity-match the home-row `g` cap — the `gg`/`g;` sequence
