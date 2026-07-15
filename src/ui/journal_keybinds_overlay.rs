@@ -13,7 +13,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Alt+s", "current scene band"),
         ("Alt+w", "whole-work band"),
         ("Alt+a", "author corpus band"),
-        ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     ("TTS", &[
         ("Ctrl+Space", "read cursor block (TTS)"),
@@ -36,12 +35,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+v", "paste clipboard (also in the r ask prompt)"),
     ]),
     ("Cross-reference", &[
-        ("Ctrl+\\", "pick a Q&A"),
         ("\\", "cycle: → gloss (same segment)"),
-    ]),
-    ("Close", &[
-        ("Esc", "close → reader"),
-        ("Ctrl+Shift+L", "save & quit app"),
-        ("Ctrl+/", "close this legend"),
     ]),
 ];
