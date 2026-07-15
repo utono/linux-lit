@@ -79,6 +79,9 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
 
 pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
+    // Moving to a different passage invalidates any diff-highlight from a
+    // custom-prompt rewrite on the passage we're leaving (Task 7).
+    s.gloss_overlay.clear_rewrite_diff();
 
     let work_abbrev = match &s.gloss_context {
         Some(ctx) => ctx.work_abbrev.clone(),
@@ -168,6 +171,10 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
 
 pub(crate) fn navigate_gloss(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
+    // Moving to a different gloss within the passage invalidates any
+    // diff-highlight from a custom-prompt rewrite on the gloss we're leaving
+    // (Task 7).
+    s.gloss_overlay.clear_rewrite_diff();
     let len = s.gloss_list.len();
     if len == 0 {
         return;
@@ -2785,6 +2792,9 @@ pub(crate) fn open_gloss_overlay(
 /// policy; `n`/Ctrl+g/Ctrl+j are consumed no-ops in this overlay.
 pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Closing the overlay must not leave a stale diff-highlight for the next
+    // open session (Task 7).
+    s.gloss_overlay.clear_rewrite_diff();
     s.tts.stop();
     s.gloss_overlay.hide();
     s.gloss_opened_from_picker = false;

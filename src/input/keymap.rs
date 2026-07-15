@@ -1676,10 +1676,13 @@ fn handle_journal_key(
             crate::input::actions::journal::step_overlay_search(state, false);
             true
         }
-        // Escape precedence: an active overlay search clears first (stay in the
-        // overlay); else an active term filter clears (stay); else close.
+        // Escape precedence: an active rewrite diff-highlight clears first (stay
+        // in the overlay); else an active overlay search clears (stay); else an
+        // active term filter clears (stay); else close.
         "Escape" => {
-            if crate::input::actions::journal::clear_overlay_search(state) {
+            if state.borrow().journal_overlay.rewrite_diff_active() {
+                state.borrow().journal_overlay.clear_rewrite_diff();
+            } else if crate::input::actions::journal::clear_overlay_search(state) {
                 // cleared a live search; stay in the overlay
             } else if state.borrow().journal.filter.is_some() {
                 crate::input::actions::journal::clear_filter(state);
@@ -1960,13 +1963,16 @@ fn handle_gloss_key(
             crate::input::actions::gloss::open_overlay_search(state);
             true
         }
-        // Escape precedence: an active overlay search clears first (stay in the
-        // overlay); else close to the reader, landing on the glossed passage's
-        // source line (recomputes the reader-gloss tint so a just-created gloss
-        // colors without a reload; falls back to the pre-open page). Gloss has no
+        // Escape precedence: an active rewrite diff-highlight clears first (stay
+        // in the overlay); else an active overlay search clears (stay); else
+        // close to the reader, landing on the glossed passage's source line
+        // (recomputes the reader-gloss tint so a just-created gloss colors
+        // without a reload; falls back to the pre-open page). Gloss has no
         // journal-style term filter, so the precedence is simpler.
         "Escape" => {
-            if crate::input::actions::gloss::clear_overlay_search(state) {
+            if state.borrow().gloss_overlay.rewrite_diff_active() {
+                state.borrow().gloss_overlay.clear_rewrite_diff();
+            } else if crate::input::actions::gloss::clear_overlay_search(state) {
                 // cleared a live search; stay in the overlay
             } else {
                 crate::input::actions::gloss::close_gloss_to_reader(state);

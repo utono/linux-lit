@@ -971,6 +971,9 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
+    // Closing the overlay must not leave a stale diff-highlight for the next
+    // open session (Task 7).
+    state.borrow().journal_overlay.clear_rewrite_diff();
     if state.borrow().input_mode == InputMode::JournalOverlay {
         toggle_overlay(state);
     }
@@ -1027,6 +1030,9 @@ fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
 /// Q&A of the next band; `Ctrl+p` symmetrically. Clamped at the work's first /
 /// last Q&A (no wrap). Was previously a within-band clamp.
 pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
+    // Moving to a different Q&A page invalidates any diff-highlight from a
+    // custom-prompt rewrite on the page we're leaving (Task 7).
+    state.borrow().journal_overlay.clear_rewrite_diff();
     // Filtered subset walk: step within the term matches, render read-only,
     // and skip the unfiltered work-wide logic entirely.
     {
@@ -1072,6 +1078,9 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
 /// scene with pages, delta<0 on the last (the Work band sorts before scenes).
 pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
+    // Moving to a different scene invalidates any diff-highlight from a
+    // custom-prompt rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
     let work_abbrev = current_work_abbrev(&s);
     let scenes = crate::db::queries::open_db()
         .ok()
@@ -1109,6 +1118,9 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
 /// Switch to the Work band (whole-work pages) and render it.
 pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Switching bands invalidates any diff-highlight from a custom-prompt
+    // rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
     if s.journal_band == JournalBand::Work {
         return;
     }
@@ -1124,6 +1136,9 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
 /// position's scene without closing and reopening the overlay.
 pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Switching bands invalidates any diff-highlight from a custom-prompt
+    // rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
     if s.current_work.is_none() {
         return;
     }
@@ -1142,6 +1157,9 @@ pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
 /// # nav_to_author_band verified via e2e (needs GTK AppState)
 pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Switching bands invalidates any diff-highlight from a custom-prompt
+    // rewrite on the entry we're leaving (Task 7).
+    s.journal_overlay.clear_rewrite_diff();
     let author = s
         .current_work
         .as_ref()
