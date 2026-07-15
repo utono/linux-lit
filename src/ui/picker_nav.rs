@@ -71,9 +71,36 @@ pub(crate) fn clear_list(list_box: &ListBox) {
 /// their own target index (preserving each picker's empty-start and clamp rules)
 /// and pass it here. `index < 0` or past the end selects nothing (GTK's
 /// `row_at_index` returns None) — the existing behavior at every call site.
+///
+/// Also scrolls the enclosing `ScrolledWindow` so the newly-selected row is
+/// visible: a programmatic `select_row` does NOT move the viewport (only
+/// keyboard focus-navigation auto-scrolls, which these pickers bypass by driving
+/// selection themselves), so Ctrl+n/Ctrl+p past the last/first visible row would
+/// otherwise select an off-screen row.
 pub(crate) fn select_row_at(list_box: &ListBox, index: i32) {
     if let Some(row) = list_box.row_at_index(index) {
         list_box.select_row(Some(&row));
+        scroll_row_into_view(list_box, &row);
+    }
+}
+
+/// Scroll `list_box`'s vadjustment so `row` is fully visible. `ListBox`
+/// implements `Scrollable`, so `adjustment()` is its vertical adjustment.
+/// Mirrors the library picker's inline scroll-into-view (the one card picker
+/// that had it); every other card picker reaches it through `select_row_at`.
+fn scroll_row_into_view(list_box: &ListBox, row: &gtk4::ListBoxRow) {
+    if let Some(adj) = list_box.adjustment() {
+        if let Some(bounds) = row.compute_bounds(list_box) {
+            let y = bounds.y() as f64;
+            let row_height = bounds.height() as f64;
+            let page_size = adj.page_size();
+            let current_val = adj.value();
+            if y < current_val {
+                adj.set_value(y);
+            } else if y + row_height > current_val + page_size {
+                adj.set_value(y + row_height - page_size);
+            }
+        }
     }
 }
 
