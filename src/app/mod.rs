@@ -3036,6 +3036,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::queries::ensure_claude_model_columns(&conn);
             let _ = crate::db::queries::ensure_vocab_highlight_column(&conn);
             let _ = crate::db::journal::ensure_journal_table(&conn);
+            let _ = crate::db::journal::ensure_rewrite_revisions_table(&conn);
             let _ = crate::db::queries::ensure_canonical_artifact_abbrevs(&conn);
         }
     });
