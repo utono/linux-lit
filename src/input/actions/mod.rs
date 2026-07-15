@@ -52,6 +52,10 @@ pub enum Action {
     CursorToPageBottom,
     JumpToNextDialogue,
     JumpToPrevDialogue,
+    /// Cursor-only: next dialogue line, NO media seek (h key).
+    CursorNextDialogueNoSeek,
+    /// Cursor-only: prev dialogue line, NO media seek (t key).
+    CursorPrevDialogueNoSeek,
     JumpToNextSpeaker,
     JumpToPrevSpeaker,
     JumpToNextChapter,
@@ -252,6 +256,8 @@ impl Action {
             | Action::CursorToPageBottom
             | Action::JumpToNextDialogue
             | Action::JumpToPrevDialogue
+            | Action::CursorNextDialogueNoSeek
+            | Action::CursorPrevDialogueNoSeek
             | Action::JumpToNextSpeaker
             | Action::JumpToPrevSpeaker
             | Action::JumpToNextChapter
@@ -392,6 +398,8 @@ impl Action {
             Action::CursorToPageBottom => "CursorToPageBottom",
             Action::JumpToNextDialogue => "JumpToNextDialogue",
             Action::JumpToPrevDialogue => "JumpToPrevDialogue",
+            Action::CursorNextDialogueNoSeek => "CursorNextDialogueNoSeek",
+            Action::CursorPrevDialogueNoSeek => "CursorPrevDialogueNoSeek",
             Action::JumpToNextSpeaker => "JumpToNextSpeaker",
             Action::JumpToPrevSpeaker => "JumpToPrevSpeaker",
             Action::JumpToNextChapter => "JumpToNextChapter",

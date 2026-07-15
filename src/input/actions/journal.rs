@@ -572,11 +572,7 @@ pub(crate) fn activate_filter(state: &Rc<RefCell<AppState>>, term: &str) -> bool
         .unwrap_or_default();
     let mut s = state.borrow_mut();
     if matches.is_empty() {
-        crate::ui::toast::show_transient(
-            &s.chapter_toast,
-            &format!("No entries mention \u{201c}{}\u{201d}", term),
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&s, &format!("No entries mention \u{201c}{}\u{201d}", term), 3);
         return false;
     }
     s.journal.filter = Some(JournalFilter {
@@ -711,7 +707,7 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
     let ctag = s.journal_overlay.search_current_tag().clone();
     let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, pattern);
     if search.matches.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No matches", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
     } else if let Some((off, _)) = search.matches.first() {
         s.journal_overlay.scroll_to_char_offset(*off);
     }
@@ -739,7 +735,7 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
         let ctag = s.journal_overlay.search_current_tag().clone();
         let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, &pat);
         if search.matches.is_empty() {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No matches", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
             return;
         }
         s.journal.search = Some(search);
@@ -1388,11 +1384,11 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
                     land_on_current_band_id(&mut s, id);
                 }
             }
-            crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
         } else {
             // Stay in the editor; the buffer is now the saved baseline so the
             // dirty-check resets. Re-seed the seed to the just-saved buffer.
-            crate::ui::toast::show_transient(&s.chapter_toast, "Saved (:q to exit)", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Saved (:q to exit)", 2);
         }
     }
     // After a non-quit `:w`, reset the editor's dirty baseline to the saved text
@@ -1413,11 +1409,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
 pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
     let dirty = state.borrow().journal_overlay.edit_is_dirty();
     if dirty && !force {
-        crate::ui::toast::show_transient(
-            &state.borrow().chapter_toast,
-            "Unsaved changes \u{2014} :w to save, :q! to discard",
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Unsaved changes \u{2014} :w to save, :q! to discard", 3);
         return;
     }
     let mut s = state.borrow_mut();
@@ -1521,7 +1513,7 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
             .map(|p| (p.id, p.question.trim().to_string(), p.answer.trim().to_string()))
     };
     let Some((id, q, a)) = page else {
-        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to rewrite", 2);
         return;
     };
     {
@@ -1583,7 +1575,7 @@ pub(crate) fn open_rewrite_target(state: &Rc<RefCell<AppState>>) {
         displayed_journal_page(&s).is_some()
     };
     if !has_entry {
-        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to rewrite", 2);
         return;
     }
 
@@ -1658,7 +1650,7 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
         displayed_journal_page(&s)
     };
     let Some(page) = page else {
-        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to rewrite", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to rewrite", 2);
         return;
     };
     let id = page.id;
@@ -1682,7 +1674,7 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
         .and_then(|conn| crate::db::journal::terms_for_entry(&conn, id).ok())
         .unwrap_or_default();
 
-    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, "Improving question\u{2026}");
+    crate::input::navigation::show_persistent_chapter_toast(&state.borrow(), "Improving question\u{2026}");
 
     improve_question(state, old_q, &terms, move |st, improved_q| {
         // Persist the improved question immediately with the unchanged answer,
@@ -1699,7 +1691,7 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
             // clears it via rewrite_with_claude's own toast; the both path opens
             // the instruction card, which does not, so dismiss it here) before
             // opening the answer-instruction card for the improved question.
-            crate::ui::toast::show_transient(&st.borrow().chapter_toast, "Question improved", 2);
+            crate::input::navigation::show_chapter_toast_secs(&st.borrow(), "Question improved", 2);
             begin_rewrite_with(st, id, &improved_q, &answer);
         } else {
             rewrite_with_claude(
@@ -1724,7 +1716,7 @@ pub(crate) fn undo_journal_edit(state: &Rc<RefCell<AppState>>) {
     let (id, question, answer, model) = match snapshot {
         Some(snap) => snap,
         None => {
-            crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Nothing to undo", 2);
+            crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to undo", 2);
             return;
         }
     };
@@ -1763,7 +1755,7 @@ pub(crate) fn undo_journal_edit(state: &Rc<RefCell<AppState>>) {
         // ordering doesn't leave the view on a different page.
         land_on_current_band_id(&mut s, id);
     }
-    crate::ui::toast::show_transient(&s.chapter_toast, "Undid edit", 2);
+    crate::input::navigation::show_chapter_toast_secs(&s, "Undid edit", 2);
 }
 
 pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
@@ -1865,7 +1857,7 @@ fn rewrite_with_claude(
     let model_for_db = model.clone();
     let user_msg = rewrite_user_message(&context, question, answer, instruction);
 
-    crate::ui::toast::show_persistent(&state.borrow().chapter_toast, target.toast());
+    crate::input::navigation::show_persistent_chapter_toast(&state.borrow(), target.toast());
 
     crate::input::actions::claude_bridge::run_claude_request(
         state,
@@ -1918,11 +1910,11 @@ fn rewrite_with_claude(
                 render_current(&mut s);
                 land_on_current_band_id(&mut s, id);
             }
-            crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
         },
         move |st, msg| {
             let s = st.borrow();
-            crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+            crate::input::navigation::show_chapter_toast_secs(&s, msg, 4);
         },
     );
 }
@@ -2170,7 +2162,7 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
         .unwrap_or_default();
 
     if pages.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No journal pages yet — press r to ask", 3);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No journal pages yet — press r to ask", 3);
         return false;
     }
 
@@ -2284,7 +2276,7 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
 pub(crate) fn open_move_picker(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.journal.pages.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No page to move", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No page to move", 2);
         return;
     }
     // Passage pages are citation-anchored and not movable. A passage page now
@@ -2297,12 +2289,12 @@ pub(crate) fn open_move_picker(state: &Rc<RefCell<AppState>>) {
         .get(s.journal.page_index)
         .is_some_and(|p| p.start_citation.is_some() && p.end_citation.is_some());
     if on_passage_page || matches!(s.journal_band, JournalBand::Passage { .. }) {
-        crate::ui::toast::show_transient(&s.chapter_toast, "Can't move a passage page", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Can't move a passage page", 2);
         return;
     }
     let rows = move_target_rows(&s, &s.journal_band.clone());
     if rows.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No other band to move to", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No other band to move to", 2);
         return;
     }
     s.journal_move_picker.set_items(rows);
@@ -2370,7 +2362,7 @@ pub(crate) fn confirm_move_picker(state: &Rc<RefCell<AppState>>) {
         s.journal.page_index = pos;
         render_current(&mut s);
     }
-    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Moved to {}", label), 2);
+    crate::input::navigation::show_chapter_toast_secs(&s, &format!("Moved to {}", label), 2);
     crate::logging::log("JOURNAL: moved page to new band");
 }
 
@@ -2436,7 +2428,7 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
     // Copy the id prefaced with a label so a paste self-identifies.
     let copied = format!("Journal Q&A ID: {}", id);
     let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
-    crate::ui::toast::show_transient(&s.chapter_toast, &format!("Copied {}", copied), 2);
+    crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
     crate::logging::log(&format!("JOURNAL: copied \"{}\"", copied));
 }
 

@@ -47,7 +47,7 @@ pub(crate) fn open(state: &Rc<RefCell<AppState>>) {
     };
     if !opened {
         let s = state.borrow();
-        crate::ui::toast::show_transient(&s.chapter_toast, "Nothing to copy on this line", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Nothing to copy on this line", 2);
     }
 }
 
@@ -64,9 +64,5 @@ pub(crate) fn close(state: &Rc<RefCell<AppState>>) {
 /// Toast shown when a save/rewrite verb is used in the copy-only editor.
 pub(crate) fn refuse_save(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    crate::ui::toast::show_transient(
-        &s.chapter_toast,
-        "Copy-only view \u{2014} nothing is saved (y copies, :q exits)",
-        3,
-    );
+    crate::input::navigation::show_chapter_toast_secs(&s, "Copy-only view \u{2014} nothing is saved (y copies, :q exits)", 3);
 }

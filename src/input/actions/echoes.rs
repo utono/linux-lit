@@ -1602,7 +1602,7 @@ pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>, channel: 
 
 fn show_no_echo_turns_toast(state_rc: &Rc<RefCell<AppState>>) {
     let s = state_rc.borrow();
-    crate::ui::toast::show_transient(&s.chapter_toast, "No echoes in this work", 3);
+    crate::input::navigation::show_chapter_toast_secs(&s, "No echoes in this work", 3);
 }
 
 /// Confirm the echo-turns picker selection: jump the cursor to the turn's

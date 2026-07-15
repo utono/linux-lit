@@ -124,9 +124,9 @@ pub(crate) enum PageChangeReason {
     Vocab,
     /// User pressed comma/q/j/k for dialogue navigation.
     Dialogue,
-    /// Cursor-only movement with no audio seek. Currently unused: j/k now seek
-    /// like comma/q (Dialogue). Kept for a future no-seek cursor verb.
-    #[allow(dead_code)]
+    /// Cursor-only movement with no audio seek — h/t step to the prev/next
+    /// dialogue line while MPV keeps playing where it was. (j/k, by contrast,
+    /// seek like comma/q via Dialogue.)
     Cursor,
     /// MPV CursorSync drove the cursor to a new line; do NOT re-seek MPV.
     MpvSync,
@@ -1506,6 +1506,57 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
     }
 }
 
+/// Previous dialogue line, cursor-only — NO media seek (`t` key).
+/// Mirrors `jump_to_prev_dialogue` but passes `PageChangeReason::Cursor`
+/// so `after_page_change` skips `seek_to_current_line`: the highlight moves
+/// to the prior dialogue line while MPV keeps playing where it was.
+pub fn cursor_prev_dialogue_no_seek(state: &mut AppState) {
+    if state.current_line == 0 {
+        return;
+    }
+    let target = {
+        let stage_lookup = |bi: usize| -> Option<i64> {
+            state.work_line_for_buffer(bi)
+                .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                .map(|l| l.sub_line)
+        };
+        prev_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, state.is_prose(), &stage_lookup)
+    };
+    if let Some(target) = target {
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        state.prev_highlight_line.set(None);
+        scroll_after_jump_backward(state);
+        after_page_change(state, PageChangeReason::Cursor);
+    }
+}
+
+/// Next dialogue line, cursor-only — NO media seek (`h` key). See
+/// `cursor_prev_dialogue_no_seek`.
+pub fn cursor_next_dialogue_no_seek(state: &mut AppState) {
+    let line_count = state.buffer.line_count() as usize;
+    if line_count == 0 {
+        return;
+    }
+    let target = {
+        let stage_lookup = |bi: usize| -> Option<i64> {
+            state.work_line_for_buffer(bi)
+                .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+                .map(|l| l.sub_line)
+        };
+        next_dialogue_line(&state.buffer, &state.translation_lines, state.current_line, line_count, state.is_prose(), &stage_lookup)
+    };
+    if let Some(target) = target {
+        let prev_line = state.current_line;
+        state.current_line = target;
+        state.pending_advance = None;
+        state.pending_advance_ignore_bl = None;
+        scroll_after_jump_forward(state, prev_line);
+        after_page_change(state, PageChangeReason::Cursor);
+    }
+}
+
 /// Move cursor to previous dialogue line and seek media to it (`k` key).
 pub fn cursor_prev_line(state: &mut AppState) {
     if state.current_line == 0 {
@@ -2490,48 +2541,102 @@ fn prose_chapter_numbering(div1: i64, max_div1: i64) -> Option<(i64, i64)> {
     }
 }
 
-/// Show `text` in the chapter toast for 3 seconds.
-///
-/// Uses a generation counter (`chapter_toast_gen`) so rapid `;` presses don't
-/// cut a later toast short: each call bumps the generation and the scheduled
-/// hide-timeout captures it; when the timeout fires it only hides the toast if
-/// its generation is still current. A stale timer (one whose toast has since
-/// been superseded) is a no-op, so the latest toast always gets its full 3s.
+/// Show `text` in the chapter toast for 3 seconds. See
+/// `show_chapter_toast_secs` for the mechanism.
 pub(crate) fn show_chapter_toast(state: &AppState, text: &str) {
+    show_chapter_toast_secs(state, text, 3);
+}
+
+/// Mark the act/scene strip as borrowed by a transient toast, saving the
+/// persistent pill's current text on the FALSE→TRUE edge so it can be restored
+/// verbatim when the last transient in a chain clears. Idempotent while already
+/// borrowed (a spinner → "Saved" chain keeps the original pill text, not the
+/// spinner's). No-op save when the pill isn't persistent (`saved` stays `None`,
+/// so the restore hides the strip).
+fn begin_chapter_toast_borrow(state: &AppState) {
+    if !state.chapter_toast_borrowed.get() {
+        let saved = state
+            .chapter_toast_persistent
+            .get()
+            .then(|| state.chapter_toast.text().to_string());
+        *state.chapter_toast_saved.borrow_mut() = saved;
+        state.chapter_toast_borrowed.set(true);
+    }
+}
+
+/// Release the strip and put the act/scene pill back (or hide the strip if the
+/// pill wasn't persistent when the borrow began). Called from a transient's
+/// gen-guarded expiry; the caller has already confirmed its generation is still
+/// current, so this owns the restore.
+fn restore_chapter_toast(
+    toast: &gtk4::Label,
+    borrowed: &std::cell::Cell<bool>,
+    saved: &std::cell::RefCell<Option<String>>,
+) {
+    borrowed.set(false);
+    if let Some(t) = saved.borrow_mut().take() {
+        toast.set_text(&t);
+        toast.set_visible(true);
+    } else {
+        toast.set_visible(false);
+    }
+}
+
+/// Show `text` in the chapter-toast widget for `secs` seconds, then restore the
+/// persistent act/scene pill (or hide the strip if the pill is off).
+///
+/// This is the single entry point for EVERY transient that borrows the
+/// bottom-center act/scene strip on the shared `chapter_toast` widget ("Sync:
+/// on", "Copied", "No timestamp…", "Saved", calibration messages, …). It:
+///
+/// - saves the pill's text via `begin_chapter_toast_borrow` so the pill is
+///   restored verbatim on expiry (no cursor move required),
+/// - marks the strip borrowed (`chapter_toast_borrowed`) so a sync-driven
+///   `refresh_persistent_chapter_toast` can't overwrite the transient text
+///   mid-flight, and
+/// - uses a generation counter (`chapter_toast_gen`) so rapid presses don't cut
+///   a later toast short and a stale timer is a no-op — the latest toast always
+///   gets its full duration and owns the borrow/restore.
+pub(crate) fn show_chapter_toast_secs(state: &AppState, text: &str, secs: u64) {
     let gen = state.chapter_toast_gen.get().wrapping_add(1);
     state.chapter_toast_gen.set(gen);
     log_fmt!("CHAPTER_TOAST: show gen={} text={:?}", gen, text);
 
+    begin_chapter_toast_borrow(state);
     state.chapter_toast.set_text(text);
     state.chapter_toast.set_visible(true);
 
     let toast = state.chapter_toast.clone();
+    let borrowed = state.chapter_toast_borrowed.clone();
+    let saved = state.chapter_toast_saved.clone();
     let gen_cell = state.chapter_toast_gen.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+    glib::timeout_add_local_once(std::time::Duration::from_secs(secs), move || {
         if gen_cell.get() != gen {
             log_fmt!("CHAPTER_TOAST: hide gen={} superseded (current={}), keeping visible",
                 gen, gen_cell.get());
             return;
         }
         log_fmt!("CHAPTER_TOAST: hide gen={}", gen);
-        toast.set_visible(false);
+        restore_chapter_toast(&toast, &borrowed, &saved);
     });
 }
 
 /// Show a transient bottom-center message on `label` (a toast widget OTHER than
 /// `chapter_toast` — e.g. `speed_toast`, `search_toast`), and when it expires
-/// bring the persistent act/scene/chapter toast back if it is toggled on. Used
-/// by the sync (`s`/`ss`) and search toasts, which borrow the same bottom strip:
-/// while the message is up the persistent chapter toast is hidden so the two
-/// don't stack, and it is redisplayed the moment the message clears — no cursor
-/// move required. The redisplay is guarded by `chapter_toast_gen` so a rapid
-/// second message (which bumps the generation via its own `show_*` call) cancels
-/// the earlier restore, and a work switch / toggle-off (which also bump/clear)
-/// leave it a no-op. No-op restore when the toast is not persistent.
+/// bring the persistent act/scene pill back if it is toggled on. Used by the
+/// sync (`s`/`ss`) and search toasts, which borrow the same bottom strip: while
+/// the message is up the persistent chapter toast is hidden so the two don't
+/// stack, and it is redisplayed the moment the message clears — no cursor move
+/// required. The redisplay is guarded by `chapter_toast_gen` so a rapid second
+/// message (which bumps the generation via its own `show_*` call) cancels the
+/// earlier restore, and a work switch / toggle-off (which also bump/clear) leave
+/// it a no-op. No-op restore when the pill is not persistent.
 pub(crate) fn show_transient_over_chapter_toast(state: &AppState, label: &gtk4::Label, text: &str) {
     // Hide the chapter toast (persistent OR a still-visible transient scene
-    // toast) so the borrowed message shows alone, not stacked over it.
+    // toast) so the borrowed message shows alone, not stacked over it. Save the
+    // pill text so expiry restores it verbatim.
     state.chapter_toast.set_visible(false);
+    begin_chapter_toast_borrow(state);
     // Bump the generation and capture it, so the scheduled restore only fires
     // for the newest message (mirrors show_chapter_toast's stale-timer guard).
     let gen = state.chapter_toast_gen.get().wrapping_add(1);
@@ -2540,19 +2645,34 @@ pub(crate) fn show_transient_over_chapter_toast(state: &AppState, label: &gtk4::
     label.set_visible(true);
     let label = label.clone();
     let toast = state.chapter_toast.clone();
-    let persistent = state.chapter_toast_persistent.clone();
+    let borrowed = state.chapter_toast_borrowed.clone();
+    let saved = state.chapter_toast_saved.clone();
     let gen_cell = state.chapter_toast_gen.clone();
     glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
         label.set_visible(false);
         // Superseded by a newer toast/message, or toggled off / work-switched:
-        // that owner now controls the strip, so don't resurrect the old toast.
+        // that owner now controls the strip, so don't resurrect the old toast
+        // or clear a borrow flag that now belongs to the newer message.
         if gen_cell.get() != gen {
             return;
         }
-        if persistent.get() {
-            toast.set_visible(true);
-        }
+        restore_chapter_toast(&toast, &borrowed, &saved);
     });
+}
+
+/// Show `text` on the chapter-toast widget with NO auto-hide timer — an
+/// in-flight spinner ("Consolidating…", "Rewriting…", "Improving question…")
+/// that a later transient dismisses. Borrows the act/scene strip like the
+/// transient variants (saving the pill text, suppressing sync refresh) so the
+/// spinner isn't overwritten mid-flight; the dismissing `show_chapter_toast_secs`
+/// call restores the pill.
+pub(crate) fn show_persistent_chapter_toast(state: &AppState, text: &str) {
+    let gen = state.chapter_toast_gen.get().wrapping_add(1);
+    state.chapter_toast_gen.set(gen);
+    log_fmt!("CHAPTER_TOAST: show spinner gen={} text={:?}", gen, text);
+    begin_chapter_toast_borrow(state);
+    state.chapter_toast.set_text(text);
+    state.chapter_toast.set_visible(true);
 }
 
 /// Like `show_chapter_toast` but with NO auto-hide timer — the toast stays up
@@ -2572,6 +2692,14 @@ pub(crate) fn show_chapter_toast_persistent(state: &AppState, text: &str) {
 /// call — it must refresh even when the title bar is hidden.
 pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
     if !state.chapter_toast_persistent.get() {
+        return;
+    }
+    // A transient bottom-strip toast ("Sync: on", search, "Copied", …) is
+    // currently borrowing the strip. Sync-driven cursor moves must NOT
+    // resurrect the act/scene pill underneath it — the transient's expiry
+    // restores the pill. Without this guard the pill flickers back the instant
+    // a CursorSync tick lands after the toast appears.
+    if state.chapter_toast_borrowed.get() {
         return;
     }
     let text = compute_current_chapter_text(state);

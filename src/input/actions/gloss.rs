@@ -231,7 +231,7 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
     let ctag = s.gloss_overlay.search_current_tag().clone();
     let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, pattern);
     if search.matches.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No matches", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
     } else if let Some((off, _)) = search.matches.first() {
         s.gloss_overlay.scroll_to_char_offset(*off);
     }
@@ -260,7 +260,7 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
         let ctag = s.gloss_overlay.search_current_tag().clone();
         let search = crate::input::overlay_search::set_from_text(&buffer, &tag, &ctag, &pat);
         if search.matches.is_empty() {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No matches", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
             return;
         }
         s.gloss_search = Some(search);
@@ -1104,7 +1104,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
         let mut s = state.borrow_mut();
         s.gloss_overlay.exit_edit_buffer();
         s.input_mode = crate::app::InputMode::GlossOverlay;
-        crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
     } else {
         // `update_and_render_gloss_in_place` re-rendered the COLORED read display
         // and does not know about the editor, so the editor view is now gone.
@@ -1119,7 +1119,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
             s.gloss_overlay.enter_edit_buffer(&raw, &fill, &fg);
             s.gloss_overlay.reseed_edit_buffer(&raw);
             s.input_mode = crate::app::InputMode::GlossEdit;
-            crate::ui::toast::show_transient(&s.chapter_toast, "Saved (:q to exit)", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Saved (:q to exit)", 2);
         }
     }
 }
@@ -1130,11 +1130,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
 pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
     let dirty = state.borrow().gloss_overlay.edit_is_dirty();
     if dirty && !force {
-        crate::ui::toast::show_transient(
-            &state.borrow().chapter_toast,
-            "Unsaved changes \u{2014} :w to save, :q! to discard",
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Unsaved changes \u{2014} :w to save, :q! to discard", 3);
         return;
     }
     // Drop the editor, then re-render the STORED (un-edited) gloss in its colored
@@ -2651,7 +2647,7 @@ pub(crate) fn voice_picker_toast(state_rc: &Rc<RefCell<AppState>>, verb: &str, n
 }
 
 fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
-    crate::ui::toast::show_transient(&state_rc.borrow().chapter_toast, msg, 3);
+    crate::input::navigation::show_chapter_toast_secs(&state_rc.borrow(), msg, 3);
 }
 
 /// Show a toast that stays up until something explicitly replaces it (another

@@ -179,11 +179,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
     if free < CHAT_MIN_PANEL_W {
         close_chat_layout(s);
-        crate::ui::toast::show_transient(
-            &s.chapter_toast,
-            "No room for chat panel at this layout",
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&s, "No room for chat panel at this layout", 3);
         return;
     }
     size_panel(s);
@@ -226,11 +222,7 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     let (card_w, _) = crate::app::layout::main_card_rect(&s);
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
     if free < CHAT_MIN_PANEL_W {
-        crate::ui::toast::show_transient(
-            &s.chapter_toast,
-            "No room for chat panel at this layout",
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&s, "No room for chat panel at this layout", 3);
         return;
     }
     s.chat_layout_open = true;
@@ -316,7 +308,7 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         let _ = state_rc.borrow().chat_panel.take_input_text();
         if state_rc.borrow().chat.exchanges.is_empty() {
             let s = state_rc.borrow();
-            crate::ui::toast::show_transient(&s.chapter_toast, "No reply to save yet", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No reply to save yet", 2);
             return;
         }
         save_selected_exchange(state_rc);
@@ -335,7 +327,7 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
     let (question, system, user_msg, turns, model, chip, meta) = {
         let s = state_rc.borrow();
         if s.chat.pending {
-            crate::ui::toast::show_transient(&s.chapter_toast, "Waiting for the previous reply\u{2026}", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Waiting for the previous reply\u{2026}", 2);
             return;
         }
         // Resolve the passage context BEFORE consuming the input text: a
@@ -343,11 +335,11 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         // typed question untouched for retry, not silently clear it.
         let Some(work) = s.current_work.as_ref() else { return };
         let Some(seg) = crate::input::segments::segment_context(&s, 2) else {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No passage at the cursor", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);
             return;
         };
         let Some(gctx) = crate::gloss::build_context_for_type(work, &seg.cursor_lines, "reader-gloss") else {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No passage at the cursor", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);
             return;
         };
         let question = s.chat_panel.take_input_text().trim().to_string();
@@ -517,7 +509,7 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
         // Already saved: `s` re-confirms (row is persisted on every
         // successful revision); just toast.
         let _ = id;
-        crate::ui::toast::show_transient(&s.chapter_toast, "Entry is saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Entry is saved", 2);
         return;
     }
     let idx = s.chat.cursor;
@@ -541,11 +533,11 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
             let (title, hint) = prompt_title_hint(&s);
             s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
             s.input_mode = crate::app::InputMode::ChatPrompt;
-            crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
             crate::logging::log(&format!("CHAT: saved exchange as journal page {}", id));
         }
         Err(err) => {
-            crate::ui::toast::show_transient(&s.chapter_toast, "Save failed", 3);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);
             crate::logging::log(&format!("CHAT: save failed: {}", err));
         }
     }
@@ -588,15 +580,15 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
     let (system, user_msg, model, fallback_q, meta) = {
         let s = state_rc.borrow();
         if s.chat.pending {
-            crate::ui::toast::show_transient(&s.chapter_toast, "Waiting for the previous reply\u{2026}", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Waiting for the previous reply\u{2026}", 2);
             return;
         }
         if s.chat.revision_of.is_some() {
-            crate::ui::toast::show_transient(&s.chapter_toast, "Entry is saved \u{2014} Ctrl+Enter revises it", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Entry is saved \u{2014} Ctrl+Enter revises it", 2);
             return;
         }
         if s.chat.exchanges.is_empty() {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No conversation to consolidate yet", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No conversation to consolidate yet", 2);
             return;
         }
         let Some(work) = s.current_work.as_ref() else { return };
@@ -629,7 +621,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         let (mut rows, _) = transcript_rows(&s);
         rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
         s.chat_panel.render_rows(&rows);
-        crate::ui::toast::show_persistent(&s.chapter_toast, "Consolidating\u{2026}");
+        crate::input::navigation::show_persistent_chapter_toast(&s, "Consolidating\u{2026}");
     }
     let user_msg_for_exchange = user_msg.clone();
     crate::input::actions::claude_bridge::run_claude_request(
@@ -674,7 +666,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                     let (title, hint) = prompt_title_hint(&s);
                     s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
                     s.input_mode = crate::app::InputMode::ChatPrompt;
-                    crate::ui::toast::show_transient(&s.chapter_toast, "Consolidated and saved", 2);
+                    crate::input::navigation::show_chapter_toast_secs(&s, "Consolidated and saved", 2);
                     crate::logging::log(&format!(
                         "CHAT: consolidated {} exchanges into journal page {}",
                         merged, id
@@ -682,7 +674,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                 }
                 Err(err) => {
                     render_transcript(&s);
-                    crate::ui::toast::show_transient(&s.chapter_toast, "Save failed", 3);
+                    crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);
                     crate::logging::log(&format!("CHAT: consolidation save failed: {}", err));
                 }
             }
@@ -691,7 +683,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
             let mut s = st.borrow_mut();
             s.chat.pending = false;
             render_transcript_with_error(&s, msg);
-            crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+            crate::input::navigation::show_chapter_toast_secs(&s, msg, 4);
         },
     );
 }
@@ -925,7 +917,7 @@ pub(crate) mod chat_revision {
             let Some(id) = s.chat.revision_of else { return };
             let instruction = s.chat_panel.take_input_text().trim().to_string();
             if instruction.is_empty() {
-                crate::ui::toast::show_transient(&s.chapter_toast, "Type a revision instruction", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, "Type a revision instruction", 2);
                 return;
             }
             let Some(e) = s.chat.exchanges.iter().find(|e| e.saved_id == Some(id)) else {
@@ -957,7 +949,7 @@ pub(crate) mod chat_revision {
             .unwrap_or_default();
         {
             let s = state_rc.borrow();
-            crate::ui::toast::show_persistent(&s.chapter_toast, "Rewriting Q & A\u{2026}");
+            crate::input::navigation::show_persistent_chapter_toast(&s, "Rewriting Q & A\u{2026}");
         }
         let model_for_db = model.clone();
         crate::input::actions::claude_bridge::run_claude_request(
@@ -984,11 +976,11 @@ pub(crate) mod chat_revision {
                     }
                     crate::input::actions::journal::purge_journal_audio(&conn, id);
                 }
-                crate::ui::toast::show_transient(&s.chapter_toast, "Rewritten", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
             },
             move |st, msg| {
                 let s = st.borrow_mut();
-                crate::ui::toast::show_transient(&s.chapter_toast, msg, 4);
+                crate::input::navigation::show_chapter_toast_secs(&s, msg, 4);
                 // Restore the failed instruction for retry, mirroring
                 // submit_chat_prompt's error path.
                 s.chat_panel.paste_input_text(&instruction_err);

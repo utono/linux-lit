@@ -673,6 +673,20 @@ pub struct AppState {
     /// (`navigation::refresh_persistent_chapter_toast`), and it is re-shown
     /// after a search toast borrows the bottom strip. Reset on work switch.
     pub chapter_toast_persistent: Rc<Cell<bool>>,
+    /// True while a transient bottom-center toast is borrowing the act/scene
+    /// strip (a "Sync: on" / search / "Copied" / etc. message). While set,
+    /// `refresh_persistent_chapter_toast` is a no-op so sync-driven cursor
+    /// moves can't resurrect the act/scene pill underneath the transient. The
+    /// transient's gen-guarded expiry clears it and restores the pill. See
+    /// `show_transient_over_chapter_toast` / `refresh_persistent_chapter_toast`.
+    pub chapter_toast_borrowed: Rc<Cell<bool>>,
+    /// The act/scene pill text saved when a transient first borrows the strip
+    /// (false→true edge of `chapter_toast_borrowed`), so the pill is restored
+    /// verbatim when the LAST transient in a chain (spinner → "Saved") clears —
+    /// snapshotting at each transient would capture the previous transient's
+    /// text, not the pill's. `Some` only while borrowed; `None` when free or the
+    /// pill is not persistent.
+    pub chapter_toast_saved: Rc<RefCell<Option<String>>>,
     pub speed_toast: gtk4::Label,
     /// Centered bottom toast for search boundaries ("no earlier/later
     /// occurrence"). Placed like chapter_toast (centered, 32px from the bottom)
@@ -1999,6 +2013,8 @@ pub fn build_window(
         chapter_toast,
         chapter_toast_gen: Rc::new(Cell::new(0)),
         chapter_toast_persistent: Rc::new(Cell::new(false)),
+        chapter_toast_borrowed: Rc::new(Cell::new(false)),
+        chapter_toast_saved: Rc::new(RefCell::new(None)),
         speed_toast,
         search_toast,
         word_cycle: crate::input::actions::word_copy::WordCycleState::default(),
@@ -3213,6 +3229,8 @@ pub fn display_work_at_with_prepared(
     // the config preference below (once the new work's line_map exists), so
     // it can auto-show for the new work if `chapter_toast_shown` is set.
     state.chapter_toast_persistent.set(false);
+    state.chapter_toast_borrowed.set(false);
+    *state.chapter_toast_saved.borrow_mut() = None;
     state.chapter_toast.set_visible(false);
 
     // Build buffer text (with or without sign column)
@@ -4550,7 +4568,7 @@ pub(crate) use crate::db::journal::AUTHOR_DIV as JOURNAL_AUTHOR_DIV;
 pub fn toggle_image_view(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.page_image.images.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No page images for this work", 3);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No page images for this work", 3);
         return;
     }
     s.page_image.mode = !s.page_image.mode;
@@ -4621,7 +4639,7 @@ pub fn enter_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>)
     {
         let mut s = state.borrow_mut();
         if s.page_image.images.is_empty() {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No page images to calibrate", 3);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No page images to calibrate", 3);
             return;
         }
         s.page_image.mode = true;
@@ -4695,7 +4713,7 @@ pub fn calibration_mark(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
             None => {
                 drop(s);
                 let s = state.borrow();
-                crate::ui::toast::show_transient(&s.chapter_toast, "Cursor not on a mapped line — move it first", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, "Cursor not on a mapped line — move it first", 2);
                 return;
             }
         };
@@ -4785,7 +4803,7 @@ pub fn exit_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>, 
     s.column_divider.set_visible(two_col);
     s.right_scrolled_overlay.set_visible(two_col);
     s.input_mode = InputMode::Reader;
-    crate::ui::toast::show_transient(&s.chapter_toast, "Calibration saved", 2);
+    crate::input::navigation::show_chapter_toast_secs(&s, "Calibration saved", 2);
 }
 
 /// Count word-character runs in a line, treating combining marks (which attach to

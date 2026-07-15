@@ -213,8 +213,8 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("k"), Action::CursorPrevLine),
         (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
         // h / t jump to the next / prev line of dialogue (twins of Q / Alt+,).
-        (KeyCombo::plain("h"), Action::JumpToNextDialogue),
-        (KeyCombo::plain("t"), Action::JumpToPrevDialogue),
+        (KeyCombo::plain("h"), Action::CursorNextDialogueNoSeek),
+        (KeyCombo::plain("t"), Action::CursorPrevDialogueNoSeek),
         (KeyCombo::plain("Up"), Action::CursorPrevLine),
         (KeyCombo::shift("Up"), Action::PageBackwardBottom),
         (KeyCombo::plain("Down"), Action::CursorNextDialogue),

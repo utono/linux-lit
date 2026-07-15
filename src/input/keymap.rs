@@ -1172,7 +1172,7 @@ fn handle_segment_vim_key(
         EditorAction::CopyToClipboard(text) => {
             copy_to_clipboard(&text);
             let s = state.borrow();
-            crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "Copied", 2);
             true
         }
         EditorAction::ToggleHighlight | EditorAction::Nop => true,
@@ -1433,11 +1433,7 @@ fn handle_journal_key(
     if state.borrow().journal.filter.is_some()
         && matches!(key_name, "r" | "space" | "a" | "backslash")
     {
-        crate::ui::toast::show_transient(
-            &state.borrow().chapter_toast,
-            "Clear the term filter (Esc) for this key",
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Clear the term filter (Esc) for this key", 3);
         return true;
     }
 
@@ -2035,7 +2031,7 @@ fn toggle_playback_sync(s: &mut AppState) {
 /// Show a transient bottom-center toast (reuses `chapter_toast`, 3s auto-hide).
 /// Used when a play attempt is a no-op because the line has no timestamp.
 fn show_no_timestamp_toast(s: &AppState) {
-    crate::ui::toast::show_transient(&s.chapter_toast, "No timestamp on this line", 3);
+    crate::input::navigation::show_chapter_toast_secs(&s, "No timestamp on this line", 3);
 }
 
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
@@ -2386,7 +2382,7 @@ fn handle_block_visual_key(
                 (cfg.yank_exit)(&s.gloss_overlay);
                 s.input_mode = cfg.return_mode;
                 (cfg.set_hint)(&s.gloss_overlay);
-                crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, "Copied", 2);
             }
             true
         }
@@ -2451,7 +2447,7 @@ fn handle_journal_visual_key(
                 s.journal_overlay.exit_visual();
                 s.input_mode = crate::app::InputMode::JournalOverlay;
                 s.journal_overlay.set_journal_hint();
-                crate::ui::toast::show_transient(&s.chapter_toast, "Copied", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, "Copied", 2);
             }
             true
         }
@@ -3224,6 +3220,8 @@ fn dispatch_action(
         CursorToPageBottom => navigation::cursor_to_page_bottom(&mut state.borrow_mut()),
         JumpToNextDialogue => navigation::jump_to_next_dialogue(&mut state.borrow_mut()),
         JumpToPrevDialogue => navigation::jump_to_prev_dialogue(&mut state.borrow_mut()),
+        CursorNextDialogueNoSeek => navigation::cursor_next_dialogue_no_seek(&mut state.borrow_mut()),
+        CursorPrevDialogueNoSeek => navigation::cursor_prev_dialogue_no_seek(&mut state.borrow_mut()),
         JumpToNextSpeaker => navigation::jump_to_next_speaker(&mut state.borrow_mut()),
         JumpToPrevSpeaker => navigation::jump_to_prev_speaker(&mut state.borrow_mut()),
         JumpToNextChapter => navigation::jump_to_next_chapter(&mut state.borrow_mut()),
@@ -3480,7 +3478,7 @@ fn dispatch_action(
                 s.scansion.level = crate::scansion::ScanLevel::Off;
                 // Reuse the chapter-toast widget for a transient reader message
                 // (same pattern as show_chapter_toast in navigation.rs:1670).
-                crate::ui::toast::show_transient(&s.chapter_toast, "No scansion for this work", 3);
+                crate::input::navigation::show_chapter_toast_secs(&s, "No scansion for this work", 3);
                 crate::logging::log("SCANSION: no scansion for this work");
                 return;
             }
@@ -3690,22 +3688,22 @@ fn dispatch_action(
         ToggleAuthorship => {
             let mut s = state.borrow_mut();
             if s.authorship_sets.is_empty() {
-                crate::ui::toast::show_transient(&s.chapter_toast, "No authorship data for this work", 3);
+                crate::input::navigation::show_chapter_toast_secs(&s, "No authorship data for this work", 3);
                 return;
             }
             s.authorship_enabled = !s.authorship_enabled;
             crate::app::formatting::apply_authorship_formatting(&mut s);
             let label = if s.authorship_enabled { "Authorship: on" } else { "Authorship: off" };
-            crate::ui::toast::show_transient(&s.chapter_toast, label, 3);
+            crate::input::navigation::show_chapter_toast_secs(&s, label, 3);
         }
         PickAttributionSet => {
             let s = state.borrow();
             if s.authorship_sets.is_empty() {
-                crate::ui::toast::show_transient(&s.chapter_toast, "No authorship data for this work", 3);
+                crate::input::navigation::show_chapter_toast_secs(&s, "No authorship data for this work", 3);
                 return;
             }
             if s.authorship_sets.len() == 1 {
-                crate::ui::toast::show_transient(&s.chapter_toast, "Only one attribution set available", 3);
+                crate::input::navigation::show_chapter_toast_secs(&s, "Only one attribution set available", 3);
                 return;
             }
             drop(s);

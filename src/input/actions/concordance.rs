@@ -703,5 +703,5 @@ pub(crate) fn restore_sync_after_concordance(state: &mut AppState) {
 
 fn show_no_concordance_toast(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    crate::ui::toast::show_transient(&s.chapter_toast, "No concordance active — press \\ to pick a word", 3);
+    crate::input::navigation::show_chapter_toast_secs(&s, "No concordance active — press \\ to pick a word", 3);
 }

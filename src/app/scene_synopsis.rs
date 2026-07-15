@@ -382,7 +382,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     }
 
     if s.synopsis_cache.is_empty() {
-        crate::ui::toast::show_transient(&s.chapter_toast, "No synopsis for this section", 3);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No synopsis for this section", 3);
         return;
     }
 
@@ -390,7 +390,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
         Some(text) => text.clone(),
         None => {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No synopsis for this section", 3);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No synopsis for this section", 3);
             return;
         }
     };

@@ -217,7 +217,7 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     let ((div1, div2), original) = match undo {
         Some(u) => u,
         None => {
-            crate::ui::toast::show_transient(&state_rc.borrow().chapter_toast, "Nothing to undo", 2);
+            crate::input::navigation::show_chapter_toast_secs(&state_rc.borrow(), "Nothing to undo", 2);
             return;
         }
     };
@@ -285,7 +285,7 @@ pub(crate) fn copy_synopsis_id(state: &Rc<RefCell<AppState>>) {
             "No synopsis id".to_string()
         }
     };
-    crate::ui::toast::show_transient(&state.borrow().chapter_toast, &msg, 2);
+    crate::input::navigation::show_chapter_toast_secs(&state.borrow(), &msg, 2);
 }
 
 /// `e` in the synopsis overlay: enter the in-place modal vim editor on the
@@ -298,7 +298,7 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
     let raw = match s.synopsis_cache.get(&(div1, div2)) {
         Some(t) => t.clone(),
         None => {
-            crate::ui::toast::show_transient(&s.chapter_toast, "No synopsis to edit", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, "No synopsis to edit", 2);
             return;
         }
     };
@@ -357,10 +357,10 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
         render_synopsis(state, div1, div2, &raw);
         let mut s = state.borrow_mut();
         s.input_mode = crate::app::InputMode::SynopsisOverlay;
-        crate::ui::toast::show_transient(&s.chapter_toast, "Saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
     } else {
         state.borrow().gloss_overlay.reseed_edit_buffer(&raw);
-        crate::ui::toast::show_transient(&state.borrow().chapter_toast, "Saved (:q to exit)", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Saved (:q to exit)", 2);
     }
 }
 
@@ -369,11 +369,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
 pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
     let dirty = state.borrow().gloss_overlay.edit_is_dirty();
     if dirty && !force {
-        crate::ui::toast::show_transient(
-            &state.borrow().chapter_toast,
-            "Unsaved changes \u{2014} :w to save, :q! to discard",
-            3,
-        );
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Unsaved changes \u{2014} :w to save, :q! to discard", 3);
         return;
     }
     let (div1, div2, stored) = {
@@ -443,7 +439,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
         Err(_) => Vec::new(),
     };
     if passages.is_empty() {
-        crate::ui::toast::show_transient(&state_rc.borrow().chapter_toast, "No glosses for this work", 3);
+        crate::input::navigation::show_chapter_toast_secs(&state_rc.borrow(), "No glosses for this work", 3);
         return;
     }
     // Stable partition: current-scene passages first, the rest after, each group
