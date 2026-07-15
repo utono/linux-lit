@@ -518,6 +518,9 @@ pub(crate) fn render_current(s: &mut AppState) {
         let search = s.journal.search.as_mut().unwrap();
         crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
     }
+    // Show the diff vs the entry's last stored revision (or clear if none), so
+    // landing on an entry always highlights what its last rewrite changed.
+    refresh_entry_diff_highlight(s);
 }
 
 /// Render the filter's current match in the overlay WITHOUT switching
@@ -561,6 +564,9 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
         let search = s.journal.search.as_mut().unwrap();
         crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
     }
+    // Show the diff vs the filtered entry's last stored revision (displayed_journal_page
+    // reads the filter match), so cross-work matches also highlight their last change.
+    refresh_entry_diff_highlight(s);
 }
 
 /// Activate a term filter: fetch matches, store filter state, render the
@@ -1022,6 +1028,33 @@ fn land_on_current_band_id(s: &mut AppState, target_id: i64) {
             render_current(s);
         }
     }
+}
+
+/// Paint the diff between the DISPLAYED journal entry and its most recent stored
+/// revision, so opening/landing on an entry shows what its last rewrite changed
+/// (persists until Escape; survives page turns via the overlay's per-page
+/// re-apply). Clears the highlight when the entry has no revision history. Call
+/// after landing on / rendering an entry. Safe to call with the overlay closed
+/// (apply/clear are buffer ops; the tag simply isn't visible).
+pub(crate) fn refresh_entry_diff_highlight(s: &mut AppState) {
+    let Some(page) = displayed_journal_page(s) else {
+        s.journal_overlay.clear_rewrite_diff();
+        return;
+    };
+    let latest = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::list_revisions(&conn, "journal", page.id).ok())
+        .and_then(|revs| revs.into_iter().last());
+    let Some(prev) = latest else {
+        s.journal_overlay.clear_rewrite_diff();
+        return;
+    };
+    let base = answer_prefix_chars(&page.question);
+    let ranges: Vec<(i32, i32)> = crate::input::rewrite_diff::changed_ranges(&prev.body, &page.answer)
+        .into_iter()
+        .map(|(a, b)| (a + base, b + base))
+        .collect();
+    s.journal_overlay.apply_rewrite_diff(&ranges);
 }
 
 /// `Ctrl+n` / `Ctrl+p`: step through EVERY Q&A in the work, across bands, in the
@@ -1900,7 +1933,6 @@ fn rewrite_with_claude(
         user_msg,
         model,
         move |st, revised| {
-            let prev_answer_for_diff = prev_answer.clone();
             st.borrow_mut().journal_undo = Some((
                 id,
                 prev_question.clone(),
@@ -1957,15 +1989,9 @@ fn rewrite_with_claude(
                 render_current(&mut s);
                 land_on_current_band_id(&mut s, id);
             }
-            let base = answer_prefix_chars(&question_owned);
-            let ranges: Vec<(i32, i32)> = crate::input::rewrite_diff::changed_ranges(
-                &prev_answer_for_diff,
-                &revised,
-            )
-            .into_iter()
-            .map(|(a, b)| (a + base, b + base))
-            .collect();
-            s.journal_overlay.apply_rewrite_diff(&ranges);
+            // The diff-highlight is painted by refresh_entry_diff_highlight inside
+            // the render above: the just-appended revision is now the entry's
+            // latest, so it computes the same changed-words diff (prev vs revised).
             crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
         },
         move |st, msg| {

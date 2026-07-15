@@ -942,6 +942,36 @@ fn render_gloss_row(s: &mut AppState, new_idx: usize) {
         let search = s.gloss_search.as_mut().unwrap();
         crate::input::overlay_search::reapply(&buffer, &tag, &ctag, search);
     }
+    // Show the diff vs this gloss's last stored revision (or clear if none), so
+    // landing on a gloss always highlights what its last rewrite changed.
+    refresh_gloss_diff_highlight(s, new_idx);
+}
+
+/// Paint the diff between the gloss at `idx` and its most recent stored revision
+/// (RAW markup), rendered to text so offsets match the displayed buffer. Clears
+/// the highlight when the gloss has no revision history. Mirrors journal's
+/// `refresh_entry_diff_highlight`; survives page turns via the overlay's per-page
+/// re-apply.
+pub(crate) fn refresh_gloss_diff_highlight(s: &mut AppState, idx: usize) {
+    let Some(gloss) = s.gloss_list.get(idx) else {
+        s.gloss_overlay.clear_rewrite_diff();
+        return;
+    };
+    let (gloss_id, current_markup) = (gloss.gloss_id, gloss.gloss_text.clone());
+    let latest = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::list_revisions(&conn, "gloss", gloss_id).ok())
+        .and_then(|revs| revs.into_iter().last());
+    let Some(prev) = latest else {
+        s.gloss_overlay.clear_rewrite_diff();
+        return;
+    };
+    let prev_rendered =
+        crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&prev.body);
+    let new_rendered =
+        crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&current_markup);
+    let ranges = crate::input::rewrite_diff::changed_ranges(&prev_rendered, &new_rendered);
+    s.gloss_overlay.apply_rewrite_diff(&ranges);
 }
 
 /// Persist a freshly composed gloss, reload the start-citation gloss list,
