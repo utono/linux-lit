@@ -115,6 +115,62 @@ pub fn ensure_rewrite_revisions_table(conn: &Connection) -> Result<(), rusqlite:
     Ok(())
 }
 
+/// One stored prior version of a journal Q&A or gloss.
+#[derive(Debug, Clone)]
+pub struct Revision {
+    pub id: i64,
+    pub question: Option<String>,
+    pub body: String,
+    pub claude_model: String,
+    pub prompt: Option<String>,
+    pub timestamp: String,
+}
+
+/// Append a pre-rewrite version to the durable history. `kind` is 'journal' or
+/// 'gloss'; `question` is Some only for journal. `prompt` is the custom
+/// instruction that produced the version REPLACING this one.
+pub fn append_revision(
+    conn: &Connection,
+    kind: &str,
+    entry_id: i64,
+    question: Option<&str>,
+    body: &str,
+    claude_model: &str,
+    prompt: Option<&str>,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO rewrite_revisions (kind, entry_id, question, body, claude_model, prompt)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![kind, entry_id, question, body, claude_model, prompt],
+    )?;
+    Ok(())
+}
+
+/// All stored revisions for an entry, oldest → newest.
+pub fn list_revisions(
+    conn: &Connection,
+    kind: &str,
+    entry_id: i64,
+) -> Result<Vec<Revision>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, question, body, claude_model, prompt, timestamp
+         FROM rewrite_revisions
+         WHERE kind = ?1 AND entry_id = ?2
+         ORDER BY timestamp ASC, id ASC",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![kind, entry_id], |r| {
+        Ok(Revision {
+            id: r.get(0)?,
+            question: r.get(1)?,
+            body: r.get(2)?,
+            claude_model: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            prompt: r.get(4)?,
+            timestamp: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
 pub fn ensure_journal_tags(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS journal_tags (
@@ -682,6 +738,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(body, "old answer");
+    }
+
+    #[test]
+    fn append_and_list_revisions_in_order() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_rewrite_revisions_table(&conn).unwrap();
+        append_revision(&conn, "gloss", 7, None, "v1 markup", "m1", Some("shorten")).unwrap();
+        append_revision(&conn, "gloss", 7, None, "v2 markup", "m2", Some("expand")).unwrap();
+        // a different entry must not leak in
+        append_revision(&conn, "gloss", 8, None, "other", "m", None).unwrap();
+        let revs = list_revisions(&conn, "gloss", 7).unwrap();
+        assert_eq!(revs.len(), 2);
+        assert_eq!(revs[0].body, "v1 markup");
+        assert_eq!(revs[1].body, "v2 markup");
+        assert_eq!(revs[0].prompt.as_deref(), Some("shorten"));
     }
 
     #[test]
