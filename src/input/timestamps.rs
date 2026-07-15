@@ -225,7 +225,10 @@ pub fn set_start_time(state: &mut AppState) -> bool {
     set_sign_columns(state, buffer_line, true, true, None);
     redraw_sign_gutters(state);
 
-    crate::input::navigation::cursor_next_dialogue(state);
+    // Advance the cursor to the next dialogue line WITHOUT seeking MPV: after
+    // stamping a start time the user wants to keep listening from where the
+    // audio is, not jump playback to the newly-selected line's start.
+    crate::input::navigation::cursor_next_dialogue_no_seek(state);
 
     true
 }
