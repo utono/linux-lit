@@ -662,6 +662,14 @@ impl GlossOverlay {
         self.gloss_view.buffer()
     }
 
+    /// Full text of the gloss_view buffer (start..end) — the RENDERED plain text,
+    /// for computing a rewrite diff against the buffer offsets.
+    pub fn buffer_text_for_diff(&self) -> String {
+        let b = self.gloss_view.buffer();
+        let (s, e) = b.bounds();
+        b.text(&s, &e, false).to_string()
+    }
+
     /// The "all matches" search-highlight tag.
     pub fn search_tag(&self) -> &gtk4::TextTag {
         &self.search_tag

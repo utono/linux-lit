@@ -1011,10 +1011,24 @@ fn update_and_render_gloss_in_place(
     full_gloss: &str,
     model_for_db: &str,
     log_msg: &str,
+    diff: Option<(&str, Option<&str>)>, // (prev_rendered_text, custom_prompt)
 ) {
+    // Capture the PRE-rewrite RAW gloss text (the durable revision body) before
+    // the in-memory row is overwritten below.
+    let prev_raw = state_rc
+        .borrow()
+        .gloss_list
+        .get(gloss_index)
+        .map(|g| g.gloss_text.clone());
+
     // Persist the rewritten text in place and purge this gloss's cached audio
     // (every block's verse/answer may have changed, so drop all of it).
     if let Ok(conn) = crate::db::queries::open_db_rw() {
+        if let (Some(prev), Some((_, prompt))) = (prev_raw.as_ref(), diff) {
+            let _ = crate::db::journal::append_revision(
+                &conn, "gloss", gloss_id, None, prev, model_for_db, prompt,
+            );
+        }
         let _ = crate::db::queries::update_gloss(&conn, gloss_id, full_gloss, model_for_db);
         let _ = crate::db::queries::delete_gloss_audio(&conn, gloss_id);
     }
@@ -1040,6 +1054,11 @@ fn update_and_render_gloss_in_place(
     s.gloss_overlay.set_position(gloss_index, s.gloss_list.len());
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
     s.gloss_index = gloss_index;
+    if let Some((prev_rendered, _)) = diff {
+        let new_rendered = s.gloss_overlay.buffer_text_for_diff();
+        let ranges = crate::input::rewrite_diff::changed_ranges(prev_rendered, &new_rendered);
+        s.gloss_overlay.apply_rewrite_diff(&ranges);
+    }
     recolor_cached_blocks(&s);
     // The gloss text changed but the glossed-passage SET did not, so the
     // main-card reader-gloss tint is unchanged; recompute anyway for parity with
@@ -1099,6 +1118,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
     update_and_render_gloss_in_place(
         state, &ctx, idx, gloss_id, &raw, &model,
         &format!("GLOSS: hand-edited gloss {} in place (vim)", gloss_id),
+        None,
     );
     if quit {
         let mut s = state.borrow_mut();
@@ -1383,6 +1403,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         };
         (ctx, existing, state.config.claude_model.clone(), idx, gloss_id)
     };
+    // Capture the on-screen RENDERED gloss text before it is overwritten, so the
+    // post-rewrite diff highlight can compare old-rendered vs new-rendered.
+    let prev_rendered = state_rc.borrow().gloss_overlay.buffer_text_for_diff();
 
     // Show the passage being reglossed on the loading card (same single-column
     // `<speaker>`/`<verse>` formatting as the gloss result), not a bare
@@ -1438,6 +1461,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
             update_and_render_gloss_in_place(
                 st, &ctx, gloss_index, gloss_id, &verified_text, &model_for_db,
                 &format!("GLOSS: edited {} gloss {} in place", gloss_type_owned, gloss_id),
+                Some((&prev_rendered, Some(&pasted_owned))),
             );
         },
         |st, msg| {
