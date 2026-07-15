@@ -3804,13 +3804,12 @@ pub fn display_work_at_with_prepared(
     crate::input::page_table::load_for_work(state);
     crate::input::prose_pages::load_for_prose_work(state);
 
-    // Persistent scene/chapter toast: shown by default for plays and
-    // prose-with-chapters, honoring the remembered `chapter_toast_shown`
-    // preference. The line_map now exists, so `chapter_toast_persists()` is
-    // reliable. Setting the flag here lets the `update_highlight_and_show`
-    // below (which calls refresh_persistent_chapter_toast) paint the toast.
-    state.chapter_toast_persistent
-        .set(state.config.chapter_toast_shown && state.chapter_toast_persists());
+    // Persistent bottom toast retired: the running-head strip is now the
+    // always-visible position indicator. Keep the flag false so the transient-
+    // toast borrow/restore never treats an (unpainted, empty) pill as
+    // restorable — otherwise a Sync:/copy toast clearing would restore an empty
+    // visible strip.
+    state.chapter_toast_persistent.set(false);
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
