@@ -3817,6 +3817,10 @@ pub fn display_work_at_with_prepared(
     crate::input::navigation::update_highlight_and_show(state);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
 
+    // Populate the running-head strip for the freshly-loaded work (both labels).
+    // Cursor-move updates keep it fresh afterward; this covers the first paint.
+    crate::app::scene_synopsis::update_running_heads(state);
+
     // Karaoke: tint the phrase that will begin to play (the resume line's
     // start time) so it's visible before playback starts.
     crate::input::phrase_highlight::show_startup_phrase(state);
