@@ -936,6 +936,12 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
            background-color: {bg}; padding: 4px 14px; border-radius: 10px; \
            border: 1px solid {dim}; }} \
          .card-top {{ background-color: {bg}; border-radius: 12px 12px 0 0; }} \
+         .running-head {{ border-bottom: 1px solid {dim}; \
+           padding: 0 40px; }} \
+         .running-head-work {{ color: {dim}; font-size: 11px; \
+           font-variant: small-caps; letter-spacing: 1px; opacity: 0.7; }} \
+         .running-head-scene {{ color: {dim}; font-size: 11px; \
+           font-variant: small-caps; letter-spacing: 1px; opacity: 0.7; }} \
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \
          .column-divider {{ background-color: {dim}; min-width: 1px; \

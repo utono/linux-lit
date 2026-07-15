@@ -298,6 +298,14 @@ pub struct AppState {
     pub page_turn_overlay: gtk4::Overlay,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
+    /// Running-head strip labels living inside `top_spacer` (the card's top
+    /// band). `running_head_work` is the work abbrev (left); `running_head_scene`
+    /// is the position label (right) — act/scene for plays, chapter for prose.
+    /// Both are refreshed on every cursor move and on work load via
+    /// `scene_synopsis::update_running_heads`, on ALL works. Blank only when no
+    /// work is loaded. Replaces the persistent bottom-center position toast.
+    pub running_head_work: gtk4::Label,
+    pub running_head_scene: gtk4::Label,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     /// Left-column container. Carries the divider-hug left margin in two-column
@@ -667,11 +675,12 @@ pub struct AppState {
     /// by a newer toast) becomes a no-op, so rapid `;` presses can never have an
     /// earlier press's timer cut a later toast short. See show_chapter_toast.
     pub chapter_toast_gen: Rc<Cell<u64>>,
-    /// True while the `+` chapter/scene toast is a PERSISTENT live indicator
-    /// (plays + prose-with-chapters). When true the toast has no auto-hide
-    /// timer, its text is refreshed on every cursor move
-    /// (`navigation::refresh_persistent_chapter_toast`), and it is re-shown
-    /// after a search toast borrows the bottom strip. Reset on work switch.
+    /// Legacy flag for the retired persistent bottom act/scene toast. The
+    /// always-visible running-head strip replaced that toast, so this now stays
+    /// `false` for the app's lifetime; it is only read by the transient-toast
+    /// borrow logic (`begin_chapter_toast_borrow`), where `false` means "no
+    /// pill to restore — hide the strip when the transient clears". Kept rather
+    /// than deleted to avoid churning the shared borrow-state struct.
     pub chapter_toast_persistent: Rc<Cell<bool>>,
     /// True while a transient bottom-center toast is borrowing the act/scene
     /// strip (a "Sync: on" / search / "Copied" / etc. message). While set,
@@ -1389,11 +1398,30 @@ pub fn build_window(
     columns_hbox.append(&right_scrolled_overlay);
     right_scrolled_overlay.set_visible(false);
 
-    // Top spacer — one line height, rounded top corners only
+    // Top spacer — one line height, rounded top corners only. Doubles as the
+    // running-head strip: work abbrev at the start, position (act/scene or
+    // chapter) at the end, with a hairline rule (CSS border-bottom) separating
+    // it from the reading text.
     let top_spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     top_spacer.set_hexpand(true);
     top_spacer.set_height_request(TOP_SPACER_HEIGHT);
     top_spacer.add_css_class("card-top");
+    top_spacer.add_css_class("running-head");
+
+    let running_head_work = gtk4::Label::new(None);
+    running_head_work.set_halign(gtk4::Align::Start);
+    running_head_work.set_valign(gtk4::Align::Center);
+    running_head_work.set_hexpand(true);
+    running_head_work.add_css_class("running-head-work");
+
+    let running_head_scene = gtk4::Label::new(None);
+    running_head_scene.set_halign(gtk4::Align::End);
+    running_head_scene.set_valign(gtk4::Align::Center);
+    running_head_scene.set_hexpand(true);
+    running_head_scene.add_css_class("running-head-scene");
+
+    top_spacer.append(&running_head_work);
+    top_spacer.append(&running_head_scene);
 
     // Vertical card assembly: top spacer + scrolled area. No bottom spacer —
     // the scrolled area's card-bottom CSS provides the rounded bottom.
@@ -1806,6 +1834,8 @@ pub fn build_window(
         page_turn_overlay: page_turn_overlay.clone(),
         bottom_clip,
         top_spacer,
+        running_head_work,
+        running_head_scene,
         card_vbox,
         scrolled_window: scrolled,
         scrolled_overlay,
@@ -3224,10 +3254,9 @@ pub fn display_work_at_with_prepared(
     state.current_work = Some(work);
     crate::input::actions::chat::on_work_switched(state);
 
-    // A persistent chapter toast belongs to one work; never leak the previous
-    // work's toast across a switch. Hide it now; the flag is re-derived from
-    // the config preference below (once the new work's line_map exists), so
-    // it can auto-show for the new work if `chapter_toast_shown` is set.
+    // The persistent bottom toast is retired (the running head replaced it),
+    // so this flag stays false for the app's lifetime. Reset it here alongside
+    // the borrow state so a work switch never leaves stale borrow bookkeeping.
     state.chapter_toast_persistent.set(false);
     state.chapter_toast_borrowed.set(false);
     *state.chapter_toast_saved.borrow_mut() = None;
@@ -3775,18 +3804,21 @@ pub fn display_work_at_with_prepared(
     crate::input::page_table::load_for_work(state);
     crate::input::prose_pages::load_for_prose_work(state);
 
-    // Persistent scene/chapter toast: shown by default for plays and
-    // prose-with-chapters, honoring the remembered `chapter_toast_shown`
-    // preference. The line_map now exists, so `chapter_toast_persists()` is
-    // reliable. Setting the flag here lets the `update_highlight_and_show`
-    // below (which calls refresh_persistent_chapter_toast) paint the toast.
-    state.chapter_toast_persistent
-        .set(state.config.chapter_toast_shown && state.chapter_toast_persists());
+    // Persistent bottom toast retired: the running-head strip is now the
+    // always-visible position indicator. Keep the flag false so the transient-
+    // toast borrow/restore never treats an (unpainted, empty) pill as
+    // restorable — otherwise a Sync:/copy toast clearing would restore an empty
+    // visible strip.
+    state.chapter_toast_persistent.set(false);
 
     // Apply highlight, snap scroll, show the scrolled window.
     let t7 = std::time::Instant::now();
     crate::input::navigation::update_highlight_and_show(state);
     crate::logging::log(&format!("TIMING: update_highlight {:.0}ms", t7.elapsed().as_millis()));
+
+    // Populate the running-head strip for the freshly-loaded work (both labels).
+    // Cursor-move updates keep it fresh afterward; this covers the first paint.
+    crate::app::scene_synopsis::update_running_heads(state);
 
     // Karaoke: tint the phrase that will begin to play (the resume line's
     // start time) so it's visible before playback starts.

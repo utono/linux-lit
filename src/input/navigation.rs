@@ -2366,31 +2366,20 @@ pub fn jump_to_next_section(state: &mut AppState) {
     } else {
         jump_to_next_chapter(state);
     }
-    // Surface the new act/scene after landing. Do NOT call the `+` handler
-    // (`show_current_chapter`) — it is a TOGGLE now, so on a persisting work
-    // with the toast already up it would HIDE the toast. Instead: refresh the
-    // persistent toast to the new scene when it is on, else show the one-off
-    // transient toast (non-persisting verse, or the user hid the persistent one).
+    // The running-head strip already tracks the landed scene (via the
+    // cursor-move refresh), so there is no bottom toast to surface here.
     surface_current_scene_toast(state);
 }
 
-/// Surface the current act/scene toast WITHOUT toggling the persistent
-/// indicator. Use this wherever a non-`+` affordance wants to show/refresh the
-/// scene toast (scene jumps, the overlay `;` mirrors) — calling the `+` handler
-/// `show_current_chapter` there would toggle a shown persistent toast OFF.
-/// When the persistent toast is on, refresh it to the current line; otherwise
-/// show the one-off transient toast. Prose works skip the toast — the chapter
-/// heading already names the destination.
+/// Retired no-op, kept for its call sites (scene/chapter jumps). The
+/// always-visible running-head strip replaced the bottom act/scene toast, and
+/// the head is refreshed by the cursor-move path, so scene jumps need nothing
+/// surfaced here.
 pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
-    if state.is_prose() {
-        return;
-    }
-    if state.chapter_toast_persistent.get() {
-        refresh_persistent_chapter_toast(state);
-    } else {
-        let text = compute_current_chapter_text(state);
-        show_chapter_toast(state, &text);
-    }
+    // Retired: the running-head strip shows the current position for every
+    // work. Scene/chapter jumps update the head via the cursor-move path, so
+    // there is nothing to surface as a bottom toast.
+    let _ = state;
 }
 
 /// Jump to the previous structural section: scene marker for plays,
@@ -2500,27 +2489,13 @@ pub fn show_current_chapter(state: &mut AppState) {
     log_fmt!("SHOW_CHAPTER (+): current_line={} is_prose={} persists={}",
         state.current_line, state.is_prose(), state.chapter_toast_persists());
 
-    // Persisting works (plays + prose-with-chapters): `+` toggles a live
-    // "you are here" indicator that follows the cursor. Non-persisting works
-    // keep the transient 3-second toast.
+    // The running-head strip is now the always-visible position indicator for
+    // every work that used to persist the bottom toast (plays + prose-with-
+    // chapters). `+` therefore has nothing to toggle for them — no-op. Works
+    // that never persisted (front matter, bare verse, anthology) still get the
+    // one-off transient toast below.
     if state.chapter_toast_persists() {
-        if state.chapter_toast_persistent.get() {
-            // Toggle OFF: bump the generation (defensive) and hide. Remember
-            // the off state across launches/work switches.
-            state.chapter_toast_persistent.set(false);
-            state.chapter_toast_gen.set(state.chapter_toast_gen.get().wrapping_add(1));
-            state.chapter_toast.set_visible(false);
-            state.config.chapter_toast_shown = false;
-            crate::config::save(&state.config);
-            log_fmt!("CHAPTER_TOAST: persistent OFF (remembered)");
-            return;
-        }
-        state.chapter_toast_persistent.set(true);
-        let text = compute_current_chapter_text(state);
-        show_chapter_toast_persistent(state, &text);
-        state.config.chapter_toast_shown = true;
-        crate::config::save(&state.config);
-        log_fmt!("CHAPTER_TOAST: persistent ON text={:?} (remembered)", text);
+        log_fmt!("SHOW_CHAPTER (+): no-op — running head shows position");
         return;
     }
 
@@ -2691,20 +2666,9 @@ pub(crate) fn show_chapter_toast_persistent(state: &AppState, text: &str) {
 /// Rides the per-navigation `update_title_bar_scene` sites but is a SEPARATE
 /// call — it must refresh even when the title bar is hidden.
 pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
-    if !state.chapter_toast_persistent.get() {
-        return;
-    }
-    // A transient bottom-strip toast ("Sync: on", search, "Copied", …) is
-    // currently borrowing the strip. Sync-driven cursor moves must NOT
-    // resurrect the act/scene pill underneath it — the transient's expiry
-    // restores the pill. Without this guard the pill flickers back the instant
-    // a CursorSync tick lands after the toast appears.
-    if state.chapter_toast_borrowed.get() {
-        return;
-    }
-    let text = compute_current_chapter_text(state);
-    state.chapter_toast.set_text(&text);
-    state.chapter_toast.set_visible(true);
+    // Retired: the running-head strip replaced the persistent bottom toast.
+    // The transient-toast borrow mechanism no longer needs this refresh.
+    let _ = state;
 }
 
 /// Jump to the next bookmarked line (wraps around).
