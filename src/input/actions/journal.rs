@@ -1803,6 +1803,12 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     });
 }
 
+/// Char length of the "Q: …\n\n" prefix the journal body renders before the
+/// answer, so answer-relative diff offsets can be shifted into buffer offsets.
+fn answer_prefix_chars(question: &str) -> i32 {
+    ("Q: ".chars().count() + question.chars().count() + 2) as i32
+}
+
 /// Send a journal Q&A `(question, answer)` plus a rewrite `instruction` to Claude,
 /// save the revised answer to row `id`, and re-render. Factored from
 /// `submit_edit_rewrite` so the vim editor's `R` path reuses the exact grounding
@@ -1854,6 +1860,7 @@ fn rewrite_with_claude(
         (model, context, work_type, p.question.clone(), p.answer.clone())
     };
     let question_owned = question.to_string();
+    let instruction_owned = instruction.to_string();
     let model_for_db = model.clone();
     let user_msg = rewrite_user_message(&context, question, answer, instruction);
 
@@ -1865,6 +1872,7 @@ fn rewrite_with_claude(
         user_msg,
         model,
         move |st, revised| {
+            let prev_answer_for_diff = prev_answer.clone();
             st.borrow_mut().journal_undo = Some((
                 id,
                 prev_question.clone(),
@@ -1872,6 +1880,15 @@ fn rewrite_with_claude(
                 model_for_db.clone(),
             ));
             if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let _ = crate::db::journal::append_revision(
+                    &conn,
+                    "journal",
+                    id,
+                    Some(&prev_question),
+                    &prev_answer,
+                    &model_for_db,
+                    Some(&instruction_owned),
+                );
                 if let Err(e) = crate::db::journal::update_journal_page(
                     &conn, id, &question_owned, &revised, &model_for_db,
                 ) {
@@ -1910,6 +1927,15 @@ fn rewrite_with_claude(
                 render_current(&mut s);
                 land_on_current_band_id(&mut s, id);
             }
+            let base = answer_prefix_chars(&question_owned);
+            let ranges: Vec<(i32, i32)> = crate::input::rewrite_diff::changed_ranges(
+                &prev_answer_for_diff,
+                &revised,
+            )
+            .into_iter()
+            .map(|(a, b)| (a + base, b + base))
+            .collect();
+            s.journal_overlay.apply_rewrite_diff(&ranges);
             crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
         },
         move |st, msg| {
@@ -2444,6 +2470,19 @@ mod tests {
         let line = super::improve_terms_line(&["fee simple".to_string(), "quibble".to_string()]);
         assert!(line.contains("fee simple, quibble"), "names terms: {line}");
         assert!(line.to_lowercase().contains("preserve"), "guidance present: {line}");
+    }
+
+    #[test]
+    fn answer_prefix_chars_matches_rendered_body() {
+        // Body is `format!("{}\n\n{}", prefix_question(question), answer)` where
+        // prefix_question(q) = "Q: {q}" (journal_overlay.rs). The prefix length
+        // must exactly match where the answer begins in that rendered string.
+        let question = "What does Prospero mean here?";
+        let answer = "He means the isle is full of noises.";
+        let body = format!("Q: {}\n\n{}", question, answer);
+        let base = super::answer_prefix_chars(question) as usize;
+        assert_eq!(&body[..base], format!("Q: {}\n\n", question));
+        assert_eq!(&body[base..], answer);
     }
 
     #[test]
