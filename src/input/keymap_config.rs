@@ -243,10 +243,14 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // instead.
         (KeyCombo::shift("colon"), Action::TogglePlaybackSpeed),
         (KeyCombo::shift("semicolon"), Action::TogglePlaybackSpeed),
-        // Bookmarks live on the `;`/`'` home-region pair (`;` displaced
-        // ShowCurrentChapter, which keeps `C` and gains Shift+`;`).
-        (KeyCombo::plain("semicolon"), Action::PrevBookmark),
-        (KeyCombo::plain("apostrophe"), Action::NextBookmark),
+        // Bookmarks live on `}`/`]` (braceright/bracketright, both level-1
+        // unshifted on RPD — see AE08/AE09). Moved off the `;`/`'` home-region
+        // pair, which now duplicate the `t`/`h` dialogue-step twins below.
+        (KeyCombo::plain("braceright"), Action::PrevBookmark),
+        (KeyCombo::plain("bracketright"), Action::NextBookmark),
+        // `;`/`'` duplicate the `t`/`h` prev/next dialogue-line steps.
+        (KeyCombo::plain("semicolon"), Action::CursorPrevDialogueNoSeek),
+        (KeyCombo::plain("apostrophe"), Action::CursorNextDialogueNoSeek),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         // `.` is overloaded (Action::BookmarkTap): single tap toggles the
         // bookmark; .. reverts the toggle and opens the picker.
@@ -576,19 +580,19 @@ mod tests {
             km.lookup("bracketleft", false, false, false),
             Some(Action::JumpToPrevScene),
         );
-        // Chapter jumps on `}`/`]` (braceright/bracketright) were dropped, along
-        // with the number-row (`2`/`3`/`4`/`5`) and `(`/`&` duplicates.
-        assert_eq!(km.lookup("braceright", false, false, false), None);
-        assert_eq!(km.lookup("bracketright", false, false, false), None);
+        // The number-row (`2`/`3`/`4`/`5`) and `(`/`&` duplicates were dropped.
         assert_eq!(km.lookup("2", false, true, false), None);
         assert_eq!(km.lookup("3", false, true, false), None);
         assert_eq!(km.lookup("4", false, false, false), None);
         assert_eq!(km.lookup("5", false, false, false), None);
         assert_eq!(km.lookup("parenleft", false, false, false), None);
         assert_eq!(km.lookup("ampersand", false, false, false), None);
-        // Bookmarks remain on the `;`/`'` pair.
-        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::PrevBookmark));
-        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::NextBookmark));
+        // Bookmarks moved to `}`/`]` (braceright/bracketright).
+        assert_eq!(km.lookup("braceright", false, false, false), Some(Action::PrevBookmark));
+        assert_eq!(km.lookup("bracketright", false, false, false), Some(Action::NextBookmark));
+        // `;`/`'` now duplicate the `t`/`h` prev/next dialogue-line steps.
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogueNoSeek));
+        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogueNoSeek));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` toasts
         // the current act/scene or chapter (swapped in e42fd92).
