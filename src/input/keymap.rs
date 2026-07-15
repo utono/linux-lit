@@ -3006,42 +3006,36 @@ fn handle_keybinds_key(
             crate::input::actions::pickers::restore_mode_after_keybinds(state, back);
             return true;
         }
-        "Tab" => {
-            // First Tab jumps the highlight to the Tab cap (showing its own
-            // binding); pressing Tab again while already on that cap toggles
-            // JUMP/NAV mode. State-based double-tap — no timer.
+        // Every key jumps to its own cap so its detail shows (arrows → ↑↓←→,
+        // Space → Space, symbols → symbol caps, Tab → Tab, j/k → j/k caps).
+        // The one overload: `n`/`p` navigate rows on a DOUBLE-tap — a first
+        // press jumps to the n (or p) cap; pressing it again while already on
+        // that cap advances/retreats a row. State-based double-tap, no timer.
+        "n" => {
             let s = state.borrow();
-            if s.keybinds_overlay.is_on_tab_cap() {
-                s.keybinds_overlay.toggle_mode();
+            if s.keybinds_overlay.is_on_cap("n") {
+                drop(s);
+                next_row_or_gamepad(state);
             } else {
-                s.keybinds_overlay.jump_to_key("Tab");
+                s.keybinds_overlay.jump_to_key("n");
             }
-            return true;
         }
-        _ => {}
-    }
-
-    // Row/selection navigation is always j/k/n/p (in BOTH modes). Everything
-    // else — arrows, Space, g, G, symbols, chords — jumps to its own cap so its
-    // detail shows. This is the same "press a key to jump to its cap" behavior
-    // in NAV and JUMP mode; the two modes now differ only in the footer hint.
-    match key_name {
-        "n" => next_row_or_gamepad(state),
-        "p" => prev_row_or_gamepad(state),
-        "j" => {
-            state.borrow().keybinds_overlay.move_selection(1);
-        }
-        "k" => {
-            state.borrow().keybinds_overlay.move_selection(-1);
+        "p" => {
+            let s = state.borrow();
+            if s.keybinds_overlay.is_on_cap("p") {
+                drop(s);
+                prev_row_or_gamepad(state);
+            } else {
+                s.keybinds_overlay.jump_to_key("p");
+            }
         }
         // Any other key jumps to its matching cap (no-op if none matches —
-        // find_cap returns None). Arrows resolve to the ↑↓←→ caps, Space to the
-        // Space cap, g to the gg cap, symbols to their symbol caps, etc.
+        // find_cap returns None).
         _ => {
             state.borrow().keybinds_overlay.jump_to_key(key_name);
         }
     }
-    true // consume all other keys while keybinds visible
+    true // consume all keys while the keybinds overlay is visible
 }
 
 fn handle_action_popup_key(

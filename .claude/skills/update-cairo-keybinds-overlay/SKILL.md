@@ -41,23 +41,25 @@ separate consts, prepended/appended to their row in `row_keys()`.
 ## Per-Row Rendering (current)
 
 The overlay is **per-row** — one physical keyboard row per screen. Ctrl+/ opens
-row 1. The overlay has two input modes, toggled by `Tab` and shown in the
-header (`JUMP`/`NAV`) and footer:
+row 1. There are no modes and no footer/pill: the header is just
+`Row N of 6 — <TITLE>`.
 
-- **Jump mode** (the default on every open): press a key to jump the highlight
-  straight to that key's cap, auto-switching rows if the cap is on another row.
-  Matching is unshifted-glyph only (see `find_cap` / `key_name_to_glyph`), so
-  digit keys (`1`..`0`) and modified combos (Ctrl/Alt/Shift chords) are NOT jump
-  targets — only the bare unshifted glyph printed on the cap is. The Space cap is
-  also not jump-targetable (the global Space handler intercepts it for MPV
-  play/pause before the overlay sees it). Reach any of these caps with the arrow
-  keys instead.
-- **Nav mode**: `n`/`p` cycle rows (the gamepad overlay is the 6th screen) and
-  `j`/`k` move the key highlight.
+Input model — **every key jumps the highlight to its own cap**, auto-switching
+rows if the cap is on another row (arrows resolve to the `↑↓←→` caps, `Space` to
+the Space cap, symbols to their symbol caps, `Tab` to the Tab cap, `j`/`k` to the
+`j`/`k` caps). Matching is unshifted-glyph only (see `find_cap` /
+`key_name_to_glyph`), so digit keys (`1`..`0`) and modified combos
+(Ctrl/Alt/Shift chords) are NOT jump targets — only the bare unshifted glyph
+printed on the cap is; those caps are reached by pressing a neighbour and reading
+across, or via the `n`/`p` row overload.
 
-In both modes `←`/`→` move the highlight, `↑`/`↓` cycle rows, and `Esc` closes.
-Key routing lives in `handle_keybinds_key` (`src/input/keymap.rs`); the mode
-state and `jump_to_key`/`toggle_mode`/`is_jump_mode` live on `KeybindsOverlay`.
+The one overload: **`n`/`p` navigate rows on a double-tap.** A first `n` jumps to
+the `n` cap; pressing `n` again while already on it advances to the next row
+(`p` symmetrically retreats; the gamepad overlay is the 6th screen). State-based
+double-tap via `is_on_cap("n")` — no timer. `Esc` closes.
+
+Key routing lives in `handle_keybinds_key` (`src/input/keymap.rs`);
+`jump_to_key` / `is_on_cap` / `next_row` / `prev_row` live on `KeybindsOverlay`.
 
 ### `row_keys(idx)`
 

@@ -536,7 +536,6 @@ fn draw_row_screen(
     cr: &gtk4::cairo::Context,
     row_idx: usize,
     selected: usize,
-    jump_mode: bool,
     widget_w: f64,
     widget_h: f64,
 ) {
@@ -553,8 +552,7 @@ fn draw_row_screen(
     cr.set_font_size(20.0);
     cr.set_source_rgb(0.96, 0.94, 0.90);
     let title = ROW_TITLES.get(row_idx).copied().unwrap_or("");
-    let mode = if jump_mode { "JUMP" } else { "NAV" };
-    let header = format!("Row {} of {}  —  {}  —  {}", row_idx + 1, ROW_COUNT + 1, title, mode);
+    let header = format!("Row {} of {}  —  {}", row_idx + 1, ROW_COUNT + 1, title);
     let he = cr.text_extents(&header).unwrap();
     let _ = cr.move_to((widget_w - he.width()) / 2.0, 48.0);
     let _ = cr.show_text(&header);
@@ -765,33 +763,6 @@ fn draw_row_screen(
         ry += row_heights[i] - if *is_shift { shift_gap } else { 0.0 };
     }
 
-    // ── Mode pill ──
-    // Persistent bottom-center pill naming the active mode ("Jump" vs
-    // "Navigation"), replacing the old textual footer hint. Toggle with Tab.
-    cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
-    cr.set_font_size(14.0);
-    let label = if jump_mode { "Jump" } else { "Navigation" };
-    let te = cr.text_extents(label).unwrap();
-    let pad_x = 16.0;
-    let pad_y = 8.0;
-    let pill_w = te.width() + pad_x * 2.0;
-    let pill_h = te.height() + pad_y * 2.0;
-    let pill_x = (widget_w - pill_w) / 2.0;
-    let pill_y = widget_h - pill_h - 22.0;
-    // Rounded-rect pill body.
-    let r = pill_h / 2.0;
-    cr.new_sub_path();
-    let _ = cr.arc(pill_x + pill_w - r, pill_y + r, r, -std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
-    let _ = cr.arc(pill_x + r, pill_y + r, r, std::f64::consts::FRAC_PI_2, 3.0 * std::f64::consts::FRAC_PI_2);
-    cr.close_path();
-    cr.set_source_rgb(0.30, 0.28, 0.36);
-    let _ = cr.fill();
-    // Label centered in the pill (baseline correction via extents).
-    cr.set_source_rgb(0.90, 0.89, 0.93);
-    let text_x = pill_x + pad_x - te.x_bearing();
-    let text_y = pill_y + pad_y - te.y_bearing();
-    let _ = cr.move_to(text_x, text_y);
-    let _ = cr.show_text(label);
 }
 
 /// Truncate `text` so it fits within `max_w` px, appending "…" if cut.
@@ -831,7 +802,6 @@ pub struct KeybindsOverlay {
     drawing_area: DrawingArea,
     row_index: Rc<std::cell::Cell<usize>>,
     selected: Rc<std::cell::Cell<usize>>,
-    jump_mode: Rc<std::cell::Cell<bool>>,
 }
 
 impl KeybindsOverlay {
@@ -849,20 +819,17 @@ impl KeybindsOverlay {
 
         let row_index = Rc::new(std::cell::Cell::new(0usize));
         let selected = Rc::new(std::cell::Cell::new(first_bound(&row_keys(0))));
-        let jump_mode = Rc::new(std::cell::Cell::new(true));
 
         let row_draw = row_index.clone();
         let sel_draw = selected.clone();
-        let jump_draw = jump_mode.clone();
         drawing_area.set_draw_func(move |_area, cr, w, h| {
-            draw_row_screen(cr, row_draw.get(), sel_draw.get(), jump_draw.get(), w as f64, h as f64);
+            draw_row_screen(cr, row_draw.get(), sel_draw.get(), w as f64, h as f64);
         });
 
-        KeybindsOverlay { overlay, drawing_area, row_index, selected, jump_mode }
+        KeybindsOverlay { overlay, drawing_area, row_index, selected }
     }
 
     pub fn show(&self) {
-        self.jump_mode.set(true);
         // Reopen on the previously viewed row (row_index/selected persist across
         // hide/show). Clamp the row in case ROW_COUNT changed.
         let row = self.row_index.get().min(ROW_COUNT - 1);
@@ -914,23 +881,10 @@ impl KeybindsOverlay {
     /// Jump directly to the last keyboard row (used when entering from the
     /// gamepad screen via `p`).
     pub fn show_last_row(&self) {
-        self.jump_mode.set(true);
         let last = ROW_COUNT - 1;
         self.row_index.set(last);
         self.selected.set(first_bound(&row_keys(last)));
         self.drawing_area.set_visible(true);
-        self.drawing_area.queue_draw();
-    }
-
-    /// Move the key highlight within the current row (wraps).
-    pub fn move_selection(&self, delta: i32) {
-        let len = row_keys(self.row_index.get()).len();
-        if len == 0 {
-            return;
-        }
-        let cur = self.selected.get() as i32;
-        let next = (cur + delta).rem_euclid(len as i32) as usize;
-        self.selected.set(next);
         self.drawing_area.queue_draw();
     }
 
@@ -948,20 +902,14 @@ impl KeybindsOverlay {
         }
     }
 
-    /// Flip between jump mode and nav mode and redraw.
-    pub fn toggle_mode(&self) {
-        self.jump_mode.set(!self.jump_mode.get());
-        self.drawing_area.queue_draw();
-    }
-
-    /// Whether the highlight currently sits on the `Tab` cap (upper row). Used
-    /// by the Tab handler: the first Tab jumps here, a second Tab (already here)
-    /// toggles the mode.
-    pub fn is_on_tab_cap(&self) -> bool {
+    /// Whether the highlight currently sits on the cap whose unshifted glyph is
+    /// `glyph`. Used for the `n`/`p` double-tap: a first press jumps to the
+    /// n/p cap, a second press (already on it) navigates a row.
+    pub fn is_on_cap(&self, glyph: &str) -> bool {
         let row = self.row_index.get();
         let keys = row_keys(row);
         keys.get(self.selected.get())
-            .map(|d| d.unshifted == "Tab")
+            .map(|d| d.unshifted == glyph)
             .unwrap_or(false)
     }
 
