@@ -648,16 +648,28 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
     copy_pairing_and_screenshot(&s.theme);
 }
 
-/// Ctrl+Alt+t: desktop notification of the current theme name and root color,
-/// without cycling. The two-line body matches the theme/root cycle binds
-/// (display name, then root color); the title reads `Theme` with no counter.
+/// Ctrl+Alt+t: copy the current theme's color pairing to the system clipboard
+/// (and capture a screenshot), then notify — WITHOUT cycling. It reuses
+/// `copy_pairing_and_screenshot` so the clipboard payload is byte-identical to
+/// the theme/root cycle binds (Ctrl+t / Ctrl+Shift+t / Ctrl+$): the same
+/// `theme / root / vocab-fg / toast-bg` block plus a screenshot path. The
+/// notification body surfaces those same colors so what you see matches what
+/// you paste; the title reads `Theme` with no counter (nothing changed).
 pub(crate) fn show_theme_info(state: &Rc<RefCell<crate::app::AppState>>) {
     let s = state.borrow();
-    let body = format!("{}\n{}", s.theme.display_name, s.theme.root_color);
+    let body = format!(
+        "{}\nroot {}\nvocab-fg {}\ntoast-bg {}",
+        s.theme.display_name,
+        s.theme.root_color,
+        crate::theme::vocab_popup_fg(&s.theme),
+        crate::theme::chapter_toast_bg(&s.theme)
+    );
     let _ = std::process::Command::new("notify-send")
         .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
                "Theme", &body])
         .spawn();
+    // Same clipboard payload + screenshot as the theme/root cycle binds.
+    copy_pairing_and_screenshot(&s.theme);
 }
 
 #[cfg(test)]

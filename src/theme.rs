@@ -793,25 +793,63 @@ fn overlay_panel_bg(theme: &Theme) -> String {
 
 /// Fraction of the root/wallpaper color kept in the toast background; the rest
 /// is the card's own `text_bg`. Below 1.0 the toast reads as a MUTED variant of
-/// the root hue rather than the full-strength wallpaper chip.
+/// the root hue rather than the full-strength wallpaper chip. Applies to DARK
+/// themes only (see `chapter_toast_bg`).
 const CHAPTER_TOAST_ROOT_MIX: f64 = 0.30;
 /// After the root/card blend, lift the toast this fraction toward white so the
 /// chip reads lighter/airier than the card while keeping its faint root tint.
+/// Dark themes only.
 const CHAPTER_TOAST_WHITE_LIFT: f64 = 0.35;
 
-/// Background for the persistent act/scene/chapter toast (and the search toast),
-/// a SOFTER variant of the root/wallpaper color: the root hue blended toward the
-/// reading card's own `text_bg` (see `CHAPTER_TOAST_ROOT_MIX`), then lifted
-/// toward white (`CHAPTER_TOAST_WHITE_LIFT`). It keeps the wallpaper color's
-/// identity but is pulled toward the card and brightened so it reads as a quiet
-/// location label, not the full-strength chip that popped against the page.
-/// `contrast_on` picks the label ink against this background.
+/// Background for the persistent act/scene/chapter toast (and the search toast).
+///
+/// The chip has to read as a quiet location label sitting ON the reading card,
+/// so it must share the card's tone — NOT fight it. How we get there depends on
+/// whether the card is light or dark:
+///
+/// - **Light themes** reuse the theme's OWN cursor-line highlight: the
+///   `cursor_line_bg` tint composited over the card `text_bg` (its rgba alpha
+///   applied). This is the exact warm band the reader already sees under the
+///   current line, so the pill matches the card's family by construction. It
+///   also fixes the sepia family, where blending the saturated, COMPLEMENTARY
+///   teal root (e.g. sepia-lightest's `#437c8f`) into a warm cream card could
+///   never yield a warm chip — teal's low red channel dragged any mix cool/gray
+///   and clashed with the cream page.
+/// - **Dark themes** keep a SOFTER variant of the root/wallpaper hue: root
+///   blended toward the card's `text_bg` (`CHAPTER_TOAST_ROOT_MIX`) then lifted
+///   toward white (`CHAPTER_TOAST_WHITE_LIFT`). On dark cards the root usually
+///   shares the card's cool family, so its identity reads as an intentional echo
+///   of the wallpaper.
+///
+/// `contrast_on` picks the label ink against whichever background results.
 ///
 /// `pub(crate)` so the theme/root keybinds (`copy_pairing_and_screenshot` in
 /// `input::actions::settings`) can copy the exact pill color to the clipboard.
 pub(crate) fn chapter_toast_bg(theme: &Theme) -> String {
-    let tinted = blend_colors(&theme.root_color, &theme.text_bg, CHAPTER_TOAST_ROOT_MIX);
-    blend_colors("#ffffff", &tinted, CHAPTER_TOAST_WHITE_LIFT)
+    if theme.is_light {
+        // The cursor-line band, made opaque over the card: same warm tint the
+        // reader sees under the current line.
+        let (r, g, b) = rgba_str_to_rgb(&theme.cursor_line_bg);
+        let ink = rgb_to_hex(r as f64, g as f64, b as f64);
+        let alpha = rgba_str_alpha(&theme.cursor_line_bg);
+        blend_colors(&ink, &theme.text_bg, alpha)
+    } else {
+        let tinted = blend_colors(&theme.root_color, &theme.text_bg, CHAPTER_TOAST_ROOT_MIX);
+        blend_colors("#ffffff", &tinted, CHAPTER_TOAST_WHITE_LIFT)
+    }
+}
+
+/// Parse the alpha channel from an `rgba(r, g, b, a)` string, defaulting to 1.0
+/// (opaque) for a plain `rgb(...)`/hex or on any parse failure — so a solid
+/// `cursor_line_bg` composites as itself.
+fn rgba_str_alpha(s: &str) -> f64 {
+    let inner = s.trim().trim_start_matches("rgba").trim_start_matches("rgb")
+        .trim().trim_start_matches('(').trim_end_matches(')');
+    inner
+        .split(',')
+        .nth(3)
+        .and_then(|p| p.trim().parse::<f64>().ok())
+        .unwrap_or(1.0)
 }
 
 /// Extra white-lift for the transient CENTER toast (`.center-toast`,
@@ -1571,6 +1609,31 @@ mod tests {
         let v = resolve_theme_variant("s", &json, 5);
         assert_eq!(v.root_color, "#41819b"); // candidates[0]
         assert_eq!(v.root_variant, 0);
+    }
+
+    #[test]
+    fn light_theme_toast_matches_the_cursor_line_band() {
+        // CANDIDATES_JSON is kindle-sepia-shaped (light card #e7dec7, cursor
+        // line rgba(93,66,50,0.14)). The toast chip must equal that cursor-line
+        // tint composited over the card — the exact band the reader sees under
+        // the current line — NOT a root-tinted (teal) chip.
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let t = resolve_theme("s", &json);
+        assert!(t.is_light);
+        let want = blend_colors("#5d4232", &t.text_bg, 0.14);
+        assert_eq!(chapter_toast_bg(&t), want);
+    }
+
+    #[test]
+    fn dark_theme_toast_still_uses_the_root_hue() {
+        // Dark themes keep the softened-root chip (root mixed toward the card,
+        // then lifted toward white) — the light-theme cursor-line path must not
+        // capture them.
+        let t = default_theme();
+        assert!(!t.is_light);
+        let tinted = blend_colors(&t.root_color, &t.text_bg, CHAPTER_TOAST_ROOT_MIX);
+        let want = blend_colors("#ffffff", &tinted, CHAPTER_TOAST_WHITE_LIFT);
+        assert_eq!(chapter_toast_bg(&t), want);
     }
 
     #[test]
