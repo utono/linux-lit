@@ -112,29 +112,26 @@ pub fn browse_restore(state: &Rc<RefCell<AppState>>) {
     let plan = {
         let s = state.borrow();
         let Some(b) = s.rewrite_browse.as_ref() else {
-            return; // not browsing
+            return; // not browsing: no toast, nothing user-meaningful happened
         };
         if b.is_head() {
-            None // on HEAD — no-op
-        } else {
-            let model = current_model(&s);
-            Some((
-                b.kind,
-                b.entry_id,
-                b.head_question.clone(),
-                b.head_body.clone(),
-                b.question_at(b.pos).map(|q| q.to_string()),
-                b.body_at(b.pos).to_string(),
-                model,
-            ))
+            crate::input::navigation::show_chapter_toast_secs(&s, "Already on current version", 2);
+            return;
         }
+        let model = current_model(&s);
+        Some((
+            b.kind,
+            b.entry_id,
+            b.head_question.clone(),
+            b.head_body.clone(),
+            b.question_at(b.pos).map(|q| q.to_string()),
+            b.body_at(b.pos).to_string(),
+            model,
+        ))
     };
 
     let Some((kind, entry_id, head_question, head_body, view_question, view_body, model)) = plan
     else {
-        // Either not browsing or on HEAD.
-        let s = state.borrow();
-        crate::input::navigation::show_chapter_toast_secs(&s, "Not browsing history", 2);
         return;
     };
 
@@ -159,6 +156,18 @@ pub fn browse_restore(state: &Rc<RefCell<AppState>>) {
                 let _ = crate::db::queries::update_gloss(&conn, entry_id, &view_body, &model);
             }
             _ => {}
+        }
+    }
+
+    // Gloss renders from the in-memory gloss_list (render_gloss_live reads
+    // gloss_list[gloss_index]), so patch the restored body into memory too —
+    // the journal path re-queries the DB in render_current and needs no patch.
+    // Mirrors the live rewrite path (gloss.rs: gloss_list[idx].gloss_text = ...).
+    if kind == "gloss" {
+        let mut s = state.borrow_mut();
+        let idx = s.gloss_index;
+        if let Some(g) = s.gloss_list.get_mut(idx) {
+            g.gloss_text = view_body.clone();
         }
     }
 
