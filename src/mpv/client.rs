@@ -197,6 +197,22 @@ async fn handle_command(
                 let _ = send_command(w, cmd_b).await;
             }
         }
+        MpvCommand::SetBackground(color) => {
+            if let Some(w) = writer.as_mut() {
+                // `color` is a `#rrggbb` string from the theme. These properties
+                // take STRING values, so the JSON value must be quoted —
+                // set_property_cmd renders its value raw (used for f64s), so it
+                // can't build these. Setting `background`/`border-background` to
+                // `color` mode makes the idle backdrop and the letterbox matte
+                // both honor `background-color`.
+                let escaped = color.replace('\\', "\\\\").replace('"', "\\\"");
+                let _ = send_command(w, r#"{"command":["set_property","background","color"]}"#).await;
+                let _ = send_command(w, r#"{"command":["set_property","border-background","color"]}"#).await;
+                let cmd = format!(r#"{{"command":["set_property","background-color","{}"]}}"#, escaped);
+                let _ = send_command(w, &cmd).await;
+                crate::logging::log(&format!("MPV: background-color set to {}", color));
+            }
+        }
         MpvCommand::LoadFile(path) => {
             if let Some(w) = writer.as_mut() {
                 let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");

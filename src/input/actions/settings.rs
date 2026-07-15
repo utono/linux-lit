@@ -328,6 +328,16 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
 
     state.theme = theme.clone();
 
+    // Keep MPV's window backdrop in step with the reader's root color: update
+    // the launch-time global (for the next MPV window), and push the color to a
+    // running MPV so an already-open window recolors live. try_send is fine —
+    // if the bounded channel is momentarily full the next theme change resends,
+    // and if no MPV is connected the client-side handler is a no-op.
+    crate::mpv::discovery::set_mpv_background(&theme.root_color);
+    let _ = state
+        .cmd_tx
+        .try_send(crate::mpv::MpvCommand::SetBackground(theme.root_color.clone()));
+
     // Resync the settings overlay's own theme_index to whatever theme was just
     // applied. Without this, a theme change made OUTSIDE the overlay's own
     // row-0 cycling (Alt+t/Alt+Shift+T `cycle_theme`, or the SIGUSR1 handler)

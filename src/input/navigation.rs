@@ -2956,8 +2956,25 @@ pub fn seek_to_current_line(state: &mut AppState) {
         // indefinite holds, and a manual o/e scrub overwrites with its own
         // brief hold so scrub-following while paused still works.
         let hold = if state.mpv_playing { SYNC_SUPPRESS_SEEK } else { SYNC_SUPPRESS_INDEFINITE };
-        let new_until = std::time::Instant::now() + hold;
-        if state.suppress_sync_until.map_or(true, |existing| new_until > existing) {
+        let now = std::time::Instant::now();
+        let new_until = now + hold;
+        // Landing on a TIMESTAMPED line while PLAYING means sync should be
+        // following the audio — so an existing indefinite (86400s) hold left by
+        // a momentary UNtimestamped landing is stale and must be cleared, not
+        // preserved. Without this, one transient hop onto a line missing its
+        // timestamp permanently killed sync (guard below refused to shorten the
+        // 86400s hold) until a manual playback toggle. A legitimate longer hold
+        // (display_work's 5s load window) stays well under the threshold, so it
+        // is still honored. When paused we keep the "never shorten" rule intact.
+        let existing_is_stale = state.mpv_playing
+            && state.suppress_sync_until.is_some_and(|existing| {
+                existing.saturating_duration_since(now)
+                    > std::time::Duration::from_secs(60)
+            });
+        if existing_is_stale {
+            log_fmt!("SEEK: cleared stale indefinite suppression (timestamped landing while playing)");
+            state.suppress_sync_until = Some(new_until);
+        } else if state.suppress_sync_until.map_or(true, |existing| new_until > existing) {
             state.suppress_sync_until = Some(new_until);
         }
         let seek_time = preroll_seek_time(base);

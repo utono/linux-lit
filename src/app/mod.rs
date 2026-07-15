@@ -1134,6 +1134,11 @@ pub fn build_window(
     crate::logging::log("BUILD: loading_work guard active");
     crate::logging::log(&format!("Theme: {} ({})", theme.display_name, theme.name));
     crate::logging::log(&format!("Highlight color: {}", theme.cursor_line_bg));
+    // MPV windows opened by linux-lit take the reader's root color as their
+    // backdrop (letterbox/border matte + idle background). Record it now so the
+    // first launch_mpv (which runs in a spawn_blocking closure that can't borrow
+    // AppState) uses it; apply_theme_to_state refreshes it on later theme changes.
+    crate::mpv::discovery::set_mpv_background(&theme.root_color);
 
     let buffer = sourceview5::Buffer::new(None);
     // Disable sourceview5's default style scheme so our CSS controls all colors

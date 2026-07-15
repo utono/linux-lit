@@ -1072,7 +1072,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          textview.gloss-text text {{ background-color: {gloss_bg}; }} \
          textview.overlay-prose {{ background-color: transparent; color: {fg}; }} \
          textview.overlay-prose text {{ background-color: transparent; color: {fg}; }} \
-         .gloss-title {{ font-size: {size}pt; font-weight: bold; \
+         .gloss-title {{ font-family: {font}; font-size: {size}pt; font-weight: bold; \
            margin-bottom: 12px; padding-bottom: 12px; \
            border-bottom: 1px solid {dim}; }} \
          .journal-title {{ font-size: 13px; font-weight: normal; \

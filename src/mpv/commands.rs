@@ -18,6 +18,11 @@ pub enum MpvCommand {
     },
     SetAbLoop { a: f64, b: f64 },
     ClearAbLoop,
+    /// Recolor a running MPV window's backdrop (letterbox/border matte + idle
+    /// background) to the given color. Sent when the reader's theme or root
+    /// variant changes so an already-open MPV window follows live. New windows
+    /// pick up the color at launch instead (see `set_mpv_background`).
+    SetBackground(String),
     LoadFile(String),
     /// Load file and seek+resume after MPV reports it's ready.
     LoadFileAndSeek(String, f64),

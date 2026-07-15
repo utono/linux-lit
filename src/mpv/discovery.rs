@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::RwLock;
 
 /// MPV launch volume (percent) for the `--volume=` arg. Set once at startup
 /// from `config.mpv_volume` (see `set_mpv_volume`); defaults to 100 if never
@@ -11,6 +12,23 @@ static MPV_VOLUME: AtomicU32 = AtomicU32::new(100);
 /// Record the configured MPV launch volume. Call once after config load.
 pub fn set_mpv_volume(percent: u32) {
     MPV_VOLUME.store(percent, Ordering::Relaxed);
+}
+
+/// MPV window background color (the letterbox/border matte around video and the
+/// idle backdrop) for the `--background-color=` arg. Set from the active
+/// theme's `root_color` so an MPV window opened by linux-lit matches the
+/// reader's outer wallpaper color instead of MPV's default. A process global
+/// for the same reason as `MPV_VOLUME`: `launch_mpv` runs inside spawn_blocking
+/// closures that can't borrow AppState. Empty until the theme is applied, in
+/// which case launch_mpv falls back to MPV's own default.
+static MPV_BACKGROUND: RwLock<String> = RwLock::new(String::new());
+
+/// Record the MPV window background color. Call at startup once the theme is
+/// resolved, and again whenever the theme or root variant changes.
+pub fn set_mpv_background(color: &str) {
+    if let Ok(mut g) = MPV_BACKGROUND.write() {
+        *g = color.to_string();
+    }
 }
 
 pub fn derive_socket_path(media_path: &str) -> String {
@@ -136,11 +154,31 @@ pub fn launch_mpv(media_path: &str) -> String {
         ));
         return socket_path;
     }
+    // Paint MPV's window backdrop with the reader's root color so the
+    // letterbox/border matte around video (and the idle backdrop) matches the
+    // reader's wallpaper instead of MPV's default checkerboard/black. `color`
+    // mode makes both the idle background (`--background`) and the border matte
+    // (`--border-background`) use `--background-color`. Skipped (empty string)
+    // until the theme is applied, leaving MPV's own defaults.
+    let bg = MPV_BACKGROUND
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let bg_args: Vec<String> = if bg.is_empty() {
+        Vec::new()
+    } else {
+        vec![
+            "--background=color".to_string(),
+            "--border-background=color".to_string(),
+            format!("--background-color={}", bg),
+        ]
+    };
     match std::process::Command::new("mpv")
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
         .arg(format!("--volume={}", MPV_VOLUME.load(Ordering::Relaxed)))
+        .args(&bg_args)
         // Keep MPV's window: some works are videos, and the audiobook window
         // carries cover art. dwl routes `mpv-lit` to its own tag (config.h), so
         // it doesn't cover the reader.
