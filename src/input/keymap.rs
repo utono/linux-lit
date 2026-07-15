@@ -29,6 +29,17 @@ pub enum ChordState {
 #[derive(Default)]
 pub struct KeyState {
     pub chord: ChordState,
+    /// True while a Shift key is held and NO other key has been pressed during
+    /// the hold — i.e. a lone Shift press that is still a candidate "Shift tap".
+    /// Set on a bare `Shift_L`/`Shift_R` press, cleared the moment any other key
+    /// is pressed while Shift is down (that press makes it a modifier chord such
+    /// as Shift+g → `G`, not a tap). Consumed on the Shift RELEASE.
+    pub shift_tap_armed: bool,
+    /// The buffer line whose timestamp the most recent Shift-tap DELETE removed,
+    /// or `None` if the last Shift tap did not delete (no timestamp) or was an
+    /// undo. A second Shift tap on this SAME line undoes the delete; any cursor
+    /// move or other key clears it so the next Shift tap is a fresh delete.
+    pub shift_deleted_line: Option<usize>,
 }
 
 impl KeyState {
@@ -55,6 +66,34 @@ pub fn handle_key(
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
+
+    // ── Shift-tap tracking (main-card timestamp delete/undo) ──
+    // A LONE Shift press+release (nothing else pressed during the hold) is a
+    // "Shift tap" that deletes the cursor line's timestamp in Reader mode (the
+    // action fires on RELEASE — see the key-released controller). Here on PRESS
+    // we maintain the armed flag: pressing Shift arms it; pressing any other key
+    // while Shift is held disarms it, so Shift+g → `G` and every other
+    // uppercase/shift chord is untouched.
+    //
+    // The bare Shift press is consumed (release drives the action) ONLY in
+    // Reader mode. In every other mode Shift flows through as a normal modifier
+    // AND can still jump to its cap in the keybinds overlay.
+    if key_name == "Shift_L" || key_name == "Shift_R" {
+        let is_reader = state.borrow().input_mode == crate::app::InputMode::Reader;
+        if is_reader {
+            key_state.borrow_mut().shift_tap_armed = true;
+            return true; // consume the bare Shift press; release drives it
+        }
+        // Non-reader: not a tap candidate; let it flow to the mode handler.
+        key_state.borrow_mut().shift_tap_armed = false;
+    } else {
+        // Any non-Shift key press cancels a pending Shift tap (it's a chord now)
+        // and clears the same-line undo memory (moving off the deleted line, or
+        // any other key, means the next Shift tap is a fresh delete).
+        let mut ks = key_state.borrow_mut();
+        ks.shift_tap_armed = false;
+        ks.shift_deleted_line = None;
+    }
 
     // Shift+Ctrl+L: save position and quit from ANY mode — every overlay,
     // picker, and the vim editors included, so it sits ABOVE the JournalEdit/
@@ -288,6 +327,59 @@ pub fn handle_key(
     }
 
     false
+}
+
+/// Handle a key RELEASE. Only used for the Shift-tap timestamp delete/undo:
+/// a lone `Shift_L`/`Shift_R` release, still armed (no other key pressed during
+/// the hold), fires in **Reader mode only**. First tap on a line with a
+/// timestamp deletes it and remembers the line; a second tap on that SAME line
+/// undoes the delete. In every other mode (input overlays, pickers, vim
+/// editors) Shift is a plain modifier and this is a no-op.
+pub fn handle_key_released(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+) {
+    if key_name != "Shift_L" && key_name != "Shift_R" {
+        return;
+    }
+    // Was this a clean tap (armed and never turned into a chord)?
+    let armed = key_state.borrow().shift_tap_armed;
+    key_state.borrow_mut().shift_tap_armed = false;
+    if !armed {
+        return;
+    }
+    // Main card only — Shift stays a plain modifier everywhere else.
+    if state.borrow().input_mode != crate::app::InputMode::Reader {
+        return;
+    }
+    crate::logging::log("SHIFT_TAP: lone Shift released in Reader — delete/undo ts");
+
+    let current_line = state.borrow().current_line;
+    let deleted_here = key_state.borrow().shift_deleted_line == Some(current_line);
+
+    if deleted_here {
+        // Second tap on the same line → undo the delete, restoring the ts.
+        let restored = crate::input::timestamps::undo_timestamp(&mut state.borrow_mut());
+        key_state.borrow_mut().shift_deleted_line = None;
+        let msg = if restored {
+            "timestamp restored (undo)"
+        } else {
+            "nothing to undo"
+        };
+        navigation::show_chapter_toast(&state.borrow(), msg);
+    } else {
+        // First tap → delete the cursor line's timestamp (captures an undo
+        // snapshot internally so a second same-line tap can restore it).
+        let deleted = crate::input::timestamps::delete_timestamp(&mut state.borrow_mut());
+        if deleted {
+            key_state.borrow_mut().shift_deleted_line = Some(current_line);
+            navigation::show_chapter_toast(&state.borrow(), "timestamp deleted (Shift again undoes)");
+        } else {
+            key_state.borrow_mut().shift_deleted_line = None;
+            navigation::show_chapter_toast(&state.borrow(), "no timestamp on this line");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

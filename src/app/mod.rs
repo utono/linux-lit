@@ -2623,6 +2623,10 @@ pub fn build_window(
     let tokio_handle_for_mru = tokio_handle.clone();
     let state_for_keys = Rc::clone(&state);
     let key_state = Rc::new(RefCell::new(crate::input::keymap::KeyState::default()));
+    // Cloned up front for the key-RELEASE handler below (the pressed closure
+    // moves the originals).
+    let state_for_release = Rc::clone(&state);
+    let key_state_release = Rc::clone(&key_state);
     let key_controller = EventControllerKey::new();
     key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
     key_controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
@@ -2649,6 +2653,12 @@ pub fn build_window(
         } else {
             glib::Propagation::Proceed
         }
+    });
+    // Key RELEASE: drives the lone-Shift-tap timestamp delete/undo (Reader mode
+    // only; a plain modifier everywhere else). See keymap::handle_key_released.
+    key_controller.connect_key_released(move |_controller, keyval, _keycode, _modifier| {
+        let key_name = keyval.name().unwrap_or_default();
+        crate::input::keymap::handle_key_released(&state_for_release, &key_state_release, &key_name);
     });
     window.add_controller(key_controller);
 

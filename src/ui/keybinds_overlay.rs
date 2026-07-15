@@ -92,7 +92,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("z", "Z", "conc picker", "", &[("C-z", "conc word"), ("M-z", "conc works"), ("S-C-z", "conc list")]),
 ];
 
-const SHIFT_KEY: KeyDef = ub("Shift", "");
+const SHIFT_KEY: KeyDef = bare("Shift", "", "del ts tap");
 /// The spacebar sits below the bottom row physically, so it is appended to the
 /// BOTTOM ROW screen — and repeated on the MODIFIERS & SEQUENCES screen.
 const SPACE_KEY: KeyDef = bare("Space", "", "play from ts");
@@ -182,6 +182,11 @@ fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
         // ⌫ (U+232B) BACKSPACE cap on the number/symbol row. Maps so pressing
         // Backspace jumps to it.
         "BackSpace" => "\u{232b}",
+        // The Shift keys report "Shift_L"/"Shift_R"; the cap glyph is "Shift"
+        // (bottom row). Maps so a Shift press jumps to it in the overlay. (In
+        // Reader mode a lone Shift tap deletes a timestamp instead — handled
+        // before mode dispatch, so this only fires while an overlay is open.)
+        "Shift_L" | "Shift_R" => "Shift",
         // Arrow keys have caps on the MODIFIERS & SEQUENCES row; map their GTK
         // keyval names to those cap glyphs so a press jumps to them. (`g` is
         // left to identity-match the home-row `g` cap — the `gg`/`g;` sequence
@@ -346,6 +351,9 @@ sync) — src/input/keymap.rs",
         "copy work info" => "Action::CopyWorkInfo — src/input/keymap.rs",
         "ts tap" => "Action::DeleteTimestampTap (toast only; 2x deletes via \
 ChordState::PendingBackspace) — src/input/keymap.rs",
+        "del ts tap" => "Lone Shift tap (Reader only): deletes the cursor line's \
+timestamp; a second tap on the SAME line undoes it. keymap::handle_key_released. \
+Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
         "undo ts" => "Action::UndoTimestamp — src/input/timestamps.rs",
         "nudge −0.2" => "Action::NudgeStartBackward — src/input/timestamps.rs",
         "+0.2" => "Action::NudgeStartForward — src/input/timestamps.rs",
