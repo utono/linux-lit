@@ -298,6 +298,10 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     state
         .journal_overlay
         .set_search_colors(&search_all, &search_current);
+    // Ephemeral rewrite diff-highlight tint follows the same "all matches"
+    // search color (Task 4 of the rewrite-revision-history feature).
+    state.gloss_overlay.set_rewrite_diff_color(&search_all);
+    state.journal_overlay.set_rewrite_diff_color(&search_all);
     // Page-marker glyph color follows theme dim foreground.
     state.gloss_overlay.set_marker_color(&theme.dim_fg);
     state.journal_overlay.set_marker_color(&theme.dim_fg);

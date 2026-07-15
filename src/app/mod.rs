@@ -1531,6 +1531,10 @@ pub fn build_window(
     let (search_all, search_current) = theme.search_highlight_colors();
     gloss_overlay.set_search_colors(&search_all, &search_current);
     journal_overlay.set_search_colors(&search_all, &search_current);
+    // Ephemeral rewrite diff-highlight tint follows the same "all matches"
+    // search color (Task 4 of the rewrite-revision-history feature).
+    gloss_overlay.set_rewrite_diff_color(&search_all);
+    journal_overlay.set_rewrite_diff_color(&search_all);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();

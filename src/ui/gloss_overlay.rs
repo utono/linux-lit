@@ -191,6 +191,14 @@ pub struct GlossOverlay {
     /// the theme (Task 5).
     search_tag: gtk4::TextTag,
     search_current_tag: gtk4::TextTag,
+    /// Ephemeral rewrite diff-highlight tag (Task 4 of the rewrite-revision-
+    /// history feature). Marks the char ranges a custom-prompt rewrite changed;
+    /// applied by `apply_rewrite_diff` (Tasks 5/6), cleared by `clear_rewrite_diff`
+    /// (Task 7). Placeholder color; `set_rewrite_diff_color` wires it to the theme.
+    rewrite_diff_tag: gtk4::TextTag,
+    /// True while a rewrite diff highlight is currently applied (empty ranges
+    /// count as inactive). Read by Task 7 to decide whether to clear on next edit.
+    rewrite_diff_active: std::cell::Cell<bool>,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -548,6 +556,14 @@ impl GlossOverlay {
             .build();
         gloss_view.buffer().tag_table().add(&search_tag);
         gloss_view.buffer().tag_table().add(&search_current_tag);
+        // Ephemeral rewrite diff-highlight tag (Task 4 of the rewrite-revision-
+        // history feature). Same registration pattern as the search tags above;
+        // Tasks 5/6 call apply_rewrite_diff, Task 7 calls clear_rewrite_diff.
+        let rewrite_diff_tag = gtk4::TextTag::builder()
+            .name("rewrite_diff")
+            .background("#ffe000") // placeholder; set via set_rewrite_diff_color
+            .build();
+        gloss_view.buffer().tag_table().add(&rewrite_diff_tag);
 
         GlossOverlay {
             overlay,
@@ -609,6 +625,8 @@ impl GlossOverlay {
             pre_edit_family: RefCell::new(None),
             search_tag,
             search_current_tag,
+            rewrite_diff_tag,
+            rewrite_diff_active: std::cell::Cell::new(false),
         }
     }
 
@@ -658,6 +676,41 @@ impl GlossOverlay {
     pub fn set_search_colors(&self, all: &str, current: &str) {
         self.search_tag.set_background(Some(all));
         self.search_current_tag.set_background(Some(current));
+    }
+
+    /// The ephemeral rewrite diff-highlight tag.
+    pub fn rewrite_diff_tag(&self) -> &gtk4::TextTag {
+        &self.rewrite_diff_tag
+    }
+
+    /// True while a rewrite diff highlight is currently applied.
+    pub fn rewrite_diff_active(&self) -> bool {
+        self.rewrite_diff_active.get()
+    }
+
+    /// Set the diff-highlight background (theme-wired via set_search_colors' path).
+    pub fn set_rewrite_diff_color(&self, color: &str) {
+        self.rewrite_diff_tag.set_background(Some(color));
+    }
+
+    /// Tag every changed-word char range on the gloss buffer (clears first).
+    pub fn apply_rewrite_diff(&self, ranges: &[(i32, i32)]) {
+        let buffer = self.gloss_view.buffer();
+        self.clear_rewrite_diff();
+        for (a, b) in ranges {
+            let s = buffer.iter_at_offset(*a);
+            let e = buffer.iter_at_offset(*b);
+            buffer.apply_tag(&self.rewrite_diff_tag, &s, &e);
+        }
+        self.rewrite_diff_active.set(!ranges.is_empty());
+    }
+
+    /// Remove the diff-highlight tag over the whole buffer.
+    pub fn clear_rewrite_diff(&self) {
+        let buffer = self.gloss_view.buffer();
+        let (s, e) = buffer.bounds();
+        buffer.remove_tag(&self.rewrite_diff_tag, &s, &e);
+        self.rewrite_diff_active.set(false);
     }
 
     /// Scroll the view so the given char offset is on-screen. Creates a
