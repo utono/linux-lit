@@ -3018,34 +3018,13 @@ fn handle_keybinds_key(
             }
             return true;
         }
-        // Arrows navigate in BOTH modes.
-        "Up" => {
-            next_row_or_gamepad(state);
-            return true;
-        }
-        "Down" => {
-            prev_row_or_gamepad(state);
-            return true;
-        }
-        "Right" => {
-            state.borrow().keybinds_overlay.move_selection(1);
-            return true;
-        }
-        "Left" => {
-            state.borrow().keybinds_overlay.move_selection(-1);
-            return true;
-        }
         _ => {}
     }
 
-    if state.borrow().keybinds_overlay.is_jump_mode() {
-        // Jump mode: any other key jumps the highlight to its cap (no-op if no
-        // matching cap). Always consume so nothing leaks to the reader.
-        state.borrow().keybinds_overlay.jump_to_key(key_name);
-        return true;
-    }
-
-    // Nav mode: the classic n/p rows, j/k highlight.
+    // Row/selection navigation is always j/k/n/p (in BOTH modes). Everything
+    // else — arrows, Space, g, G, symbols, chords — jumps to its own cap so its
+    // detail shows. This is the same "press a key to jump to its cap" behavior
+    // in NAV and JUMP mode; the two modes now differ only in the footer hint.
     match key_name {
         "n" => next_row_or_gamepad(state),
         "p" => prev_row_or_gamepad(state),
@@ -3055,7 +3034,12 @@ fn handle_keybinds_key(
         "k" => {
             state.borrow().keybinds_overlay.move_selection(-1);
         }
-        _ => {}
+        // Any other key jumps to its matching cap (no-op if none matches —
+        // find_cap returns None). Arrows resolve to the ↑↓←→ caps, Space to the
+        // Space cap, g to the gg cap, symbols to their symbol caps, etc.
+        _ => {
+            state.borrow().keybinds_overlay.jump_to_key(key_name);
+        }
     }
     true // consume all other keys while keybinds visible
 }

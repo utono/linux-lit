@@ -175,6 +175,17 @@ fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
         "at" => "@",
         "dollar" => "$",
         "equal" => "=",
+        // The spacebar reports the keyval name "space"; its cap glyph is "Space"
+        // (SPACE_KEY in the bottom row). Maps so pressing Space jumps to it.
+        "space" => "Space",
+        // Arrow keys have caps on the MODIFIERS & SEQUENCES row; map their GTK
+        // keyval names to those cap glyphs so a press jumps to them. (`g` is
+        // left to identity-match the home-row `g` cap — the `gg`/`g;` sequence
+        // caps are reachable by j/k stepping.)
+        "Up" => "\u{2191}",
+        "Down" => "\u{2193}",
+        "Left" => "\u{2190}",
+        "Right" => "\u{2192}",
         _ => return None,
     })
 }
@@ -754,18 +765,33 @@ fn draw_row_screen(
         ry += row_heights[i] - if *is_shift { shift_gap } else { 0.0 };
     }
 
-    // ── Footer hint ──
+    // ── Mode pill ──
+    // Persistent bottom-center pill naming the active mode ("Jump" vs
+    // "Navigation"), replacing the old textual footer hint. Toggle with Tab.
     cr.select_font_face("sans-serif", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
-    cr.set_source_rgb(0.78, 0.76, 0.82);
-    let foot = if jump_mode {
-        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  press a key to jump to its cap  \u{00b7}  Left/Right move  \u{00b7}  Up/Down rows"
-    } else {
-        "Esc close  \u{00b7}  Tab jump/nav  \u{00b7}  n/p or Up/Down rows  \u{00b7}  j/k or Left/Right move"
-    };
-    let fe = cr.text_extents(foot).unwrap();
-    let _ = cr.move_to((widget_w - fe.width()) / 2.0, widget_h - 28.0);
-    let _ = cr.show_text(foot);
+    let label = if jump_mode { "Jump" } else { "Navigation" };
+    let te = cr.text_extents(label).unwrap();
+    let pad_x = 16.0;
+    let pad_y = 8.0;
+    let pill_w = te.width() + pad_x * 2.0;
+    let pill_h = te.height() + pad_y * 2.0;
+    let pill_x = (widget_w - pill_w) / 2.0;
+    let pill_y = widget_h - pill_h - 22.0;
+    // Rounded-rect pill body.
+    let r = pill_h / 2.0;
+    cr.new_sub_path();
+    let _ = cr.arc(pill_x + pill_w - r, pill_y + r, r, -std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
+    let _ = cr.arc(pill_x + r, pill_y + r, r, std::f64::consts::FRAC_PI_2, 3.0 * std::f64::consts::FRAC_PI_2);
+    cr.close_path();
+    cr.set_source_rgb(0.30, 0.28, 0.36);
+    let _ = cr.fill();
+    // Label centered in the pill (baseline correction via extents).
+    cr.set_source_rgb(0.90, 0.89, 0.93);
+    let text_x = pill_x + pad_x - te.x_bearing();
+    let text_y = pill_y + pad_y - te.y_bearing();
+    let _ = cr.move_to(text_x, text_y);
+    let _ = cr.show_text(label);
 }
 
 /// Truncate `text` so it fits within `max_w` px, appending "…" if cut.
@@ -939,10 +965,6 @@ impl KeybindsOverlay {
             .unwrap_or(false)
     }
 
-    /// Whether the overlay is currently in jump mode (vs nav mode).
-    pub fn is_jump_mode(&self) -> bool {
-        self.jump_mode.get()
-    }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
         self.overlay.set_child(Some(base));
