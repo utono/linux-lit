@@ -315,12 +315,11 @@ fn render_gloss_position(state: &Rc<RefCell<AppState>>, pos: usize) {
     let pairs = ctx.source_line_pairs();
     let root = s.theme.root_color.clone();
 
-    // Capture the predecessor's RENDERED text for the diff baseline.
-    let prev_rendered = prev_markup.map(|m| {
-        s.gloss_overlay
-            .show_gloss_with_color(&source_text, &m, cw, h, Some(&root), &pairs);
-        s.gloss_overlay.buffer_text_for_diff()
-    });
+    // Capture the predecessor's RENDERED text for the diff baseline — the WHOLE
+    // gloss's rendered text (not the page-1 buffer), so a change on page 2+ of a
+    // paginated revision is still in the diff and survives page turns.
+    let prev_rendered = prev_markup
+        .map(|m| crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&m));
 
     // Render the target revision (the version the user is viewing).
     s.gloss_overlay
@@ -330,7 +329,8 @@ fn render_gloss_position(state: &Rc<RefCell<AppState>>, pos: usize) {
 
     // Diff-highlight vs the predecessor (cleared when there is none).
     if let Some(prev) = prev_rendered {
-        let new_rendered = s.gloss_overlay.buffer_text_for_diff();
+        let new_rendered =
+            crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&target_markup);
         let ranges = crate::input::rewrite_diff::changed_ranges(&prev, &new_rendered);
         s.gloss_overlay.apply_rewrite_diff(&ranges);
     } else {

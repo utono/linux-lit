@@ -199,6 +199,13 @@ pub struct GlossOverlay {
     /// True while a rewrite diff highlight is currently applied (empty ranges
     /// count as inactive). Read by Task 7 to decide whether to clear on next edit.
     rewrite_diff_active: std::cell::Cell<bool>,
+    /// The rewrite diff-highlight char ranges into the WHOLE gloss's RENDERED
+    /// text (the `full_rendered_gloss_text` basis — block markups rendered and
+    /// joined by `"\n"`), NOT the current page's buffer. Stored so `render_*`
+    /// can re-tint the ranges that fall on each page after a page turn (long
+    /// glosses paginate — a change on page 2+ would otherwise be lost, since the
+    /// buffer holds only one page). Mirrors the journal overlay.
+    rewrite_diff_full: RefCell<Vec<(usize, usize)>>,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -627,6 +634,7 @@ impl GlossOverlay {
             search_current_tag,
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
+            rewrite_diff_full: RefCell::new(Vec::new()),
         }
     }
 
@@ -662,13 +670,6 @@ impl GlossOverlay {
         self.gloss_view.buffer()
     }
 
-    /// Full text of the gloss_view buffer (start..end) — the RENDERED plain text,
-    /// for computing a rewrite diff against the buffer offsets.
-    pub fn buffer_text_for_diff(&self) -> String {
-        let b = self.gloss_view.buffer();
-        let (s, e) = b.bounds();
-        b.text(&s, &e, false).to_string()
-    }
 
     /// The "all matches" search-highlight tag.
     pub fn search_tag(&self) -> &gtk4::TextTag {
@@ -696,23 +697,117 @@ impl GlossOverlay {
         self.rewrite_diff_tag.set_background(Some(color));
     }
 
-    /// Tag every changed-word char range on the gloss buffer (clears first).
+    /// Record the rewrite diff-highlight as char ranges into the WHOLE gloss's
+    /// RENDERED text (the `full_rendered_gloss_text` basis) and paint whatever
+    /// falls on the current page. Stored so `render_*` can re-tint it after a page
+    /// turn — long glosses paginate, and a change on page 2+ would otherwise be
+    /// lost because the buffer holds only one page. Mirrors the journal overlay.
     pub fn apply_rewrite_diff(&self, ranges: &[(i32, i32)]) {
-        let buffer = self.gloss_view.buffer();
-        self.clear_rewrite_diff();
-        for (a, b) in ranges {
-            let s = buffer.iter_at_offset(*a);
-            let e = buffer.iter_at_offset(*b);
-            buffer.apply_tag(&self.rewrite_diff_tag, &s, &e);
-        }
+        *self.rewrite_diff_full.borrow_mut() = ranges
+            .iter()
+            .filter(|(a, b)| b > a)
+            .map(|(a, b)| (*a as usize, *b as usize))
+            .collect();
         self.rewrite_diff_active.set(!ranges.is_empty());
+        self.reapply_rewrite_diff();
     }
 
-    /// Remove the diff-highlight tag over the whole buffer.
+    /// Re-tag the stored full-body diff ranges onto the CURRENT page's buffer,
+    /// clipping each to the page's rendered char span and shifting to page-local
+    /// offsets. Called after each render in `render_gloss_page` /
+    /// `render_synopsis_page`, so the highlight survives page turns. No-op when no
+    /// ranges are stored. Mirrors `JournalOverlay::reapply_rewrite_diff`.
+    fn reapply_rewrite_diff(&self) {
+        let buffer = self.gloss_view.buffer();
+        let (bs, be) = buffer.bounds();
+        buffer.remove_tag(&self.rewrite_diff_tag, &bs, &be);
+        let full = self.rewrite_diff_full.borrow();
+        if full.is_empty() {
+            return;
+        }
+        let (page_start, page_len) = self.current_page_char_span();
+        let page_end = page_start + page_len;
+        for (a, b) in full.iter() {
+            let s = (*a).max(page_start);
+            let e = (*b).min(page_end);
+            if s < e {
+                let si = buffer.iter_at_offset((s - page_start) as i32);
+                let ei = buffer.iter_at_offset((e - page_start) as i32);
+                buffer.apply_tag(&self.rewrite_diff_tag, &si, &ei);
+            }
+        }
+    }
+
+    /// Char offset (into the WHOLE gloss's rendered text) where the current page
+    /// begins, and the page's rendered char length — computed by rendering each
+    /// cursor-stop block's markup through the same pure transform the buffer uses
+    /// (`rendered_verse_text`) and joining pages/blocks by `"\n"`. This matches
+    /// the `full_rendered_gloss_text` basis the diff ranges index into, AND the
+    /// per-page buffer text `render_gloss_page` produces (block markups joined by
+    /// `"\n"`, rendered), because `rendered_verse_text` distributes over the
+    /// `"\n"` join (the parser discards the join whitespace and re-inserts one
+    /// separator between elements). Mirrors `JournalOverlay::current_page_char_span`.
+    ///
+    /// Only meaningful for the paginated Gloss mode (the only mode
+    /// `apply_rewrite_diff` is used on); returns `(0, 0)` otherwise.
+    fn current_page_char_span(&self) -> (usize, usize) {
+        if self.paginated_mode.get() != PaginatedMode::Gloss {
+            return (0, 0);
+        }
+        let markups = self.gloss_block_markups.borrow();
+        let pages = self.pages.borrow();
+        let n_pages = pages.len();
+        let rendered_len =
+            |m: &str| crate::ui::gloss_render::rendered_verse_text(m).chars().count();
+        // Single-page: the whole gloss renders verbatim from `current_gloss`, so
+        // the page IS the full rendered text — start 0, len = its rendered length.
+        if n_pages <= 1 {
+            let gloss = self.current_gloss.borrow();
+            return (0, rendered_len(&gloss));
+        }
+        let pidx = self.page_idx.get().min(n_pages.saturating_sub(1));
+        let Some(page) = pages.get(pidx).copied() else {
+            return (0, 0);
+        };
+        let end = page.end.min(markups.len());
+        let start_block = page.start.min(end);
+        // Render EACH prefix exactly as render_gloss_page / full_rendered_gloss_text
+        // do — the block slice joined by "\n" then rendered as one string — so the
+        // offsets match the paginated buffer AND the diff basis even if
+        // parse_gloss_tags' speaker carry-forward were to fire at a boundary.
+        // `start` = rendered length of all blocks before this page, `+1` for the
+        // "\n" that joins this page to the previous one (pages also join by "\n").
+        let prefix = markups[..start_block].join("\n");
+        let start = if start_block == 0 {
+            0
+        } else {
+            rendered_len(&prefix) + 1
+        };
+        let body = markups[start_block..end].join("\n");
+        let len = rendered_len(&body);
+        (start, len)
+    }
+
+    /// The WHOLE gloss's rendered plain text in the basis the rewrite-diff ranges
+    /// index into: each cursor-stop block's markup rendered via `rendered_verse_text`
+    /// and joined by `"\n"` (identical to `rendered_verse_text` of the joined block
+    /// markups, since the transform distributes over the join). Independent of the
+    /// current pagination, so the diff can be computed against the FULL gloss (not
+    /// the visible page-1 buffer) and prev/new sides share one basis. Feed the raw
+    /// gloss markup (`GlossBlock` source, i.e. the stored `gloss_text`).
+    pub fn full_rendered_gloss_text(gloss_markup: &str) -> String {
+        let joined = crate::ui::gloss_block::gloss_block_markups(gloss_markup).join("\n");
+        crate::ui::gloss_render::rendered_verse_text(&joined)
+    }
+
+    /// Remove the diff-highlight tag over the whole buffer and forget the stored
+    /// full-body ranges (so a page turn no longer re-paints it). Mirrors the
+    /// journal overlay.
     pub fn clear_rewrite_diff(&self) {
         let buffer = self.gloss_view.buffer();
         let (s, e) = buffer.bounds();
         buffer.remove_tag(&self.rewrite_diff_tag, &s, &e);
+        self.rewrite_diff_full.borrow_mut().clear();
         self.rewrite_diff_active.set(false);
     }
 
@@ -2164,10 +2259,17 @@ impl GlossOverlay {
         drop(pages);
 
         // Build the markup to render: the whole gloss when it fits one page, else
-        // only this page's blocks' markup slice.
+        // only this page's blocks' markup slice. BOTH paths render the REBUILT
+        // `gloss_block_markups` basis (not the raw stored markup): the multi-page
+        // path always has, and the rewrite diff-highlight indexes that same
+        // rebuilt basis (`full_rendered_gloss_text` / `current_page_char_span`).
+        // Rendering raw here on a single page would reorder echoes vs. the diff
+        // offsets and mis-tint (echo `<gloss>[…]` brackets are deferred to the
+        // source-run tail by `gloss_block_markups`).
         let (markup, page_blocks): (String, Vec<GlossBlock>) = if single_page {
             let gloss = self.current_gloss.borrow().clone();
-            (gloss.clone(), gloss_blocks(&gloss))
+            let rebuilt = crate::ui::gloss_block::gloss_block_markups(&gloss).join("\n");
+            (rebuilt, gloss_blocks(&gloss))
         } else {
             let Some(page) = page else { return };
             let markups = self.gloss_block_markups.borrow();
@@ -2197,6 +2299,10 @@ impl GlossOverlay {
         self.line_numbers.borrow_mut().clear();
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.rebuild_block_ranges_from(page_blocks);
+        // Re-tint the stored rewrite-diff ranges that fall on THIS page (long
+        // glosses paginate — a change on page 2+ would otherwise be lost). No-op
+        // when no rewrite diff is active.
+        self.reapply_rewrite_diff();
 
         // Floating page marker (⌄ more / • end), bottom-center of the viewport.
         self.update_page_marker(pidx, n_pages);

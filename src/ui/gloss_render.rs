@@ -65,6 +65,59 @@ pub(crate) fn markup_has_displayed_speaker(markup: &str) -> bool {
         .any(|el| matches!(el, GlossElement::Speaker(n) if is_displayed_speaker(n)))
 }
 
+/// The PLAIN rendered text `populate_verse_buffer` would insert for `markup`,
+/// with NO GTK buffer and NO tags — purely the character sequence.
+///
+/// This MUST mirror `populate_verse_buffer`'s insertion logic exactly (same
+/// element filter, same `"\n"` separators, same per-element transforms), because
+/// the gloss rewrite-diff highlight indexes into the rendered buffer text: to map
+/// full-body diff ranges onto a paginated page we need each page's rendered char
+/// length, and to compute the diff against the WHOLE gloss (not just the visible
+/// page-1 buffer) we need the whole gloss's rendered text. Keep the two in sync.
+///
+/// Note the `<pron>` / dropped-speaker subtlety: `populate_verse_buffer` runs the
+/// `if !first { insert "\n" }` separator for EVERY surviving element before the
+/// per-element match, and `<pron>` elements insert no body — so a `<pron>` that is
+/// not the first element still contributes a leading `"\n"`. Dropped speakers are
+/// filtered out entirely (they never reach the separator), matching the render.
+pub(crate) fn rendered_verse_text(markup: &str) -> String {
+    let elements: Vec<GlossElement> = parse_gloss_tags(markup)
+        .into_iter()
+        .filter(|el| !matches!(el, GlossElement::Speaker(n) if !is_displayed_speaker(n)))
+        .collect();
+
+    let mut out = String::new();
+    let mut first = true;
+    for el in &elements {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        match el {
+            GlossElement::Speaker(name) => out.push_str(name),
+            GlossElement::Verse(text) => {
+                out.push_str(&crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text)).0);
+            }
+            GlossElement::Gloss(text) => {
+                if let Some((quote, citation)) = split_echo(text) {
+                    out.push_str(&strip_ipa(&quote));
+                    out.push('\n');
+                    out.push_str(&strip_ipa(&citation));
+                } else {
+                    out.push_str(&crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text)).0);
+                }
+            }
+            GlossElement::Stage(text) => {
+                out.push_str(&crate::ui::gloss_block::strip_hi_spans(text).0);
+            }
+            // <pron> inserts no body text (see doc comment): the separator above
+            // already ran.
+            GlossElement::Pron(_) => {}
+        }
+    }
+    out
+}
+
 pub(crate) fn apply_bracket_styling(
     buffer: &gtk4::TextBuffer,
     base_offset: i32,
@@ -507,4 +560,92 @@ pub(crate) fn populate_verse_buffer(
     }
 
     (bar_ranges, line_nums, echo_lines)
+}
+
+#[cfg(test)]
+mod rendered_text_tests {
+    use super::rendered_verse_text;
+
+    // A speaker + a verse render as "NAME\nverse". Dropped ("UNKNOWN") speakers
+    // vanish entirely, matching populate_verse_buffer's filter.
+    #[test]
+    fn speaker_and_verse() {
+        let m = "<speaker>HAMLET</speaker><verse>To be or not to be</verse>";
+        assert_eq!(rendered_verse_text(m), "HAMLET\nTo be or not to be");
+        let m2 = "<speaker>UNKNOWN</speaker><verse>a prose line</verse>";
+        assert_eq!(rendered_verse_text(m2), "a prose line");
+    }
+
+    // IPA spans are stripped from the rendered text (they carry no visible
+    // chars), and the doubled space they leave is collapsed — so diff offsets
+    // index the SHOWN characters. Matches populate_verse_buffer's strip_ipa call.
+    #[test]
+    fn strips_ipa() {
+        let m = "<verse>Dread /drɛːd/ sovereign</verse>";
+        assert_eq!(rendered_verse_text(m), "Dread sovereign");
+    }
+
+    // <hi> highlight tags are stripped from the rendered text (the highlight is a
+    // tag, not visible chars), matching populate_verse_buffer's strip_hi_spans.
+    #[test]
+    fn strips_hi() {
+        let m = "<gloss>the <hi>quick</hi> fox</gloss>";
+        assert_eq!(rendered_verse_text(m), "the quick fox");
+    }
+
+    // The load-bearing property for pagination: rendering block markups joined by
+    // "\n" equals rendering each block and joining the results by "\n". This is
+    // why current_page_char_span can sum per-block rendered lengths (+1 per join)
+    // and land on the same offsets the paginated buffer uses.
+    #[test]
+    fn join_distributes_over_render() {
+        let a = "<speaker>KING</speaker><verse>Now is the winter</verse>";
+        let b = "<gloss>An explication paragraph.</gloss>";
+        let joined = format!("{a}\n{b}");
+        let per_block = format!("{}\n{}", rendered_verse_text(a), rendered_verse_text(b));
+        assert_eq!(rendered_verse_text(&joined), per_block);
+    }
+
+    // A <pron> element inserts no body text but still consumes a separator when it
+    // is not the first element — the whole-gloss render leaves that "\n" in place.
+    #[test]
+    fn pron_inserts_no_body_but_separator_runs() {
+        let m = "<verse>line one</verse><pron>the note</pron><verse>line two</verse>";
+        // verse, then "\n" before the (empty) pron, then "\n" before verse two.
+        assert_eq!(rendered_verse_text(m), "line one\n\nline two");
+    }
+
+    // The rewrite diff-highlight indexes the REBUILT basis
+    // (`gloss_block_markups(gloss).join("\n")`, via `full_rendered_gloss_text`),
+    // and the single-page gloss buffer must render that SAME basis or the tint
+    // lands on the wrong words. `gloss_block_markups` defers echo `<gloss>[…]`
+    // brackets to the source-run tail, so for an echo gloss the rebuilt render
+    // differs from a raw render — this asserts the rebuilt basis is what both the
+    // diff and the (now-rebuilt) single-page buffer use, so they cannot diverge.
+    #[test]
+    fn echo_gloss_rebuilt_basis_reorders_vs_raw() {
+        // A source run with an echo bracket interleaved between verses. The
+        // single-page gloss buffer renders `gloss_block_markups(gloss).join("\n")`
+        // (the REBUILT basis) so it matches the offsets the rewrite diff-highlight
+        // indexes via `full_rendered_gloss_text` (same rebuilt basis). Rendering
+        // the RAW markup instead would mis-tint, because `gloss_block_markups`
+        // defers the echo `<gloss>[…]` bracket to the source-run tail.
+        let raw = "<speaker>ROMEO</speaker><verse>But soft</verse>\
+                   <gloss>[echo — a resonance]</gloss>\
+                   <verse>what light</verse>\
+                   <gloss>An explication.</gloss>";
+        let rebuilt = crate::ui::gloss_block::gloss_block_markups(raw).join("\n");
+        let raw_render = rendered_verse_text(raw);
+        let rebuilt_render = rendered_verse_text(&rebuilt);
+        // The reordering is real: raw keeps the echo between the two verses;
+        // rebuilt moves it after "what light". If this ever stops holding, the
+        // single-page render basis no longer needs the rebuild — but until then,
+        // rendering raw on a single page would desync the diff offsets.
+        assert_ne!(raw_render, rebuilt_render);
+        // In the rebuilt (buffer + diff) basis the echo trails both verses.
+        let soft = rebuilt_render.find("But soft").unwrap();
+        let light = rebuilt_render.find("what light").unwrap();
+        let echo = rebuilt_render.find("echo").unwrap();
+        assert!(soft < light && light < echo, "echo must trail both verses in the rebuilt basis: {rebuilt_render:?}");
+    }
 }

@@ -121,6 +121,12 @@ pub struct JournalOverlay {
     /// True while a rewrite diff highlight is currently applied (empty ranges
     /// count as inactive). Read by Task 7 to decide whether to clear on next edit.
     rewrite_diff_active: std::cell::Cell<bool>,
+    /// Rewrite diff-highlight ranges as char offsets into the WHOLE-entry body
+    /// (`prefix_question(q) + "\n\n" + answer`), so the highlight survives page
+    /// turns: `render_page` clips these to the current page's char span and
+    /// re-tags them (mirrors how `hi_ranges` is re-derived per page). Empty when
+    /// no rewrite highlight is active.
+    rewrite_diff_full: RefCell<Vec<(usize, usize)>>,
 }
 
 /// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
@@ -496,6 +502,7 @@ impl JournalOverlay {
             search_current_tag,
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
+            rewrite_diff_full: RefCell::new(Vec::new()),
         }
     }
 
@@ -934,23 +941,83 @@ impl JournalOverlay {
         self.rewrite_diff_tag.set_background(Some(color));
     }
 
-    /// Tag every changed-word char range on the page buffer (clears first).
+    /// Record the rewrite diff-highlight as char ranges into the WHOLE-entry
+    /// body and paint whatever falls on the current page. Stored so `render_page`
+    /// can re-tint it after a page turn (long answers paginate — a change on
+    /// page 2+ would otherwise be lost, since the buffer holds only one page).
     pub fn apply_rewrite_diff(&self, ranges: &[(i32, i32)]) {
-        let buffer = self.view.buffer();
-        self.clear_rewrite_diff();
-        for (a, b) in ranges {
-            let s = buffer.iter_at_offset(*a);
-            let e = buffer.iter_at_offset(*b);
-            buffer.apply_tag(&self.rewrite_diff_tag, &s, &e);
-        }
+        *self.rewrite_diff_full.borrow_mut() = ranges
+            .iter()
+            .filter(|(a, b)| b > a)
+            .map(|(a, b)| (*a as usize, *b as usize))
+            .collect();
         self.rewrite_diff_active.set(!ranges.is_empty());
+        self.reapply_rewrite_diff();
     }
 
-    /// Remove the diff-highlight tag over the whole buffer.
+    /// Re-tag the stored full-body diff ranges onto the CURRENT page's buffer,
+    /// clipping each to the page's char span and shifting to page-local offsets.
+    /// Called after each `set_text` in `render_page`, so the highlight survives
+    /// page turns (the `<hi>` model). No-op when no ranges are stored.
+    fn reapply_rewrite_diff(&self) {
+        let buffer = self.view.buffer();
+        let (bs, be) = buffer.bounds();
+        buffer.remove_tag(&self.rewrite_diff_tag, &bs, &be);
+        let full = self.rewrite_diff_full.borrow();
+        if full.is_empty() {
+            return;
+        }
+        let (page_start, page_len) = self.current_page_char_span();
+        let page_end = page_start + page_len;
+        for (a, b) in full.iter() {
+            let s = (*a).max(page_start);
+            let e = (*b).min(page_end);
+            if s < e {
+                let si = buffer.iter_at_offset((s - page_start) as i32);
+                let ei = buffer.iter_at_offset((e - page_start) as i32);
+                buffer.apply_tag(&self.rewrite_diff_tag, &si, &ei);
+            }
+        }
+    }
+
+    /// Char offset (into the whole-entry body) where the current page begins,
+    /// and the page's char length — computed from the cleaned (`<hi>`-stripped)
+    /// paragraph slice so it matches the char basis of `render_page`'s `body`
+    /// and of the whole-body diff ranges. The page body is
+    /// `paras[start..end].join("\n\n")` (2 join chars between blocks).
+    fn current_page_char_span(&self) -> (usize, usize) {
+        let paras = self.all_paragraphs.borrow();
+        let pages = self.pages.borrow();
+        let Some(page) = pages.get(self.page_idx.get()) else {
+            return (0, 0);
+        };
+        let clean_chars = |raw: &str| -> usize {
+            crate::ui::gloss_block::strip_hi_spans(raw).0.chars().count()
+        };
+        // Chars before this page: every earlier paragraph's cleaned length plus
+        // the 2-char "\n\n" join that follows each of them.
+        let mut start = 0usize;
+        for p in paras.iter().take(page.start) {
+            start += clean_chars(p) + 2;
+        }
+        // This page's body length: cleaned paragraphs joined by "\n\n".
+        let mut len = 0usize;
+        for (i, p) in paras[page.start..page.end].iter().enumerate() {
+            if i > 0 {
+                len += 2;
+            }
+            len += clean_chars(p);
+        }
+        (start, len)
+    }
+
+    /// Remove the diff-highlight tag over the whole buffer and forget the stored
+    /// full-body ranges (so a page turn no longer re-paints it).
     pub fn clear_rewrite_diff(&self) {
         let buffer = self.view.buffer();
         let (s, e) = buffer.bounds();
         buffer.remove_tag(&self.rewrite_diff_tag, &s, &e);
+        self.rewrite_diff_full.borrow_mut().clear();
         self.rewrite_diff_active.set(false);
     }
 
@@ -1463,6 +1530,9 @@ impl JournalOverlay {
         // editor sets raw text and must not re-apply these read-mode ranges).
         // Notes have no <hi> spans so apply_hi_color is a no-op for them.
         self.apply_hi_color();
+        // Re-paint the rewrite diff-highlight for THIS page (clipped to the
+        // page's char span), so a change on page 2+ survives page turns.
+        self.reapply_rewrite_diff();
         // The leading `Q:` line renders as PLAIN body text — no header tag. It
         // used to get a bold/0.9-scale/dim header treatment, but the tag only
         // landed on the first render (page turns skipped it), and the user

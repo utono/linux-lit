@@ -1066,7 +1066,12 @@ fn update_and_render_gloss_in_place(
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
     s.gloss_index = gloss_index;
     if let Some((prev_rendered, _)) = diff {
-        let new_rendered = s.gloss_overlay.buffer_text_for_diff();
+        // Diff against the WHOLE gloss's rendered text, NOT the current buffer:
+        // long glosses paginate, and the buffer holds only page 1, so a
+        // buffer-based diff would miss every change on page 2+. `prev_rendered`
+        // is computed in the same full-render basis by the caller.
+        let new_rendered =
+            crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(full_gloss);
         let ranges = crate::input::rewrite_diff::changed_ranges(prev_rendered, &new_rendered);
         s.gloss_overlay.apply_rewrite_diff(&ranges);
     }
@@ -1414,9 +1419,12 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         };
         (ctx, existing, state.config.claude_model.clone(), idx, gloss_id)
     };
-    // Capture the on-screen RENDERED gloss text before it is overwritten, so the
-    // post-rewrite diff highlight can compare old-rendered vs new-rendered.
-    let prev_rendered = state_rc.borrow().gloss_overlay.buffer_text_for_diff();
+    // Capture the WHOLE OLD gloss's RENDERED text before it is overwritten, so the
+    // post-rewrite diff highlight can compare old-rendered vs new-rendered across
+    // the FULL gloss (not just the visible page-1 buffer — long glosses paginate).
+    // Same full-render basis the new side uses in update_and_render_gloss_in_place.
+    let prev_rendered =
+        crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&existing_gloss_text);
 
     // Show the passage being reglossed on the loading card (same single-column
     // `<speaker>`/`<verse>` formatting as the gloss result), not a bare
