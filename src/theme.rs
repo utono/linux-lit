@@ -1041,9 +1041,13 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
+         /* act/scene chapter-toast: no background, sits on the card's own bg. \
+            To restore the pill look, swap the line below for: \
+            .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
+              background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
+              box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} */ \
          .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
-           background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
-           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} \
+           padding: 6px 14px; opacity: 0.97; }} \
          .center-toast {{ font-size: 13px; color: {center_toast_fg}; \
            background-color: {center_toast_bg}; padding: 6px 14px; border-radius: 10px; \
            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14); opacity: 0.97; }} \
