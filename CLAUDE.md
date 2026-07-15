@@ -64,27 +64,6 @@ themselves. Multi-instance is supported (per-process slots: own log suffix,
 `i{n}-` MPV sockets, config merge-on-save), but a running instance predates
 any rebuild.
 
-## Verify on-screen changes before calling them done (REQUIRED)
-
-Any change with visible/interactive behavior — a new keybind, an overlay
-change, a highlight/tint, pagination, a layout tweak — is NOT done on a green
-`cargo build`/`cargo test` alone. Before reporting the work complete, ALWAYS
-either:
-
-1. **Run the headless e2e yourself** (the cage/grim/wtype harness below —
-   first resort, works from the agent's own shell), open every capture, and
-   report what you saw; OR
-2. **If the harness genuinely won't launch** (e.g. `cage` exits non-zero, no
-   `/tmp/cage.log`, empty PNGs after a retry — a real possibility in some
-   agent environments), **explicitly prompt the user to test manually** and
-   hand them the exact steps: which work/overlay to open, the precise keys to
-   press, and what the correct result looks like. Do not silently skip
-   verification or merge/finish while claiming it "should work."
-
-State plainly which path was taken ("verified headless: …" or "headless
-launch failed — needs your manual check: …"). Never present build-and-review
-as equivalent to seeing it run. This applies before finishing a branch too.
-
 ## Parallel Claude Code Sessions (git worktrees)
 
 Two or more concurrent sessions must NEVER share this checkout — each
