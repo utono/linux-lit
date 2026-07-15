@@ -212,6 +212,12 @@ pub struct FingerprintParts {
     pub line_spacing: u32,
     pub text_margins: u32,
     pub columns: u8,
+    /// The running-head strip height (`TOP_SPACER_HEIGHT`) reserved above the
+    /// first text line. It shrinks the columns' usable height, so it changes
+    /// how many rows fit per page — a stored table baked at a different spacer
+    /// height must be invalidated and regenerated. Included so the app
+    /// self-heals when the strip height changes (no manual LIT_GEN_PAGE_TABLE).
+    pub top_spacer_height: i32,
 }
 
 /// "v1|" + the parts, pipe-joined. Human-readable on purpose: the
@@ -219,9 +225,10 @@ pub struct FingerprintParts {
 /// self-explaining (you can see WHICH input moved).
 pub fn fingerprint_string(p: &FingerprintParts) -> String {
     format!(
-        "v1|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}",
+        "v2|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}|{}",
         p.font_family, p.font_size, p.ascent, p.descent, p.char_width,
-        p.width, p.height, p.line_spacing, p.text_margins, p.columns
+        p.width, p.height, p.line_spacing, p.text_margins, p.columns,
+        p.top_spacer_height
     )
 }
 
@@ -249,6 +256,7 @@ pub fn layout_fingerprint(state: &crate::app::AppState) -> String {
         line_spacing: state.config.line_spacing,
         text_margins: state.config.text_margins,
         columns: state.column_count(),
+        top_spacer_height: crate::app::TOP_SPACER_HEIGHT,
     };
     fingerprint_string(&parts)
 }
@@ -858,14 +866,17 @@ mod tests {
             font_family: "Charter".into(), font_size: 17,
             ascent: 16, descent: 5, char_width: 9,
             width: 1920, height: 1200, line_spacing: 6, text_margins: 24,
-            columns: 2,
+            columns: 2, top_spacer_height: 64,
         };
         let a = fingerprint_string(&p);
         assert_eq!(a, fingerprint_string(&p), "must be deterministic");
-        assert!(a.starts_with("v1|"), "schema-versioned: {a}");
-        let mut q = FingerprintParts { font_size: 18, ..p };
+        assert!(a.starts_with("v2|"), "schema-versioned: {a}");
+        let mut q = FingerprintParts { font_size: 18, ..p.clone() };
         assert_ne!(a, fingerprint_string(&q));
         q = FingerprintParts { descent: 6, font_size: 17, ..q };
         assert_ne!(a, fingerprint_string(&q));
+        // top_spacer_height is fingerprinted: changing it must invalidate.
+        let taller = FingerprintParts { top_spacer_height: 80, ..p };
+        assert_ne!(a, fingerprint_string(&taller), "spacer height must affect fp");
     }
 }
