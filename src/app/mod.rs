@@ -1699,29 +1699,41 @@ pub fn build_window(
     word_status_label.set_visible(false);
     authorship_picker.overlay.add_overlay(&word_status_label);
 
+    // Transient status toasts (Copied / Sync: on / No timestamp / Saved /
+    // spinners) float at the TOP CENTER, inside the header band (the 64px
+    // `top_spacer`, which sits `content_hbox` margin_top=24 below the window
+    // top). They overlay the running-head strip's center gap — the work abbrev
+    // (left) and act/scene (right) labels stay visible on the sides. margin_top
+    // ≈ card_top(24) + ~header-center so the toast lines up with those labels.
     let chapter_toast = gtk4::Label::new(None);
-    chapter_toast.set_valign(gtk4::Align::End);
+    chapter_toast.set_valign(gtk4::Align::Start);
     chapter_toast.set_halign(gtk4::Align::Center);
-    chapter_toast.set_margin_bottom(32);
+    chapter_toast.set_margin_top(40);
     chapter_toast.add_css_class("chapter-toast");
     chapter_toast.set_visible(false);
 
+    // Shared status toast (Sync: on/off, Speed: Nx, Copied …). Despite the name
+    // it is the common bottom-center status widget; every caller re-centers it at
+    // runtime (set_halign(Center) + reset horizontal margins) and relies on this
+    // valign/margin_top for vertical placement. Now TOP-center, in the header
+    // band, next to chapter_toast/search_toast — the callers set only halign +
+    // horizontal margins, so this default is the single source of vertical
+    // placement for all of them.
     let speed_toast = gtk4::Label::new(None);
-    speed_toast.set_valign(gtk4::Align::End);
-    speed_toast.set_halign(gtk4::Align::Start);
-    speed_toast.set_margin_bottom(32);
-    speed_toast.set_margin_start(24);
+    speed_toast.set_valign(gtk4::Align::Start);
+    speed_toast.set_halign(gtk4::Align::Center);
+    speed_toast.set_margin_top(40);
     speed_toast.add_css_class("center-toast");
     speed_toast.set_visible(false);
 
-    // Search boundary toast: centered horizontally, sitting in the thin strip
-    // BELOW the card (the card has a 24px bottom margin, so a small-font label
-    // pinned ~5px from the window bottom lands in that gap rather than over the
-    // card). Small font (.search-toast) so it fits the narrow strip.
+    // Search boundary toast ("No later/earlier occurrence"): top center, in the
+    // header band alongside the status toast (chapter_toast). Small font
+    // (.search-toast). Sits at the same margin_top so the two never appear at
+    // different heights.
     let search_toast = gtk4::Label::new(None);
-    search_toast.set_valign(gtk4::Align::End);
+    search_toast.set_valign(gtk4::Align::Start);
     search_toast.set_halign(gtk4::Align::Center);
-    search_toast.set_margin_bottom(5);
+    search_toast.set_margin_top(42);
     search_toast.add_css_class("search-toast");
     search_toast.set_visible(false);
 

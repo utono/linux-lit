@@ -2181,9 +2181,9 @@ fn toggle_playback_sync(s: &mut AppState) {
     }
     let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
     crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
-    // Bottom-center (same place as the act/scene pill); reset margins in
-    // case a prior corner toast moved the shared widget. Redisplays the
-    // persistent act/scene/chapter toast underneath when this clears.
+    // Top-center status placement (the shared status toast's construction sets
+    // valign=Start + margin_top; here we only reset halign + horizontal margins
+    // in case a prior corner toast moved the shared widget).
     s.speed_toast.set_halign(gtk4::Align::Center);
     s.speed_toast.set_margin_start(0);
     s.speed_toast.set_margin_end(0);
@@ -3431,9 +3431,8 @@ fn dispatch_action(
             let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::SetSpeed(new_speed));
             crate::logging::log(&format!("SPEED: cycled to {}x", new_speed));
             let label = format!("Speed: {:.1}x", new_speed);
-            // Speed toast sits bottom-center (same place as the act/scene pill);
-            // reset margins in case a prior "Sync:"/"Copied" moved the shared
-            // toast to a corner.
+            // Top-center status placement (shared status toast; reset halign +
+            // horizontal margins in case a prior "Sync:"/"Copied" moved it).
             s.speed_toast.set_halign(gtk4::Align::Center);
             s.speed_toast.set_margin_start(0);
             s.speed_toast.set_margin_end(0);
@@ -3724,8 +3723,8 @@ fn dispatch_action(
                 let _ = child.wait();
             }
             crate::logging::log(&format!("CLIPBOARD: copied {}", clip));
-            // Confirm with a bottom-center toast (same place as the act/scene
-            // pill); reset margins in case a prior corner toast moved the widget.
+            // Confirm with a top-center status toast (shared widget; reset halign
+            // + horizontal margins in case a prior corner toast moved it).
             let s = state.borrow();
             s.speed_toast.set_halign(gtk4::Align::Center);
             s.speed_toast.set_margin_start(0);
