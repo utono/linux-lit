@@ -159,8 +159,9 @@ pub fn handle_key(
         }
         if !gloss_open && mode == crate::app::InputMode::Reader {
             // All work types: space plays from the cursor line's start time and
-            // `a` is the pure pause/resume toggle (the `a` → TogglePause table
-            // bind). Poetry/plays no longer swap the two — they behave like prose.
+            // `Tab` is the pure pause/resume toggle (the `Tab` → TogglePause
+            // table bind; `a`/`Tab` were swapped — `a` now opens the chat
+            // layout). Poetry/plays don't swap the two — they behave like prose.
             let mut s = state.borrow_mut();
             if !crate::input::timestamps::play_current_line(&mut s) {
                 show_no_timestamp_toast(&s);

@@ -265,10 +265,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
-        // it is intercepted before dispatch in keymap.rs). `a` is a PURE
+        // it is intercepted before dispatch in keymap.rs). `Tab` is a PURE
         // pause/resume toggle — no seek (TogglePause). This holds for ALL work
         // types; poetry/plays no longer swap the two (they match prose).
-        (KeyCombo::plain("a"), Action::TogglePause),
+        // (`a`/`Tab` were SWAPPED: `a` now opens the chat layout, below.)
+        (KeyCombo::plain("Tab"), Action::TogglePause),
         // `s` toggles playback sync directly (was `@`/`at`; `s` was TogglePause).
         (KeyCombo::plain("s"), Action::TogglePlaybackSync),
         // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
@@ -345,8 +346,10 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("f"), Action::CycleFontForward),
         (KeyCombo::plain("F"), Action::CycleFontBackward),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
-        // Tab toggles the chat layout; TogglePreviousWork is unbound (Ctrl+minus recent picker covers it).
-        (KeyCombo::plain("Tab"), Action::ToggleChatLayout),
+        // `a` toggles the chat layout; TogglePreviousWork is unbound (Ctrl+minus
+        // recent picker covers it). (`a`/`Tab` were SWAPPED: `Tab` is now the
+        // MPV pause/resume toggle, in media_bindings above.)
+        (KeyCombo::plain("a"), Action::ToggleChatLayout),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::ctrl("t"), Action::ThemeNext),
         (KeyCombo::ctrl_shift("T"), Action::ThemePrev),
@@ -486,7 +489,7 @@ mod tests {
     #[test]
     fn r_cycles_vocab_and_ctrl_r_asks_journal() {
         let m = default_reader_bindings();
-        assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
+        assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::ToggleChatLayout));
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
         // minus and # freed; Ctrl+r = vocab journal Q&A (was R, now unbound;
         // VocabPopupNext dropped from Ctrl+r); Ctrl+n/p page its answer.
@@ -509,7 +512,7 @@ mod tests {
             m.get(&KeyCombo::plain("backslash")),
             Some(&Action::CycleSegmentOverlays)
         );
-        assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
+        assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::TogglePause));
     }
 
     #[test]
@@ -630,13 +633,15 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // "a" plain is TogglePause; Ctrl+a is AskPassage; Ctrl+a vs Ctrl+Shift+a differ.
+        // "a" plain is ToggleChatLayout (swapped with Tab, which is now
+        // TogglePause); Ctrl+a is AskPassage; Ctrl+a vs Ctrl+Shift+a differ.
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
         assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
         assert_eq!(a_ctrl, Some(Action::AskPassage));
-        assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
+        assert_eq!(km.lookup("a", false, false, false), Some(Action::ToggleChatLayout));
+        assert_eq!(km.lookup("Tab", false, false, false), Some(Action::TogglePause));
         // plain v (segment vim copy) vs Shift+v (reader visual mode) differ.
         assert_eq!(km.lookup("v", false, false, false), Some(Action::OpenSegmentVim));
         assert_eq!(km.lookup("V", false, true, false), Some(Action::EnterVisualMode));
