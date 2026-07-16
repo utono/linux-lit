@@ -65,8 +65,8 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "ask passage")]);
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "chat layout", "A: authorship", &[("C-a", "last overlay"), ("S-C-a", "attr set")]),
-    key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
+    key("a", "A", "chat layout", "A: authorship", &[("C-a", "close chat"), ("S-C-a", "attr set")]),
+    key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[("C-o", "last overlay")]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "scansion")]),
     key("i", "I", "2-col translation", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
@@ -290,7 +290,10 @@ the last-closed gloss/journal overlay; overlays close via Escape) \
 — src/input/actions/gloss.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (journal Q&A → gloss \
 → synopsis, wraps; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
-        "chat layout" => "Action::ToggleChatLayout (`a` opens/cycles focus) \
+        "chat layout" => "Action::ToggleChatLayout (`a` opens; with the panel \
+open it cycles focus INTO it — Ctrl+a closes) — src/input/actions/chat.rs",
+        "close chat" => "Action::CloseChatLayout (Ctrl+a — the hide half of \
+`a`'s show; works from the reader AND from inside the panel) \
 — src/input/actions/chat.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
         "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
