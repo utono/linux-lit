@@ -3240,10 +3240,13 @@ fn handle_visual_key(
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     match key_name {
-        // Ctrl+a — open the Journal Q&A ask card for the selection directly
+        // Ctrl+Tab — open the Journal Q&A ask card for the selection directly
         // (skips the Action menu). Works for ask-entered AND V-entered
-        // selections, so the menu is never required for Journal Q&A.
-        "a" if is_ctrl => {
+        // selections, so the menu is never required for Journal Q&A. Mirrors
+        // the reader-table AskPassage chord: pressing the SAME chord that
+        // entered visual mode confirms it. (Was Ctrl+a before the
+        // Ctrl+a/Ctrl+Tab swap — Ctrl+a is now ToggleLastOverlay.)
+        "Tab" | "ISO_Left_Tab" if is_ctrl => {
             crate::input::visual::action_journal_qa(state);
             true
         }
