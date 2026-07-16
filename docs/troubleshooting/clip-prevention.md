@@ -627,6 +627,42 @@ When a half line clips at the bottom edge of a scrolled surface:
     but this one is font-metric rounding — the pixel e2e / real display is the
     proof. (`translation_overlay.rs`, 2026-07-14.)
 
+15. **MAIN CARD, two-column play — columns underfill by ~1 line (a persistent
+    ~40px blank band at each column bottom), or after tightening that band the
+    last column line's descenders slice.** The two-column FILL decision
+    (`column_split`, `viewport.rs`) and the two-column CLIP
+    (`update_bottom_clip`'s `exact_end` branch, `scroll.rs`) reserve DIFFERENT
+    bottom bands, and they must be kept consistent:
+    - The `exact_end` clip sums the ACTUAL line heights `[page_top, end-1]` and
+      reserves only a `descender_allowance` (~5px, capped by the boundary blank
+      budget) below the last line — NOT the full `BASE_BOTTOM_MARGIN`.
+    - So the fill must NOT reserve the full `BASE_BOTTOM_MARGIN(40)` — that wastes
+      ~1 line per column (the underfill). The two-column fill instead reserves
+      `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` (a small pad, `scroll.rs`),
+      sized to what the clip consumes. Single-column paged pages KEEP
+      `BASE_BOTTOM_MARGIN` (their clip DOES cover the whole band, `scroll.rs`
+      `reserve = widget_height - usable_height`).
+    - Tell (underfill): `column_split`'s `usable` is `card_h - guard - 40` while
+      the clip band is only ~5px — logged fill leaves ~40px slack under a full
+      column. Tell (slice): `TWO_COLUMN_BOTTOM_MARGIN` too small — the last line
+      sits under the descender allowance; raise it.
+    - `TWO_COLUMN_BOTTOM_MARGIN` is chosen EMPIRICALLY (smallest reserve with a
+      clean last-line descender at 1920×1200); verify with
+      `LIT_DEBUG_CLIP_COLOR='#ff0000'` (the red band must clear the descenders).
+    - The two fill sites (`viewport.rs` left/right column `usable`), the
+      first-spread short-opening probe, AND `validate_spreads`
+      (`page_table.rs`, the generator's fit check) must ALL use the same
+      constant, or generation rejects the fuller spreads and falls back to
+      no-table. Changing the reserve shifts every two-column spread boundary, so
+      the layout fingerprint version was bumped (`v2`→`v3`) to regenerate stale
+      `play_pages` tables. NON-obvious downstream effect: the shifted breaks move
+      the nav-fuzz cursor, so a SearchJump can target the work's trailing stage
+      direction and trip the `viewport fill < 10%` guard — that is a harness
+      artifact (the anchor still covers the last DIALOGUE line), fixed by
+      exempting pure non-dialogue tail landings in `nav_test.rs`, NOT a clip bug.
+    (`viewport.rs`/`scroll.rs`/`page_table.rs`, 2026-07-16;
+    docs/superpowers/specs/2026-07-15-two-column-fill-reserve-design.md.)
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

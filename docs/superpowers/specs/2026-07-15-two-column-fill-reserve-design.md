@@ -1,7 +1,18 @@
 # Fuller two-column play columns — design
 
 **Date:** 2026-07-15
-**Status:** approved, implementing
+**Status:** implemented (N=16); verified.
+
+> **Implementation note (2026-07-16).** `TWO_COLUMN_BOTTOM_MARGIN = 16`, chosen
+> empirically at 1920×1200 (recovers +1 line per column — LLL-Arkangel Act 3
+> Scene 1 went left 34→35, right 32→33 — with the `LIT_DEBUG_CLIP_COLOR` band
+> clearing the last line's descenders). Fingerprint bumped `v2`→`v3`. One
+> follow-on surfaced during verification: the shifted spread breaks moved the
+> nav-fuzz cursor so a SearchJump could target the work's trailing stage
+> direction (`[They all exit.]`) and trip the `viewport fill < 10%` guard. That
+> is NOT a product bug — the anchor covers the last DIALOGUE line — and was
+> resolved by exempting pure non-dialogue tail landings in `nav_test.rs`. The
+> speculatively-drafted anchor-coverage spec/plan (2026-07-16) are SUPERSEDED.
 
 ## Problem
 
