@@ -198,6 +198,20 @@ pub(crate) fn after_page_change(state: &mut AppState, reason: PageChangeReason) 
 /// Going down: page turn when cursor reaches the last visible line.
 /// Going up: smooth scroll to keep cursor visible.
 /// Jump to the first line.
+///
+/// Prefers the first dialogue line that is also TIMESTAMPED. A work's opening
+/// dialogue line is often untimestamped front matter — on PROSE especially,
+/// `is_dialogue_line` is just "non-blank, non-separator", so the very first line
+/// is a bare title (TT: "TO THE RIGHT HONOURABLE JOHN LORD SOMERS", no
+/// `line_timestamps` row while every line after it has one). Landing there sends
+/// `seek_to_current_line` down its no-timestamp branch: no MPV seek, no karaoke
+/// paint, and an INDEFINITE sync suppression — i.e. `gg` visibly did nothing to
+/// the audio or the tint. Skipping to the first timestamped dialogue line makes
+/// `gg` mean "the start of the narration"; the page still opens at line 0, so
+/// the title stays visible above the cursor.
+///
+/// Falls back to the first dialogue line (then line 0) when NO line is
+/// timestamped — a text-only work with no audio behaves exactly as before.
 pub fn jump_to_start(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -209,8 +223,16 @@ pub fn jump_to_start(state: &mut AppState) {
             .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
             .map(|l| l.sub_line)
     };
+    let is_dlg = |i: usize| is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup);
+    let has_ts = |i: usize| {
+        state
+            .work_line_for_buffer(i)
+            .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+            .is_some_and(|l| l.timestamp.is_some())
+    };
     let target = (0..line_count)
-        .find(|&i| is_dialogue_line(&state.buffer, i, state.is_prose(), &stage_lookup))
+        .find(|&i| is_dlg(i) && has_ts(i))
+        .or_else(|| (0..line_count).find(|&i| is_dlg(i)))
         .unwrap_or(0);
 
     state.current_line = target;
