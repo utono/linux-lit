@@ -18,8 +18,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("TTS / voice", &[
         ("a", "play / pause (MPV, same as main card)"),
-        ("Ctrl+Space", "read cursor block (TTS)"),
-        ("A", "restart cursor block TTS"),
+        ("Ctrl+Space", "play / stop cursor block TTS (synthesizes on miss)"),
+        ("A", "restart cursor block TTS from start (synthesizes on miss)"),
         ("Shift+Space", "synthesize all prose blocks"),
         ("l", "play / stop source verse TTS"),
         ("L", "pick voice for source reading"),

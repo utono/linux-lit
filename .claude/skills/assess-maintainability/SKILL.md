@@ -9,64 +9,50 @@ argument-hint: (no args) | <module path to focus, e.g. src/ui>
 ## Overview
 
 Produce a **ranked, numbered list of behavior-preserving refactoring
-opportunities** for linux-lit, in the same house style as audit opportunities
-#5–#8 (footer-row-builder, picker-nav, claude-bridge, sentinel-keys). The
-deliverable is NOT a generic code-smell report — it is a continuation of the
-numbered ledger at `docs/audit-opportunities.md`, where each entry is
-sized to one **safe-scope** PR: extract the byte-identical part of a duplication
-family, name a magic literal, or move a self-contained block — with the
-structurally-different cases **explicitly EXCLUDED**.
-
-**Core principle:** every opportunity must be a *behavior-preserving* cut a
-developer could ship through `docs(spec) → docs(plan) → refactor → merge --no-ff`
-with zero behavior change. If it can't, it is out of scope for this audit.
-
-## When to use
-
-- After merging a batch of features, to catch drift no single diff revealed.
-- When a file crosses a size threshold (the picker/overlay family grew again).
-- The user asks to "assess maintainability" or "find refactoring opportunities."
+opportunities**, continuing the ledger at `docs/audit-opportunities.md`. Not a
+generic code-smell report: each entry is sized to one **safe-scope** PR that
+ships through `docs(spec) → docs(plan) → refactor → merge --no-ff` with zero
+behavior change. If a cut can't meet that bar, it is out of scope.
 
 ## When NOT to use
 
-- **Per-change review of a diff** → use `/code-review` (it sees only what you
-  changed; it can't see cross-commit drift). Run `/code-review` before every
-  merge; run *this* skill periodically over the whole tree.
-- **Bug hunting / crash safety** (e.g. `.unwrap()` panics, wrong logic) → that is
-  `/code-review`, not this. This audit is duplication/structure only.
+- **Per-change review of a diff** → `/code-review` (it sees only what you
+  changed; it can't see cross-commit drift). Run it before every merge; run
+  *this* skill periodically over the whole tree.
+- **Bug hunting / crash safety** (`.unwrap()` panics, wrong logic) →
+  `/code-review`. This audit is duplication/structure only.
 - **Correctness vs. external readers** → `review-against-references`.
 
 ## What "safe-scope" means (the house bar)
 
-This is the distinction the baseline generic assessment gets wrong. It defaults
-to recommending large, behavior-*changing* rewrites ("split AppState into
-sub-structs", "extract 6 modules from app.rs"). Those are real but they are NOT
-safe-scope opportunities — they are multi-PR projects with behavior risk.
+A generic assessment defaults to large, behavior-*changing* rewrites ("split
+AppState", "extract 6 modules from app.rs"). Those are real, but they are
+multi-PR projects with behavior risk — note them as a "larger project" aside,
+never as a numbered opportunity.
 
 A safe-scope opportunity:
 
-- **Is behavior-preserving and verifiable.** Pure widget-construction extraction,
-  byte-identical tail extraction, literal → named constant. No control-flow
-  change, no API change a caller can observe.
+- **Is behavior-preserving and verifiable.** Widget-construction extraction,
+  byte-identical tail extraction, literal → named constant. No control-flow or
+  observable API change.
 - **Decomposes the duplication into variant FAMILIES.** Near-identical sites are
-  almost never uniform. Classify them (variant A/B/C/D…) and extract ONLY the
-  part that is identical across all of them. See #6 picker-nav: 13 ListBox
-  pickers share one identical `select_row_at` tail but compute their index four
-  different ways — the helper owns only the tail.
-- **Names what it EXCLUDES and why.** Every spec lists the structurally-different
-  cases left untouched (e.g. picker-nav excludes `library_picker` for its
-  scroll-into-view, `settings`/`action_popup` for `rem_euclid` over a `Vec`).
-  An opportunity with no exclusions is usually mis-scoped.
-- **Rejects speculative generality.** Do NOT propose a `Picker` trait, a generic
-  abstraction, or a "future-proof" layer. The house style explicitly rejects
-  these ("Deliberately NOT a full Picker trait"). One concrete, minimal cut.
+  almost never uniform. Classify them (A/B/C…) and extract ONLY the part
+  identical across all. See #6 picker-nav: 13 ListBox pickers share one identical
+  `select_row_at` tail but compute their index four different ways — the helper
+  owns only the tail. "Dedup the toast blocks" is not an opportunity; "variants A
+  (2 sites) / B (1 site), extract identical A, exclude B" is.
+- **Names what it EXCLUDES and why** (picker-nav excludes `library_picker` for
+  its scroll-into-view, `settings`/`action_popup` for `rem_euclid` over a `Vec`).
+  An opportunity with no exclusions is mis-scoped — if you can't name what stays
+  untouched, you haven't scoped it.
+- **Rejects speculative generality.** No `Picker` trait, no generic abstraction,
+  no "future-proof" layer. One concrete, minimal cut.
 
 ## Procedure
 
-1. **Read only the ledger's index, not the whole file.** The ledger
+1. **Read only the ledger's index, never the whole file.** The ledger
    (`docs/audit-opportunities.md`; create from `ledger-template.md` if missing)
-   keeps shipped opportunities as **one-liners** and current OPEN ones as full
-   analyses — reading it whole burns tokens on detail an audit does not need.
+   keeps shipped opportunities as one-liners and OPEN ones as full analyses.
    Pull just what numbering + de-dup require:
 
    ```bash
@@ -74,82 +60,57 @@ A safe-scope opportunity:
      docs/audit-opportunities.md
    ```
 
-   From that: the highest `#N` (new work continues the numbering — never reuse a
-   merged number), which numbers are already shipped, the Lessons block, and the
-   Standing exclusions. Read the FULL prose of a specific entry only when a new
-   signal looks like it might collide with it. Cross-check DONE status against
-   `git log --grep refactor`. Do NOT read `audit-opportunities-archive.md` — it
-   holds retired full write-ups and is never part of an audit run.
+   That pattern depends on the heading format pinned in `ledger-template.md` — if
+   it returns an implausibly short index, fix the pattern rather than proceeding
+   on a partial one (a missed `#N` means reusing a merged number).
 
-2. **Prune shipped entries FIRST — always, before adding any new ones.** For
-   every `#N` whose refactor has merged since the last audit (confirm via
-   `git log --grep refactor` and the commit hash), collapse its full analysis to
-   the one-line shipped form (`**#N** slug (hash) — one-sentence what-and-where`,
-   matching the existing `#5`–`#72` list). This keeps the ledger's always-read
-   bulk flat no matter how many batches run. **A completed action item never
-   stays as a full analysis in the live ledger.**
+   From it: the highest `#N` (new work continues the numbering), which are
+   shipped, the Lessons block, the Standing exclusions. Open a full OPEN entry
+   only when a new signal looks like it might collide with it. Cross-check DONE
+   against `git log --grep refactor`. Never open
+   `docs/audit-opportunities-archive.md` during an audit.
+
+2. **Prune shipped entries FIRST, before adding any new ones.** For every `#N`
+   merged since the last audit (confirm via `git log --grep refactor` + the
+   hash), collapse its analysis to the one-line form (`**#N** slug (hash) —
+   one-sentence what-and-where`). A completed action item never stays as a full
+   analysis — that is what keeps the always-read ledger flat as batches
+   accumulate.
 
    Before deleting the prose, append it **verbatim** (newest batch first) to
-   `docs/audit-opportunities-archive.md` — the archive the skill never reads —
-   so the Signal / Identical-part / Variants / EXCLUDED reasoning survives
-   outside git history. Move any exclusion that is still load-bearing into the
-   ledger's **Standing exclusions** section rather than losing it in the archive.
+   `docs/audit-opportunities-archive.md`, so the Signal / Identical-part /
+   Variants / EXCLUDED reasoning survives outside git history. Promote any
+   still-load-bearing exclusion into the ledger's **Standing exclusions** rather
+   than losing it in the archive.
 
-3. **Gather raw signals** (dispatch parallel `Explore`/`general-purpose` agents
-   for breadth; this is read-only). Look for:
-   - **Duplication families** — sibling files/handlers with near-identical bodies.
-     The recurring hot spots: `src/ui/*_picker.rs` (~12 files),
+3. **Gather raw signals** — dispatch parallel `Explore`/`general-purpose` agents
+   for breadth (read-only, and it keeps the dumps out of this context):
+
+   - **Duplication families** — sibling files/handlers with near-identical
+     bodies. Recurring hot spots: `src/ui/*_picker.rs` (~12 files),
      `src/ui/*_overlay.rs`, `handle_*_key` in `keymap.rs`, the
-     gloss/synopsis/journal trio in `src/input/actions/`.
-     Find them: `rg -n 'fn move_selection|fn handle_.*_key|fn build_footer' src`
-   - **Repeated literals** — magic strings/numbers reused as sentinels.
-     `rg -n '"whole_work"|"__.*__"|-1\b' src/input src/ui`
+     gloss/synopsis/journal trio in `src/input/actions/`. Find them with
+     `rg -n 'fn move_selection|fn handle_.*_key|fn build_footer|fn build_.*_row' src`
+     — an opportunity only if there's an identical tail or identical widget
+     construction under the varying parts.
+   - **Repeated literals** — magic strings/numbers reused as sentinels:
+     `rg -n '"whole_work"|"__.*__"|= -1|-1\b' src/input src/ui`. Counts if the
+     same literal appears at ≥2 sites.
    - **Oversized files** — `fd -e rs . src -I | xargs wc -l | sort -rn | head`.
-     Size is a *pointer to look*, not itself an opportunity — the opportunity is
-     a specific self-contained block inside it that can move with no coupling
-     (e.g. gloss_overlay.rs's ~1100 lines of pure buffer helpers).
+     Size is a *pointer to look*, never itself an opportunity; the opportunity is
+     a specific self-contained block that moves with no coupling (e.g.
+     gloss_overlay.rs's ~1100 lines of pure buffer helpers).
 
-4. **Convert each signal into a candidate opportunity.** For each, answer:
-   - What is the **byte-identical** part across all sites? (That is what extracts.)
-   - What are the **variants** (how does each site differ)?
-   - What must be **EXCLUDED** and why?
-   - Is it behavior-preserving? If not, drop it or note it separately as a
-     "larger project, not safe-scope" — do NOT number it as an opportunity.
+4. **Convert each signal into a candidate.** What is the **byte-identical** part
+   across all sites (that is what extracts)? What are the **variants**? What is
+   **EXCLUDED** and why? Is it behavior-preserving — if not, drop it or note it
+   as a larger project.
 
 5. **Rank** by `(duplication_count × drift_risk) ÷ scope_size`. Highest = many
-   identical copies that can drift apart, extracted by a tiny safe cut. A 6000-line
-   file with no clean seam ranks LOW despite its size.
+   identical copies that can drift apart, extracted by a tiny safe cut. A
+   6000-line file with no clean seam ranks LOW despite its size.
 
 6. **Write the ledger.** Append each new opportunity as a numbered entry (format
-   in `ledger-template.md`). Report the ranked list inline to the user, then STOP
-   — this skill produces the audit, it does not write specs or refactor. The user
-   picks an opportunity; the spec→plan→refactor→merge pipeline takes it from there.
-
-## Quick reference
-
-| Signal | Command | Becomes opportunity if… |
-|--------|---------|-------------------------|
-| Picker duplication | `rg -n 'fn move_selection' src/ui` | identical tail, varying index calc |
-| Overlay duplication | `rg -n 'fn build_.*_row\|footer' src/ui` | identical widget construction |
-| Handler duplication | `rg -n 'fn handle_.*_key' src/input` | shared hide/reset block |
-| Magic sentinel | `rg -n '"whole_work"\|= -1' src` | same literal reused ≥2 sites |
-| Oversized file | `wc -l` sort | a self-contained block moves with no coupling |
-
-## Common mistakes
-
-- **Proposing the god-struct rewrite as a P0 opportunity.** Splitting `AppState`
-  or carving 6 modules out of `app.rs` is behavior-changing and multi-PR — note
-  it as a "larger project" aside, never as a numbered safe-scope opportunity.
-- **Listing a smell without the variant analysis.** "Dedup the toast blocks" is
-  not an opportunity; "toast blocks split into variants A (2 sites) / B (1 site),
-  extract the identical A part, exclude B" is.
-- **No EXCLUSIONS.** If you can't name what stays untouched, you haven't scoped it.
-- **Mixing in bug fixes.** `.unwrap()`→`?` is crash safety, not this audit.
-- **Reusing a merged `#N`** or restarting numbering — always continue the ledger.
-- **Leaving a shipped entry as a full analysis.** A merged `#N` must be pruned to
-  a one-liner (its prose archived to `audit-opportunities-archive.md`) before the
-  audit adds anything new — the always-read ledger stays flat, or every batch
-  makes the next run more expensive.
-- **Reading the whole ledger (or the archive) into context.** `rg` the index per
-  step 1; open a full OPEN entry only on a suspected collision; never open the
-  archive during an audit.
+   in `ledger-template.md`), report the ranked list inline, then STOP. This skill
+   produces the audit; it does not write specs or refactor. The user picks one;
+   the spec→plan→refactor→merge pipeline takes it from there.

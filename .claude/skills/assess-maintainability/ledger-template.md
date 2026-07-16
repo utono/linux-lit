@@ -3,6 +3,11 @@
 Each opportunity in `docs/audit-opportunities.md` is one entry.
 Copy this shape. Keep numbering monotonic; never reuse a merged number.
 
+The `## #N — ` and `- **#N** ` prefixes below, and the `## Lessons` /
+`Standing exclusions` / `Below the floor` headings, are what the skill's step-1
+`rg` index pattern matches. Changing them means updating that pattern too, or
+the audit reads a partial index and reuses a merged number.
+
 ```markdown
 ## #N — <short-name> — STATUS
 

@@ -16,9 +16,9 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Playback / TTS", &[
         ("a", "play / pause (MPV, same as main card)"),
-        ("Ctrl+Space", "read cursor block (TTS)"),
-        ("A", "play / pause cursor block TTS (cached only)"),
-        ("Ctrl+s", "restart cursor block TTS"),
+        ("Ctrl+Space", "play / stop cursor block TTS (synthesizes on miss)"),
+        ("A", "restart cursor block TTS from start (synthesizes on miss)"),
+        ("Ctrl+s", "restart cursor block TTS from start (synthesizes on miss)"),
     ]),
     ("Editing", &[
         ("r", "ask a new question"),

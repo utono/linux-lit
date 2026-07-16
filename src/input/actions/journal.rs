@@ -1010,6 +1010,9 @@ pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
     // open session (Task 7); a revision browse (Task 8) drops with it.
     state.borrow().journal_overlay.clear_rewrite_diff();
     state.borrow_mut().rewrite_browse = None;
+    // Stop any cached-segment TTS still playing, so closing the overlay silences
+    // it (mirrors close_gloss_to_reader's s.tts.stop()).
+    state.borrow_mut().tts.stop();
     if state.borrow().input_mode == InputMode::JournalOverlay {
         toggle_overlay(state);
     }
