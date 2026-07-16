@@ -209,8 +209,8 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
         // Cursor / dialogue
-        (KeyCombo::plain("j"), Action::CursorNextDialogue),
-        (KeyCombo::plain("k"), Action::CursorPrevLine),
+        (KeyCombo::plain("j"), Action::CursorNextDialogueNoSeek),
+        (KeyCombo::plain("k"), Action::CursorPrevDialogueNoSeek),
         (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
         // h / t jump to the next / prev line of dialogue (twins of Q / Alt+,).
         (KeyCombo::plain("h"), Action::CursorNextDialogueNoSeek),
@@ -248,9 +248,10 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // pair, which now duplicate the `t`/`h` dialogue-step twins below.
         (KeyCombo::plain("braceright"), Action::PrevBookmark),
         (KeyCombo::plain("bracketright"), Action::NextBookmark),
-        // `;`/`'` duplicate the `t`/`h` prev/next dialogue-line steps.
-        (KeyCombo::plain("semicolon"), Action::CursorPrevDialogueNoSeek),
-        (KeyCombo::plain("apostrophe"), Action::CursorNextDialogueNoSeek),
+        // `;`/`'` carry the seeking cursor steps swapped off `k`/`j`
+        // (prev line / next dialogue); `k`/`j` take the no-seek steps above.
+        (KeyCombo::plain("semicolon"), Action::CursorPrevLine),
+        (KeyCombo::plain("apostrophe"), Action::CursorNextDialogue),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         // `.` is overloaded (Action::BookmarkTap): single tap toggles the
         // bookmark; .. reverts the toggle and opens the picker.
@@ -465,8 +466,8 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("x")), Some(&Action::PageForward));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogue));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevLine));
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogueNoSeek));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevDialogueNoSeek));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
@@ -523,9 +524,9 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("J")), Some(&Action::JumpToNextSpeaker));
         assert_eq!(m.get(&KeyCombo::plain("K")), Some(&Action::JumpToPrevSpeaker));
-        // Lowercase j / k keep their existing cursor bindings (regression guard).
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogue));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevLine));
+        // Lowercase j / k carry the no-seek dialogue steps (swapped off `'`/`;`).
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogueNoSeek));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevDialogueNoSeek));
     }
 
     #[test]
@@ -590,9 +591,9 @@ mod tests {
         // Bookmarks moved to `}`/`]` (braceright/bracketright).
         assert_eq!(km.lookup("braceright", false, false, false), Some(Action::PrevBookmark));
         assert_eq!(km.lookup("bracketright", false, false, false), Some(Action::NextBookmark));
-        // `;`/`'` now duplicate the `t`/`h` prev/next dialogue-line steps.
-        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogueNoSeek));
-        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogueNoSeek));
+        // `;`/`'` carry the seeking steps swapped off `k`/`j`.
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevLine));
+        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` toasts
         // the current act/scene or chapter (swapped in e42fd92).
@@ -653,7 +654,7 @@ mod tests {
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageBackward));
         // Other defaults preserved:
         assert_eq!(km.lookup("y", false, false, false), Some(Action::PageBackward));
-        assert_eq!(km.lookup("j", false, false, false), Some(Action::CursorNextDialogue));
+        assert_eq!(km.lookup("j", false, false, false), Some(Action::CursorNextDialogueNoSeek));
     }
 
     #[test]

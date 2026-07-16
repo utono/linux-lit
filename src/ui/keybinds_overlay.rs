@@ -49,7 +49,7 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "ts tap");
 
 const UPPER_ROW: &[KeyDef] = &[
-    key(";", ":", "dlg back", ":: cycle speed", &[]),
+    key(";", ":", "cursor \u{2191}", ":: cycle speed", &[]),
     key(",", "<", "prev speaker", "", &[("M-,", "prev dlg"), ("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl"), ("C-p", "Q&A page \u{25b2}")]),
@@ -80,10 +80,10 @@ const HOME_ROW: &[KeyDef] = &[
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
 const BOTTOM_ROW: &[KeyDef] = &[
-    bare("'", "\"", "dlg fwd"),
+    bare("'", "\"", "cursor \u{2193}"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
-    key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
+    key("j", "J", "dlg fwd", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
+    key("k", "K", "dlg back", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
