@@ -270,7 +270,9 @@ pub(crate) fn cancel_voice_picker(state: &Rc<RefCell<crate::app::AppState>>) {
 /// config.theme. Called from settings overlay's theme cycling and from
 /// revert_to_snapshot.
 pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &crate::theme::Theme) {
-    let css = crate::theme::generate_css(theme, &state.config.font_family, state.config.font_size);
+    let divider_bottom = crate::input::scroll::two_column_divider_bottom_px(&state.text_view);
+    let css = crate::theme::generate_css(
+        theme, &state.config.font_family, state.config.font_size, divider_bottom);
     state.css_provider.load_from_string(&css);
 
     // Update dim tag foreground

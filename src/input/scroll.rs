@@ -746,6 +746,16 @@ pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
 /// this constant or generation falls back to no-table.
 pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 16;
 
+/// The pixel reserve the two-column fill leaves BELOW the last possible line:
+/// `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` — exactly the band
+/// `usable = card_h - guard - TWO_COLUMN_BOTTOM_MARGIN` withholds. The
+/// `.column-divider` bottom margin is set to this so the divider ends at the
+/// last-possible-line baseline, identically on every page. Reads the guard from
+/// the live view (same font source as the fill) so it tracks font changes.
+pub(crate) fn two_column_divider_bottom_px(text_view: &sourceview5::View) -> i32 {
+    crate::input::viewport::descender_guard_px(text_view, 0) + TWO_COLUMN_BOTTOM_MARGIN
+}
+
 /// Bottom-clip height for a paged column whose content is a sum of
 /// `line_yrange` LOGICAL line heights (`total`): `space` minus `total`, minus a
 /// small `allowance` so the clip's top edge sits BELOW the last line's glyph

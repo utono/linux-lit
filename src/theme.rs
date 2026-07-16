@@ -1051,7 +1051,12 @@ fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
 }
 
 /// Generate GTK CSS for a theme.
-pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
+pub fn generate_css(
+    theme: &Theme,
+    font_family: &str,
+    font_size: u32,
+    divider_bottom_px: i32,
+) -> String {
     let picker_css = picker_css(theme, font_family, font_size);
     let css = format!(
         "window {{ background-color: {root}; \
@@ -1072,12 +1077,15 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \
          /* Divider spans the full text band: top = the column top where the
             first line can appear (text_view top_margin = 0); bottom margin =
-            TWO_COLUMN_BOTTOM_MARGIN, the two-column FILL reserve, so the divider
-            ends at the SAME last-line baseline the columns now fill to. (It used
-            to be 40px to match the views' static bottom_margin, but the fill
-            reserve was reduced below that so text extends lower — the divider
-            must track the fill reserve, not the view margin, or it stops short of
-            the text. Reconcile with TWO_COLUMN_BOTTOM_MARGIN if that changes.)
+            `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` = the exact reserve the
+            two-column FILL leaves below the last possible line
+            (`usable = card_h - guard - TWO_COLUMN_BOTTOM_MARGIN`). So the divider
+            ends at the SAME baseline as the LAST POSSIBLE line, identically on
+            every page (the reserve is fixed, independent of how much text a page
+            holds). The caller passes this as `divider_bottom_px` from the live
+            `descender_guard_px` so it stays correct across font changes. (Was a
+            static 40px matching the view's bottom_margin, then 16px = the fill
+            reserve alone, which overshot the last line by the descender guard.)
             Horizontal 8px keeps the gutter gap. */ \
          .column-divider {{ background-color: {dim}; min-width: 1px; \
            margin: 0px 8px {divider_bottom}px 8px; opacity: 0.28; }} \
@@ -1333,7 +1341,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         size = font_size,
         chat_size = font_size.saturating_sub(2).max(8),
         chat_ink = contrast_on(&theme.root_color),
-        divider_bottom = crate::input::scroll::TWO_COLUMN_BOTTOM_MARGIN,
+        divider_bottom = divider_bottom_px,
     );
     // Diagnostic knob: LIT_DEBUG_CLIP_COLOR=<css color> paints every bottom-clip
     // box (main card + overlays) that color for the run, so a clip edge that is
