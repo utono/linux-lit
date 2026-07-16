@@ -42,6 +42,13 @@ pub(crate) struct ChatState {
     pub cursor: usize,
     pub revision_of: Option<i64>,
     pub pending: bool,
+    /// Passage PINNED by opening the panel with `Tab` from visual (`V`) mode:
+    /// the reader's selection, verbatim, as a one-segment context. While set,
+    /// EVERY question in the session sends exactly this passage as the source
+    /// text instead of re-deriving the cursor's segment ±2 neighbors — so
+    /// follow-ups keep discussing the same passage even if the cursor drifts.
+    /// Cleared with the rest of ChatState when the panel closes.
+    pub pinned_passage: Option<crate::input::segments::SegmentContext>,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -187,13 +194,41 @@ pub(crate) fn regate_panel(s: &mut AppState) {
     crate::logging::log(&format!("CHAT: regate kept panel (free={}px)", free));
 }
 
+/// `Tab` from visual (`V`) mode: open the chat panel PINNED to the selection.
+/// The highlighted passage becomes the source text for every question in the
+/// session (see `ChatState::pinned_passage`) — the chat sends exactly what was
+/// highlighted, with no neighbor segments, instead of re-deriving the cursor's
+/// segment ±2 each time. Exits visual mode first (the selection is captured,
+/// so its highlight has served its purpose), then opens/focuses the panel via
+/// the normal path. No-op when the selection maps to no work lines.
+pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
+    let pinned = {
+        let s = state_rc.borrow();
+        let Some(sel) = s.visual_selection.as_ref() else { return };
+        let (start, end) = sel.range();
+        crate::input::segments::selection_context(&s, start, end)
+    };
+    let Some(pinned) = pinned else {
+        let s = state_rc.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No passage in the selection", 2);
+        return;
+    };
+    crate::input::visual::exit_visual_mode(&mut state_rc.borrow_mut());
+    // Opens when closed, else focuses the panel — neither path touches
+    // ChatState, so the pin below survives either way.
+    toggle_chat_layout(state_rc);
+    state_rc.borrow_mut().chat.pinned_passage = Some(pinned);
+    let s = state_rc.borrow();
+    crate::input::navigation::show_chapter_toast_secs(&s, "Chat pinned to selection", 2);
+}
+
 pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.chat_layout_open {
         // Panel already open: Tab (from reader focus) cycles INTO the panel —
         // the prompt when its input is showing, else the transcript (a
         // retired input stays hidden until `a` re-shows it); closing is
-        // Ctrl+Tab's job (ToggleLastOverlay shadow).
+        // Ctrl+Tab's job (CloseChatLayout).
         if s.chat_panel.input_is_open() {
             focus_prompt(&mut s);
         } else {
@@ -334,9 +369,19 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         // validation failure (no work / no passage at cursor) must leave the
         // typed question untouched for retry, not silently clear it.
         let Some(work) = s.current_work.as_ref() else { return };
-        let Some(seg) = crate::input::segments::segment_context(&s, 2) else {
-            crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);
-            return;
+        // A PINNED passage (panel opened with Tab from V-mode) is the source for
+        // every question in the session — send exactly what was highlighted, no
+        // neighbor segments, regardless of where the cursor has since moved.
+        // Otherwise fall back to the live cursor segment ±2 neighbors.
+        let seg = match s.chat.pinned_passage.clone() {
+            Some(pinned) => pinned,
+            None => match crate::input::segments::segment_context(&s, 2) {
+                Some(seg) => seg,
+                None => {
+                    crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);
+                    return;
+                }
+            },
         };
         let Some(gctx) = crate::gloss::build_context_for_type(work, &seg.cursor_lines, "reader-gloss") else {
             crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);

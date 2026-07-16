@@ -3253,6 +3253,14 @@ fn handle_visual_key(
             crate::input::visual::action_journal_qa(state);
             true
         }
+        // Tab — open the chat panel PINNED to this selection: the highlighted
+        // passage becomes the chat's source text for every question in the
+        // session (no neighbor segments, cursor-independent). Mirrors the
+        // reader's Tab = chat, but with the passage fixed.
+        "Tab" | "ISO_Left_Tab" => {
+            crate::input::actions::chat::open_chat_pinned_to_selection(state);
+            true
+        }
         "j" => {
             crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), 1);
             true

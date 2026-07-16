@@ -4,6 +4,7 @@
 
 use crate::app::AppState;
 
+#[derive(Clone)]
 pub(crate) struct SegmentContext {
     /// Segment texts in buffer order (cursor's segment included).
     pub segments: Vec<String>,
@@ -104,6 +105,42 @@ pub(crate) fn chat_user_message(
         "Work type: {}\nWork: {} by {}\n{}: {}\n\nContext (consecutive segments; the reader's cursor segment is marked):\n{}Reader's question:\n{}",
         genre, title, author, unit_label, scene_label, ctx, question,
     )
+}
+
+/// A context holding ONLY the buffer lines `[start, end]` as a single segment —
+/// the reader's visual selection, verbatim. Used by the chat panel's pinned
+/// passage (`Tab` from V-mode): the chat then sends exactly what was
+/// highlighted, with NO neighbor segments, for every question in the session.
+///
+/// Shaped as a one-segment `SegmentContext` (`cursor_index = 0`) so the whole
+/// downstream path — `chat_user_message`, the source header, the citations —
+/// works unchanged; it simply has nothing to add around the passage.
+/// None when there is no work or the range maps to no work lines.
+pub(crate) fn selection_context(
+    state: &AppState,
+    start: usize,
+    end: usize,
+) -> Option<SegmentContext> {
+    let work = state.current_work.as_ref()?;
+    let text = (start..=end)
+        .map(|l| crate::input::viewport::buffer_line_text(&state.buffer, l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cursor_lines: Vec<crate::db::models::Line> = (start..=end)
+        .filter_map(|bl| {
+            state
+                .work_line_for_buffer(bl)
+                .and_then(|wi| work.lines.get(wi).cloned())
+        })
+        .collect();
+    if cursor_lines.is_empty() {
+        return None;
+    }
+    let (div1, div2) = cursor_lines
+        .first()
+        .map(|l| (l.div1, l.div2))
+        .unwrap_or((0, 0));
+    Some(SegmentContext { segments: vec![text], cursor_index: 0, cursor_lines, div1, div2 })
 }
 
 /// The cursor's segment ±`n` neighbors, resolved against the live buffer.
