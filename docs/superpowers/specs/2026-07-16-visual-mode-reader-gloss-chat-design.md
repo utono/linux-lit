@@ -76,7 +76,8 @@ New function `action_reader_gloss_chat` in `src/input/visual.rs`, beside
 1. **`chat::open_chat_pinned_to_selection`** (`chat.rs:213`) — reads
    `visual_selection.range()`, builds the `SegmentContext` via
    `segments::selection_context`, exits visual mode, opens and floats the
-   panel, sets `chat.pinned_passage`. Reused verbatim.
+   panel, sets `chat.pinned_passage`. Reused, with the placement change in
+   "Panel placement" below.
 2. **`gloss::build_context_for_type(work, &selected_lines, "reader-gloss")`**
    — the same call `action_journal_qa` makes at `visual.rs:533`. Yields the
    citation-based context (`start_citation`, `end_citation`, `div1`, `div2`,
@@ -99,6 +100,50 @@ the transcript.
 `READER_GLOSS_PROMPT` (`gloss.rs:1081`) — the auto-gloss prompt. Not
 `READER_GLOSS_QUESTION_PROMPT` (`gloss.rs:1409`), which is the Add/question
 variant used when the user supplies a question.
+
+## Panel placement
+
+On a two-column work the panel floats over the column the passage is *not*
+in, so the passage stays visible. A selection spanning both columns has no
+such column: either side covers half of it.
+
+**Rule: a selection spanning both columns floats the panel LEFT.** A
+selection within one column keeps today's behavior — float over the other
+column.
+
+`line_in_right_column(line, split, end)` (the free function
+`cursor_in_right_column` calls at `chat.rs:132,139`) takes an explicit line,
+so the selection's span is classified with the same helper and no new column
+logic:
+
+- `line_in_right_column(start, ..) != line_in_right_column(end, ..)` →
+  spans both → `ChatPlacement::FloatLeft`.
+- Otherwise → float over the column the selection is not in.
+
+The `split`/`end` bounds come from the same two sources
+`cursor_in_right_column` uses, in the same order: the active page table's
+spread for `page_top_line` when in table mode, else the live
+`viewport::column_split` with its `split > page_end` "no right column"
+normalization.
+
+### Ordering defect this exposes
+
+`open_chat_pinned_to_selection` calls `exit_visual_mode` (`chat.rs:228`)
+*before* `toggle_chat_layout` (`:231`), and `toggle_chat_layout` picks the
+side via `float_side_for_cursor(s)`, which reads `s.current_line` — not the
+selection. By the time placement is decided the selection is already cleared,
+so today the side is chosen from wherever the cursor sits (one end of the
+selection). That is invisible for a within-column selection, since both ends
+agree, but it makes the spanning case unimplementable as written.
+
+The fix: capture `(start, end)` before `exit_visual_mode` (the function
+already does, at `:217`) and thread the resulting placement into the open
+path, rather than letting `toggle_chat_layout` re-derive it from the cursor.
+Scope this to the selection-pinned entry point; the plain `Tab` open with no
+selection keeps using `float_side_for_cursor`.
+
+`Ctrl+l` (`flip_panel_side`, `chat.rs:153`) still flips the panel afterwards,
+so a left placement the user dislikes is one keypress from the other side.
 
 ### Guards
 
@@ -158,10 +203,16 @@ happens only on a successful response, so a failure leaves no gloss row.
 - `Ctrl+-` still resolves to `JumpToNextVocab`.
 - `build_context_for_type` yields the expected citations for a selection.
 - The cache-hit path issues no API request.
+- Placement: a selection wholly in the left column floats right; wholly in
+  the right column floats left; spanning both floats left.
+  `line_in_right_column` takes explicit lines, so these are table-driven cases
+  needing no GUI.
 
 **Needs a real render** — the headless cage e2e or the user's `crll` session:
 
 - The panel floats over the non-cursor column on a two-column work.
+- A both-column selection floats left and the panel does not cover the
+  selection's left half.
 - The auto-fired answer lands in the transcript with no input shown.
 - `a` reopens the ask input; `s` saves a follow-up.
 
@@ -175,3 +226,7 @@ a manual hand-off with exact steps.
   in favor of reusing the chat panel.
 - Rebinding the vocab loop.
 - Changing what `s`, `Ctrl+Enter` (revision), or `S` (consolidate) mean.
+- Changing placement for the plain (unpinned) `Tab` open, or for
+  `regate_panel`'s work-switch re-check (`chat.rs:171`) — both keep using
+  `float_side_for_cursor`. Only the selection-pinned entry point gains the
+  spanning rule.
