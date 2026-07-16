@@ -397,10 +397,12 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
 fn selection_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("V"), Action::EnterVisualMode),
-        // Ctrl+a: paragraph/speech ask — pre-selects the block, second Ctrl+a
-        // or Return opens the Journal Q&A ask card. (ToggleLastOverlay lives on
-        // Ctrl+o; the whole Tab cap belongs to the chat panel.)
-        (KeyCombo::ctrl("a"), Action::AskPassage),
+        // Action::AskPassage (paragraph/speech pre-select -> Journal Q&A ask
+        // card) is deliberately UNBOUND — it used to sit on Ctrl+a. The action
+        // and its code path (visual::enter_visual_block_mode, the pending_ask
+        // fast-path) are intact, so re-adding a bind here (or a keymap.json
+        // entry) restores it. Journal Q&A is still reachable without it: select
+        // with `V`, then Ctrl+a in visual mode / the Action menu.
         // Copy-only vim view of the cursor's segment: opens in VISUAL mode,
         // visual `y` copies to the system clipboard, nothing is ever saved.
         (KeyCombo::plain("v"), Action::OpenSegmentVim),
@@ -486,7 +488,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
         assert_eq!(m.get(&KeyCombo::ctrl("Tab")), Some(&Action::CloseChatLayout));
         assert_eq!(m.get(&KeyCombo::ctrl("o")), Some(&Action::ToggleLastOverlay));
-        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::AskPassage));
+        // AskPassage is deliberately unbound (was Ctrl+a).
+        assert_eq!(m.get(&KeyCombo::ctrl("a")), None);
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
         assert_eq!(m.get(&KeyCombo::plain("u")), Some(&Action::SetStartTime));
@@ -646,13 +649,20 @@ mod tests {
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
         // The `Tab` cap owns the chat panel: plain Tab = ToggleChatLayout
-        // (open / cycle focus), Ctrl+Tab = CloseChatLayout. The `a` cap: plain
-        // = TogglePause, Ctrl+a = AskPassage. Ctrl+a vs Ctrl+Shift+a differ.
+        // (open / cycle focus), Ctrl+Tab = CloseChatLayout — a live plain-vs-
+        // Ctrl pair on one cap. The `a` cap: plain = TogglePause; Ctrl+a is
+        // UNBOUND (AskPassage was removed from it), Ctrl+Shift+a is bound — so
+        // those two still resolve differently.
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
+        assert_eq!(a_ctrl, None); // Ctrl+a deliberately unbound
+        assert_eq!(a_ctrl_shift, Some(Action::PickAttributionSet));
+        assert_ne!(
+            km.lookup("Tab", false, false, false),
+            km.lookup("Tab", true, false, false),
+        );
         assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
-        assert_eq!(a_ctrl, Some(Action::AskPassage));
         assert_eq!(km.lookup("o", true, false, false), Some(Action::ToggleLastOverlay));
         assert_eq!(km.lookup("Tab", true, false, false), Some(Action::CloseChatLayout));
         assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));

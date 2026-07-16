@@ -3245,10 +3245,10 @@ fn handle_visual_key(
 ) -> bool {
     match key_name {
         // Ctrl+a — open the Journal Q&A ask card for the selection directly
-        // (skips the Action menu). Works for ask-entered AND V-entered
-        // selections, so the menu is never required for Journal Q&A. Mirrors
-        // the reader-table AskPassage chord: pressing the SAME chord that
-        // entered visual mode confirms it.
+        // (skips the Action menu). This is now the PRIMARY route to a passage
+        // Q&A: select with `V`, then Ctrl+a. (The reader-side AskPassage chord
+        // that pre-selected the block and set `pending_ask` was unbound; the
+        // pending_ask fast-path below still works if that bind is restored.)
         "a" if is_ctrl => {
             crate::input::visual::action_journal_qa(state);
             true
