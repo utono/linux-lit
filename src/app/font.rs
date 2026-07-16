@@ -30,7 +30,9 @@ pub(crate) fn reapply_font(state: &AppState) {
     let end = state.buffer.end_iter();
     state.buffer.apply_tag(&tag, &start, &end);
     // Also update CSS for consistency
-    let css = crate::theme::generate_css(&state.theme, &state.config.font_family, state.config.font_size);
+    let divider_bottom = crate::input::scroll::two_column_divider_bottom_px(&state.text_view);
+    let css = crate::theme::generate_css(
+        &state.theme, &state.config.font_family, state.config.font_size, divider_bottom);
     state.css_provider.load_from_string(&css);
     // Keep translation tag in sync (italic, 4pt smaller) and ensure it
     // overrides the freshly re-added font-size tag.

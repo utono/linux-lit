@@ -1299,6 +1299,7 @@ pub fn build_window(
         &theme,
         &config.font_family,
         config.font_size,
+        crate::input::scroll::two_column_divider_bottom_px(&text_view),
     );
     css_provider.load_from_string(&css);
     gtk4::style_context_add_provider_for_display(
