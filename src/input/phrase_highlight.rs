@@ -214,7 +214,12 @@ fn active_mode(s: &AppState) -> PhraseHighlightMode {
 /// through its own suppression window).
 pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
     let mode = active_mode(s);
-    if !mode.is_on() || !s.sync_enabled || s.translations_visible {
+    // NOT gated on `sync_enabled`: the karaoke tint tracks the audio position
+    // itself, so it must keep sweeping even when playback SYNC (the cursor/page
+    // following the audio) is toggled off. It IS gated on the class mode being
+    // on and on translations being hidden (the inflated translation buffer
+    // misaligns character offsets).
+    if !mode.is_on() || s.translations_visible {
         clear_phrase_highlight(s);
         return;
     }
@@ -245,7 +250,9 @@ pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
 /// the caller can hold the tint through its sync-suppression window.
 pub fn paint_pending_phrase(s: &mut AppState, pos: f64) -> bool {
     let mode = active_mode(s);
-    if !mode.is_on() || !s.sync_enabled || s.translations_visible {
+    // Not gated on `sync_enabled` (see update_phrase_highlight) — a seek-driven
+    // pending paint should show the karaoke tint at the target even with sync off.
+    if !mode.is_on() || s.translations_visible {
         return false;
     }
     paint_phrase_at(s, pos, true);
@@ -296,7 +303,18 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
         .map(|wi| (wi, lines[wi].id))
     };
     let Some((spoken_wi, line_id)) = spoken else {
-        clear_phrase_highlight(s);
+        // HOLD-ON-TRANSIENT-MISS: on prose, a long paragraph straddling several
+        // pages advances the page window but NOT `current_line`, so the spoken
+        // line can drift outside `resolve_spoken_idx`'s bounded walk window and
+        // return None for a stretch of ticks — the karaoke tint used to blank
+        // and stay blank until things re-converged ("sometimes disappears on
+        // TT"). Instead, KEEP the last-painted phrase when one is up (a fresh
+        // resolve will replace it). Clear only when nothing is painted, so a
+        // genuinely stopped/off-data state still shows nothing. Mirrors how
+        // `phrase_at_time` already holds a span through inter-span gaps.
+        if s.active_phrase.is_none() {
+            clear_phrase_highlight(s);
+        }
         return;
     };
     let cache_stale = s
@@ -322,7 +340,14 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
             .map(|i| (c.spans[i], i))
     });
     let Some((span, span_idx)) = hit else {
-        clear_phrase_highlight(s);
+        // HOLD-ON-TRANSIENT-MISS (same rationale as the resolve-miss above): the
+        // resolved line has no span active at `pos` — a partial/gappy timestamp
+        // stretch. Keep the last-painted phrase rather than blanking mid-sweep;
+        // a later tick with a real span replaces it. Clear only when nothing is
+        // painted.
+        if s.active_phrase.is_none() {
+            clear_phrase_highlight(s);
+        }
         return;
     };
     let Some(bl) = s.buffer_line_for_work(spoken_wi) else {
@@ -390,6 +415,10 @@ pub(crate) fn phrase_step_target(
 /// raw ±seconds seek.
 pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
     let mode = active_mode(s);
+    // This one KEEPS the `sync_enabled` gate: `o`/`e` is a phrase-aware SEEK
+    // (it moves playback), not the passive karaoke display. With sync off the
+    // caller falls back to a raw ±seconds seek. Only the display painters
+    // (update_phrase_highlight / paint_pending_phrase) dropped the sync gate.
     if !mode.is_on() || !s.sync_enabled || s.translations_visible {
         return false;
     }
