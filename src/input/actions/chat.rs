@@ -586,11 +586,24 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     match saved {
         Ok(id) => {
             s.chat.exchanges[idx].saved_id = Some(id);
+            // Revision mode is ARMED but not entered: `revision_of` makes a
+            // later Ctrl+Enter refine this row (and the input title read
+            // "Revise this entry" via prompt_title_hint) WITHOUT opening the
+            // input now. `s` is a save, full stop — it must not yank focus into
+            // a text field the reader did not ask for. Tab back into the panel
+            // to revise. (This used to open_input + set ChatPrompt here.)
             s.chat.revision_of = Some(id);
+            // If the input happens to be open ALREADY (the `s`-alias path types
+            // into it, so it is), retitle it in place — it would otherwise keep
+            // saying "Ask about this passage" while revision_of is set, i.e. lie
+            // about what Ctrl+Enter now does. Retitle only; focus and mode are
+            // untouched. Safe: the alias consumed the text, so there is no draft
+            // for open_input's vim reseed to destroy.
+            if s.chat_panel.input_is_open() && s.chat_panel.peek_input_text().trim().is_empty() {
+                let (title, hint) = prompt_title_hint(&s);
+                s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+            }
             render_saved_entry(&s, &q, &a);
-            let (title, hint) = prompt_title_hint(&s);
-            s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
-            s.input_mode = crate::app::InputMode::ChatPrompt;
             // Re-derive the glossed-line tint so the just-saved passage colors
             // IMMEDIATELY, mirroring every gloss.rs save/edit/delete path.
             // Without this the entry existed but its passage stayed unmarked
