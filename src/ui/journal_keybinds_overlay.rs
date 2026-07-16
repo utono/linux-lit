@@ -14,9 +14,10 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Alt+w", "whole-work band"),
         ("Alt+a", "author corpus band"),
     ]),
-    ("TTS", &[
+    ("Playback / TTS", &[
+        ("a", "play / pause (MPV, same as main card)"),
         ("Ctrl+Space", "read cursor block (TTS)"),
-        ("a", "play / pause (cached TTS only)"),
+        ("A", "play / pause cursor block TTS (cached only)"),
         ("Ctrl+s", "restart cursor block TTS"),
     ]),
     ("Editing", &[
@@ -31,7 +32,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+Shift+J", "move Q&A to another band"),
     ]),
     ("Vim edit mode (after e)", &[
-        ("H", "highlight selection (visual; toggles)"),
+        ("H", "in visual mode: toggle <hi> highlight on the selection"),
         ("Ctrl+v", "paste clipboard (also in the r ask prompt)"),
     ]),
     ("Cross-reference", &[

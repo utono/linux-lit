@@ -1659,9 +1659,14 @@ fn handle_journal_key(
             }
             true
         }
-        // `a`: toggle play/pause of the cursor block's TTS (starts it only
-        // when a cached MP3 exists; never synthesizes).
+        // `a`: global MPV play/pause, same as the main card's `a` (TogglePause).
         "a" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            true
+        }
+        // `A` (Shift+a): toggle play/pause of the cursor block's TTS (starts it
+        // only when a cached MP3 exists; never synthesizes). Was plain `a`.
+        "A" => {
             crate::input::actions::gloss::toggle_pause_current_journal_block(state);
             true
         }
@@ -1895,7 +1900,13 @@ fn handle_gloss_key(
         }
     }
     match key_name {
+        // `a`: global MPV play/pause, same as the main card's `a` (TogglePause).
         "a" => {
+            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            true
+        }
+        // `A` (Shift+a): (re)start the cursor block's TTS. Was plain `a`.
+        "A" => {
             crate::input::actions::gloss::begin_current_block(state);
             true
         }
