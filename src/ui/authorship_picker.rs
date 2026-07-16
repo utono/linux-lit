@@ -67,9 +67,9 @@ impl AuthorshipPicker {
     }
 
     pub fn move_selection(&self, delta: i32) {
-        let current = self.list_box.selected_row().map(|r| r.index()).unwrap_or(0);
-        let next = (current + delta).max(0);
-        crate::ui::picker_nav::select_row_at(&self.list_box, next);
+        // Family B (−1 start) so a first Ctrl+p with nothing selected lands on
+        // the LAST row rather than row 0 — consistent with every other picker.
+        crate::ui::picker_nav::move_selection_from(&self.list_box, delta);
     }
 
     pub fn selected_set(&self) -> Option<&AttributionSet> {

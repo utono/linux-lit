@@ -499,36 +499,12 @@ impl LibraryPicker {
         })
     }
 
+    /// Ctrl+n / Ctrl+p. WRAPS at both ends (last -> first, first -> last) —
+    /// the shared picker behavior. Was a hand-rolled modular wrap with its own
+    /// O(n) row count and an inline copy of scroll-into-view; both now live in
+    /// picker_nav (`move_selection_clamped` wraps and `select_row_at` scrolls).
     pub fn move_selection(&self, delta: i32) {
-        if let Some(current) = self.list_box.selected_row() {
-            let idx = current.index();
-            let mut count = 0i32;
-            while self.list_box.row_at_index(count).is_some() {
-                count += 1;
-            }
-            if count == 0 {
-                return;
-            }
-            let new_idx = ((idx + delta) % count + count) % count;
-            if let Some(row) = self.list_box.row_at_index(new_idx) {
-                self.list_box.select_row(Some(&row));
-                // Scroll the selected row into view within the ScrolledWindow
-                if let Some(adj) = self.list_box.adjustment() {
-                    if let Some(bounds) = row.compute_bounds(&self.list_box) {
-                        let y = bounds.y() as f64;
-                        let row_height = bounds.height() as f64;
-                        let page_size = adj.page_size();
-                        let current_val = adj.value();
-
-                        if y < current_val {
-                            adj.set_value(y);
-                        } else if y + row_height > current_val + page_size {
-                            adj.set_value(y + row_height - page_size);
-                        }
-                    }
-                }
-            }
-        }
+        crate::ui::picker_nav::move_selection_clamped(&self.list_box, delta);
     }
 }
 

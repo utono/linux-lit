@@ -185,26 +185,81 @@ pub(crate) fn speaker_prefixed_first_line(speaker: &str, source_text: &str) -> S
     }
 }
 
-/// Move the selection by `delta` rows, FAMILY A: requires a current selection and
-/// clamps the new index at ≥ 0 (so up-arrow at the top stays on row 0). No-op if
-/// nothing is selected. The byte-identical body of the card pickers
+/// How many rows `list_box` holds. O(1): GTK keeps the child list, and the last
+/// child's own index is `len - 1`. 0 on an empty list.
+pub(crate) fn row_count(list_box: &ListBox) -> i32 {
+    list_box
+        .last_child()
+        .and_then(|c| c.downcast::<gtk4::ListBoxRow>().ok())
+        .map(|r| r.index() + 1)
+        .unwrap_or(0)
+}
+
+/// Wrap `idx` into `0..count` (count > 0). `-1` becomes the LAST row and `count`
+/// becomes the first, so a single step off either end lands on the other end.
+/// Pure — unit-tested below.
+pub(crate) fn wrap_index(idx: i32, count: i32) -> i32 {
+    if count <= 0 {
+        return 0;
+    }
+    idx.rem_euclid(count)
+}
+
+/// Move the selection by `delta` rows, FAMILY A: requires a current selection.
+/// WRAPS at both ends — Ctrl+p on the first row lands on the last, Ctrl+n on the
+/// last lands on the first. No-op if nothing is selected or the list is empty.
+/// The byte-identical body of the card pickers
 /// (bookmark/gloss/journal/media/concordance). The sibling FAMILY B
-/// (`move_selection_from`) starts from −1 and does NOT clamp — kept separate
-/// because that behavior difference (clamp vs no-clamp) is load-bearing.
+/// (`move_selection_from`) differs only in treating "no selection" as a start
+/// point; both wrap identically.
 pub(crate) fn move_selection_clamped(list_box: &ListBox, delta: i32) {
     if let Some(current) = list_box.selected_row() {
-        let idx = current.index();
-        let new_idx = (idx + delta).max(0);
-        select_row_at(list_box, new_idx);
+        let count = row_count(list_box);
+        if count == 0 {
+            return;
+        }
+        select_row_at(list_box, wrap_index(current.index() + delta, count));
     }
 }
 
 /// Move the selection by `delta` rows, FAMILY B: treats "no selection" as index
-/// −1 and adds `delta` with NO lower clamp (an out-of-range index is a no-op in
-/// `select_row_at`). The byte-identical body of the concordance-word/list/works
-/// and echo-line pickers. See `move_selection_clamped` for FAMILY A; the −1-start
-/// and absent `.max(0)` are exactly why these are two helpers, not one.
+/// −1, so a first Ctrl+n selects row 0 and a first Ctrl+p selects the LAST row.
+/// WRAPS at both ends like FAMILY A. The byte-identical body of the
+/// concordance-word/list/works and echo-line pickers. Kept separate from
+/// `move_selection_clamped` because the −1 start is load-bearing (those pickers
+/// can be shown with nothing selected).
 pub(crate) fn move_selection_from(list_box: &ListBox, delta: i32) {
+    let count = row_count(list_box);
+    if count == 0 {
+        return;
+    }
     let current = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
-    select_row_at(list_box, current + delta);
+    select_row_at(list_box, wrap_index(current + delta, count));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_index;
+
+    /// The wrap contract Ctrl+n/Ctrl+p rely on: one step past either end lands
+    /// on the other end, and an existing in-range index is untouched.
+    #[test]
+    fn wrap_index_wraps_both_ends_and_passes_through() {
+        // In range: unchanged.
+        assert_eq!(wrap_index(0, 5), 0);
+        assert_eq!(wrap_index(3, 5), 3);
+        assert_eq!(wrap_index(4, 5), 4);
+        // Ctrl+n off the end -> first.
+        assert_eq!(wrap_index(5, 5), 0);
+        // Ctrl+p off the front -> last. Also the FAMILY B "no selection" start:
+        // current = -1, delta = -1 -> -2 must still land on a real row.
+        assert_eq!(wrap_index(-1, 5), 4);
+        assert_eq!(wrap_index(-2, 5), 3);
+        // Single-row list: every step stays put.
+        assert_eq!(wrap_index(1, 1), 0);
+        assert_eq!(wrap_index(-1, 1), 0);
+        // Empty list: defined, never panics or divides by zero.
+        assert_eq!(wrap_index(0, 0), 0);
+        assert_eq!(wrap_index(-1, 0), 0);
+    }
 }
