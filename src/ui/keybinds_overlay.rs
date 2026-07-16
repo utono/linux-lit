@@ -295,11 +295,16 @@ panel. CLOSED: Tab opens it (2-col floats over the column the cursor is not in; 
 1-col pins the card right). OPEN + reader focus: Tab moves focus INTO the panel \
 — the prompt if its input is showing, else the transcript. OPEN + panel focus: \
 Tab cycles on — prompt -> transcript -> reader. So repeated Tab walks \
-reader -> panel -> reader without ever closing. Ctrl+Tab closes (from anywhere); \
-Escape from the transcript returns focus to the reader. The panel is MODAL while \
-focused: unmatched keys are swallowed, so reader binds (incl. `a` = pause) do \
-not fire until focus is back — in the transcript j/k move, `s` saves the \
-exchange, `a` re-shows a retired input, Ctrl+l flips the panel side. \
+reader -> panel -> reader without ever closing. FROM VISUAL (`V`) MODE: Tab \
+opens the chat PINNED to the highlighted passage — that selection alone is the \
+source text sent to Claude for EVERY question in the session (no neighbor \
+segments; it does not follow the cursor), and the pin clears when the panel \
+closes. Unpinned, the chat instead sends the cursor's segment ±2 neighbors, \
+re-derived per question. Ctrl+Tab closes (from anywhere); Escape from the \
+transcript returns focus to the reader. The panel is MODAL while focused: \
+unmatched keys are swallowed, so reader binds (incl. `a` = pause) do not fire \
+until focus is back — in the transcript j/k move, `s` saves the exchange, `a` \
+re-shows a retired input, Ctrl+l flips the panel side. \
 — src/input/actions/chat.rs",
         "close chat" => "Action::CloseChatLayout — Ctrl+Tab. The hide half of \
 Tab's show: works from the reader AND from inside the panel (prompt or \
