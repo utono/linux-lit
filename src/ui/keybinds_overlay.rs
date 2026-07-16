@@ -290,11 +290,21 @@ the last-closed gloss/journal overlay; overlays close via Escape) \
 — src/input/actions/gloss.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (journal Q&A → gloss \
 → synopsis, wraps; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
-        "chat focus" => "Action::ToggleChatLayout (Tab: OPENS the chat panel \
-when closed, else cycles focus INTO it; inside the panel Tab cycles prompt -> \
-transcript -> reader. Ctrl+Tab closes) — src/input/actions/chat.rs",
-        "close chat" => "Action::CloseChatLayout (Ctrl+Tab — works from the \
-reader AND from inside the panel, so one chord always dismisses it) \
+        "chat focus" => "Action::ToggleChatLayout — the Tab cap owns the chat \
+panel. CLOSED: Tab opens it (2-col floats over the column the cursor is not in; \
+1-col pins the card right). OPEN + reader focus: Tab moves focus INTO the panel \
+— the prompt if its input is showing, else the transcript. OPEN + panel focus: \
+Tab cycles on — prompt -> transcript -> reader. So repeated Tab walks \
+reader -> panel -> reader without ever closing. Ctrl+Tab closes (from anywhere); \
+Escape from the transcript returns focus to the reader. The panel is MODAL while \
+focused: unmatched keys are swallowed, so reader binds (incl. `a` = pause) do \
+not fire until focus is back — in the transcript j/k move, `s` saves the \
+exchange, `a` re-shows a retired input, Ctrl+l flips the panel side. \
+— src/input/actions/chat.rs",
+        "close chat" => "Action::CloseChatLayout — Ctrl+Tab. The hide half of \
+Tab's show: works from the reader AND from inside the panel (prompt or \
+transcript), so one chord always dismisses it wherever focus sits. Clears the \
+chat history and unpins the card. No-op when the panel is not open. \
 — src/input/actions/chat.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
         "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
@@ -328,9 +338,15 @@ on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
 — src/input/visual.rs",
 
         // ── MPV / audio ──
-        "play/pause" => "Action::TogglePause — src/input/keymap.rs. Pure \
-pause/resume toggle for all work types (bound to `a`); Space plays from the \
-cursor line's timestamp.",
+        "play/pause" => "Action::TogglePause — the `a` cap is MEDIA, the Tab cap \
+is the chat panel. Plain `a`: pure MPV pause/resume, no seek, all work types \
+(Space instead PLAYS from the cursor line's timestamp). Same `a` = pause inside \
+the journal / gloss / translation overlays and the vocab-sentence loop. \
+EXCEPTION — with the chat panel focused on its TRANSCRIPT, `a` re-shows a \
+retired input instead (the panel is modal there; pause is unavailable until you \
+Tab back to the reader). Ctrl+a is UNBOUND (it was AskPassage: select with `V`, \
+then Ctrl+a in visual mode, for a passage Q&A). Shift+a = authorship; \
+Ctrl+Shift+a = attribution set. — src/input/keymap.rs",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",
         "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9 -> 0.8) \
