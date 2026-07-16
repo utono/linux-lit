@@ -578,6 +578,15 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
             let (title, hint) = prompt_title_hint(&s);
             s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
             s.input_mode = crate::app::InputMode::ChatPrompt;
+            // Re-derive the glossed-line tint so the just-saved passage colors
+            // IMMEDIATELY, mirroring every gloss.rs save/edit/delete path.
+            // Without this the entry existed but its passage stayed unmarked
+            // until some other path recomputed — opening the journal overlay on
+            // it and escaping out was the only way to see it (the overlay's
+            // close path runs the same recompute). The chat panel STAYS OPEN
+            // here, so recompute directly rather than via a return-to-reader
+            // path (which would wrongly switch the input mode).
+            crate::app::apply_reader_gloss_highlighting(&mut s);
             crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
             crate::logging::log(&format!("CHAT: saved exchange as journal page {}", id));
         }
@@ -711,6 +720,11 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                     let (title, hint) = prompt_title_hint(&s);
                     s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
                     s.input_mode = crate::app::InputMode::ChatPrompt;
+                    // Same refresh as the `s` save path: the consolidated entry
+                    // is a new journal page, so re-derive the glossed-line tint
+                    // now or its passage stays unmarked until some other path
+                    // recomputes.
+                    crate::app::apply_reader_gloss_highlighting(&mut s);
                     crate::input::navigation::show_chapter_toast_secs(&s, "Consolidated and saved", 2);
                     crate::logging::log(&format!(
                         "CHAT: consolidated {} exchanges into journal page {}",
