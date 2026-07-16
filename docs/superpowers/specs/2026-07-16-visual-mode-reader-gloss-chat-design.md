@@ -4,12 +4,16 @@ _Design spec. 2026-07-16 (US Central)._
 
 ## Summary
 
-Add one keybind: `-` in visual mode. After selecting lines with `V`, pressing
-`-` opens the existing chat panel pinned to that selection, immediately fires
-the reader-gloss prompt without showing an ask input, and writes the resulting
-gloss to `passages` + `glosses` on arrival. Inside the panel, `a` reopens the
-ask input for follow-up questions and `s` saves those to the journal, exactly
-as they do today.
+Add `-` in visual mode: after selecting lines with `V`, pressing `-` opens the
+existing chat panel pinned to that selection, immediately fires the
+reader-gloss prompt without showing an ask input, and writes the resulting
+gloss to `passages` + `glosses` on arrival.
+
+Inside the panel, three keys act on the pinned passage: `a` reopens the ask
+input for follow-up questions and `s` saves those to the journal (both exactly
+as they do today), `r`/`R` reglosses — a fresh Claude call saved as a new
+lit.db row — and `Ctrl+n`/`Ctrl+p` cycles through the passage's stored
+glosses, wrapping.
 
 The bind joins visual-mode `Ctrl+a` (Journal Q&A ask card) and visual-mode
 `Tab` (chat pinned to selection) as a third sibling on the same
@@ -33,6 +37,10 @@ design follows the code:
 ## Binds
 
 - **New:** `-` (`minus`) in visual mode → new action, auto reader gloss.
+- **New (panel keys, `handle_chat_transcript_key` arms — not reader binds):**
+  `r`/`R` → regloss; `Ctrl+n`/`Ctrl+p` → cycle stored glosses. These live in
+  the panel's own handler, so they do not touch `keymap_config.rs` and cannot
+  collide with the reader-level meanings of those keys.
 - **Unchanged:** plain `-` in the reader stays unbound. The existing test at
   `keymap_config.rs:511` asserting `plain("minus") == None` keeps passing.
 - **Unchanged:** `Ctrl+-` → `JumpToNextVocab`, `Ctrl+Shift+-` /
@@ -66,7 +74,8 @@ Every alternative home for the vocab pair fails:
    no input shown.
 4. The answer lands as exchange #1 in the transcript and is written to the DB.
 5. `a` reopens the ask input for follow-ups; `s` saves a follow-up to the
-   journal; `Ctrl+Tab` or Escape closes.
+   journal; `r`/`R` reglosses the passage into a new lit.db row; `Ctrl+Tab`
+   or Escape closes.
 
 ## Handler
 
@@ -126,7 +135,7 @@ spread for `page_top_line` when in table mode, else the live
 `viewport::column_split` with its `split > page_end` "no right column"
 normalization.
 
-### Ordering defect this exposes
+### Placement ordering defect this exposes
 
 `open_chat_pinned_to_selection` calls `exit_visual_mode` (`chat.rs:228`)
 *before* `toggle_chat_layout` (`:231`), and `toggle_chat_layout` picks the
@@ -156,6 +165,84 @@ so a left placement the user dislikes is one keypress from the other side.
   existing gloss on that span, as `action_reader_gloss` does (`visual.rs:575`).
   On a hit, populate the transcript from the stored gloss and issue no
   request — pressing `-` twice on a passage is cheap and idempotent.
+
+## Regloss — `r` / `R` in the panel
+
+`r` or `R` in the chat transcript reglosses the pinned passage: it calls
+Claude again with `READER_GLOSS_PROMPT` and saves a **new** reader-gloss row
+to lit.db for the same span, appending the result to the transcript as a new
+exchange.
+
+This is a panel key, so it is an arm in `handle_chat_transcript_key`
+(`keymap.rs:1326`) beside the existing `s` (`:1351`) and `a` (`:1355`) —
+not a reader-level bind. Reader-level `r` stays `VocabPopupTap`
+(`keymap_config.rs:302`) and plain `R` stays unbound (asserted at `:514`);
+neither test changes. Both `r` and `R` map to the same action; `R` already
+means regenerate/edit in the gloss overlay (`READER_GLOSS_EDIT_PROMPT`,
+`gloss.rs:1490`), so the meaning carries over.
+
+**It bypasses the cache.** The `-` cache check exists to avoid re-spending an
+API call on a span that already has a gloss. Regloss wants the opposite, so
+`r`/`R` skips `find_glosses_by_start` and always calls Claude. It requires a
+pinned passage (`chat.pinned_passage`) and honors the `chat.pending`
+in-flight guard.
+
+**Storage: insert, newest wins.** Each regloss is a new `glosses` row on the
+same `passage_id` via the same `persist_render_install_gloss` path — history
+is kept, nothing is overwritten. `save_gloss`'s `INSERT OR IGNORE INTO
+passages` (`queries.rs:2250`) means the passage row is reused, not
+duplicated.
+
+Lookups resolve to the newest row with no change: `find_glosses_by_start`
+already orders `(g.gloss_type = 'reader-gloss') DESC, g.timestamp DESC`
+(`queries.rs:2169`), so the `-` cache check and the glossed-line tint pick up
+the most recent gloss.
+
+### One-second timestamp tie
+
+`glosses.timestamp` is written by `CURRENT_TIMESTAMP`, which SQLite stores at
+one-second granularity. Two glosses on the same span within the same second
+tie on `timestamp DESC`, and SQLite may return either — reglossing twice in
+quick succession is precisely that case.
+
+Fix: add `g.id DESC` as a final tiebreak to `find_glosses_by_start`'s ORDER
+BY. `id` is `last_insert_rowid()` (`queries.rs:2266`) and so is monotonic per
+insert, making "newest wins" deterministic. This is a one-line change to an
+existing query; it strictly refines an ordering that was previously arbitrary
+within a tie, so no existing caller's behavior regresses.
+
+## Gloss cycling — `Ctrl+n` / `Ctrl+p` in the panel
+
+`Ctrl+n` and `Ctrl+p` cycle forward and backward through every stored gloss
+for the pinned passage, wrapping at both ends. Since regloss keeps history,
+this is how the history is read back — including glosses written in earlier
+sessions.
+
+Also arms in `handle_chat_transcript_key`, beside `Ctrl+l`
+(`keymap.rs:1360`). No conflict with reader-level `Ctrl+n`/`Ctrl+p`
+(`VocabJournalPageNext`/`PagePrev`, `keymap_config.rs:308-309`) — the panel
+handler is a separate context and those binds are untouched.
+
+**Two different lists.** `j`/`k` move `transcript_cursor_move`
+(`keymap.rs:1343`), a cursor over this session's in-memory `chat.exchanges`.
+`Ctrl+n`/`Ctrl+p` moves over stored `glosses` rows from lit.db. These are
+distinct axes and need distinct state — cycling must not reuse `chat.cursor`.
+
+**Cycling swaps exchange #1 in place.** The auto-gloss occupies the first
+transcript slot; `Ctrl+n`/`Ctrl+p` replaces the gloss text shown there with
+the next stored gloss. Follow-up exchanges below it are untouched and `j`/`k`
+still moves over them. The slot indicates which gloss is showing (e.g.
+"2 of 5").
+
+**New state on `ChatState`:** the ordered list of stored glosses for the
+pinned passage and an index into it. Populated when `-` opens the panel
+(from the `find_glosses_by_start` call the cache check already makes — no
+extra query) and re-populated after a regloss, which appends a row and leaves
+the index on the new gloss. With one stored gloss, cycling is a no-op.
+
+**Scope:** cycling reads `gloss_type = "reader-gloss"` rows for the pinned
+span only. It does not cycle journal entries, and it does not apply when no
+passage is pinned.
 
 ## Persistence
 
@@ -203,6 +290,14 @@ happens only on a successful response, so a failure leaves no gloss row.
 - `Ctrl+-` still resolves to `JumpToNextVocab`.
 - `build_context_for_type` yields the expected citations for a selection.
 - The cache-hit path issues no API request.
+- `r`/`R` bypasses the cache and always issues a request, where `-` on the
+  same span does not.
+- `find_glosses_by_start` returns the newest reader-gloss first when two rows
+  share a `timestamp` (the `id DESC` tiebreak). This test fails against the
+  current query — write it first.
+- Cycling wraps at both ends and is a no-op with a single stored gloss;
+  reader-level `Ctrl+n`/`Ctrl+p` still resolve to `VocabJournalPageNext`/
+  `PagePrev`.
 - Placement: a selection wholly in the left column floats right; wholly in
   the right column floats left; spanning both floats left.
   `line_in_right_column` takes explicit lines, so these are table-driven cases
@@ -213,6 +308,8 @@ happens only on a successful response, so a failure leaves no gloss row.
 - The panel floats over the non-cursor column on a two-column work.
 - A both-column selection floats left and the panel does not cover the
   selection's left half.
+- `r`/`R` appends a regloss and `Ctrl+n`/`Ctrl+p` cycles between the stored
+  glosses, swapping exchange #1 in place while follow-ups stay put.
 - The auto-fired answer lands in the transcript with no input shown.
 - `a` reopens the ask input; `s` saves a follow-up.
 
@@ -224,8 +321,12 @@ a manual hand-off with exact steps.
 
 - A separate floating gloss overlay widget with its own `InputMode` — rejected
   in favor of reusing the chat panel.
-- Rebinding the vocab loop.
-- Changing what `s`, `Ctrl+Enter` (revision), or `S` (consolidate) mean.
+- Rebinding the vocab loop, or changing reader-level `r`, `R`, `Ctrl+n`, or
+  `Ctrl+p`.
+- Changing what `s`, `Ctrl+Enter` (revision), `S` (consolidate), or `j`/`k`
+  (transcript cursor) mean.
+- Deleting or pruning stored glosses. Regloss only ever appends; nothing in
+  this design removes a gloss row.
 - Changing placement for the plain (unpinned) `Tab` open, or for
   `regate_panel`'s work-switch re-check (`chat.rs:171`) — both keep using
   `float_side_for_cursor`. Only the selection-pinned entry point gains the
