@@ -1057,7 +1057,7 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// shrinks the columns' usable height, so the live pagination engine fits one
 /// fewer row per page — the pinned play_pages/prose_pages tables must be
 /// regenerated at the new geometry to match (LIT_GEN_PAGE_TABLE / re-import).
-pub const TOP_SPACER_HEIGHT: i32 = 64;
+pub const TOP_SPACER_HEIGHT: i32 = 74;
 
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
@@ -1461,8 +1461,14 @@ pub fn build_window(
     content_hbox.set_valign(gtk4::Align::Fill);
     content_hbox.set_vexpand(true);
     content_hbox.set_width_request(config.column_width as i32);
-    content_hbox.set_margin_top(24);
-    content_hbox.set_margin_bottom(24);
+    // Vertical outer margins (window edge → card) are intentionally SMALLER than
+    // the horizontal CARD_OUTER_MARGIN(24): a slightly taller card, whose gained
+    // height funds more breathing room inside (header top-inset + bottom reserve)
+    // WITHOUT costing a text row. See layout.rs `main_card_rect` (mirrors this in
+    // its fallback height) and CARD_VERTICAL_OUTER_MARGIN. Horizontal start/end
+    // are overwritten by apply_card_sizing; top/bottom are set once here.
+    content_hbox.set_margin_top(crate::app::layout::CARD_VERTICAL_OUTER_MARGIN);
+    content_hbox.set_margin_bottom(crate::app::layout::CARD_VERTICAL_OUTER_MARGIN);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
     content_hbox.append(&page_turn_overlay);

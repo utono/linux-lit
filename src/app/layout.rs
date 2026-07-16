@@ -36,9 +36,18 @@ pub fn verse_left_offset(window_width: i32, column_width: u32) -> i32 {
 const SONNET_BLOCK_SAMPLE: &str = "Then, churls, their thoughts, although their eyes were kind,";
 
 /// Outer margin between the reading card (`content_hbox`) and the window, on
-/// every side. Single source of truth for both `apply_card_sizing` (which sets
-/// it on the card) and `main_card_rect` (the pre-allocation height fallback).
+/// the LEFT/RIGHT. Single source of truth for `apply_card_sizing` (which sets
+/// start/end on the card). Vertical margins use `CARD_VERTICAL_OUTER_MARGIN`.
 pub(crate) const CARD_OUTER_MARGIN: i32 = 24;
+
+/// Outer margin between the card and the window on the TOP/BOTTOM. Smaller than
+/// the horizontal `CARD_OUTER_MARGIN` so the card is slightly TALLER; the gained
+/// height funds more breathing room INSIDE the card (a taller header band above
+/// the first line, a larger bottom reserve below the last line) without costing
+/// a text row. Set once on `content_hbox` (mod.rs) and mirrored in the
+/// `main_card_rect` height fallback below. Vertical only — never applied to
+/// start/end.
+pub(crate) const CARD_VERTICAL_OUTER_MARGIN: i32 = 14;
 
 /// Bottom margin on the shared ask/edit input card (`ui::ask_card`), lifting
 /// its bottom border above the act/scene toast pill with breathing room while
@@ -453,7 +462,7 @@ pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
         s.translations_visible,
     );
     let card_w = target.min(ww.max(1));
-    let card_h = (s.window.height() - 2 * CARD_OUTER_MARGIN).max(0);
+    let card_h = (s.window.height() - 2 * CARD_VERTICAL_OUTER_MARGIN).max(0);
     (card_w, card_h)
 }
 
