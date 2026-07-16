@@ -62,10 +62,10 @@ const UPPER_ROW: &[KeyDef] = &[
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
 ];
-const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "last overlay")]);
+const TAB_KEY: KeyDef = key("Tab", "", "play/pause", "", &[("C-Tab", "ask passage")]);
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "chat layout", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
+    key("a", "A", "chat layout", "A: authorship", &[("C-a", "last overlay"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "scansion")]),
@@ -290,8 +290,8 @@ the last-closed gloss/journal overlay; overlays close via Escape) \
 — src/input/actions/gloss.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (journal Q&A → gloss \
 → synopsis, wraps; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
-        "chat layout" => "Action::ToggleChatLayout (`a` opens/cycles focus; \
-Ctrl+Tab closes the last overlay) — src/input/actions/chat.rs",
+        "chat layout" => "Action::ToggleChatLayout (`a` opens/cycles focus) \
+— src/input/actions/chat.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
         "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
         "BCP echo turns" => "Action::ShowEchoTurnsBcp — src/input/actions/echoes.rs",
@@ -375,7 +375,7 @@ Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
         "chat side" => "Action::ChatPanelFlipSide — src/input/actions/chat.rs",
         "synopsis" => "Action::ShowSynopsisOverlay — src/app.rs",
         "col layout" => "Action::ToggleColumnLayout — src/input/navigation.rs",
-        "ask passage" => "Action::AskPassage -> InputMode::Visual (Ctrl+a/Return \
+        "ask passage" => "Action::AskPassage -> InputMode::Visual (Ctrl+Tab/Return \
 opens the ask card, j/k extend, Esc cancels) — src/input/visual.rs",
         "authorship" => "Action::ToggleAuthorship — src/app.rs",
         "attr set" => "Action::PickAttributionSet — src/input/keymap.rs",
