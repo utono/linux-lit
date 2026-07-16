@@ -317,9 +317,23 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         && state.config.show_cursor_line;
     // In non-dim prose the cursor line carries NO persistent bg tint (the
     // karaoke tint is the marking); verse keeps the persistent cursor tint.
+    //
+    // EXCEPT on an UNTIMESTAMPED line: there is no phrase to paint, so the
+    // karaoke tint can't mark anything and the cursor would be INVISIBLE. Prose
+    // front matter is routinely untimestamped (TT's title line "TO THE RIGHT
+    // HONOURABLE JOHN LORD SOMERS." has no line_timestamps row), and that line
+    // is exactly where the reader steps with `k` to ADD a start time via `u` —
+    // with no marking it looked like `k` couldn't reach it at all (it could;
+    // the landing was just unmarked). Fall back to the persistent tint there so
+    // the cursor is always visible. Timestamped prose lines are unchanged.
+    let cursor_has_timestamp = state
+        .work_line_for_buffer(state.current_line)
+        .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+        .is_some_and(|l| l.timestamp.is_some());
     let prose_no_tint = !PROSE_DIM_OTHER_PARAGRAPHS
         && state.is_prose()
-        && state.config.show_cursor_line;
+        && state.config.show_cursor_line
+        && cursor_has_timestamp;
     // Consume any leftover flash/hold flags unconditionally so a flag set by
     // the page-set paths (prose_flash_hold) or a raced overlay-close arm can't
     // linger and leak into a later overlay-close flash.
