@@ -224,8 +224,10 @@ pub struct ActionPopupState {
     pub selected_index: usize,
 }
 
-/// Built-in action names, in display order.
-pub const BUILTIN_ACTIONS: &[&str] = &["Journal Q&A", "Reader Gloss", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
+/// Built-in action names, in display order. The `match index` in
+/// `execute_action` maps these POSITIONALLY — reorder both together or an item
+/// fires the wrong action.
+pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Journal Q&A", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -269,12 +271,13 @@ pub fn execute_action(
 
     if index < builtin_count {
         match index {
+            // Index order MUST match BUILTIN_ACTIONS above.
             0 => {
-                action_journal_qa(state_rc);
+                action_reader_gloss(state_rc);
                 return;
             }
             1 => {
-                action_reader_gloss(state_rc);
+                action_journal_qa(state_rc);
                 return;
             }
             2 => {
