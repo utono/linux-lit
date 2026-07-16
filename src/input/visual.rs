@@ -98,13 +98,19 @@ pub(crate) fn cursor_block_bounds(state: &AppState) -> Option<(usize, usize)> {
 /// Apply the selection_tag to all lines in the visual selection range.
 /// Also removes dim_tag from those lines so they appear at full brightness.
 pub fn apply_selection_highlight(state: &AppState) {
-    let selection = match &state.visual_selection {
-        Some(s) => s,
-        None => return,
-    };
+    let Some(selection) = state.visual_selection.as_ref() else { return };
     let (start, end) = selection.range();
-    let buffer = &state.buffer;
+    apply_selection_highlight_range(state, start, end);
+}
 
+/// Apply the selection_tag to buffer lines `[start, end]` WITHOUT requiring a
+/// live `visual_selection`. Used to keep a passage visibly marked after visual
+/// mode has exited — the chat panel's pinned passage (`Tab` from V-mode) marks
+/// its source this way for as long as the pin lives (`close_chat_layout` clears
+/// it). Same body as `apply_selection_highlight`, which is the
+/// `visual_selection`-driven wrapper over this.
+pub fn apply_selection_highlight_range(state: &AppState, start: usize, end: usize) {
+    let buffer = &state.buffer;
     for line_idx in start..=end {
         if let Some(line_start) = buffer.iter_at_line(line_idx as i32) {
             let mut line_end = line_start;
