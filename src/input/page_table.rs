@@ -376,7 +376,7 @@ pub fn generate_and_store(state: &crate::app::AppState) {
         .collect();
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
-    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let usable = widget_height - guard - crate::input::scroll::TWO_COLUMN_BOTTOM_MARGIN;
     let ss_vec = state.section_starts().map(|s| s.to_vec());
     let ctx = ValidateCtx {
         line_count,
