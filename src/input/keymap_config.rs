@@ -265,11 +265,12 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
 fn media_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         // Space plays from the cursor line's start timestamp (PlayCurrentLine;
-        // it is intercepted before dispatch in keymap.rs). `Tab` is a PURE
+        // it is intercepted before dispatch in keymap.rs). `a` is a PURE
         // pause/resume toggle — no seek (TogglePause). This holds for ALL work
-        // types; poetry/plays no longer swap the two (they match prose).
-        // (`a`/`Tab` were SWAPPED: `a` now opens the chat layout, below.)
-        (KeyCombo::plain("Tab"), Action::TogglePause),
+        // types; poetry/plays no longer swap the two (they match prose). The
+        // journal/gloss/translation overlays mirror this `a` (see keymap.rs).
+        // `Tab` is reserved for chat focus-cycling (ToggleChatLayout, below).
+        (KeyCombo::plain("a"), Action::TogglePause),
         // `s` toggles playback sync directly (was `@`/`at`; `s` was TogglePause).
         (KeyCombo::plain("s"), Action::TogglePlaybackSync),
         // '-' is unbound (vocab popup cycling moved to `r`; Ctrl+- enters
@@ -330,14 +331,13 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::alt("j"), Action::OpenJournalPicker),
-        // Ctrl+o reopens the last-closed gloss/journal overlay. (It moved off
-        // Ctrl+a, which is now CloseChatLayout — the hide half of `a`'s show.)
+        // Ctrl+o reopens the last-closed gloss/journal overlay.
         (KeyCombo::ctrl("o"), Action::ToggleLastOverlay),
-        // Ctrl+a closes the chat panel that plain `a` opens. Bound in the reader
-        // table AND intercepted inside the panel's own handlers, so the one
-        // chord always dismisses it. (`Ctrl+a`/`Ctrl+Tab` were swapped earlier:
-        // Ctrl+Tab is now AskPassage, below.)
-        (KeyCombo::ctrl("a"), Action::CloseChatLayout),
+        // Ctrl+Tab closes the chat panel that plain `Tab` opens — the whole
+        // `Tab` cap owns the chat: Tab opens/cycles focus, Ctrl+Tab closes.
+        // Bound in the reader table AND intercepted inside the panel's own
+        // handlers, so the one chord always dismisses it.
+        (KeyCombo::ctrl("Tab"), Action::CloseChatLayout),
         // `\` cycles the segment overlays: journal Q&A → gloss → synopsis
         // (wraps; advance arms live in the overlay modal handlers).
         (KeyCombo::plain("backslash"), Action::CycleSegmentOverlays),
@@ -353,10 +353,12 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("f"), Action::CycleFontForward),
         (KeyCombo::plain("F"), Action::CycleFontBackward),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
-        // `a` toggles the chat layout; TogglePreviousWork is unbound (Ctrl+minus
-        // recent picker covers it). (`a`/`Tab` were SWAPPED: `Tab` is now the
-        // MPV pause/resume toggle, in media_bindings above.)
-        (KeyCombo::plain("a"), Action::ToggleChatLayout),
+        // `Tab` is the chat panel's one key: it OPENS the layout when closed and
+        // CYCLES FOCUS when open (reader -> panel; inside the panel prompt ->
+        // transcript -> reader — see the chat handlers in keymap.rs). Ctrl+Tab
+        // closes it. TogglePreviousWork is unbound (Ctrl+minus recent picker
+        // covers it).
+        (KeyCombo::plain("Tab"), Action::ToggleChatLayout),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::ctrl("t"), Action::ThemeNext),
         (KeyCombo::ctrl_shift("T"), Action::ThemePrev),
@@ -395,10 +397,10 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
 fn selection_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("V"), Action::EnterVisualMode),
-        // Ctrl+Tab: paragraph/speech ask — pre-selects the block, second
-        // Ctrl+Tab or Return opens the Journal Q&A ask card. (Ctrl+a is now
-        // CloseChatLayout; ToggleLastOverlay moved to Ctrl+o.)
-        (KeyCombo::ctrl("Tab"), Action::AskPassage),
+        // Ctrl+a: paragraph/speech ask — pre-selects the block, second Ctrl+a
+        // or Return opens the Journal Q&A ask card. (ToggleLastOverlay lives on
+        // Ctrl+o; the whole Tab cap belongs to the chat panel.)
+        (KeyCombo::ctrl("a"), Action::AskPassage),
         // Copy-only vim view of the cursor's segment: opens in VISUAL mode,
         // visual `y` copies to the system clipboard, nothing is ever saved.
         (KeyCombo::plain("v"), Action::OpenSegmentVim),
@@ -482,9 +484,9 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
-        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::CloseChatLayout));
+        assert_eq!(m.get(&KeyCombo::ctrl("Tab")), Some(&Action::CloseChatLayout));
         assert_eq!(m.get(&KeyCombo::ctrl("o")), Some(&Action::ToggleLastOverlay));
-        assert_eq!(m.get(&KeyCombo::ctrl("Tab")), Some(&Action::AskPassage));
+        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::AskPassage));
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
         assert_eq!(m.get(&KeyCombo::plain("u")), Some(&Action::SetStartTime));
@@ -499,7 +501,7 @@ mod tests {
     #[test]
     fn r_cycles_vocab_and_ctrl_r_asks_journal() {
         let m = default_reader_bindings();
-        assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::ToggleChatLayout));
+        assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
         // minus and # freed; Ctrl+r = vocab journal Q&A (was R, now unbound;
         // VocabPopupNext dropped from Ctrl+r); Ctrl+n/p page its answer.
@@ -522,7 +524,7 @@ mod tests {
             m.get(&KeyCombo::plain("backslash")),
             Some(&Action::CycleSegmentOverlays)
         );
-        assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::TogglePause));
+        assert_eq!(m.get(&KeyCombo::plain("a")), Some(&Action::TogglePause));
     }
 
     #[test]
@@ -643,18 +645,18 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // The `a` cap shows/hides the chat panel: plain a = ToggleChatLayout,
-        // Ctrl+a = CloseChatLayout. The `Tab` cap: plain = TogglePause,
-        // Ctrl+Tab = AskPassage. Ctrl+a vs Ctrl+Shift+a still differ.
+        // The `Tab` cap owns the chat panel: plain Tab = ToggleChatLayout
+        // (open / cycle focus), Ctrl+Tab = CloseChatLayout. The `a` cap: plain
+        // = TogglePause, Ctrl+a = AskPassage. Ctrl+a vs Ctrl+Shift+a differ.
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
         assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
-        assert_eq!(a_ctrl, Some(Action::CloseChatLayout));
+        assert_eq!(a_ctrl, Some(Action::AskPassage));
         assert_eq!(km.lookup("o", true, false, false), Some(Action::ToggleLastOverlay));
-        assert_eq!(km.lookup("Tab", true, false, false), Some(Action::AskPassage));
-        assert_eq!(km.lookup("a", false, false, false), Some(Action::ToggleChatLayout));
-        assert_eq!(km.lookup("Tab", false, false, false), Some(Action::TogglePause));
+        assert_eq!(km.lookup("Tab", true, false, false), Some(Action::CloseChatLayout));
+        assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
+        assert_eq!(km.lookup("Tab", false, false, false), Some(Action::ToggleChatLayout));
         // plain v (segment vim copy) vs Shift+v (reader visual mode) differ.
         assert_eq!(km.lookup("v", false, false, false), Some(Action::OpenSegmentVim));
         assert_eq!(km.lookup("V", false, true, false), Some(Action::EnterVisualMode));

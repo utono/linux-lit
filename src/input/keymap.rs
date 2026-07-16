@@ -159,9 +159,8 @@ pub fn handle_key(
         }
         if !gloss_open && mode == crate::app::InputMode::Reader {
             // All work types: space plays from the cursor line's start time and
-            // `Tab` is the pure pause/resume toggle (the `Tab` → TogglePause
-            // table bind; `a`/`Tab` were swapped — `a` now opens the chat
-            // layout). Poetry/plays don't swap the two — they behave like prose.
+            // `a` is the pure pause/resume toggle (the `a` → TogglePause table
+            // bind). Poetry/plays don't swap the two — they behave like prose.
             let mut s = state.borrow_mut();
             if !crate::input::timestamps::play_current_line(&mut s) {
                 show_no_timestamp_toast(&s);
@@ -1277,8 +1276,8 @@ fn handle_segment_vim_key(
 }
 
 /// Chat prompt focus: Tab cycles to the transcript BEFORE the vim editor can
-/// consume it; Ctrl+a closes the panel (the hide half of the `a` that opened
-/// it — same chord as the reader's CloseChatLayout, so one chord always
+/// consume it; Ctrl+Tab closes the panel (same chord as the reader's
+/// CloseChatLayout — the whole Tab cap owns the chat, so one chord always
 /// dismisses); everything else feeds the embedded AskCard vim editor via the
 /// shared ask_vim_intercept (Ctrl+Enter submits).
 fn handle_chat_prompt_key(
@@ -1287,7 +1286,7 @@ fn handle_chat_prompt_key(
     key_char: Option<char>,
     is_ctrl: bool,
 ) -> bool {
-    if key_name == "a" && is_ctrl {
+    if (key_name == "Tab" || key_name == "ISO_Left_Tab") && is_ctrl {
         crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
         return true;
     }
@@ -1330,10 +1329,10 @@ fn handle_chat_transcript_key(
     is_ctrl: bool,
 ) -> bool {
     match key_name {
-        // Ctrl+a closes the panel — the hide half of the `a` that opened it
-        // (same chord as the reader's CloseChatLayout). Checked BEFORE plain
-        // "a" (re-show input) below, which must stay unshifted-only.
-        "a" if is_ctrl => {
+        // Ctrl+Tab closes the panel (same chord as the reader's
+        // CloseChatLayout — the whole Tab cap owns the chat). Guarded arm must
+        // precede the plain Tab (focus reader) arm below.
+        "Tab" | "ISO_Left_Tab" if is_ctrl => {
             crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
             true
         }
@@ -3245,13 +3244,12 @@ fn handle_visual_key(
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     match key_name {
-        // Ctrl+Tab — open the Journal Q&A ask card for the selection directly
+        // Ctrl+a — open the Journal Q&A ask card for the selection directly
         // (skips the Action menu). Works for ask-entered AND V-entered
         // selections, so the menu is never required for Journal Q&A. Mirrors
         // the reader-table AskPassage chord: pressing the SAME chord that
-        // entered visual mode confirms it. (Was Ctrl+a before the
-        // Ctrl+a/Ctrl+Tab swap — Ctrl+a is now ToggleLastOverlay.)
-        "Tab" | "ISO_Left_Tab" if is_ctrl => {
+        // entered visual mode confirms it.
+        "a" if is_ctrl => {
             crate::input::visual::action_journal_qa(state);
             true
         }
