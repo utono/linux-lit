@@ -730,7 +730,7 @@ fn scroll_right_view_to_split(
 /// The minimum bottom_margin needed is `page_size` — this guarantees that even
 /// the very last buffer line can appear at the viewport top with whitespace
 /// below. We only increase, never decrease, to avoid fighting GTK's layout.
-pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
+pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 
 /// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
 /// single-column path (whose clip covers the full descender_guard +
@@ -744,7 +744,7 @@ pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
 /// last line slices its descenders, raise this; if columns underfill, it drifted
 /// back toward 40. The two-column fill sites AND `validate_spreads` must both use
 /// this constant or generation falls back to no-table.
-pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 16;
+pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 22;
 
 /// The pixel reserve the two-column fill leaves BELOW the last possible line:
 /// `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` — exactly the band
