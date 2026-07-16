@@ -65,7 +65,7 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = key("Tab", "", "chat focus", "", &[("C-Tab", "close chat")]);
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play/pause", "A: authorship", &[("C-a", "ask passage"), ("S-C-a", "attr set")]),
+    key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[("C-o", "last overlay")]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "start time", "U: undo ts", &[("M-u", "scansion")]),
@@ -379,8 +379,9 @@ Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
         "chat side" => "Action::ChatPanelFlipSide — src/input/actions/chat.rs",
         "synopsis" => "Action::ShowSynopsisOverlay — src/app.rs",
         "col layout" => "Action::ToggleColumnLayout — src/input/navigation.rs",
-        "ask passage" => "Action::AskPassage -> InputMode::Visual (Ctrl+a/Return \
-opens the ask card, j/k extend, Esc cancels) — src/input/visual.rs",
+        // ("ask passage" was Ctrl+a -> Action::AskPassage; the bind was removed,
+        // so no keycap references this label any more. The action itself still
+        // exists — re-add a bind + this arm to restore it.)
         "authorship" => "Action::ToggleAuthorship — src/app.rs",
         "attr set" => "Action::PickAttributionSet — src/input/keymap.rs",
         "nav test" => "Action::ToggleNavTest — src/input/keymap.rs",
