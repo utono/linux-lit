@@ -7,6 +7,7 @@ use crate::db::queries::GlossedPassage;
 
 pub struct GlossPicker {
     pub overlay: Overlay,
+    scrim: GtkBox,
     picker_box: GtkBox,
     search_entry: Entry,
     list_box: ListBox,
@@ -33,6 +34,7 @@ impl GlossPicker {
 
         GlossPicker {
             overlay,
+            scrim: crate::ui::picker_nav::build_picker_scrim(),
             picker_box,
             search_entry,
             list_box,
@@ -53,6 +55,7 @@ impl GlossPicker {
     }
 
     pub fn show(&self) {
+        self.scrim.set_visible(true);
         self.picker_box.set_visible(true);
         self.search_entry.set_text("");
         self.search_entry.grab_focus();
@@ -61,10 +64,11 @@ impl GlossPicker {
 
     pub fn hide(&self) {
         self.picker_box.set_visible(false);
+        self.scrim.set_visible(false);
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        crate::ui::picker_attach::attach_panel(&self.overlay, base, None, &self.picker_box);
+        crate::ui::picker_attach::attach_panel(&self.overlay, base, Some(&self.scrim), &self.picker_box);
     }
 
     pub fn search_entry(&self) -> &Entry {

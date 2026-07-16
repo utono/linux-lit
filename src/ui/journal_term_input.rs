@@ -7,6 +7,7 @@ use gtk4::{Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Overlay};
 /// distinct existing journal tags, filtered as the user types.
 pub struct JournalTermInput {
     pub overlay: Overlay,
+    scrim: GtkBox,
     picker_box: GtkBox,
     search_entry: Entry,
     list_box: ListBox,
@@ -46,6 +47,7 @@ impl JournalTermInput {
 
         JournalTermInput {
             overlay,
+            scrim: crate::ui::picker_nav::build_picker_scrim(),
             picker_box,
             search_entry,
             list_box,
@@ -55,7 +57,7 @@ impl JournalTermInput {
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
-        crate::ui::picker_attach::attach_panel(&self.overlay, base, None, &self.picker_box);
+        crate::ui::picker_attach::attach_panel(&self.overlay, base, Some(&self.scrim), &self.picker_box);
     }
 
     /// Replace the suggestion list and repopulate the (unfiltered) list.
@@ -71,6 +73,7 @@ impl JournalTermInput {
     }
 
     pub fn show(&self) {
+        self.scrim.set_visible(true);
         self.picker_box.set_visible(true);
         self.search_entry.set_text("");
         self.search_entry.grab_focus();
@@ -79,6 +82,7 @@ impl JournalTermInput {
 
     pub fn hide(&self) {
         self.picker_box.set_visible(false);
+        self.scrim.set_visible(false);
     }
 
     pub fn search_entry(&self) -> &Entry {
