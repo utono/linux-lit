@@ -1236,7 +1236,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     let left_h = state.text_view.height();
     let left = if left_h > 0 {
         let guard = descender_guard_px(&state.text_view, page_top);
-        let usable = left_h - guard - BASE_BOTTOM_MARGIN;
+        let usable = left_h - guard - super::scroll::TWO_COLUMN_BOTTOM_MARGIN;
         // Keep multi-line stage directions atomic across the split: if the
         // left column would end partway through a `[...]` block (the next line
         // continues the same unclosed bracket), back up to before the block so
@@ -1324,7 +1324,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
                 let right_h = state.right_view.height();
                 let fits = if right_h > 0 {
                     let guard = descender_guard_px(&state.right_view, 0);
-                    let usable = right_h - guard - BASE_BOTTOM_MARGIN;
+                    let usable = right_h - guard - super::scroll::TWO_COLUMN_BOTTOM_MARGIN;
                     let r = visible_range(&state.right_view, &state.buffer, 0, line_count, usable);
                     // The whole opening section [0, hi) fits the right column.
                     r.last_fit + 1 >= hi
@@ -1373,7 +1373,7 @@ pub(crate) fn column_split(state: &AppState, page_top: usize) -> ColumnSplit {
     let right_h = state.right_view.height().max(left_h);
     let right = if right_h > 0 {
         let guard = descender_guard_px(&state.right_view, split);
-        let usable = right_h - guard - BASE_BOTTOM_MARGIN;
+        let usable = right_h - guard - super::scroll::TWO_COLUMN_BOTTOM_MARGIN;
         let r = visible_range(&state.right_view, &state.buffer, split, line_count, usable);
         // Clamp the right column at a section break so a new ACT/SCENE starts the
         // NEXT spread rather than appearing in this column's interior. This makes

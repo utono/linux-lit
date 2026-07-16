@@ -225,7 +225,7 @@ pub struct FingerprintParts {
 /// self-explaining (you can see WHICH input moved).
 pub fn fingerprint_string(p: &FingerprintParts) -> String {
     format!(
-        "v2|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}|{}",
+        "v3|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}|{}",
         p.font_family, p.font_size, p.ascent, p.descent, p.char_width,
         p.width, p.height, p.line_spacing, p.text_margins, p.columns,
         p.top_spacer_height
@@ -376,7 +376,7 @@ pub fn generate_and_store(state: &crate::app::AppState) {
         .collect();
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
-    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let usable = widget_height - guard - crate::input::scroll::TWO_COLUMN_BOTTOM_MARGIN;
     let ss_vec = state.section_starts().map(|s| s.to_vec());
     let ctx = ValidateCtx {
         line_count,
@@ -870,7 +870,7 @@ mod tests {
         };
         let a = fingerprint_string(&p);
         assert_eq!(a, fingerprint_string(&p), "must be deterministic");
-        assert!(a.starts_with("v2|"), "schema-versioned: {a}");
+        assert!(a.starts_with("v3|"), "schema-versioned: {a}");
         let mut q = FingerprintParts { font_size: 18, ..p.clone() };
         assert_ne!(a, fingerprint_string(&q));
         q = FingerprintParts { descent: 6, font_size: 17, ..q };

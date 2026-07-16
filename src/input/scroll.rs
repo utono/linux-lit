@@ -732,6 +732,20 @@ fn scroll_right_view_to_split(
 /// below. We only increase, never decrease, to avoid fighting GTK's layout.
 pub(crate) const BASE_BOTTOM_MARGIN: i32 = 40;
 
+/// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
+/// single-column path (whose clip covers the full descender_guard +
+/// BASE_BOTTOM_MARGIN band, see the single-col reserve in `update_bottom_clip`),
+/// the two-column `exact_end` clip sums the actual line heights and reserves
+/// only a descender allowance below the last line — so the fill only needs to
+/// reserve that much. Reserving the full 40px `BASE_BOTTOM_MARGIN` wastes ~1
+/// line per column. Value chosen empirically: the smallest reserve whose
+/// last-column line keeps a clean descender at production geometry (see
+/// docs/superpowers/plans/2026-07-15-two-column-fill-reserve.md). If a column's
+/// last line slices its descenders, raise this; if columns underfill, it drifted
+/// back toward 40. The two-column fill sites AND `validate_spreads` must both use
+/// this constant or generation falls back to no-table.
+pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 16;
+
 /// Bottom-clip height for a paged column whose content is a sum of
 /// `line_yrange` LOGICAL line heights (`total`): `space` minus `total`, minus a
 /// small `allowance` so the clip's top edge sits BELOW the last line's glyph

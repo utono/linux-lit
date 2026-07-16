@@ -815,7 +815,19 @@ fn run_step(s: &mut AppState) {
             }
         }
         let fill_pct = (total as f64 / widget_height as f64) * 100.0;
-        if fill_pct < 10.0 {
+        // EXEMPTION — pure non-dialogue TAIL landing. A SearchJump target can be
+        // the work's trailing stage direction (e.g. LLL-Arkangel's final
+        // `[They all exit.]` after the last spoken line): searching a word in it
+        // lands the cursor there, and the page correctly shows only that short
+        // non-dialogue tail below the last DIALOGUE page. That is not an
+        // underfill bug — the canonical anchor covers the last dialogue line;
+        // the tail simply has little ink. Skip the fill guard when EVERY line
+        // from `post_top` to the work's end is non-dialogue (a genuine trailing
+        // tail, not a mid-work short page). Real underfills — a page with
+        // dialogue below it that got stranded — still fire.
+        let pure_nondialogue_tail = (post_top..line_count)
+            .all(|i| !is_dialogue_line(&s.buffer, i, s.is_prose(), no_stage_lookup()));
+        if fill_pct < 10.0 && !pure_nondialogue_tail {
             fail(s, step_num, step, &format!(
                 "viewport fill {:.0}% < 10% (top={} last={} height={} content={})",
                 fill_pct, post_top, last_vis, widget_height, total
