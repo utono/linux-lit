@@ -1071,11 +1071,16 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \
          /* Divider spans the full text band: top = the column top where the
-            first line can appear (text_view top_margin = 0); bottom = 40px up,
-            matching the views' bottom_margin so it ends at the last possible
-            line. Horizontal 8px keeps the gutter gap. */ \
+            first line can appear (text_view top_margin = 0); bottom margin =
+            TWO_COLUMN_BOTTOM_MARGIN, the two-column FILL reserve, so the divider
+            ends at the SAME last-line baseline the columns now fill to. (It used
+            to be 40px to match the views' static bottom_margin, but the fill
+            reserve was reduced below that so text extends lower — the divider
+            must track the fill reserve, not the view margin, or it stops short of
+            the text. Reconcile with TWO_COLUMN_BOTTOM_MARGIN if that changes.)
+            Horizontal 8px keeps the gutter gap. */ \
          .column-divider {{ background-color: {dim}; min-width: 1px; \
-           margin: 0px 8px 40px 8px; opacity: 0.28; }} \
+           margin: 0px 8px {divider_bottom}px 8px; opacity: 0.28; }} \
          textview {{ background-color: {bg}; color: {fg}; }} \
          textview border {{ background-color: {bg}; }} \
          textview border.left {{ background-color: {bg}; }} \
@@ -1328,6 +1333,7 @@ pub fn generate_css(theme: &Theme, font_family: &str, font_size: u32) -> String 
         size = font_size,
         chat_size = font_size.saturating_sub(2).max(8),
         chat_ink = contrast_on(&theme.root_color),
+        divider_bottom = crate::input::scroll::TWO_COLUMN_BOTTOM_MARGIN,
     );
     // Diagnostic knob: LIT_DEBUG_CLIP_COLOR=<css color> paints every bottom-clip
     // box (main card + overlays) that color for the run, so a clip edge that is
