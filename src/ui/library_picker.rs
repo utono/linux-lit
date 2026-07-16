@@ -362,18 +362,33 @@ impl LibraryPicker {
                     let mut rows: Vec<(i32, Scored)> = Vec::new();
 
                     for group in &self.groups {
-                        if let Some(score) = author_name_score(&filter_lower, &group.author) {
+                        let author_hit = author_name_score(&filter_lower, &group.author);
+                        if let Some(score) = author_hit {
                             // Author rows sort above work rows at equal relevance.
                             rows.push((
                                 score + 100,
                                 Scored::Author(&group.author, group.works.len()),
                             ));
-                            continue; // don't also list this author's works individually
                         }
                         for work in &group.works {
-                            if let Some(score) = work_score(&filter_lower, work) {
-                                rows.push((score, Scored::Work(work)));
+                            let Some(score) = work_score(&filter_lower, work) else { continue };
+                            // An author hit normally collapses its works into the
+                            // single author row (you drill in with Return). But
+                            // `author_name_score` is a LOOSE SUBSEQUENCE match, so
+                            // short queries incidentally match unrelated authors —
+                            // 48 of 304 abbrevs are a subsequence of some author's
+                            // name (e.g. "AYL" in "AnthonY TrolLope"). Collapsing
+                            // unconditionally HID those works entirely: typing a
+                            // work's own abbrev listed that author instead, and no
+                            // score could fix it because the work was never scored.
+                            // So a work still lists individually when it out-scores
+                            // its author's row — which an abbrev-prefix hit always
+                            // does (ABBREV_PREFIX_BONUS clears match_score's 1500
+                            // ceiling, and the author row's is 1500 + 100).
+                            if author_hit.is_some_and(|a| score <= a + 100) {
+                                continue;
                             }
+                            rows.push((score, Scored::Work(work)));
                         }
                     }
 
@@ -516,17 +531,35 @@ impl LibraryPicker {
 /// field boundaries (title→author→abbrev) and beating a genuine per-field match —
 /// which is what let "romeo" surface unrelated works via `title author abbrev`.
 /// `None` when the filter matches none of the three fields.
+/// Bonus that lifts an ABBREV-PREFIX hit above every title/author score.
+/// `match_score`'s ceiling is a prefix substring: 1000 base + 500 prefix bonus =
+/// 1500, so 2000 clears it outright — typing a work's abbrev puts that work (and
+/// its variant editions, which share the prefix: `Cym` -> `Cym`, `Cym-Amb`,
+/// `Cym-Arkangel`) at the TOP, ahead of any coincidental title match.
+const ABBREV_PREFIX_BONUS: i32 = 2000;
+
 fn work_score(filter: &str, work: &WorkSummary) -> Option<i32> {
     use crate::ui::picker_filter::match_score;
     let title = work.title.to_lowercase();
     let author = work.author.to_lowercase();
     let abbrev = work.abbrev.to_lowercase();
     // Title is the primary field; author/abbrev matches are demoted so a title
-    // hit always outranks an author/abbrev-only hit for the same query.
+    // hit always outranks an author/abbrev-only hit for the same query —
+    // EXCEPT an abbrev PREFIX, which is an unambiguous "I typed this work's
+    // abbrev" signal and wins outright (`ABBREV_PREFIX_BONUS`). A non-prefix
+    // abbrev hit (the query merely appears inside the abbrev) keeps the
+    // demotion, so ordinary words still rank by title.
+    let abbrev_score = match_score(filter, &abbrev).map(|s| {
+        if !filter.is_empty() && abbrev.starts_with(filter) {
+            s + ABBREV_PREFIX_BONUS
+        } else {
+            s - 400
+        }
+    });
     [
         match_score(filter, &title),
         match_score(filter, &author).map(|s| s - 400),
-        match_score(filter, &abbrev).map(|s| s - 400),
+        abbrev_score,
     ]
     .into_iter()
     .flatten()
@@ -893,5 +926,60 @@ mod tests {
         let recent: Vec<String> = vec![];
         let result = group_works_recent(&all_groups, &recent);
         assert!(result.is_empty());
+    }
+
+    // ── Abbrev-prefix ranking ─────────────────────────────────────────────
+
+    /// Typing a work's abbrev must put THAT work on top, ahead of any
+    /// coincidental title hit — and its variant editions (which share the
+    /// abbrev prefix) come with it.
+    #[test]
+    fn abbrev_prefix_outranks_title_and_author_hits() {
+        let target = make_work("Cym", "Cymbeline", "Shakespeare");
+        let variant = make_work("Cym-Amb", "Cymbeline (Ambrose)", "Shakespeare");
+        // A work whose TITLE starts with the query — the strongest non-abbrev
+        // score there is (1000 base + 500 prefix).
+        let title_hit = make_work("XX", "Cymbal Symbolism", "Someone");
+
+        let q = "cym";
+        let s_target = work_score(q, &target).expect("abbrev prefix matches");
+        let s_variant = work_score(q, &variant).expect("variant prefix matches");
+        let s_title = work_score(q, &title_hit).expect("title prefix matches");
+
+        assert!(s_target > s_title, "abbrev prefix must beat a title prefix");
+        assert!(s_variant > s_title, "variant abbrev prefix must beat a title prefix");
+    }
+
+    /// A NON-prefix abbrev hit keeps its demotion: the query merely occurring
+    /// inside an abbrev must not jump that work over a real title match.
+    #[test]
+    fn abbrev_non_prefix_stays_demoted_below_title() {
+        // "amb" is inside the abbrev but not a prefix.
+        let inside = make_work("Cym-Amb", "Cymbeline (Ambrose)", "Shakespeare");
+        let title_hit = make_work("XX", "Ambassadors", "Someone");
+        let q = "amb";
+        let s_inside = work_score(q, &inside).expect("matches inside abbrev");
+        let s_title = work_score(q, &title_hit).expect("title prefix matches");
+        assert!(
+            s_title > s_inside,
+            "a mid-abbrev hit must stay below a title prefix (title stays primary)"
+        );
+    }
+
+    /// The author-collapse trap: `author_name_score` is a loose SUBSEQUENCE
+    /// match, so "AYL" matches "AnthonY TrolLope". The work must still out-score
+    /// that author row, so the list-building code lists it instead of hiding it.
+    #[test]
+    fn abbrev_prefix_outranks_an_incidental_author_subsequence() {
+        let ayl = make_work("AYL", "As You Like It", "Shakespeare");
+        let q = "ayl";
+        let work = work_score(q, &ayl).expect("abbrev prefix matches");
+        let author = author_name_score(q, "Anthony Trollope")
+            .expect("loose subsequence matches the author");
+        assert!(
+            work > author + 100,
+            "abbrev prefix ({work}) must beat the author row ({}) or the work is hidden",
+            author + 100
+        );
     }
 }
