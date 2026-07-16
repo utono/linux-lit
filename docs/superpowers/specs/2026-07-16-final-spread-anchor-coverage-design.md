@@ -1,9 +1,21 @@
 # Reserve-independent final-spread anchor — design
 
 **Date:** 2026-07-16
-**Status:** approved, implementing
-**Depends on:** 2026-07-15-two-column-fill-reserve-design.md (this fixes a
-regression that change exposed).
+**Status:** SUPERSEDED — the premise was wrong; no product fix was needed.
+**Depends on:** 2026-07-15-two-column-fill-reserve-design.md.
+
+> **SUPERSEDED (2026-07-16).** This spec assumed the reserve change orphaned the
+> work's last line. Deeper investigation showed the anchor was CORRECT: it
+> covers the last *dialogue* line (LLL-Arkangel L4247, `'songs of Apollo. You
+> that way;'`); the "orphaned" L4248–L4249 are a blank line + the trailing stage
+> direction `[They all exit.]`, legitimately trimmed off the dialogue page. The
+> observed nav-fuzz failure was the harness's SearchJump targeting that trailing
+> stage direction (the reserve change shifted earlier breaks, moving the fuzz
+> cursor). Resolved in the **nav-fuzz assertion** (exempt pure non-dialogue tail
+> landings), NOT in `last_page_top`. Coverage-fallback attempts described below
+> were implemented, tested, and reverted — `last_page_top` never returned a
+> covering spread because the tail is non-dialogue and off the forward chain by
+> design. Kept for the investigation record.
 
 ## Problem
 

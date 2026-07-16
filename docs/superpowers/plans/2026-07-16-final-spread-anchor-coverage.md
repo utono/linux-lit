@@ -1,5 +1,10 @@
 # Final-Spread Anchor Coverage Implementation Plan
 
+> **SUPERSEDED (2026-07-16)** — see the design doc's superseded banner. The
+> anchor was never wrong (it covers the last DIALOGUE line; the tail is a
+> trailing stage direction). The real fix was a nav-fuzz assertion exemption,
+> not `last_page_top`. Do NOT execute this plan; kept for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Make `last_page_top` (the two-column final-page anchor) always cover the work's last line, even when the fuller columns leave only a 1–2 line tail — fixing the G/search orphan regression the fill-reserve change exposed.
