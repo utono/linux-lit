@@ -27,7 +27,7 @@ impl VoicePicker {
         picker_box.set_halign(Align::Center);
         picker_box.set_valign(Align::Start);
         picker_box.set_margin_top(40);
-        picker_box.set_width_request(560);
+        picker_box.set_width_request(675);
         // Use the shared themed picker style (cream card, themed entry/rows),
         // matching the library/media/gloss pickers — not the old dark picker-box.
         picker_box.add_css_class("library-picker");
@@ -42,7 +42,7 @@ impl VoicePicker {
 
         let scrolled = ScrolledWindow::new();
         scrolled.set_vexpand(true);
-        scrolled.set_max_content_height(500);
+        scrolled.set_max_content_height(750);
         scrolled.set_propagate_natural_height(true);
 
         let list_box = ListBox::new();

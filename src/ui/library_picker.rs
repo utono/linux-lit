@@ -620,13 +620,13 @@ pub(crate) fn footer_hints(level: &PickerLevel) -> Vec<&'static str> {
 }
 
 /// Compute the picker box size request from the toplevel window's allocated
-/// dimensions. Width is 60% of the window clamped to [450, 800]; height is
-/// 70% clamped to [350, 700]. Returns (width, height) in pixels.
+/// dimensions. Width is 62% of the window clamped to [450, 1000]; height is
+/// 72% clamped to [440, 1075]. Returns (width, height) in pixels.
 pub(crate) fn responsive_size(window_w: i32, window_h: i32) -> (i32, i32) {
-    let w = (window_w as f32 * 0.6).round() as i32;
-    let h = (window_h as f32 * 0.7).round() as i32;
-    let w = w.clamp(450, 800);
-    let h = h.clamp(350, 700);
+    let w = (window_w as f32 * 0.62).round() as i32;
+    let h = (window_h as f32 * 0.72).round() as i32;
+    let w = w.clamp(450, 1000);
+    let h = h.clamp(440, 1075);
     (w, h)
 }
 
@@ -839,26 +839,26 @@ mod tests {
 
     #[test]
     fn test_responsive_size_clamps_to_max() {
-        // Big window — clamp at the 800x700 ceiling.
+        // Big window — clamp at the 1000x1075 ceiling.
         let (w, h) = responsive_size(2400, 1600);
-        assert_eq!(w, 800);
-        assert_eq!(h, 700);
+        assert_eq!(w, 1000);
+        assert_eq!(h, 1075);
     }
 
     #[test]
     fn test_responsive_size_uses_floor() {
-        // Tiny window — never go below 450x350.
+        // Tiny window — never go below 450x440.
         let (w, h) = responsive_size(200, 200);
         assert_eq!(w, 450);
-        assert_eq!(h, 350);
+        assert_eq!(h, 440);
     }
 
     #[test]
     fn test_responsive_size_scales_in_middle() {
-        // 800x600 -> 60% width = 480, 70% height = 420.
+        // 800x600 -> 62% width = 496, 72% height = 432 -> floored to 440.
         let (w, h) = responsive_size(800, 600);
-        assert_eq!(w, 480);
-        assert_eq!(h, 420);
+        assert_eq!(w, 496);
+        assert_eq!(h, 440);
     }
 
     // ── Recent picker tests ──────────────────────────────────────────────

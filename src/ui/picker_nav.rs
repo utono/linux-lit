@@ -135,8 +135,8 @@ pub(crate) fn build_picker_card() -> GtkBox {
         .spacing(4)
         .halign(Align::Center)
         .valign(Align::Center)
-        .width_request(750)
-        .height_request(500)
+        .width_request(900)
+        .height_request(775)
         .build();
     picker_box.add_css_class("library-picker");
     picker_box
