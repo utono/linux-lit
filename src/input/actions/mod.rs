@@ -196,8 +196,14 @@ pub enum Action {
     ToggleColumnLayout,
     TogglePreviousWork,
     ToggleDim,
-    /// Tab: toggle the left chat panel layout (card pins right).
+    /// `a`: open the chat panel layout (card pins right); with the panel
+    /// already open it cycles focus INTO the panel rather than closing —
+    /// closing is `Ctrl+a` (CloseChatLayout).
     ToggleChatLayout,
+    /// `Ctrl+a`: close the chat panel layout — the hide half of `a`'s show.
+    /// Works from the reader AND from inside the panel (prompt/transcript),
+    /// so one chord always dismisses it. No-op when the panel isn't open.
+    CloseChatLayout,
     /// Ctrl+l: flip a floating chat panel to the other reading column.
     ChatPanelFlipSide,
     ThemeNext,
@@ -329,6 +335,7 @@ impl Action {
             | Action::ToggleColumnLayout
             | Action::ToggleDim
             | Action::ToggleChatLayout
+            | Action::CloseChatLayout
             | Action::ChatPanelFlipSide
             | Action::ThemeNext
             | Action::ThemePrev
@@ -484,6 +491,7 @@ impl Action {
             Action::TogglePreviousWork => "TogglePreviousWork",
             Action::ToggleDim => "ToggleDim",
             Action::ToggleChatLayout => "ToggleChatLayout",
+            Action::CloseChatLayout => "CloseChatLayout",
             Action::ChatPanelFlipSide => "ChatPanelFlipSide",
             Action::ThemeNext => "ThemeNext",
             Action::ThemePrev => "ThemePrev",

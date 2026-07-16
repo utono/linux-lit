@@ -1277,15 +1277,17 @@ fn handle_segment_vim_key(
 }
 
 /// Chat prompt focus: Tab cycles to the transcript BEFORE the vim editor can
-/// consume it; Ctrl+Tab closes the panel; everything else feeds the embedded
-/// AskCard vim editor via the shared ask_vim_intercept (Ctrl+Enter submits).
+/// consume it; Ctrl+a closes the panel (the hide half of the `a` that opened
+/// it — same chord as the reader's CloseChatLayout, so one chord always
+/// dismisses); everything else feeds the embedded AskCard vim editor via the
+/// shared ask_vim_intercept (Ctrl+Enter submits).
 fn handle_chat_prompt_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
     key_char: Option<char>,
     is_ctrl: bool,
 ) -> bool {
-    if (key_name == "Tab" || key_name == "ISO_Left_Tab") && is_ctrl {
+    if key_name == "a" && is_ctrl {
         crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
         return true;
     }
@@ -1328,7 +1330,10 @@ fn handle_chat_transcript_key(
     is_ctrl: bool,
 ) -> bool {
     match key_name {
-        "Tab" | "ISO_Left_Tab" if is_ctrl => {
+        // Ctrl+a closes the panel — the hide half of the `a` that opened it
+        // (same chord as the reader's CloseChatLayout). Checked BEFORE plain
+        // "a" (re-show input) below, which must stay unshifted-only.
+        "a" if is_ctrl => {
             crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
             true
         }
@@ -3587,6 +3592,7 @@ fn dispatch_action(
             crate::logging::log(&format!("DIM: {}", if s.dim_enabled { "on" } else { "off" }));
         }
         ToggleChatLayout => crate::input::actions::chat::toggle_chat_layout(state),
+        CloseChatLayout => crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut()),
         ChatPanelFlipSide => {
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut())
         }
