@@ -69,6 +69,11 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
+    // A pinned passage (Tab from V-mode) keeps its selection tag painted for as
+    // long as the pin lives — the pin dies with ChatState below, so the mark
+    // goes with it. Harmless no-op when nothing was pinned (the reader never
+    // leaves the tag applied outside visual mode).
+    crate::input::visual::clear_selection_highlight(s);
     s.chat = Default::default();
     s.chat_panel.render_rows(&[]);
     s.chat_layout_open = false;
@@ -198,27 +203,35 @@ pub(crate) fn regate_panel(s: &mut AppState) {
 /// The highlighted passage becomes the source text for every question in the
 /// session (see `ChatState::pinned_passage`) — the chat sends exactly what was
 /// highlighted, with no neighbor segments, instead of re-deriving the cursor's
-/// segment ±2 each time. Exits visual mode first (the selection is captured,
-/// so its highlight has served its purpose), then opens/focuses the panel via
-/// the normal path. No-op when the selection maps to no work lines.
+/// segment ±2 each time.
+///
+/// Leaves visual MODE (so keys go to the chat, not the selection) but KEEPS the
+/// passage visibly marked: the selection tag is re-applied over the pinned range
+/// and lives exactly as long as the pin does — `close_chat_layout` clears both.
+/// So the mark always shows precisely what the chat is discussing.
+/// No-op when the selection maps to no work lines.
 pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
-    let pinned = {
+    let picked = {
         let s = state_rc.borrow();
         let Some(sel) = s.visual_selection.as_ref() else { return };
         let (start, end) = sel.range();
-        crate::input::segments::selection_context(&s, start, end)
+        crate::input::segments::selection_context(&s, start, end).map(|ctx| (ctx, start, end))
     };
-    let Some(pinned) = pinned else {
+    let Some((pinned, start, end)) = picked else {
         let s = state_rc.borrow();
         crate::input::navigation::show_chapter_toast_secs(&s, "No passage in the selection", 2);
         return;
     };
+    // exit_visual_mode clears the selection tag (its normal job); re-apply it
+    // over the pinned range afterwards so the passage stays marked while the
+    // chat discusses it.
     crate::input::visual::exit_visual_mode(&mut state_rc.borrow_mut());
     // Opens when closed, else focuses the panel — neither path touches
     // ChatState, so the pin below survives either way.
     toggle_chat_layout(state_rc);
     state_rc.borrow_mut().chat.pinned_passage = Some(pinned);
     let s = state_rc.borrow();
+    crate::input::visual::apply_selection_highlight_range(&s, start, end);
     crate::input::navigation::show_chapter_toast_secs(&s, "Chat pinned to selection", 2);
 }
 
