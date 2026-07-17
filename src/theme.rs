@@ -1388,13 +1388,18 @@ pub fn generate_css(
          /* Speakerless (prose) source: no label to hang past, so verse/stage \
             sit at the shallower speaker indent instead of the deep verse one \
             (mirrors gloss_render::populate_verse_buffer's has_speaker branch). */ \
-         .chat-a-verse-flush {{ color: {chat_ink}; \
+         /* Prose source has no speaker heading or deep verse indent to set it \
+            apart from the model's commentary, so italicize it — quoted prose \
+            then reads as clearly distinct from the upright gloss. Play/verse \
+            source (.chat-a-verse) keeps its upright weight (it has a speaker \
+            + deep indent already). */ \
+         .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
            padding-left: {q_speaker}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 0px; }} \
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            padding-left: {q_speaker}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
-         .chat-a-gloss {{ color: {chat_ink}; padding-top: 10px; padding-left: {q_body}px; }} \
+         .chat-a-gloss {{ color: {chat_ink}; padding-top: 18px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {dim}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \
