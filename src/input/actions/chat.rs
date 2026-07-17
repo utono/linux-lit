@@ -2160,7 +2160,7 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     } else {
         R::Answer(answer.to_string())
     };
-    s.chat_panel.render_rows(&[
+    s.chat_panel.render_rows_to_top(&[
         R::SavedMark,
         R::Question(format!("Q: {}", question)),
         answer_row,

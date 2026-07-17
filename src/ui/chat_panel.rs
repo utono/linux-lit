@@ -142,6 +142,17 @@ impl ChatPanel {
         glib::idle_add_local_once(move || adj.set_value(adj.upper()));
     }
 
+    /// Rebuild the transcript from rows and scroll to the TOP (not the end).
+    /// `render_saved_entry` uses this for the standalone 3-row saved/revision
+    /// view: the reader wants to land on the `Q:` line at the top of the entry,
+    /// so a long answer must not pin the viewport to its own bottom the way
+    /// `render_rows` (newest-last, scroll-to-end) does.
+    pub fn render_rows_to_top(&self, rows: &[TranscriptRow]) {
+        self.rebuild_rows(rows);
+        let adj = self.transcript_scroll.vadjustment();
+        glib::idle_add_local_once(move || adj.set_value(0.0));
+    }
+
     /// Rebuild the transcript, paint the `.chat-cursor-row` accent bar
     /// (`theme::generate_css`) on the WIDGET at index `cursor` (j/k's row
     /// cursor — see `input::actions::chat::transcript_rows`' doc comment for
