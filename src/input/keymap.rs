@@ -3259,7 +3259,9 @@ fn handle_visual_key(
         // session (no neighbor segments, cursor-independent). Mirrors the
         // reader's Tab = chat, but with the passage fixed.
         "Tab" | "ISO_Left_Tab" => {
-            crate::input::actions::chat::open_chat_pinned_to_selection(state);
+            // Result unused here: this bind has no follow-on action gated on
+            // success (unlike the reader-gloss '-' path in visual.rs).
+            let _ = crate::input::actions::chat::open_chat_pinned_to_selection(state);
             true
         }
         "minus" => {

@@ -692,14 +692,16 @@ pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell
     let Some((ctx, model)) = prepared else { return };
 
     // Pins the passage, exits visual mode, opens and places the panel. Bails
-    // with its own toast when the selection has no passage, or when a
-    // single-column layout has no room for the panel.
-    crate::input::actions::chat::open_chat_pinned_to_selection(state_rc);
-    {
-        let s = state_rc.borrow();
-        if !s.chat_layout_open {
-            return; // no room for the panel; its toast already explained
-        }
+    // with its own toast (returning false) when the selection has no
+    // passage, or when a single-column layout has no room for the panel.
+    //
+    // MUST branch on the return value, not on `chat_layout_open`: if a panel
+    // was already open from a PREVIOUS passage, `chat_layout_open` stays
+    // true even when THIS call fails to pin (e.g. this selection has no
+    // passage) — that would gloss the new (empty) selection into a panel
+    // still pinned to the old one.
+    if !crate::input::actions::chat::open_chat_pinned_to_selection(state_rc) {
+        return; // callee already toasted why
     }
 
     let cached = crate::input::actions::chat::reload_gloss_list(&ctx.work_abbrev, &ctx.start_citation);

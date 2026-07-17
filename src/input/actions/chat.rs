@@ -264,10 +264,17 @@ pub(crate) fn regate_panel(s: &mut AppState) {
 /// and lives exactly as long as the pin does — `close_chat_layout` clears both.
 /// So the mark always shows precisely what the chat is discussing.
 /// No-op when the selection maps to no work lines.
-pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
+///
+/// Returns `true` only when a new pin was actually installed into
+/// `s.chat.pinned_passage`. Returns `false` on both early-return paths (no
+/// selection at all; selection maps to no passage) — in neither case does
+/// this touch any existing pin, so callers MUST NOT infer success from
+/// `chat_layout_open` alone: a panel opened by a PREVIOUS call stays open
+/// (and still pinned to the OLD passage) even when this call fails.
+pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) -> bool {
     let picked = {
         let s = state_rc.borrow();
-        let Some(sel) = s.visual_selection.as_ref() else { return };
+        let Some(sel) = s.visual_selection.as_ref() else { return false };
         let (start, end) = sel.range();
         // Placement MUST be computed here, while the selection still exists:
         // exit_visual_mode below clears it, and toggle_chat_layout then picks a
@@ -279,7 +286,7 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
     let Some((pinned, start, end, placement)) = picked else {
         let s = state_rc.borrow();
         crate::input::navigation::show_chapter_toast_secs(&s, "No passage in the selection", 2);
-        return;
+        return false;
     };
     // exit_visual_mode clears the selection tag (its normal job); re-apply it
     // over the pinned range afterwards so the passage stays marked while the
@@ -304,6 +311,7 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
     let s = state_rc.borrow();
     crate::input::visual::apply_selection_highlight_range(&s, start, end);
     crate::input::navigation::show_chapter_toast_secs(&s, "Chat pinned to selection", 2);
+    true
 }
 
 pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
@@ -675,9 +683,17 @@ pub(crate) fn save_reader_gloss(
     // newest-first (Task 1's id DESC tiebreak makes this deterministic even
     // when two saves share a one-second timestamp).
     s.chat.gloss_list = reload_gloss_list(&ctx.work_abbrev, &ctx.start_citation);
-    s.chat.gloss_index = new_id
-        .and_then(|id| s.chat.gloss_list.iter().position(|g| g.gloss_id == id))
-        .unwrap_or(0);
+    // On a failed save (new_id is None) leave gloss_index untouched: falling
+    // back to 0 would silently repoint it at whatever gloss is newest in the
+    // reloaded list, which is NOT the gloss on screen when the save failed.
+    if let Some(id) = new_id {
+        s.chat.gloss_index = s
+            .chat
+            .gloss_list
+            .iter()
+            .position(|g| g.gloss_id == id)
+            .unwrap_or(0);
+    }
 
     // Re-derive the glossed-line tint so the passage colors IMMEDIATELY. The
     // panel STAYS OPEN, so recompute directly rather than via a
@@ -720,9 +736,17 @@ pub(crate) fn request_reader_gloss(
     let on_success = move |sr: &Rc<RefCell<AppState>>, reply: String| {
         let mut s = sr.borrow_mut();
         s.chat.pending = false;
-        save_reader_gloss(&mut s, &ctx_ok, &reply, &model_for_db);
+        let saved = save_reader_gloss(&mut s, &ctx_ok, &reply, &model_for_db);
         push_gloss_exchange(&mut s, &ctx_ok, &reply);
         focus_transcript(&mut s);
+        // Still render the gloss (the user paid for it), but if it didn't
+        // persist they must know — otherwise a later '-' on this passage
+        // silently re-fires a paid API call because the cache is empty.
+        // `s` here is the same RefMut borrowed above; show_chapter_toast_secs
+        // takes &AppState so reborrow it rather than re-entering `sr`.
+        if saved.is_none() {
+            crate::input::navigation::show_chapter_toast_secs(&s, "Gloss not saved", 3);
+        }
     };
     let on_error = move |sr: &Rc<RefCell<AppState>>, e: &str| {
         let mut s = sr.borrow_mut();
