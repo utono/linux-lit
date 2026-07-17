@@ -656,6 +656,17 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     });
 }
 
+/// `-` in visual mode: open the chat panel pinned to the selection and gloss
+/// the passage immediately — no ask input. Sibling to `Ctrl+a` (Journal Q&A
+/// ask card) and `Tab` (chat pinned, empty input) on the same select-then-act
+/// flow.
+pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    // Pins the passage, exits visual mode, opens and places the panel. Bails
+    // with its own toast when the selection has no passage, or when a
+    // single-column layout has no room for the panel.
+    crate::input::actions::chat::open_chat_pinned_to_selection(state_rc);
+}
+
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
         let state = state_rc.borrow();

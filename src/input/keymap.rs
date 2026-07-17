@@ -3262,6 +3262,10 @@ fn handle_visual_key(
             crate::input::actions::chat::open_chat_pinned_to_selection(state);
             true
         }
+        "minus" => {
+            crate::input::visual::action_reader_gloss_chat(state);
+            true
+        }
         "j" => {
             crate::input::visual::move_selection_cursor(&mut state.borrow_mut(), 1);
             true
