@@ -1675,14 +1675,21 @@ fn persist_exchange_to_journal(s: &mut AppState, idx: usize) -> Option<i64> {
 /// page, mark it, and pivot the panel into the revision loop on that entry.
 pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
-    if let Some(id) = s.chat.revision_of {
+    if s.chat.revision_of.is_some() {
         // Already saved: `s` re-confirms (row is persisted on every
         // successful revision); just toast.
-        let _ = id;
         crate::input::navigation::show_chapter_toast_secs(&s, "Entry is saved", 2);
         return;
     }
     let idx = s.chat.cursor;
+    // The FIRST Q&A auto-saves on arrival WITHOUT arming revision_of, so its
+    // `saved_id` is set while `revision_of` is None. Pressing `s` on it must not
+    // insert a SECOND journal row — short-circuit on the exchange's own
+    // saved_id, not only on revision_of.
+    if s.chat.exchanges.get(idx).and_then(|e| e.saved_id).is_some() {
+        crate::input::navigation::show_chapter_toast_secs(&s, "Entry is saved", 2);
+        return;
+    }
     let Some(e) = s.chat.exchanges.get(idx) else { return };
     let (q, a) = (e.question.clone(), e.answer.clone());
     match persist_exchange_to_journal(&mut s, idx) {
