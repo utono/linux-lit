@@ -2148,7 +2148,15 @@ pub(crate) fn size_panel(s: &AppState) {
             // overlap with the header, not any of its footprint below it.
             let top_margin =
                 crate::app::layout::CARD_VERTICAL_OUTER_MARGIN + crate::app::TOP_SPACER_HEIGHT;
-            let panel_h = (card_h - crate::app::TOP_SPACER_HEIGHT).max(0);
+            // The two-column DIVIDER stops short of the card's bottom by its own
+            // bottom margin (`two_column_divider_bottom_px`), so a panel that
+            // fills to the card bottom would drop its left border BELOW the
+            // divider's end. Shrink the height by that same inset so the panel's
+            // bottom edge lands on the divider's, not the card's.
+            let divider_inset =
+                crate::input::scroll::two_column_divider_bottom_px(&s.text_view);
+            let panel_h =
+                (card_h - crate::app::TOP_SPACER_HEIGHT - divider_inset).max(0);
             s.chat_panel.container.set_valign(gtk4::Align::Start);
             s.chat_panel.container.set_margin_top(top_margin);
             s.chat_panel.size_to(w, panel_h);
