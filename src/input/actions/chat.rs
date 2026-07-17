@@ -631,6 +631,11 @@ pub(crate) fn push_gloss_exchange(
     } else {
         s.chat.exchanges[0] = ex;
     }
+    // Selects the gloss, deliberately — slot #1's content just changed under
+    // the reader, so leaving the cursor on a follow-up below while the gloss
+    // silently swaps above would be worse. `Ctrl+n`/`Ctrl+p` inherit this and
+    // snap the cursor back up to the gloss; that is intended, not a leak of
+    // the gloss axis into the j/k axis (cycle_gloss writes only gloss_index).
     s.chat.cursor = 0;
     render_transcript(s);
 }
@@ -657,6 +662,8 @@ pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
     if n <= 1 {
         return; // nothing to cycle to
     }
+    // Order is load-bearing: gloss_index must land BEFORE push_gloss_exchange,
+    // whose chip reads it to render "n of N".
     s.chat.gloss_index = wrap_index(s.chat.gloss_index, delta, n);
     let text = s.chat.gloss_list[s.chat.gloss_index].gloss_text.clone();
     let Some(ctx) = s.chat.gloss_ctx.clone() else { return };
