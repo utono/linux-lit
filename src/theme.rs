@@ -1069,10 +1069,18 @@ const CHAT_QUOTE_VERSE_INDENT: i32 = 68; // gloss_render::QUOTE_VERSE_INDENT * 2
 /// rows, see `gloss_render::chat_gloss_rows`) mirror the MAIN READING CARD's
 /// own dialogue typography: `src/app/formatting.rs`'s `speaker-name` TextTag
 /// is small-caps, weight 400, scale 0.75 — subordinate to the dialogue line
-/// purely via size/weight, not color-dimming. The verse is the star (quoted
-/// Shakespeare), so `.chat-a-verse` renders at FULL ink, not the dimmed
-/// `alpha(chat_ink, 0.70)` / `{dim}` it used before — that made the quoted
-/// source read lighter than the reader's own verse on the same screen.
+/// purely via size/weight, not color-dimming. `.chat-a-speaker` therefore
+/// carries `font-variant: small-caps; font-weight: normal; font-size: 0.75em`
+/// with NO `color`/`alpha` override (full ink, `{chat_ink}`/`{fg}` — CSS
+/// `currentColor` inheritance would also work but an explicit value matches
+/// every sibling rule's style) — `0.75em` is the CSS analogue of the card's
+/// Pango `scale(0.75)`, both relative multipliers on the inherited/base font
+/// size (see the `.chat-a-speaker` rule below for the full Fix 4 rationale).
+/// The verse is the star (quoted Shakespeare), so `.chat-a-verse` renders at
+/// FULL ink too, not a dimmed tint — that made the quoted source read
+/// lighter than the reader's own verse on the same screen. Verse is also
+/// upright, never italic (Fix 3) — the card italicizes ONLY stage
+/// directions/BCP rubrics, never dialogue.
 /// Vertical rhythm: a gloss block is `[speaker?; verse/stage lines; gloss]`.
 /// `padding-top: 14px` on the speaker (mirrors the main card's own 14px
 /// `speaker-gap` tag) is the only large gap — it opens each new block.
@@ -1286,10 +1294,33 @@ pub fn generate_css(
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .chat-panel {{ background-color: transparent; }} \
+         /* Fix 7: no TOP border. The float panel sits directly below the \
+            card's own header band now (Fix 6's margin_top clears it), so a \
+            top border drew a second stray rule immediately under the header \
+            with nothing above it inside the panel to separate FROM — it \
+            read as a floating line, not a boundary. Left/right/bottom stay: \
+            those genuinely separate the floating panel from the reading \
+            column it overlaps (left/right) and the space below it (bottom). \
+            border-radius stays 8px on all four corners even with the top \
+            border gone — `border-radius` shapes the BACKGROUND/clip corners \
+            independently of which edges are stroked, so the top corners \
+            still round (matching the card's own rounded-top look) with no \
+            border line drawn along that curve, which reads as intentional \
+            (a rounded panel, not a clipped rectangle) rather than wrong. */ \
          .chat-panel-float {{ background-color: {bg}; \
-           border: 1px solid alpha({fg}, 0.25); border-radius: 8px; \
+           border-left: 1px solid alpha({fg}, 0.25); \
+           border-right: 1px solid alpha({fg}, 0.25); \
+           border-bottom: 1px solid alpha({fg}, 0.25); \
+           border-radius: 8px; \
            padding: 12px; }} \
-         .chat-transcript {{ font-family: {font}; font-size: {chat_size}pt; }} \
+         /* Fix 5: the transcript renders at the CARD's own font_size, not a \
+            shrunk one — source lines AND the explication/gloss paragraphs \
+            must match the main card's body text (see generate_css's doc \
+            comment). Was `font_size.saturating_sub(2).max(8)` (a local \
+            `chat_size`, removed); the narrower panel still wraps fine at \
+            full size (labels wrap via WordChar, see append_row_label), so \
+            nothing else in this stylesheet depended on the smaller size. */ \
+         .chat-transcript {{ font-family: {font}; font-size: {size}pt; }} \
          .chat-transcript label {{ padding-bottom: 3px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
@@ -1317,20 +1348,40 @@ pub fn generate_css(
             tag), 8px above a stage direction (stage-direction-gap). The Box \
             therefore uses spacing 0: every gap here is padding, or the Box's \
             own spacing would add itself to all of them. */ \
-         .chat-a-speaker {{ color: alpha({chat_ink}, 0.75); font-weight: normal; \
-           font-variant: small-caps; font-size: 0.82em; letter-spacing: 0.5px; \
+         /* Fix 4: speaker labels must match the CARD's own speaker-name \
+            TextTag (formatting.rs:191-195) — variant: small-caps, weight: \
+            400 (normal), scale: 0.75 (relative to the card's body font) — \
+            and carry NO color override, so (like the card) it reads at FULL \
+            ink, not dimmed. `font-size: 0.75em` is the CSS analogue of the \
+            card's Pango `scale(0.75)`: `em` is relative to the element's \
+            inherited font-size exactly as Pango scale is relative to the \
+            view's base font, and `.chat-transcript`'s base IS the reader \
+            font (Fix 5 sets it to the card's own font_size, not a shrunk \
+            one), so 0.75em here lands the speaker at the same PROPORTION of \
+            body text the card uses. Dropped `letter-spacing` (the card's tag \
+            has none — small-caps + scale alone is what makes it read \
+            quiet, per the card's own doc comment) and the 0.82em size. */ \
+         .chat-a-speaker {{ color: {chat_ink}; font-weight: normal; \
+           font-variant: small-caps; font-size: 0.75em; \
            padding-top: 14px; padding-left: {q_speaker}px; }} \
          .chat-transcript label.chat-a-speaker {{ padding-bottom: 0px; }} \
-         .chat-a-verse {{ color: {chat_ink}; font-style: italic; \
+         /* Fix 3: the main card never italicizes dialogue/verse — \
+            formatting.rs's Style::Italic appears ONLY on stage directions \
+            (stage-direction-style) and BCP rubrics, never on speaker-name or \
+            plain dialogue lines. Quoted source verse in the panel must match: \
+            upright, not italic. */ \
+         .chat-a-verse {{ color: {chat_ink}; \
            padding-left: {q_verse}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse {{ padding-bottom: 0px; }} \
+         /* Stage directions KEEP italic — this matches the card's \
+            stage-direction-style tag (Style::Italic), unlike verse above. */ \
          .chat-a-stage {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            padding-left: {q_verse}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage {{ padding-bottom: 0px; }} \
          /* Speakerless (prose) source: no label to hang past, so verse/stage \
             sit at the shallower speaker indent instead of the deep verse one \
             (mirrors gloss_render::populate_verse_buffer's has_speaker branch). */ \
-         .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
+         .chat-a-verse-flush {{ color: {chat_ink}; \
            padding-left: {q_speaker}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 0px; }} \
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
@@ -1343,7 +1394,11 @@ pub fn generate_css(
            border-left: 2px solid alpha({fg}, 0.35); }} \
          .chat-panel-float .chat-error {{ color: alpha({fg}, 0.55); }} \
          .chat-panel-float .chat-saved {{ color: {dim}; }} \
-         .chat-panel-float .chat-a-speaker {{ color: {dim}; }} \
+         /* Float variant: {fg} is the float body colour (see the doc comment \
+            on .chat-panel-float's other rows below) — full ink, matching the \
+            pinned rule's {chat_ink} above. Was {dim}; that dimmed the label \
+            against Fix 4's brief. */ \
+         .chat-panel-float .chat-a-speaker {{ color: {fg}; }} \
          .chat-panel-float .chat-a-verse {{ color: {fg}; }} \
          .chat-panel-float .chat-a-verse-flush {{ color: {fg}; }} \
          .chat-panel-float .chat-a-stage {{ color: alpha({fg}, 0.55); }} \
@@ -1450,7 +1505,6 @@ pub fn generate_css(
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
-        chat_size = font_size.saturating_sub(2).max(8),
         chat_ink = contrast_on(&theme.root_color),
         divider_bottom = divider_bottom_px,
         q_body = CHAT_QUOTE_BODY_INDENT,

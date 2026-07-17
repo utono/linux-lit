@@ -400,6 +400,34 @@ pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
     }
 }
 
+/// Whether each WIDGET of a single `TranscriptRow` is a valid j/k landing
+/// spot — same widget-space granularity as `row_widget_texts` (one entry per
+/// label `rebuild_rows`/`append_gloss_answer` actually paints), derived from
+/// the SAME `chat_gloss_rows` split so this can never drift out of sync with
+/// what `append_gloss_answer` renders. Only a `ChatGlossRowKind::Speaker`
+/// widget is unlandable — a speaker name isn't a line you'd read, copy, or
+/// mark (see the chat panel's Fix 2). Every other row kind (verse, stage,
+/// gloss, question, answer, chip, thinking, saved-mark, error) is landable.
+pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
+    match row {
+        TranscriptRow::GlossAnswer(markup) => {
+            use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
+            let rows = chat_gloss_rows(markup);
+            if rows.is_empty() {
+                // Mirrors append_gloss_answer's plain-label fallback: one
+                // widget, landable (it's the raw text, not a speaker label).
+                vec![true]
+            } else {
+                rows.iter()
+                    .map(|(kind, _)| *kind != ChatGlossRowKind::Speaker)
+                    .collect()
+            }
+        }
+        // Every other row kind is exactly one widget, always landable.
+        _ => vec![true; row_widget_texts(row).len()],
+    }
+}
+
 #[cfg(test)]
 mod row_widget_texts_tests {
     use super::{row_widget_texts, TranscriptRow as R};
@@ -442,5 +470,49 @@ mod row_widget_texts_tests {
     fn untagged_gloss_answer_falls_back_to_raw_text_as_one_widget() {
         let texts = row_widget_texts(&R::GlossAnswer("no tags here".to_string()));
         assert_eq!(texts, vec!["no tags here".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod row_widget_landable_tests {
+    use super::{row_widget_landable, TranscriptRow as R};
+
+    #[test]
+    fn plain_rows_are_all_landable() {
+        assert_eq!(row_widget_landable(&R::Question("Q: x".into())), vec![true]);
+        assert_eq!(row_widget_landable(&R::Answer("A".into())), vec![true]);
+        assert_eq!(row_widget_landable(&R::Chip("chip".into())), vec![true]);
+        assert_eq!(row_widget_landable(&R::Error("err".into())), vec![true]);
+        assert_eq!(row_widget_landable(&R::Thinking), vec![true]);
+        assert_eq!(row_widget_landable(&R::SavedMark), vec![true]);
+    }
+
+    /// The load-bearing case: only the Speaker widget is unlandable — verse
+    /// and gloss widgets in the same GlossAnswer stay landable.
+    #[test]
+    fn gloss_answer_marks_only_speaker_unlandable() {
+        let markup = "<speaker>CYMBELINE</speaker>\n\
+                       <verse>Stand by my side, you whom the gods have made</verse>\n\
+                       <gloss>Cymbeline honors the disguised Belarius.</gloss>";
+        let landable = row_widget_landable(&R::GlossAnswer(markup.to_string()));
+        assert_eq!(landable, vec![false, true, true]);
+    }
+
+    /// A source turn with two speakers (a scene changing hands): every
+    /// Speaker widget is unlandable, not just the first.
+    #[test]
+    fn multiple_speakers_are_all_unlandable() {
+        let markup = "<speaker>CYMBELINE</speaker>\n\
+                       <verse>line one</verse>\n\
+                       <speaker>BELARIUS</speaker>\n\
+                       <verse>line two</verse>";
+        let landable = row_widget_landable(&R::GlossAnswer(markup.to_string()));
+        assert_eq!(landable, vec![false, true, false, true]);
+    }
+
+    #[test]
+    fn untagged_gloss_answer_single_widget_is_landable() {
+        let landable = row_widget_landable(&R::GlossAnswer("no tags here".to_string()));
+        assert_eq!(landable, vec![true]);
     }
 }
