@@ -196,12 +196,10 @@ This also fixes an ordering defect: `open_chat_pinned_to_selection` calls `exit_
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `src/input/actions/chat.rs`:
+`chat.rs` ALREADY has a `#[cfg(test)] mod placement_tests` (it tests `line_in_right_column`, the function this task builds on). Two same-named sibling modules do not compile — add these tests INTO that existing module rather than appending a new one.
 
 ```rust
-#[cfg(test)]
-mod placement_tests {
-    use super::*;
+// ADD INTO the existing `mod placement_tests` in src/input/actions/chat.rs.
 
     // A page whose left column is lines 0..=9 and right column 10..=19:
     // split = Some(10), page_end = 19.
@@ -236,7 +234,7 @@ mod placement_tests {
     fn no_right_column_floats_right() {
         assert_eq!(placement_for_range(2, 8, None, PAGE_END), ChatPlacement::FloatRight);
     }
-}
+// (no closing brace here — these go inside the existing module's braces.)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -897,7 +895,7 @@ Cycle the pinned passage's stored glosses, wrapping, swapping transcript slot #1
 
 - [ ] **Step 1: Write the failing test**
 
-Add to the `placement_tests` module in `src/input/actions/chat.rs`, or as a sibling module:
+Append to `src/input/actions/chat.rs` as a NEW sibling module. `chat.rs` already has `revision_tests`, `placement_tests`, and `consolidate_tests`; `gloss_cycle_tests` does not collide with any of them. (Do not add these into `placement_tests` — that module is about column placement, a different concern.)
 
 ```rust
 #[cfg(test)]
