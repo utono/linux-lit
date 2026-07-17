@@ -1365,6 +1365,14 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
             true
         }
+        "n" if is_ctrl => {
+            crate::input::actions::chat::cycle_gloss(&mut state.borrow_mut(), 1);
+            true
+        }
+        "p" if is_ctrl => {
+            crate::input::actions::chat::cycle_gloss(&mut state.borrow_mut(), -1);
+            true
+        }
         "Escape" => {
             crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
             true

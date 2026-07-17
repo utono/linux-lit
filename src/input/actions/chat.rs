@@ -635,6 +635,39 @@ pub(crate) fn push_gloss_exchange(
     render_transcript(s);
 }
 
+/// Step an index by `delta`, wrapping at both ends. `len == 0` stays at 0
+/// (guards the modulo).
+fn wrap_index(cur: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let n = len as i32;
+    (((cur as i32 + delta) % n + n) % n) as usize
+}
+
+/// `Ctrl+n`/`Ctrl+p` in the transcript: show the next/previous STORED gloss
+/// for the pinned passage, wrapping.
+///
+/// A different axis from `j`/`k`: those move `chat.cursor` over this session's
+/// in-memory `exchanges`, while this moves over lit.db rows (including earlier
+/// sessions'). Swaps transcript slot #1 in place, so follow-up exchanges below
+/// are untouched.
+pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
+    let n = s.chat.gloss_list.len();
+    if n <= 1 {
+        return; // nothing to cycle to
+    }
+    s.chat.gloss_index = wrap_index(s.chat.gloss_index, delta, n);
+    let text = s.chat.gloss_list[s.chat.gloss_index].gloss_text.clone();
+    let Some(ctx) = s.chat.gloss_ctx.clone() else { return };
+    push_gloss_exchange(s, &ctx, &text);
+    crate::logging::log(&format!(
+        "CHAT-GLOSS: cycled to gloss {} of {}",
+        s.chat.gloss_index + 1,
+        n
+    ));
+}
+
 /// The "n of N" chip for the gloss slot, so cycling shows which stored gloss
 /// is on screen.
 fn gloss_chip(s: &AppState) -> String {
@@ -1462,5 +1495,37 @@ mod consolidate_tests {
         let t = consolidate_transcript(&ex);
         assert!(!t.contains("omitted"));
         assert!(t.contains("Q1?") && t.contains("Q12?"));
+    }
+}
+
+#[cfg(test)]
+mod gloss_cycle_tests {
+    use super::*;
+
+    #[test]
+    fn forward_wraps_at_the_end() {
+        assert_eq!(wrap_index(0, 1, 3), 1);
+        assert_eq!(wrap_index(1, 1, 3), 2);
+        assert_eq!(wrap_index(2, 1, 3), 0); // wraps
+    }
+
+    #[test]
+    fn backward_wraps_at_the_start() {
+        assert_eq!(wrap_index(2, -1, 3), 1);
+        assert_eq!(wrap_index(1, -1, 3), 0);
+        assert_eq!(wrap_index(0, -1, 3), 2); // wraps
+    }
+
+    #[test]
+    fn single_gloss_stays_put() {
+        assert_eq!(wrap_index(0, 1, 1), 0);
+        assert_eq!(wrap_index(0, -1, 1), 0);
+    }
+
+    /// Guard against a % panic / underflow on an empty list.
+    #[test]
+    fn empty_list_stays_at_zero() {
+        assert_eq!(wrap_index(0, 1, 0), 0);
+        assert_eq!(wrap_index(0, -1, 0), 0);
     }
 }
