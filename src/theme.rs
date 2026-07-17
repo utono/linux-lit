@@ -1052,16 +1052,23 @@ fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
 
 /// Chat-panel block-quote indents, derived from the gloss OVERLAY's own
 /// `gloss_render::{QUOTE_BODY_INDENT, QUOTE_SPEAKER_INDENT, QUOTE_VERSE_INDENT}`
-/// (20 / 48 / 108) at a 2/3 scale, rounded. The overlay's card is typically
-/// ~1050px wide (`config.column_width`) with its own `bar_left` inset on top
-/// of these values; the chat panel's minimum width is `CHAT_MIN_PANEL_W`
-/// (500px, see `input/actions/chat.rs`) — roughly half — so the full 108px
-/// verse hang would leave under 400px of wrap width and crowd the text. 2/3
-/// keeps the same graduated relationship (body < speaker < verse) the overlay
-/// establishes without eating so much of the narrower panel.
-const CHAT_QUOTE_BODY_INDENT: i32 = 14; // gloss_render::QUOTE_BODY_INDENT * 2/3
-const CHAT_QUOTE_SPEAKER_INDENT: i32 = 32; // gloss_render::QUOTE_SPEAKER_INDENT * 2/3
-const CHAT_QUOTE_VERSE_INDENT: i32 = 68; // gloss_render::QUOTE_VERSE_INDENT * 2/3 (rounded)
+/// (20 / 48 / 108) at a 2/3 scale, rounded, THEN the source rows (speaker +
+/// verse) bumped by ~2 characters. The overlay's card is typically ~1050px
+/// wide (`config.column_width`) with its own `bar_left` inset on top of these
+/// values; the chat panel's minimum width is `CHAT_MIN_PANEL_W` (500px, see
+/// `input/actions/chat.rs`) — roughly half — so the full 108px verse hang
+/// would leave under 400px of wrap width and crowd the text. 2/3 keeps the
+/// graduated relationship (body < speaker < verse) the overlay establishes.
+///
+/// `CHAT_SOURCE_INDENT_BUMP` (16px ≈ 2 chars of Charter at the 16pt body size,
+/// serif advance ~0.5em) deepens the SOURCE lines only — the block quote reads
+/// as more clearly set off from the flush explication. The body/explication
+/// indent is not a source line and is left at the 2/3 value. The bump lands
+/// speaker back at the overlay's own 48.
+const CHAT_SOURCE_INDENT_BUMP: i32 = 16;
+const CHAT_QUOTE_BODY_INDENT: i32 = 14; // gloss_render::QUOTE_BODY_INDENT * 2/3 (explication; no bump)
+const CHAT_QUOTE_SPEAKER_INDENT: i32 = 32 + CHAT_SOURCE_INDENT_BUMP; // 2/3 (=32) + 2 chars
+const CHAT_QUOTE_VERSE_INDENT: i32 = 68 + CHAT_SOURCE_INDENT_BUMP; // 2/3 (=68, rounded) + 2 chars
 
 /// Generate GTK CSS for a theme.
 ///
@@ -1294,24 +1301,19 @@ pub fn generate_css(
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .chat-panel {{ background-color: transparent; }} \
-         /* Fix 7: no TOP border. The float panel sits directly below the \
-            card's own header band now (Fix 6's margin_top clears it), so a \
-            top border drew a second stray rule immediately under the header \
-            with nothing above it inside the panel to separate FROM — it \
-            read as a floating line, not a boundary. Left/right/bottom stay: \
-            those genuinely separate the floating panel from the reading \
-            column it overlaps (left/right) and the space below it (bottom). \
-            border-radius stays 8px on all four corners even with the top \
-            border gone — `border-radius` shapes the BACKGROUND/clip corners \
-            independently of which edges are stroked, so the top corners \
-            still round (matching the card's own rounded-top look) with no \
-            border line drawn along that curve, which reads as intentional \
-            (a rounded panel, not a clipped rectangle) rather than wrong. */ \
+         /* No TOP border and SQUARE corners. The float panel sits directly \
+            below the card's own header band (Fix 6's margin_top clears it), so \
+            a top border drew a stray rule under the header with nothing above \
+            it to separate FROM. Left/right/bottom stay — they separate the \
+            floating panel from the reading column it overlaps and the space \
+            below. border-radius is 0: the panel butts against the header with \
+            a straight top edge, and rounding only the stroked corners while \
+            the unstroked top stayed square read as inconsistent. */ \
          .chat-panel-float {{ background-color: {bg}; \
            border-left: 1px solid alpha({fg}, 0.25); \
            border-right: 1px solid alpha({fg}, 0.25); \
            border-bottom: 1px solid alpha({fg}, 0.25); \
-           border-radius: 8px; \
+           border-radius: 0; \
            padding: 12px; }} \
          /* Fix 5: the transcript renders at the CARD's own font_size, not a \
             shrunk one — source lines AND the explication/gloss paragraphs \
