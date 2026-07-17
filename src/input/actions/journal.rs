@@ -2836,6 +2836,27 @@ mod tests {
         assert!(r_pos > a_pos && r_pos < i_pos, "focus directive sits after the answer, before the instruction");
     }
 
+    #[test]
+    fn rewrite_user_message_with_empty_instruction_is_still_well_formed() {
+        // The "rewrite afresh under the default prompt" path (journal `R` and,
+        // now, the chat panel's empty-Ctrl+Enter): an empty instruction must
+        // still yield a coherent request — context + question + current answer
+        // + the revise directive, just with no custom steering appended.
+        let msg = rewrite_user_message(
+            "Work: Bleak House by Charles Dickens",
+            "Who is Esther?",
+            "She narrates half the book.",
+            "",
+        );
+        assert!(msg.contains("Bleak House"), "context present");
+        assert!(msg.contains("Who is Esther?"), "question present");
+        assert!(msg.contains("She narrates half the book."), "current answer present");
+        assert!(msg.contains("return only the revised answer"), "revise directive present");
+        // The message is non-trivial even with no instruction (not just the
+        // instruction line collapsed to nothing).
+        assert!(msg.len() > 100, "empty-instruction message is still substantive");
+    }
+
     /// Build a `JournalPage` for band-classification tests.
     fn page(div1: i64, div2: i64, start: Option<&str>, end: Option<&str>) -> crate::db::journal::JournalPage {
         crate::db::journal::JournalPage {

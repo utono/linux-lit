@@ -517,7 +517,7 @@ fn focus_prompt_in_mode(s: &mut AppState, insert: bool) {
 /// The honest title/hint pair for the current chat mode (revision vs ask).
 fn prompt_title_hint(s: &AppState) -> (&'static str, &'static str) {
     if s.chat.revision_of.is_some() {
-        ("Revise this entry", "Ctrl+Enter send \u{b7} s update \u{b7} Tab cycle")
+        ("Revise this entry", "Ctrl+Enter revise (empty = rewrite afresh) \u{b7} Tab cycle")
     } else {
         ("Ask about this passage", "Ctrl+Enter send \u{b7} s save \u{b7} S consolidate \u{b7} Tab cycle")
     }
@@ -2554,11 +2554,12 @@ pub(crate) mod chat_revision {
         let (id, q, a, context, instruction, model) = {
             let s = state_rc.borrow();
             let Some(id) = s.chat.revision_of else { return };
+            // An EMPTY instruction is not an error: like the journal overlay's
+            // `R` ("Ctrl+Enter with NO instruction rewrites the answer afresh
+            // under the default prompt"), it re-runs the rewrite on the saved
+            // Q&A with no custom steering — `rewrite_user_message` puts the
+            // instruction at the end, so an empty one reads as "revise afresh".
             let instruction = s.chat_panel.take_input_text().trim().to_string();
-            if instruction.is_empty() {
-                crate::input::navigation::show_chapter_toast_secs(&s, "Type a revision instruction", 2);
-                return;
-            }
             let Some(e) = s.chat.exchanges.iter().find(|e| e.saved_id == Some(id)) else {
                 return;
             };
