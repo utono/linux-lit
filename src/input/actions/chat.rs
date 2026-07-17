@@ -1708,6 +1708,19 @@ fn same_passage_question(q: &str) -> String {
 /// carries its full user_msg, so capping can never orphan a question from
 /// its passage. Returns the turns plus the last exchange's chip (for the
 /// current message's own dedupe check).
+/// The user turn a question-less auto-gloss exchange stands in for, so history
+/// never carries an empty user turn (which the API rejects). Grounded in the
+/// passage the exchange still holds; falls back to a bare instruction if the
+/// source is somehow empty, since the return must never itself be empty.
+fn gloss_history_user_turn(e: &Exchange) -> String {
+    let src = e.source_markup.trim();
+    if src.is_empty() {
+        "Provide a reader's gloss of the preceding passage.".to_string()
+    } else {
+        format!("Provide a reader's gloss of this passage:\n\n{src}")
+    }
+}
+
 fn build_history_turns(
     exchanges: &[Exchange],
 ) -> (Vec<crate::claude::ChatTurn>, Option<String>) {
@@ -1719,6 +1732,18 @@ fn build_history_turns(
             same_passage_question(&e.question)
         } else {
             e.user_msg.clone()
+        };
+        // An auto-gloss exchange has an empty user_msg AND question (`-` asks
+        // nothing), so `content` is empty here — and the API rejects a user
+        // turn with empty content (HTTP 400 "messages must have non-empty
+        // content"), which broke the FIRST follow-up asked with `a`. Synthesize
+        // the request the gloss stood in for, grounded in the passage the
+        // exchange still carries, so the assistant's gloss answer has a valid
+        // antecedent instead of a blank one.
+        let content = if content.trim().is_empty() {
+            gloss_history_user_turn(e)
+        } else {
+            content
         };
         prev_chip = Some(e.chip.as_str());
         turns.push(crate::claude::ChatTurn { role: "user", content });
@@ -1796,6 +1821,39 @@ mod history_tests {
             source_markup: String::new(),
             saved_id: None,
         }
+    }
+
+    fn gloss_ex(chip: &str, source: &str, a: &str) -> Exchange {
+        // An auto-gloss exchange: empty question AND user_msg, but a real
+        // source_markup and answer. This is the shape that sent an empty user
+        // turn to the API (HTTP 400) before build_history_turns synthesized one.
+        let mut e = ex(chip, "", "", a);
+        e.source_markup = source.to_string();
+        e
+    }
+
+    #[test]
+    fn gloss_exchange_gets_a_synthesized_nonempty_user_turn() {
+        // A gloss followed by a real question on the same passage: the gloss's
+        // user turn must be non-empty (the bug: it was ""), and grounded in
+        // the source it carries.
+        let exchanges = [
+            gloss_ex("chipA", "<verse>Stand by my side</verse>", "gloss answer"),
+            ex("chipA", "What does it mean?", "What does it mean?", "a2"),
+        ];
+        let (turns, _last) = build_history_turns(&exchanges);
+        assert_eq!(turns.len(), 4);
+        assert!(!turns[0].content.trim().is_empty(), "gloss user turn was empty");
+        assert!(turns[0].content.contains("Stand by my side"));
+        assert_eq!(turns[1].content, "gloss answer");
+    }
+
+    #[test]
+    fn gloss_exchange_with_empty_source_still_yields_nonempty_turn() {
+        let exchanges = [gloss_ex("chipA", "", "gloss answer")];
+        let (turns, _last) = build_history_turns(&exchanges);
+        assert_eq!(turns.len(), 2);
+        assert!(!turns[0].content.trim().is_empty());
     }
 
     #[test]
