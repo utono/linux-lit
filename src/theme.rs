@@ -1050,6 +1050,19 @@ fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
     }
 }
 
+/// Chat-panel block-quote indents, derived from the gloss OVERLAY's own
+/// `gloss_render::{QUOTE_BODY_INDENT, QUOTE_SPEAKER_INDENT, QUOTE_VERSE_INDENT}`
+/// (20 / 48 / 108) at a 2/3 scale, rounded. The overlay's card is typically
+/// ~1050px wide (`config.column_width`) with its own `bar_left` inset on top
+/// of these values; the chat panel's minimum width is `CHAT_MIN_PANEL_W`
+/// (500px, see `input/actions/chat.rs`) — roughly half — so the full 108px
+/// verse hang would leave under 400px of wrap width and crowd the text. 2/3
+/// keeps the same graduated relationship (body < speaker < verse) the overlay
+/// establishes without eating so much of the narrower panel.
+const CHAT_QUOTE_BODY_INDENT: i32 = 14; // gloss_render::QUOTE_BODY_INDENT * 2/3
+const CHAT_QUOTE_SPEAKER_INDENT: i32 = 32; // gloss_render::QUOTE_SPEAKER_INDENT * 2/3
+const CHAT_QUOTE_VERSE_INDENT: i32 = 68; // gloss_render::QUOTE_VERSE_INDENT * 2/3 (rounded)
+
 /// Generate GTK CSS for a theme.
 ///
 /// `.chat-a-speaker`/`.chat-a-verse` (the chat panel's typed reader-gloss
@@ -1298,15 +1311,24 @@ pub fn generate_css(
          .chat-saved {{ color: alpha({chat_ink}, 0.65); }} \
          .chat-a-speaker {{ color: alpha({chat_ink}, 0.75); font-weight: normal; \
            font-variant: small-caps; font-size: 0.82em; letter-spacing: 0.5px; \
-           padding-top: 14px; }} \
+           padding-top: 14px; padding-left: {q_speaker}px; }} \
          .chat-transcript label.chat-a-speaker {{ padding-bottom: 1px; }} \
          .chat-a-verse {{ color: {chat_ink}; font-style: italic; \
-           padding-left: 6px; padding-top: 0px; }} \
+           padding-left: {q_verse}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse {{ padding-bottom: 2px; }} \
          .chat-a-stage {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           padding-left: 6px; padding-top: 0px; }} \
+           padding-left: {q_verse}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-stage {{ padding-bottom: 2px; }} \
-         .chat-a-gloss {{ color: {chat_ink}; padding-top: 10px; }} \
+         /* Speakerless (prose) source: no label to hang past, so verse/stage \
+            sit at the shallower speaker indent instead of the deep verse one \
+            (mirrors gloss_render::populate_verse_buffer's has_speaker branch). */ \
+         .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
+           padding-left: {q_speaker}px; padding-top: 0px; }} \
+         .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 2px; }} \
+         .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
+           padding-left: {q_speaker}px; padding-top: 0px; }} \
+         .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 2px; }} \
+         .chat-a-gloss {{ color: {chat_ink}; padding-top: 10px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {dim}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \
@@ -1315,8 +1337,25 @@ pub fn generate_css(
          .chat-panel-float .chat-saved {{ color: {dim}; }} \
          .chat-panel-float .chat-a-speaker {{ color: {dim}; }} \
          .chat-panel-float .chat-a-verse {{ color: {fg}; }} \
+         .chat-panel-float .chat-a-verse-flush {{ color: {fg}; }} \
          .chat-panel-float .chat-a-stage {{ color: alpha({fg}, 0.55); }} \
+         .chat-panel-float .chat-a-stage-flush {{ color: alpha({fg}, 0.55); }} \
          .chat-panel-float .chat-a-gloss {{ color: {fg}; }} \
+         /* j/k row cursor (CHANGE 1): accent bar to the left of the cursor \
+            row, mirroring the reading card's cursorline treatment and the \
+            gloss overlay's accent bar — reusing {cursor_bg}, the same accent \
+            `.ask-card.card-focused`'s border-left already uses. An INSET \
+            box-shadow (like `.library-picker row:selected`'s left accent, \
+            theme.rs:1040) rather than `border-left`/`padding-left`: those two \
+            properties are already spoken for by the row's own indent class \
+            (chat-a-verse etc. sets padding-left directly), and CSS can't sum \
+            two padding-left declarations — a shadow paints the bar without \
+            consuming layout space, so it composes with ANY indent class. The \
+            background wash makes a bare-on-root Answer/Question row (no \
+            indent of its own) still read as the current line, not just a \
+            thin rule. */ \
+         .chat-cursor-row {{ box-shadow: inset 3px 0 0 {cursor_bg}; \
+           background-color: alpha({cursor_bg}, 0.10); }} \
          .chat-input {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.30); border-radius: 6px; \
            transition: border-color 320ms ease-out, \
@@ -1376,6 +1415,9 @@ pub fn generate_css(
         chat_size = font_size.saturating_sub(2).max(8),
         chat_ink = contrast_on(&theme.root_color),
         divider_bottom = divider_bottom_px,
+        q_body = CHAT_QUOTE_BODY_INDENT,
+        q_speaker = CHAT_QUOTE_SPEAKER_INDENT,
+        q_verse = CHAT_QUOTE_VERSE_INDENT,
     );
     // Diagnostic knob: LIT_DEBUG_CLIP_COLOR=<css color> paints every bottom-clip
     // box (main card + overlays) that color for the run, so a clip edge that is

@@ -145,11 +145,15 @@ impl ChatPanel {
         glib::idle_add_local_once(move || adj.set_value(adj.upper()));
     }
 
-    /// Rebuild the transcript and scroll the row at index `focus` to the top
-    /// of the viewport (exchange-cursor navigation). Unlike `render_rows`,
-    /// this does NOT pin the scroll to the end — pinning is what made j/k
-    /// cursor moves look like dead keys.
-    pub fn render_rows_focused(&self, rows: &[TranscriptRow], focus: usize) {
+    /// Rebuild the transcript, paint the `.chat-cursor-row` accent bar
+    /// (`theme::generate_css`) on the WIDGET at index `cursor` (j/k's row
+    /// cursor — see `input::actions::chat::transcript_rows`' doc comment for
+    /// why this must be a widget index, not a `TranscriptRow` index: a
+    /// `GlossAnswer` row explodes into several widgets), and scroll it to the
+    /// top of the viewport. Unlike `render_rows`, this does NOT pin the
+    /// scroll to the end — pinning is what made j/k cursor moves look like
+    /// dead keys.
+    pub fn render_rows_focused_cursor(&self, rows: &[TranscriptRow], cursor: usize) {
         self.rebuild_rows(rows);
         let boxx = self.transcript_box.clone();
         let scroll = self.transcript_scroll.clone();
@@ -157,13 +161,15 @@ impl ChatPanel {
             let mut child = boxx.first_child();
             let mut i = 0usize;
             while let Some(c) = child {
-                if i == focus {
+                if i == cursor {
+                    c.add_css_class("chat-cursor-row");
                     if let Some(b) = c.compute_bounds(&boxx) {
                         let adj = scroll.vadjustment();
                         let max = (adj.upper() - adj.page_size()).max(0.0);
                         adj.set_value((b.y() as f64).clamp(0.0, max));
                     }
-                    return;
+                } else {
+                    c.remove_css_class("chat-cursor-row");
                 }
                 child = c.next_sibling();
                 i += 1;
@@ -231,6 +237,16 @@ impl ChatPanel {
     /// `TextTag`s. Falls back to one plain `chat-a` label with the raw text
     /// when the markup carries none of the recognized tags (defensive: should
     /// not happen for a real gloss answer, but never show a blank row).
+    ///
+    /// Indentation mirrors the overlay's block-quote model
+    /// (`gloss_render::{QUOTE_SPEAKER_INDENT, QUOTE_VERSE_INDENT}`, applied at
+    /// `populate_verse_buffer` gloss_render.rs:343-351): the source verse hangs
+    /// one dialogue step past the speaker label ONLY when the block actually
+    /// HAS a speaker (`chat-a-verse`/`chat-a-stage`); a speakerless (prose)
+    /// source has no label to hang past, so it sits at the shallower speaker
+    /// indent instead (`chat-a-verse-flush`/`chat-a-stage-flush`) — the deep
+    /// indent would read as arbitrary over-indentation there, exactly the
+    /// subtlety the overlay's `has_speaker` branch documents.
     fn append_gloss_answer(&self, markup: &str) {
         use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
         let rows = chat_gloss_rows(markup);
@@ -238,11 +254,14 @@ impl ChatPanel {
             self.append_row_label(markup, "chat-a");
             return;
         }
+        let has_speaker = rows.iter().any(|(k, _)| *k == ChatGlossRowKind::Speaker);
         for (kind, text) in rows {
             let class = match kind {
                 ChatGlossRowKind::Speaker => "chat-a-speaker",
-                ChatGlossRowKind::Verse => "chat-a-verse",
-                ChatGlossRowKind::Stage => "chat-a-stage",
+                ChatGlossRowKind::Verse if has_speaker => "chat-a-verse",
+                ChatGlossRowKind::Verse => "chat-a-verse-flush",
+                ChatGlossRowKind::Stage if has_speaker => "chat-a-stage",
+                ChatGlossRowKind::Stage => "chat-a-stage-flush",
                 ChatGlossRowKind::Gloss => "chat-a-gloss",
             };
             self.append_row_label(&text, class);

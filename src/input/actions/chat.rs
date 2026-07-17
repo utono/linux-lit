@@ -40,6 +40,16 @@ pub(crate) struct Exchange {
 pub(crate) struct ChatState {
     pub exchanges: Vec<Exchange>,
     pub cursor: usize,
+    /// j/k row cursor: index into the RENDERED transcript rows (one per
+    /// `chat_panel::TranscriptRow` — a gloss answer explodes into several,
+    /// speaker/verse/gloss/etc.), not into `exchanges`. This is what the
+    /// accent bar (`.chat-cursor-row`) paints on and what j/k actually steps.
+    /// `cursor` (the EXCHANGE cursor, used by `s` save / the `▶` marker /
+    /// Ctrl+n/p gloss cycling) is derived from it via `build_transcript_rows`'
+    /// `row_owner` map — see `transcript_cursor_move`. Reset to the new
+    /// exchange's leading row alongside every `cursor` write (new answer,
+    /// gloss push, consolidate) — see `snap_row_cursor_to_exchange`.
+    pub row_cursor: usize,
     pub revision_of: Option<i64>,
     pub pending: bool,
     /// Passage PINNED by opening the panel with `Tab` from visual (`V`) mode:
@@ -590,7 +600,8 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
                 saved_id: None,
             });
             s.chat.cursor = s.chat.exchanges.len() - 1;
-            render_transcript(&s);
+            snap_row_cursor_to_exchange(&mut s);
+            render_transcript(&mut s);
             // Answer visible: retire the input until asked for again (`a` on
             // the transcript reopens it) and hand focus to the transcript so
             // j/k/s work immediately.
@@ -622,6 +633,25 @@ fn answer_row(e: &Exchange) -> crate::ui::chat_panel::TranscriptRow {
     }
 }
 
+/// How many actual WIDGETS (label rows in `transcript_box`) a single
+/// `TranscriptRow` renders as. Every variant is one widget
+/// (`chat_panel::rebuild_rows`'s `append_row_label`) EXCEPT `GlossAnswer`,
+/// which `append_gloss_answer` explodes into one label per
+/// `gloss_render::chat_gloss_rows` row (speaker/verse/stage/gloss) — so the
+/// j/k row cursor, which must land on those individual widgets, has to count
+/// in this same "widget space", not `Vec<TranscriptRow>` space. Falls back to
+/// 1 for markup with no recognized tags, matching `append_gloss_answer`'s own
+/// plain-label fallback.
+fn widget_row_count(row: &crate::ui::chat_panel::TranscriptRow) -> usize {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    match row {
+        R::GlossAnswer(markup) => {
+            crate::ui::gloss_render::chat_gloss_rows(markup).len().max(1)
+        }
+        _ => 1,
+    }
+}
+
 /// Whether `e` should render a `Q:` row at all. An auto-gloss exchange
 /// (`push_gloss_exchange`) deliberately stores an empty `question` — "the
 /// user asked nothing" — so a literal `▶ Q:` row with nothing after it reads
@@ -632,15 +662,35 @@ fn has_question_row(e: &Exchange) -> bool {
     !e.question.is_empty()
 }
 
-/// Build the transcript rows; also returns the row index of the cursor
-/// exchange's leading row, so renders can scroll the selection into view.
-fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize) {
+/// Build the transcript rows. Returns `(rows, cursor_row, row_owner)`:
+/// - `cursor_row`: the WIDGET-space row index of the exchange cursor
+///   (`s.chat.cursor`)'s leading row — same role as before, just expressed in
+///   widget space (see `widget_row_count`) instead of `Vec<TranscriptRow>`
+///   space, which only differ for a `GlossAnswer` row.
+/// - `row_owner[w]`: the exchange index that owns widget row `w`. Used to
+///   derive `s.chat.cursor` from `s.chat.row_cursor` (j/k) — see
+///   `transcript_cursor_move`.
+fn transcript_rows(
+    s: &AppState,
+) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize, Vec<usize>) {
+    build_transcript_rows(&s.chat.exchanges, s.chat.cursor)
+}
+
+/// Pure core of `transcript_rows` (no `AppState` — takes the exchange list
+/// and exchange cursor directly), so the row-count/row_owner bookkeeping is
+/// unit-testable without constructing an `AppState`.
+fn build_transcript_rows(
+    exchanges: &[Exchange],
+    cursor: usize,
+) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize, Vec<usize>) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
+    let mut row_owner: Vec<usize> = Vec::new();
     let mut cursor_row = 0;
+    let mut widget_row = 0usize; // running WIDGET-space row count
     let mut prev_chip: Option<&str> = None;
-    for (i, e) in s.chat.exchanges.iter().enumerate() {
-        let is_cursor = i == s.chat.cursor;
+    for (i, e) in exchanges.iter().enumerate() {
+        let is_cursor = i == cursor;
         let marker = if is_cursor { "\u{25b8} " } else { "" };
         let show_question = has_question_row(e);
         let chip_is_new = prev_chip != Some(e.chip.as_str());
@@ -654,13 +704,15 @@ fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, 
         let marker_row = if show_question {
             None // Question row (pushed below) carries it.
         } else if chip_is_new {
-            Some(rows.len()) // Chip row (pushed next) carries it.
+            Some(widget_row) // Chip row (pushed next) carries it.
         } else {
             None // Falls through to the answer row (pushed further below).
         };
         if chip_is_new {
             let chip_marker = if is_cursor && marker_row.is_some() { marker } else { "" };
             rows.push(R::Chip(format!("{chip_marker}{}", e.chip)));
+            row_owner.push(i);
+            widget_row += 1;
         }
         prev_chip = Some(e.chip.as_str());
         if let Some(r) = marker_row {
@@ -668,22 +720,54 @@ fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, 
                 cursor_row = r;
             }
         } else if is_cursor {
-            cursor_row = rows.len();
+            cursor_row = widget_row;
         }
         if show_question {
             rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
+            row_owner.push(i);
+            widget_row += 1;
         }
-        rows.push(answer_row(e));
+        let ans = answer_row(e);
+        let ans_widgets = widget_row_count(&ans);
+        rows.push(ans);
+        for _ in 0..ans_widgets {
+            row_owner.push(i);
+        }
+        widget_row += ans_widgets;
         if e.saved_id.is_some() {
             rows.push(R::SavedMark);
+            row_owner.push(i);
+            widget_row += 1;
         }
     }
-    (rows, cursor_row)
+    (rows, cursor_row, row_owner)
 }
 
-pub(crate) fn render_transcript(s: &AppState) {
-    let (rows, cursor_row) = transcript_rows(s);
-    s.chat_panel.render_rows_focused(&rows, cursor_row);
+/// Render the transcript at the CURRENT `s.chat.row_cursor` (clamped to the
+/// rendered widget count) — never resets it. A caller that just changed
+/// `s.chat.cursor` (the exchange cursor: new answer, gloss push, consolidate)
+/// must explicitly snap `row_cursor` to the new exchange's leading row FIRST
+/// (see `snap_row_cursor_to_exchange`) — this function alone would otherwise
+/// leave j/k's row cursor stranded on stale content.
+pub(crate) fn render_transcript(s: &mut AppState) {
+    let (rows, _cursor_row, row_owner) = transcript_rows(s);
+    let n = row_owner.len();
+    if n == 0 {
+        s.chat.row_cursor = 0;
+    } else if s.chat.row_cursor >= n {
+        s.chat.row_cursor = n - 1;
+    }
+    s.chat_panel.render_rows_focused_cursor(&rows, s.chat.row_cursor);
+}
+
+/// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
+/// widget row. Called by every site that just wrote `s.chat.cursor` directly
+/// (new answer arrives, gloss push, consolidate) so j/k's row cursor follows
+/// the new content instead of pointing at a now-stale row — the same "jump to
+/// what just changed" behavior the old exchange-only cursor always had.
+fn snap_row_cursor_to_exchange(s: &mut AppState) {
+    let (_rows, cursor_row, _row_owner) = transcript_rows(s);
+    s.chat.row_cursor = cursor_row;
 }
 
 /// Put a reader-gloss into transcript slot #1 — replacing the gloss already
@@ -720,6 +804,7 @@ pub(crate) fn push_gloss_exchange(
     // snap the cursor back up to the gloss; that is intended, not a leak of
     // the gloss axis into the j/k axis (cycle_gloss writes only gloss_index).
     s.chat.cursor = 0;
+    snap_row_cursor_to_exchange(s);
     render_transcript(s);
 }
 
@@ -917,7 +1002,7 @@ pub(crate) fn request_reader_gloss(
         s.chat.pending = false;
         // No gloss row is written on failure — the DB write only happens on a
         // successful reply. The panel stays open.
-        render_transcript(&s);
+        render_transcript(&mut s);
         crate::input::navigation::show_chapter_toast_secs(&s, "Gloss failed", 3);
         crate::logging::log(&format!("CHAT-GLOSS: API error: {}", e));
     };
@@ -961,7 +1046,7 @@ pub(crate) fn regloss_pinned(state_rc: &Rc<RefCell<AppState>>) {
 /// flight rather than sitting blank.
 fn render_transcript_thinking_gloss(s: &AppState) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let (mut rows, _) = transcript_rows(s);
+    let (mut rows, _, _) = transcript_rows(s);
     rows.push(R::Chip("Reader gloss".to_string()));
     rows.push(R::Thinking);
     s.chat_panel.render_rows(&rows);
@@ -988,7 +1073,7 @@ pub(crate) fn reload_gloss_list(
 
 fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let (mut rows, _) = transcript_rows(s);
+    let (mut rows, _, _) = transcript_rows(s);
     rows.push(R::Chip(chip.to_string()));
     rows.push(R::Question(format!("Q: {}", question)));
     rows.push(R::Thinking);
@@ -997,28 +1082,48 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {
 
 fn render_transcript_with_error(s: &AppState, msg: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let (mut rows, _) = transcript_rows(s);
+    let (mut rows, _, _) = transcript_rows(s);
     rows.push(R::Error(msg.to_string()));
     s.chat_panel.render_rows(&rows);
 }
 
-/// Move the transcript exchange cursor by `delta` and scroll the selected
-/// exchange into view. When the cursor is already clamped at a boundary
-/// (single exchange, or first/last), degrade to plain viewport scrolling so
-/// an answer taller than the panel stays fully readable.
+/// Move the j/k ROW cursor (`s.chat.row_cursor`, widget-space — see
+/// `transcript_rows`' doc comment) by `delta` and scroll it into view. When
+/// the cursor is already clamped at a boundary (single row, or first/last),
+/// degrade to plain viewport scrolling so an answer taller than the panel
+/// stays fully readable — same fallback the old exchange-only cursor used,
+/// and for the same reason (see `scroll_transcript_step`'s doc comment).
+///
+/// `s.chat.cursor` (the EXCHANGE cursor — save/`▶`/Ctrl+n/p target) is
+/// derived from the new row position via `row_owner`, NOT moved
+/// independently: the row IS inside some exchange, so "which exchange is
+/// selected" is a pure function of "which row the cursor is on". Keeping two
+/// independently-steppable cursors would let them drift out of sync (e.g. `s`
+/// saving an exchange the accent bar isn't even on).
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
-    let n = s.chat.exchanges.len();
-    if n == 0 {
+    let (_rows, _cursor_row, row_owner) = transcript_rows(s);
+    let Some(clamped) = step_row_cursor(s.chat.row_cursor, delta, row_owner.len()) else {
+        if !row_owner.is_empty() {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+        }
         return;
-    }
-    let cur = s.chat.cursor as i32 + delta;
-    let clamped = cur.clamp(0, n as i32 - 1) as usize;
-    if clamped == s.chat.cursor {
-        s.chat_panel.scroll_transcript_step(delta as f64);
-        return;
-    }
-    s.chat.cursor = clamped;
+    };
+    s.chat.row_cursor = clamped;
+    s.chat.cursor = row_owner[clamped];
     render_transcript(s);
+}
+
+/// Pure clamp step for the row cursor: `cur + delta`, clamped to
+/// `[0, n - 1]`. Returns `None` when `n == 0` (nothing to move to) OR the
+/// clamped result equals `cur` (already at a boundary) — both cases mean
+/// "the row cursor did not move", which `transcript_cursor_move` treats as
+/// "degrade to plain viewport scrolling" (see its doc comment).
+fn step_row_cursor(cur: usize, delta: i32, n: usize) -> Option<usize> {
+    if n == 0 {
+        return None;
+    }
+    let next = (cur as i32 + delta).clamp(0, n as i32 - 1) as usize;
+    (next != cur).then_some(next)
 }
 
 /// `s` on the transcript: save the selected exchange as a passage journal
@@ -1160,7 +1265,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
     {
         let mut s = state_rc.borrow_mut();
         s.chat.pending = true;
-        let (mut rows, _) = transcript_rows(&s);
+        let (mut rows, _, _) = transcript_rows(&s);
         rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
         s.chat_panel.render_rows(&rows);
         crate::input::navigation::show_persistent_chapter_toast(&s, "Consolidating\u{2026}");
@@ -1203,6 +1308,12 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                         saved_id: Some(id),
                     });
                     s.chat.cursor = s.chat.exchanges.len() - 1;
+                    // render_saved_entry below bypasses transcript_rows (it's
+                    // a standalone 3-row revision view, no accent bar), but
+                    // snap row_cursor anyway so a later j/k step (which DOES
+                    // go through transcript_rows) starts from the exchange
+                    // that's actually now selected, not a stale row index.
+                    snap_row_cursor_to_exchange(&mut s);
                     s.chat.revision_of = Some(id);
                     render_saved_entry(&s, &q, &a);
                     let (title, hint) = prompt_title_hint(&s);
@@ -1220,7 +1331,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                     ));
                 }
                 Err(err) => {
-                    render_transcript(&s);
+                    render_transcript(&mut s);
                     crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);
                     crate::logging::log(&format!("CHAT: consolidation save failed: {}", err));
                 }
@@ -1704,5 +1815,148 @@ mod gloss_cycle_tests {
     fn empty_list_stays_at_zero() {
         assert_eq!(wrap_index(0, 1, 0), 0);
         assert_eq!(wrap_index(0, -1, 0), 0);
+    }
+}
+
+/// j/k row-cursor stepping/clamping (CHANGE 1). `step_row_cursor` is pure
+/// clamp arithmetic — house style per `gloss_cycle_tests` above, but NOT
+/// wrapping: a row cursor running off either end degrades to viewport
+/// scrolling (`transcript_cursor_move`'s doc comment), it does not wrap back
+/// to the other end like the gloss-cycle axis does.
+#[cfg(test)]
+mod row_cursor_step_tests {
+    use super::step_row_cursor;
+
+    #[test]
+    fn steps_forward_and_backward_mid_range() {
+        assert_eq!(step_row_cursor(1, 1, 5), Some(2));
+        assert_eq!(step_row_cursor(1, -1, 5), Some(0));
+    }
+
+    #[test]
+    fn clamps_at_the_end_without_wrapping() {
+        assert_eq!(step_row_cursor(4, 1, 5), None); // already last row
+        assert_eq!(step_row_cursor(4, 5, 5), None); // large delta, clamped result == cur
+        assert_eq!(step_row_cursor(3, 5, 5), Some(4)); // large delta still lands, doesn't wrap
+    }
+
+    #[test]
+    fn clamps_at_the_start_without_wrapping() {
+        assert_eq!(step_row_cursor(0, -1, 5), None);
+    }
+
+    #[test]
+    fn single_row_never_moves() {
+        assert_eq!(step_row_cursor(0, 1, 1), None);
+        assert_eq!(step_row_cursor(0, -1, 1), None);
+    }
+
+    /// Guard against a clamp underflow/panic on an empty transcript.
+    #[test]
+    fn empty_transcript_stays_at_zero() {
+        assert_eq!(step_row_cursor(0, 1, 0), None);
+        assert_eq!(step_row_cursor(0, -1, 0), None);
+    }
+}
+
+/// `widget_row_count` / `build_transcript_rows`' `row_owner` map (CHANGE 1):
+/// the row cursor moves in WIDGET space, which only diverges from
+/// `Vec<TranscriptRow>` space at a `GlossAnswer` row (it explodes into one
+/// widget per `gloss_render::chat_gloss_rows` row). These tests pin that
+/// divergence down, and prove `row_owner` correctly maps every exploded
+/// widget back to its owning exchange — the mechanism `s`/`▶`/Ctrl+n/p rely
+/// on to stay correct once j/k can land mid-gloss.
+#[cfg(test)]
+mod row_cursor_widget_tests {
+    use super::{build_transcript_rows, widget_row_count, Exchange};
+    use crate::ui::chat_panel::TranscriptRow as R;
+
+    fn plain_ex(chip: &str, question: &str, answer: &str) -> Exchange {
+        Exchange {
+            question: question.to_string(),
+            answer: answer.to_string(),
+            chip: chip.to_string(),
+            user_msg: String::new(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id: None,
+        }
+    }
+
+    fn gloss_ex(chip: &str, markup: &str) -> Exchange {
+        // push_gloss_exchange always stores an empty question (see its doc
+        // comment) — that's what routes answer_row to GlossAnswer.
+        plain_ex(chip, "", markup)
+    }
+
+    #[test]
+    fn plain_answer_is_one_widget() {
+        assert_eq!(widget_row_count(&R::Answer("text".to_string())), 1);
+        assert_eq!(widget_row_count(&R::Question("Q: x".to_string())), 1);
+        assert_eq!(widget_row_count(&R::Chip("chip".to_string())), 1);
+        assert_eq!(widget_row_count(&R::SavedMark), 1);
+        assert_eq!(widget_row_count(&R::Thinking), 1);
+    }
+
+    #[test]
+    fn gloss_answer_explodes_into_one_widget_per_typed_row() {
+        let markup = "<speaker>CYMBELINE</speaker>\n\
+                       <verse>Stand by my side</verse>\n\
+                       <gloss>Cymbeline honors him.</gloss>";
+        // 3 rows: Speaker, Verse, Gloss (chat_gloss_rows_tests pins the same
+        // split in gloss_render.rs).
+        assert_eq!(widget_row_count(&R::GlossAnswer(markup.to_string())), 3);
+    }
+
+    // Markup with none of the recognized tags falls back to ONE widget
+    // (append_gloss_answer's own plain-label fallback) — must not panic on a
+    // zero-length row_owner slice or silently vanish from the count.
+    #[test]
+    fn untagged_gloss_answer_falls_back_to_one_widget() {
+        assert_eq!(widget_row_count(&R::GlossAnswer("no tags here".to_string())), 1);
+    }
+
+    #[test]
+    fn row_owner_maps_every_widget_of_a_gloss_exchange_to_its_index() {
+        let markup = "<speaker>CYMBELINE</speaker>\n\
+                       <verse>Stand by my side</verse>\n\
+                       <gloss>Cymbeline honors him.</gloss>";
+        let exchanges = vec![gloss_ex("chipA", markup)];
+        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0);
+        // Chip + exploded gloss (3 widgets) = 4 widget rows, all owned by
+        // exchange 0.
+        assert_eq!(row_owner, vec![0, 0, 0, 0]);
+        assert_eq!(row_owner.len(), 4);
+        assert_eq!(rows.len(), 2); // Vec<TranscriptRow> space: Chip + GlossAnswer(1)
+        // Cursor lands on the chip row (the gloss exchange's marker fallback
+        // — see build_transcript_rows' marker_row doc comment).
+        assert_eq!(cursor_row, 0);
+    }
+
+    #[test]
+    fn row_owner_distinguishes_two_plain_exchanges() {
+        let exchanges = vec![
+            plain_ex("chipA", "Q1?", "A1"),
+            plain_ex("chipB", "Q2?", "A2"),
+        ];
+        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 1);
+        // Each exchange: Chip, Question, Answer = 3 widgets.
+        assert_eq!(row_owner, vec![0, 0, 0, 1, 1, 1]);
+        assert_eq!(rows.len(), 6);
+        // Cursor (exchange 1) leads at its Question row (widget index 4).
+        assert_eq!(cursor_row, 4);
+    }
+
+    #[test]
+    fn row_owner_covers_saved_mark_widget() {
+        let mut e = plain_ex("chipA", "Q1?", "A1");
+        e.saved_id = Some(42);
+        let (rows, _cursor_row, row_owner) = build_transcript_rows(&[e], 0);
+        // Chip, Question, Answer, SavedMark = 4 widgets, all exchange 0.
+        assert_eq!(row_owner, vec![0, 0, 0, 0]);
+        assert_eq!(rows.len(), 4);
     }
 }
