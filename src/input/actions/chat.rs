@@ -1491,9 +1491,12 @@ pub(crate) fn regloss_pinned(state_rc: &Rc<RefCell<AppState>>) {
 /// explication.
 fn render_transcript_thinking_gloss(s: &AppState, ctx: &crate::gloss::GlossContext) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let (mut rows, _, _) = transcript_rows(s);
-    rows.push(R::GlossAnswer(ctx.passage_doc()));
-    rows.push(R::Thinking);
+    // While a regloss (`r`/`R`) is in flight, show ONLY the source passage and
+    // "thinking…" — NOT the prior transcript. Prepending `transcript_rows(s)`
+    // left the CURRENT gloss stacked above the one being regenerated (same wall
+    // -of-text problem the question path had). The passage doc is the context
+    // being reglossed; the new gloss replaces it when it lands.
+    let rows = vec![R::GlossAnswer(ctx.passage_doc()), R::Thinking];
     s.chat_panel.render_rows(&rows);
 }
 
