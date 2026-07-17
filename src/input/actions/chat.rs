@@ -21,15 +21,28 @@ pub(crate) enum ChatPlacement {
 }
 
 /// Which content the transcript pane is showing: the session's live
-/// gloss/Q&A exchanges (`ChatState.exchanges`), or the pinned passage's
-/// SAVED journal entries (`ChatState.journal_list`) — a read-only view over a
-/// different lit.db table (`journal_entries`, `scope='passage'`), toggled by
-/// `t`. Default is `Gloss` — the panel's existing, unchanged behavior.
+/// gloss/Q&A exchanges (`ChatState.exchanges`), the pinned passage's SAVED
+/// journal entries (`ChatState.journal_list` — a read-only view over a
+/// different lit.db table, `journal_entries` `scope='passage'`), or a single
+/// just-answered follow-up (`Question` — see its own doc comment). All three
+/// are toggled/reached via `t` (`flip_view`). Default is `Gloss` — the
+/// panel's existing, unchanged behavior.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum PanelView {
     #[default]
     Gloss,
     Journal,
+    /// Showing exactly ONE Q&A — the follow-up that was just submitted/
+    /// answered (`s.chat.exchanges[s.chat.cursor]`) — instead of the whole
+    /// transcript. Entered by `submit_chat_prompt` the instant a question is
+    /// sent (so "thinking…" shows only that question) and kept through the
+    /// answer's arrival (so the answer appears alone, with no gloss or
+    /// earlier exchanges above it). `t` from here goes to `Gloss` (see
+    /// `flip_view`) — this is the non-gloss side of the toggle, same as
+    /// `Journal`. Transient display only: the answer's persistent record is
+    /// the journal row (`persist_exchange_to_journal`/`s`), unaffected by
+    /// this view.
+    Question,
 }
 
 /// One question/answer turn in the chat transcript.
@@ -636,12 +649,18 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
     {
         let mut s = state_rc.borrow_mut();
         s.chat.pending = true;
-        // A submitted question always answers into `exchanges` (the Gloss
-        // view's axis) — switch back to Gloss so the "thinking…" row, and
-        // then the answer, are visible even if the reader asked this while
-        // looking at the Journal view (`t`).
-        s.chat.view = PanelView::Gloss;
+        // A submitted question always answers into `exchanges`, shown
+        // FOCUSED (this one Q&A only, not the whole transcript) — switch to
+        // Question so the "thinking…" row, and then the answer, are visible
+        // alone even if the reader asked this while looking at the Gloss or
+        // Journal view. `t` from here returns to Gloss (see `flip_view`).
+        s.chat.view = PanelView::Question;
         render_transcript_with_thinking(&s, &question, &chip);
+        // Hide the ask input the INSTANT the question is submitted, not when
+        // the answer arrives — the input stays gone through the whole
+        // "thinking…" wait. `a` on the transcript reopens it, same as before.
+        s.chat_panel.close_input();
+        focus_transcript(&mut s);
     }
 
     let (div1, div2, start_citation, end_citation, source_markup) = meta;
@@ -669,11 +688,14 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             });
             s.chat.cursor = s.chat.exchanges.len() - 1;
             snap_row_cursor_to_exchange(&mut s);
-            render_transcript(&mut s);
-            // Answer visible: retire the input until asked for again (`a` on
-            // the transcript reopens it) and hand focus to the transcript so
-            // j/k/s work immediately.
-            s.chat_panel.close_input();
+            // Stay in Question view (set at submit) and render ONLY this
+            // Q&A — not the whole transcript (render_transcript), which
+            // would bring the gloss and any earlier exchanges back above it.
+            // `t` still reaches the full gloss transcript from here.
+            debug_assert_eq!(s.chat.view, PanelView::Question);
+            render_current_question(&mut s);
+            // Answer visible: hand focus to the transcript so j/k/s work
+            // immediately. The input was already hidden on submit.
             focus_transcript(&mut s);
             // Auto-save the FIRST follow-up Q&A on this passage so the
             // reader doesn't have to press `s`. Any further follow-up in the
@@ -703,8 +725,22 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         move |st, msg| {
             let mut s = st.borrow_mut();
             s.chat.pending = false;
+            // No exchange was ever pushed on a failed request, so there is no
+            // single Q&A for Question view to focus on — render_transcript_
+            // with_error shows the FULL transcript (gloss + prior exchanges)
+            // plus the error, so line up `view` with what's actually on
+            // screen (same "match view to the render" rule
+            // save_selected_exchange follows). Otherwise `view` would say
+            // Question while Gloss-shaped content is on screen, and `t`
+            // would silently no-op (flip_view's Question arm) instead of
+            // reaching Journal.
+            s.chat.view = PanelView::Gloss;
             render_transcript_with_error(&s, msg);
-            // Restore the failed question for retry.
+            // The input was hidden on submit (close_input, above) — its vim
+            // engine is gone, so paste_input_text alone would silently no-op
+            // (paste_text requires a live engine). Reopen it for retry before
+            // restoring the failed question.
+            focus_prompt(&mut s);
             s.chat_panel.paste_input_text(&question_err);
         },
     );
@@ -830,6 +866,30 @@ fn build_transcript_rows(
     (rows, cursor_row, row_owner)
 }
 
+/// Pure row-builder for `PanelView::Question`: exactly ONE exchange's rows —
+/// its `Q:` row (via `has_question_row`/`answer_row`, same rules
+/// `build_transcript_rows` uses per-exchange) plus a trailing `SavedMark` if
+/// it's been saved — with NO chip and NO other exchange. This is
+/// `build_transcript_rows`'s per-exchange body run for a single `i == 0`
+/// slice, factored out so the "one exchange -> its rows" shape is
+/// unit-testable without constructing a whole transcript or an `AppState`.
+/// The chip is deliberately omitted (matching `render_transcript_with_thinking`'s
+/// existing "question names its own subject" reasoning) — a Question-view
+/// render never shows the source-preview label the full Gloss transcript
+/// does.
+fn build_single_exchange_rows(e: &Exchange) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    let mut rows = Vec::new();
+    if has_question_row(e) {
+        rows.push(R::Question(format!("Q: {}", e.question)));
+    }
+    rows.push(answer_row(e));
+    if e.saved_id.is_some() {
+        rows.push(R::SavedMark);
+    }
+    rows
+}
+
 /// Render the transcript at the CURRENT `s.chat.row_cursor` (clamped to the
 /// rendered widget count) — never resets it. A caller that just changed
 /// `s.chat.cursor` (the exchange cursor: new answer, gloss push, consolidate)
@@ -860,6 +920,24 @@ pub(crate) fn render_transcript(s: &mut AppState) {
     });
     s.chat_panel
         .render_rows_focused_cursor(&rows, s.chat.row_cursor, selection);
+}
+
+/// Render `PanelView::Question`: exactly the exchange at `s.chat.cursor` —
+/// its `Q:` row + answer row (+ `SavedMark` once saved), via
+/// `build_single_exchange_rows` — NOT the gloss, NOT any other exchange.
+/// Plain `render_rows` (no row-cursor accent bar, no visual-selection
+/// painting), same choice `render_journal_view` makes: a one-exchange view
+/// has nothing for `j`/`k`'s row axis to usefully cycle over, so it degrades
+/// to viewport scrolling (see `transcript_cursor_move`'s `Question` guard).
+/// No-ops (renders nothing) when `cursor` is out of range — defensive; every
+/// real call site sets `cursor` to a just-pushed exchange's own index first.
+pub(crate) fn render_current_question(s: &mut AppState) {
+    let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+        s.chat_panel.render_rows(&[]);
+        return;
+    };
+    let rows = build_single_exchange_rows(e);
+    s.chat_panel.render_rows(&rows);
 }
 
 /// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
@@ -947,6 +1025,13 @@ fn wrap_index(cur: usize, delta: i32, len: usize) -> usize {
 /// to swap there. Toasts rather than silently doing nothing, matching this
 /// module's other reachable-but-inapplicable binds (e.g. `copy_gloss_id`'s
 /// "No gloss to copy").
+///
+/// NOT no-op'd in `PanelView::Question` (deliberately, no guard needed):
+/// Ctrl+n/p is the gloss axis, and `push_gloss_exchange` below unconditionally
+/// sets `view = Gloss` and renders the full transcript — so cycling from a
+/// shown Q&A reads as "switch to the gloss, then cycle it", which is more
+/// useful than a toast telling the reader to press `t` first for a bind that
+/// is about to take them there anyway.
 pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
     if s.chat.view == PanelView::Journal {
         crate::input::navigation::show_chapter_toast_secs(s, "Ctrl+n/p cycles glosses \u{2014} t for gloss view", 2);
@@ -969,12 +1054,20 @@ pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
     ));
 }
 
-/// Pure flip: `Gloss` <-> `Journal`. Pulled out of `toggle_panel_view` so the
-/// toggle direction is unit-testable without an `AppState`/`Rc<RefCell<_>>`.
+/// Pure flip, three-way: `Gloss -> Journal -> Gloss` (unchanged pair) and
+/// `Question -> Gloss` — a shown Q&A is the non-gloss side of the toggle, so
+/// `t` from it returns to the gloss, same direction `Journal` already goes.
+/// There is deliberately no `Gloss -> Question`: `Question` is only ever
+/// ENTERED by asking a follow-up (`submit_chat_prompt`), never by cycling
+/// into it — `t` from Gloss always means "show the journal", matching the
+/// existing bind before this view existed. Pulled out of `toggle_panel_view`
+/// so the toggle direction is unit-testable without an `AppState`/
+/// `Rc<RefCell<_>>`.
 fn flip_view(v: PanelView) -> PanelView {
     match v {
         PanelView::Gloss => PanelView::Journal,
         PanelView::Journal => PanelView::Gloss,
+        PanelView::Question => PanelView::Gloss,
     }
 }
 
@@ -1078,6 +1171,11 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
             render_transcript(&mut s);
             crate::logging::log("CHAT-JOURNAL: view toggled to gloss");
         }
+        // flip_view never PRODUCES Question (see its doc comment) — this arm
+        // is unreachable in practice, kept only so the match stays exhaustive
+        // if PanelView grows further. No render: Question is only ever
+        // entered by submit_chat_prompt, not by this toggle.
+        PanelView::Question => {}
     }
 }
 
@@ -1342,9 +1440,10 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, _chip: &str) {
     // the prior transcript (the gloss + any earlier exchanges). The gloss is
     // what the question is ABOUT; leaving it above the pending answer made the
     // panel a wall of text with the live question buried at the bottom. The
-    // gloss returns when the answer lands (the success path re-renders the full
-    // transcript). The source-preview chip is dropped with the rest — the
-    // question names its own subject.
+    // answer, when it lands, replaces this with the SAME single-Q&A shape
+    // (`render_current_question`, `PanelView::Question`) — the gloss does NOT
+    // return until `t`. The source-preview chip is dropped with the rest —
+    // the question names its own subject.
     let rows = vec![
         R::Question(format!("Q: {}", question)),
         R::Thinking,
@@ -1380,12 +1479,15 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 /// independently-steppable cursors would let them drift out of sync (e.g. `s`
 /// saving an exchange the accent bar isn't even on).
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
-    // Journal view is a flat, uncycled list (see `toggle_panel_view`'s doc
-    // comment) with no row_cursor/row_owner of its own — it never went
-    // through `render_journal_view`'s sibling `render_transcript`, so reading
-    // `transcript_rows` (the Gloss-view's `exchanges`) here would move a
-    // cursor over content that isn't even on screen. j/k just scrolls.
-    if s.chat.view == PanelView::Journal {
+    // Journal and Question are both flat, uncycled views with no
+    // row_cursor/row_owner of their own — neither goes through
+    // `render_transcript` (Journal: `render_journal_view`; Question:
+    // `render_current_question`, plain `render_rows`, no accent bar), so
+    // reading `transcript_rows` (the Gloss-view's `exchanges`) here would
+    // move a cursor over content that isn't even on screen. A single Q&A is
+    // rarely taller than the panel, and even when it is, plain scrolling
+    // reads it fully — j/k just scrolls in both.
+    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_step(delta as f64);
         return;
     }
@@ -1478,13 +1580,14 @@ fn first_landable_at_or_after(from: usize, landable: &[bool]) -> usize {
 /// check only fires in that all-unlandable case, and exists purely so `V`
 /// cannot anchor a selection on a speaker label by construction.
 pub(crate) fn toggle_transcript_visual(s: &mut AppState) {
-    // No row_cursor/row_owner axis in Journal view (see
+    // No row_cursor/row_owner axis in Journal or Question view (see
     // `transcript_cursor_move`'s same guard) — `V` has nothing to anchor a
     // selection over there, so it's a no-op rather than silently entering a
     // selection state that `y`/render_transcript would then act on over the
-    // WRONG (Gloss-view) content.
-    if s.chat.view == PanelView::Journal {
-        crate::logging::log("CHAT-VISUAL: V ignored (journal view)");
+    // WRONG (Gloss-view, whole-`exchanges`) content instead of what's on
+    // screen.
+    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+        crate::logging::log("CHAT-VISUAL: V ignored (journal/question view)");
         return;
     }
     if s.chat.visual_anchor.take().is_some() {
@@ -1557,13 +1660,13 @@ fn visual_selection_range(anchor: usize, cursor: usize) -> (usize, usize) {
 /// `landable_mask`, which gates j/k/V-anchor landing, not what `V`+`y` copies
 /// once spanned.
 pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
-    // Journal view has no row_cursor/row_owner axis (see
+    // Journal and Question views have no row_cursor/row_owner axis (see
     // `transcript_cursor_move`'s guard) — `y` would otherwise copy whatever
-    // stale Gloss-view row_cursor points at, silently yanking content that
-    // isn't even the one on screen.
-    if state_rc.borrow().chat.view == PanelView::Journal {
+    // stale Gloss-view row_cursor points at (from the whole `exchanges`
+    // list), silently yanking content that isn't even the one on screen.
+    if matches!(state_rc.borrow().chat.view, PanelView::Journal | PanelView::Question) {
         let s = state_rc.borrow();
-        crate::input::navigation::show_chapter_toast_secs(&s, "Nothing to copy in journal view", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Nothing to copy in this view", 2);
         return;
     }
     // Collect text and drop the borrow BEFORE toasting: show_chapter_toast_secs
@@ -1695,12 +1798,13 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     match persist_exchange_to_journal(&mut s, idx) {
         Some(id) => {
             // render_saved_entry below always shows the just-saved exchange
-            // directly (it bypasses transcript_rows/journal_view_rows
-            // entirely — see its own doc comment), so line up `view` with
-            // what is actually on screen: if `s` was pressed while looking
-            // at the Journal view, the panel is about to show Gloss-shaped
-            // content, and a later `t` should read as "leaving Gloss", not
-            // "leaving a Journal view that's no longer what's rendered".
+            // directly (it bypasses transcript_rows/journal_view_rows/
+            // build_single_exchange_rows entirely — see its own doc
+            // comment), so line up `view` with what is actually on screen:
+            // if `s` was pressed while looking at the Journal OR Question
+            // view, the panel is about to show Gloss-shaped content, and a
+            // later `t` should read as "leaving Gloss", not "leaving a
+            // Journal/Question view that's no longer what's rendered".
             s.chat.view = PanelView::Gloss;
             // Revision mode is ARMED but not entered: `revision_of` makes a
             // later Ctrl+Enter refine this row (and the input title read
@@ -2845,10 +2949,20 @@ mod panel_view_toggle_tests {
     use crate::ui::chat_panel::TranscriptRow as R;
 
     #[test]
-    fn flip_is_its_own_inverse() {
+    fn flip_cycles_gloss_and_journal() {
         assert_eq!(flip_view(PanelView::Gloss), PanelView::Journal);
         assert_eq!(flip_view(PanelView::Journal), PanelView::Gloss);
         assert_eq!(flip_view(flip_view(PanelView::Gloss)), PanelView::Gloss);
+    }
+
+    /// The three-way requirement this feature adds: `t` from a shown Q&A
+    /// (`Question`) must land on `Gloss` in ONE press — the non-gloss side of
+    /// the toggle, same direction `Journal` already goes. There is no reverse
+    /// arm (`Gloss -> Question`): `Question` is only ever entered by asking a
+    /// follow-up, never by cycling into it (see `flip_view`'s doc comment).
+    #[test]
+    fn flip_from_question_reaches_gloss() {
+        assert_eq!(flip_view(PanelView::Question), PanelView::Gloss);
     }
 
     #[test]
@@ -2932,5 +3046,77 @@ mod panel_view_toggle_tests {
             texts,
             vec!["Q: Q1?", "A1.", "Q: Q2?", "A2.", "Q: Q3?", "A3."]
         );
+    }
+}
+
+/// `build_single_exchange_rows` — the `PanelView::Question` focused render's
+/// pure seam (one exchange -> its rows, no gloss, no other exchange, no
+/// chip). House style per `panel_view_toggle_tests`/`consolidate_tests`
+/// above: pure functions, no `AppState`/GTK. The actual GTK paint
+/// (`render_current_question`'s `render_rows` call) is not unit-testable and
+/// is exercised only by manual/headless on-screen verification.
+#[cfg(test)]
+mod question_view_tests {
+    use super::{build_single_exchange_rows, Exchange};
+    use crate::ui::chat_panel::TranscriptRow as R;
+
+    fn qa_exchange(question: &str, answer: &str, saved_id: Option<i64>) -> Exchange {
+        Exchange {
+            question: question.to_string(),
+            answer: answer.to_string(),
+            chip: "Some source chip".to_string(),
+            user_msg: String::new(),
+            div1: 1,
+            div2: 1,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id,
+        }
+    }
+
+    #[test]
+    fn follow_up_exchange_renders_question_then_plain_answer_no_chip() {
+        let e = qa_exchange("What does York mean?", "He is plotting.", None);
+        let rows = build_single_exchange_rows(&e);
+        // Exactly 2 rows: Q + A. No Chip row, unlike the full transcript's
+        // build_transcript_rows — a Question-view render never shows the
+        // source-preview label (see the function's doc comment).
+        assert_eq!(rows.len(), 2);
+        match &rows[0] {
+            R::Question(t) => assert_eq!(t, "Q: What does York mean?"),
+            _ => panic!("row 0 must be a Question row"),
+        }
+        match &rows[1] {
+            R::Answer(t) => assert_eq!(t, "He is plotting."),
+            _ => panic!("row 1 must be a plain Answer row, not GlossAnswer"),
+        }
+    }
+
+    /// A reader-gloss exchange (`push_gloss_exchange`'s empty-question
+    /// convention — see `has_question_row`'s doc comment) must never reach
+    /// `PanelView::Question` in practice (only `a`-submitted follow-ups do),
+    /// but the row-builder itself is exercised here for completeness: no
+    /// Question row, and the answer renders as GlossAnswer (raw markup), not
+    /// a plain Answer label.
+    #[test]
+    fn gloss_shaped_exchange_omits_question_row_and_uses_gloss_answer() {
+        let e = qa_exchange("", "<speaker>YORK</speaker><verse>Speak.</verse>", None);
+        let rows = build_single_exchange_rows(&e);
+        assert_eq!(rows.len(), 1);
+        match &rows[0] {
+            R::GlossAnswer(markup) => assert!(markup.contains("YORK")),
+            _ => panic!("row 0 must be a GlossAnswer row for an empty-question exchange"),
+        }
+    }
+
+    #[test]
+    fn saved_exchange_appends_saved_mark() {
+        let e = qa_exchange("Q?", "A.", Some(42));
+        let rows = build_single_exchange_rows(&e);
+        assert_eq!(rows.len(), 3);
+        assert!(matches!(rows[0], R::Question(_)));
+        assert!(matches!(rows[1], R::Answer(_)));
+        assert!(matches!(rows[2], R::SavedMark));
     }
 }
