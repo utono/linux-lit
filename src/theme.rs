@@ -1298,31 +1298,44 @@ pub fn generate_css(
            background-color: alpha({chat_ink}, 0.10); transition: none; }} \
          .chat-panel-float .chat-transcript-scroll.chat-flash-wash {{ \
            background-color: alpha({fg}, 0.10); }} \
-         .chat-q {{ color: alpha({chat_ink}, 0.70); }} \
-         .chat-a {{ color: {chat_ink}; }} \
+         /* Prose rows keep the airy gap the transcript Box used to supply for \
+            every row (spacing 10). It is padding now: the Box went to spacing \
+            0 so SOURCE lines could sit at the main card's pure line-height, \
+            and these rows would otherwise jam together. */ \
+         .chat-q {{ color: alpha({chat_ink}, 0.70); padding-top: 10px; }} \
+         .chat-a {{ color: {chat_ink}; padding-top: 10px; }} \
          .chat-chip {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; }} \
-         .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; }} \
-         .chat-saved {{ color: alpha({chat_ink}, 0.65); }} \
+           border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; \
+           padding-top: 10px; }} \
+         .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
+           padding-top: 10px; }} \
+         .chat-saved {{ color: alpha({chat_ink}, 0.65); padding-top: 10px; }} \
+         /* Source lines mirror the MAIN CARD's spacing model (formatting.rs): \
+            the card sets pixels_above/below_lines(0) globally, so consecutive \
+            verse lines sit at pure line-height with NO gap, and space appears \
+            only BETWEEN blocks — 14px above a speaker (the card's speaker-gap \
+            tag), 8px above a stage direction (stage-direction-gap). The Box \
+            therefore uses spacing 0: every gap here is padding, or the Box's \
+            own spacing would add itself to all of them. */ \
          .chat-a-speaker {{ color: alpha({chat_ink}, 0.75); font-weight: normal; \
            font-variant: small-caps; font-size: 0.82em; letter-spacing: 0.5px; \
            padding-top: 14px; padding-left: {q_speaker}px; }} \
-         .chat-transcript label.chat-a-speaker {{ padding-bottom: 1px; }} \
+         .chat-transcript label.chat-a-speaker {{ padding-bottom: 0px; }} \
          .chat-a-verse {{ color: {chat_ink}; font-style: italic; \
            padding-left: {q_verse}px; padding-top: 0px; }} \
-         .chat-transcript label.chat-a-verse {{ padding-bottom: 2px; }} \
+         .chat-transcript label.chat-a-verse {{ padding-bottom: 0px; }} \
          .chat-a-stage {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           padding-left: {q_verse}px; padding-top: 0px; }} \
-         .chat-transcript label.chat-a-stage {{ padding-bottom: 2px; }} \
+           padding-left: {q_verse}px; padding-top: 8px; }} \
+         .chat-transcript label.chat-a-stage {{ padding-bottom: 0px; }} \
          /* Speakerless (prose) source: no label to hang past, so verse/stage \
             sit at the shallower speaker indent instead of the deep verse one \
             (mirrors gloss_render::populate_verse_buffer's has_speaker branch). */ \
          .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
            padding-left: {q_speaker}px; padding-top: 0px; }} \
-         .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 2px; }} \
+         .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 0px; }} \
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           padding-left: {q_speaker}px; padding-top: 0px; }} \
-         .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 2px; }} \
+           padding-left: {q_speaker}px; padding-top: 8px; }} \
+         .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
          .chat-a-gloss {{ color: {chat_ink}; padding-top: 10px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {dim}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \

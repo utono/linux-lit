@@ -49,7 +49,11 @@ impl ChatPanel {
         container.set_margin_start(24);
         container.set_visible(false);
 
-        let transcript_box = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+        // Spacing 0: source lines must sit at pure line-height like the main
+        // card (which sets pixels_above/below_lines(0)), so every gap is
+        // padding on the row's own CSS class — a Box spacing would add itself
+        // to all of them and no per-row rule could take it back.
+        let transcript_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         // Reader font, slightly smaller than the main card (theme.rs sets
         // .chat-transcript to font_size - 2pt); the row labels inherit it.
         transcript_box.add_css_class("chat-transcript");
