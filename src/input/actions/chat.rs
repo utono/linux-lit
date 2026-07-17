@@ -381,6 +381,18 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
         // this one — same reasoning as the gloss_ctx/gloss_list reset above.
         s.chat.view = PanelView::Gloss;
         s.chat.journal_list.clear();
+        // The TRANSCRIPT is passage-scoped too. On a FRESH open toggle_chat_layout
+        // ran against a Default ChatState, but re-pinning while the panel is
+        // already open (V-select A, gloss, Escape, V-select B, `-`) reaches here
+        // with A's exchanges/cursor still live — and push_gloss_exchange only
+        // overwrites exchanges[0], so A's follow-up Q&As would strand below B's
+        // gloss. Clear them: the '-' path re-fills exchanges[0] immediately;
+        // Tab correctly starts B's conversation empty.
+        s.chat.exchanges.clear();
+        s.chat.cursor = 0;
+        s.chat.row_cursor = 0;
+        s.chat.revision_of = None;
+        s.chat.visual_anchor = None;
         s.chat.pinned_passage = Some(pinned);
         // Re-place from the SELECTION, overriding toggle_chat_layout's
         // cursor-derived side. Only floats: a Pinned panel (single-column) has
