@@ -80,6 +80,15 @@ pub(crate) struct ChatState {
     /// a save needs for the `passages` row. Set when `-` opens the panel.
     /// Must track `pinned_passage` — see the invariant note there.
     pub gloss_ctx: Option<crate::gloss::GlossContext>,
+    /// `V` visual-selection anchor, in the SAME widget-row space as
+    /// `row_cursor` (see its doc comment) — NOT the reader's
+    /// `AppState.visual_selection`, which is a buffer-line selection over a
+    /// GtkTextBuffer the panel doesn't have. `Some(anchor)` while active;
+    /// `j`/`k` then move `row_cursor` as the live end while `anchor` holds
+    /// still, and `(anchor, row_cursor)` (either order) is the selected
+    /// range. `None` outside visual mode. Resets with the rest of `ChatState`
+    /// on panel close / work switch (`#[derive(Default)]` above).
+    pub visual_anchor: Option<usize>,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -734,6 +743,13 @@ fn build_transcript_rows(
 /// must explicitly snap `row_cursor` to the new exchange's leading row FIRST
 /// (see `snap_row_cursor_to_exchange`) — this function alone would otherwise
 /// leave j/k's row cursor stranded on stale content.
+///
+/// Also clamps `s.chat.visual_anchor` (if a `V` selection is active) to the
+/// same widget-row count and passes the resolved `(anchor, row_cursor)` range
+/// down so the panel paints `.chat-visual-row` across the selection — the
+/// same clamp-on-every-render discipline `row_cursor` itself already gets, so
+/// a selection anchored on content that later shrinks (e.g. a regloss) can
+/// never point past the end of the rendered rows.
 pub(crate) fn render_transcript(s: &mut AppState) {
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let n = row_owner.len();
@@ -742,7 +758,15 @@ pub(crate) fn render_transcript(s: &mut AppState) {
     } else if s.chat.row_cursor >= n {
         s.chat.row_cursor = n - 1;
     }
-    s.chat_panel.render_rows_focused_cursor(&rows, s.chat.row_cursor);
+    if let Some(anchor) = s.chat.visual_anchor {
+        s.chat.visual_anchor = Some(if n == 0 { 0 } else { anchor.min(n - 1) });
+    }
+    let selection = s.chat.visual_anchor.map(|a| {
+        let cur = s.chat.row_cursor;
+        if a <= cur { (a, cur) } else { (cur, a) }
+    });
+    s.chat_panel
+        .render_rows_focused_cursor(&rows, s.chat.row_cursor, selection);
 }
 
 /// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
@@ -1115,6 +1139,124 @@ fn step_row_cursor(cur: usize, delta: i32, n: usize) -> Option<usize> {
     }
     let next = (cur as i32 + delta).clamp(0, n as i32 - 1) as usize;
     (next != cur).then_some(next)
+}
+
+/// `V` on the transcript: toggle a panel-local visual selection anchored at
+/// the current `row_cursor`. A second `V` (or `Escape` — see
+/// `handle_chat_transcript_key`) exits WITHOUT copying, mirroring the
+/// reader's `V`/`Escape` exit path but over `ChatState.visual_anchor`, not
+/// `AppState.visual_selection` (see its doc comment for why those must never
+/// be conflated). No-ops (does not enter) on an empty transcript — there is
+/// no row to anchor on, and entering would leave `row_cursor`/`visual_anchor`
+/// both at 0 with nothing rendered to show a selection over, silently
+/// swallowing the very next `y` (copies zero rows) instead of failing loudly.
+pub(crate) fn toggle_transcript_visual(s: &mut AppState) {
+    if s.chat.visual_anchor.take().is_some() {
+        render_transcript(s);
+        crate::logging::log("CHAT-VISUAL: exited");
+        return;
+    }
+    let (_rows, _cursor_row, row_owner) = transcript_rows(s);
+    if row_owner.is_empty() {
+        crate::logging::log("CHAT-VISUAL: V ignored (empty transcript)");
+        return;
+    }
+    s.chat.visual_anchor = Some(s.chat.row_cursor);
+    render_transcript(s);
+    crate::logging::log(&format!("CHAT-VISUAL: entered at row {}", s.chat.row_cursor));
+}
+
+/// Exit the transcript visual selection without copying (`Escape`'s first
+/// press while `V` is active). No-op — and no render — when no selection is
+/// active, so `Escape` falls through to `focus_reader` untouched.
+pub(crate) fn exit_transcript_visual(s: &mut AppState) -> bool {
+    if s.chat.visual_anchor.take().is_some() {
+        render_transcript(s);
+        crate::logging::log("CHAT-VISUAL: exited (Escape)");
+        true
+    } else {
+        false
+    }
+}
+
+/// Pure range resolution: anchor/cursor in either order -> `(start, end)`
+/// inclusive, widget-row space. Shared by `render_transcript` (highlight) and
+/// `yank_transcript_selection` (copy) so both agree on exactly which rows are
+/// "selected".
+fn visual_selection_range(anchor: usize, cursor: usize) -> (usize, usize) {
+    if anchor <= cursor { (anchor, cursor) } else { (cursor, anchor) }
+}
+
+/// `y` on the transcript: copy to the system clipboard via `wl-copy` — ONLY
+/// wl-copy, never xclip/xsel (Wayland; see `visual::action_copy`'s and
+/// `copy_gloss_id`'s precedent). Two cases:
+/// - Visual selection active: every widget row in `(anchor, row_cursor)`
+///   (inclusive, either order), joined by newlines, THEN exits visual mode —
+///   mirroring the reader's `yank_selection` contract (copy, then
+///   `exit_visual_mode`), not its buffer-based mechanism (the panel has no
+///   `GtkTextBuffer` to read from).
+/// - No selection: just the cursor ROW's text — one verse line, one gloss
+///   paragraph, matching j/k's own granularity. Deliberately NOT the whole
+///   exchange or block: `row_cursor` already points at exactly one widget,
+///   and `y` should copy what the accent bar is on, nothing more.
+///
+/// Text comes from `chat_panel::row_widget_texts`, which yields RENDERED text
+/// (e.g. "CYMBELINE", not `<speaker>CYMBELINE</speaker>`) — see its doc
+/// comment and `row_widget_texts_tests::gloss_answer_yields_rendered_text_not_raw_markup`.
+pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
+    // Collect text and drop the borrow BEFORE toasting: show_chapter_toast_secs
+    // takes &AppState and re-borrows, so toasting under this borrow_mut would
+    // double-borrow and panic (mirrors copy_gloss_id's own toast-after-
+    // borrow-drop discipline — see its comment).
+    let (text, n_rows, had_selection) = {
+        let mut s = state_rc.borrow_mut();
+        let (rows, _cursor_row, _row_owner) = transcript_rows(&s);
+        let all_texts: Vec<String> = rows
+            .iter()
+            .flat_map(crate::ui::chat_panel::row_widget_texts)
+            .collect();
+        let n = all_texts.len();
+        let had_selection = s.chat.visual_anchor.is_some();
+        let range = match s.chat.visual_anchor {
+            Some(anchor) => visual_selection_range(anchor, s.chat.row_cursor),
+            None => (s.chat.row_cursor, s.chat.row_cursor),
+        };
+        let selected: Vec<String> = if n == 0 {
+            Vec::new()
+        } else {
+            let (start, end) = (range.0.min(n - 1), range.1.min(n - 1));
+            all_texts[start..=end].to_vec()
+        };
+        let count = selected.len();
+        let text = selected.join("\n");
+        if had_selection {
+            // Copy-then-exit, mirroring the reader's yank_selection contract.
+            s.chat.visual_anchor = None;
+            render_transcript(&mut s);
+        }
+        (text, count, had_selection)
+    };
+
+    if n_rows == 0 {
+        let s = state_rc.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "Nothing to copy", 2);
+        return;
+    }
+
+    let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+    crate::logging::log(&format!(
+        "CHAT-YANK: copied {} row(s){} to clipboard",
+        n_rows,
+        if had_selection { " (visual)" } else { "" }
+    ));
+
+    let s = state_rc.borrow();
+    let label = if n_rows == 1 {
+        "Copied 1 line".to_string()
+    } else {
+        format!("Copied {} lines", n_rows)
+    };
+    crate::input::navigation::show_chapter_toast_secs(&s, &label, 2);
 }
 
 /// `s` on the transcript: save the selected exchange as a passage journal
@@ -1966,5 +2108,67 @@ mod row_cursor_widget_tests {
         // Chip, Question, Answer, SavedMark = 4 widgets, all exchange 0.
         assert_eq!(row_owner, vec![0, 0, 0, 0]);
         assert_eq!(rows.len(), 4);
+    }
+}
+
+/// `V`/`y` visual-selection range arithmetic (this feature): anchor/cursor
+/// resolve to an inclusive `(start, end)` in EITHER order — `j`/`k` can
+/// extend the live end above or below the anchor — and the resulting range
+/// must slice the flattened widget-text list correctly, including the
+/// single-row (no-selection) case `y` also uses. Pure index math, same house
+/// style as `row_cursor_step_tests`/`row_cursor_widget_tests` above; the
+/// actual `wl-copy` spawn and GTK CSS-class painting are not unit-testable
+/// and are exercised only by manual/headless on-screen verification.
+#[cfg(test)]
+mod visual_selection_tests {
+    use super::visual_selection_range;
+
+    #[test]
+    fn anchor_before_cursor_is_already_ordered() {
+        assert_eq!(visual_selection_range(1, 4), (1, 4));
+    }
+
+    #[test]
+    fn anchor_after_cursor_flips_to_ordered() {
+        // j/k moved the live end (cursor) UP past the anchor — extend-up.
+        assert_eq!(visual_selection_range(4, 1), (1, 4));
+    }
+
+    #[test]
+    fn anchor_equals_cursor_is_a_single_row() {
+        assert_eq!(visual_selection_range(2, 2), (2, 2));
+    }
+
+    #[test]
+    fn anchor_at_zero_extends_down_to_last_row() {
+        assert_eq!(visual_selection_range(0, 7), (0, 7));
+    }
+
+    /// Slice out of a flattened widget-text list, mirroring the clamp
+    /// `yank_transcript_row_or_selection` applies before indexing
+    /// (`start.min(n-1)`/`end.min(n-1)`) — guards a stale anchor pointing
+    /// past a transcript that shrank without a render in between.
+    #[test]
+    fn range_slices_the_expected_rows() {
+        let texts: Vec<String> = ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
+        let (start, end) = visual_selection_range(1, 3);
+        assert_eq!(&texts[start..=end], &["b".to_string(), "c".to_string(), "d".to_string()]);
+    }
+
+    #[test]
+    fn single_row_no_selection_slices_exactly_one() {
+        let texts: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        let cursor = 1usize;
+        let (start, end) = (cursor, cursor); // yank's no-selection range
+        assert_eq!(&texts[start..=end], &["b".to_string()]);
+    }
+
+    #[test]
+    fn clamp_guards_a_stale_range_past_a_shrunk_list() {
+        let texts: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let n = texts.len();
+        let (raw_start, raw_end) = visual_selection_range(0, 5); // stale: transcript shrank
+        let (start, end) = (raw_start.min(n - 1), raw_end.min(n - 1));
+        assert_eq!(&texts[start..=end], &["a".to_string(), "b".to_string()]);
     }
 }

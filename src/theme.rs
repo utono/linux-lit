@@ -1356,6 +1356,17 @@ pub fn generate_css(
             thin rule. */ \
          .chat-cursor-row {{ box-shadow: inset 3px 0 0 {cursor_bg}; \
            background-color: alpha({cursor_bg}, 0.10); }} \
+         /* V panel-local visual selection (chat panel's own y yank -
+            distinct from the reader's AppState.visual_selection, a
+            different space entirely). Reuses selection_bg, the SAME blue
+            wash the reading card's visual-selection tag and the gloss/
+            synopsis/journal hi marker already use, so a selected row reads
+            as selected in the same color everywhere in the app.
+            chat-cursor-row may paint on the SAME widget as the anchor/
+            single-row-selection case; the two backgrounds simply layer
+            (cursor's box-shadow accent bar stays on top), so no override
+            is needed. */ \
+         .chat-visual-row {{ background-color: {selection_bg}; }} \
          .chat-input {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.30); border-radius: 6px; \
            transition: border-color 320ms ease-out, \
@@ -1405,6 +1416,7 @@ pub fn generate_css(
         center_toast_fg = contrast_on(&center_toast_bg(theme)),
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
+        selection_bg = crate::theme::selection_bg(theme),
         vocab_popup_fg = vocab_popup_fg(theme),
         vocab_popup_dim = vocab_popup_tier(
             &vocab_popup_ink(theme), &theme.root_color, 0.55, VOCAB_POPUP_DIM_MIN_CONTRAST),

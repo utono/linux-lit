@@ -1348,6 +1348,24 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), -1);
             true
         }
+        // `V`: enter/exit a panel-local visual selection anchored at the row
+        // cursor. Distinct from the reader's `V` (a different InputMode, over
+        // AppState.visual_selection) — see ChatState.visual_anchor's doc
+        // comment. `j`/`k` above already extend it (they just move
+        // row_cursor; render_transcript reads visual_anchor to repaint the
+        // highlighted range).
+        "V" => {
+            crate::input::actions::chat::toggle_transcript_visual(&mut state.borrow_mut());
+            true
+        }
+        // `y`: copy the visual selection (if active) or just the cursor row
+        // to the system clipboard via wl-copy. See
+        // yank_transcript_row_or_selection's doc comment for the
+        // selection-vs-single-row contract.
+        "y" => {
+            crate::input::actions::chat::yank_transcript_row_or_selection(state);
+            true
+        }
         "s" => {
             crate::input::actions::chat::save_selected_exchange(state);
             true
@@ -1380,8 +1398,15 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::cycle_gloss(&mut state.borrow_mut(), -1);
             true
         }
+        // Escape exits an active `V` selection FIRST and stays in the panel
+        // (mirrors the reader's own visual-mode Escape); only a SECOND
+        // Escape, with no selection active, focuses the reader.
         "Escape" => {
-            crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
+            let mut s = state.borrow_mut();
+            if crate::input::actions::chat::exit_transcript_visual(&mut s) {
+                return true;
+            }
+            crate::input::actions::chat::focus_reader(&mut s);
             true
         }
         _ => true,

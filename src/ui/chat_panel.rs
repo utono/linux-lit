@@ -153,7 +153,19 @@ impl ChatPanel {
     /// top of the viewport. Unlike `render_rows`, this does NOT pin the
     /// scroll to the end — pinning is what made j/k cursor moves look like
     /// dead keys.
-    pub fn render_rows_focused_cursor(&self, rows: &[TranscriptRow], cursor: usize) {
+    ///
+    /// `selection`, when `Some((start, end))` (widget-row space, inclusive,
+    /// `start <= end`), also paints `.chat-visual-row` on every widget in that
+    /// range — the `V` visual-mode highlight. `start`/`end` may equal
+    /// `cursor` (a one-row selection just anchored); both classes can land on
+    /// the same widget, and the CSS box-shadow/background compose fine
+    /// together (see `theme::generate_css`'s `.chat-visual-row` comment).
+    pub fn render_rows_focused_cursor(
+        &self,
+        rows: &[TranscriptRow],
+        cursor: usize,
+        selection: Option<(usize, usize)>,
+    ) {
         self.rebuild_rows(rows);
         let boxx = self.transcript_box.clone();
         let scroll = self.transcript_scroll.clone();
@@ -170,6 +182,11 @@ impl ChatPanel {
                     }
                 } else {
                     c.remove_css_class("chat-cursor-row");
+                }
+                if selection.is_some_and(|(start, end)| i >= start && i <= end) {
+                    c.add_css_class("chat-visual-row");
+                } else {
+                    c.remove_css_class("chat-visual-row");
                 }
                 child = c.next_sibling();
                 i += 1;
@@ -310,5 +327,86 @@ impl ChatPanel {
     pub fn apply_font(&self, font_family: &str, font_size: u32) {
         let font_str = format!("{} {}", font_family, font_size);
         crate::ui::apply_font_to_views(&[self.input.input()], &font_str, "chat-input-font");
+    }
+}
+
+/// The RENDERED text for a single `TranscriptRow`, in WIDGET space — one
+/// entry per label `rebuild_rows`/`append_gloss_answer` would actually paint,
+/// same granularity `widget_row_count` (chat.rs) counts and `y` (the
+/// transcript's yank bind) copies. This is a second, parallel implementation
+/// of `rebuild_rows`'s dispatch — kept in sync by `chat_gloss_rows_tests`-style
+/// coverage below and by the fact that both read the exact same
+/// `gloss_render::chat_gloss_rows` split for `GlossAnswer`.
+///
+/// Deliberately mirrors `rebuild_rows`'s text, NOT the raw markup: a
+/// `GlossAnswer` row's `<speaker>`/`<verse>`/`<gloss>` tags are stripped by
+/// `chat_gloss_rows` exactly as they are for display, so `y` copies
+/// "CYMBELINE" / "Stand by my side..." — never a literal `<speaker>` tag.
+/// `Thinking` yields the same placeholder text the label shows ("thinking…")
+/// rather than an empty string, so a yank mid-request doesn't silently copy
+/// nothing.
+pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
+    match row {
+        TranscriptRow::GlossAnswer(markup) => {
+            use crate::ui::gloss_render::chat_gloss_rows;
+            let rows = chat_gloss_rows(markup);
+            if rows.is_empty() {
+                // Mirrors append_gloss_answer's own plain-label fallback.
+                vec![markup.clone()]
+            } else {
+                rows.into_iter().map(|(_, text)| text).collect()
+            }
+        }
+        TranscriptRow::Question(t) => vec![t.clone()],
+        TranscriptRow::Answer(t) => vec![t.clone()],
+        TranscriptRow::Chip(t) => vec![t.clone()],
+        TranscriptRow::Error(t) => vec![t.clone()],
+        TranscriptRow::Thinking => vec!["thinking\u{2026}".to_string()],
+        TranscriptRow::SavedMark => vec!["\u{2713} saved".to_string()],
+    }
+}
+
+#[cfg(test)]
+mod row_widget_texts_tests {
+    use super::{row_widget_texts, TranscriptRow as R};
+
+    #[test]
+    fn plain_rows_yield_their_own_text() {
+        assert_eq!(row_widget_texts(&R::Question("Q: x".into())), vec!["Q: x"]);
+        assert_eq!(row_widget_texts(&R::Answer("A".into())), vec!["A"]);
+        assert_eq!(row_widget_texts(&R::Chip("chip".into())), vec!["chip"]);
+        assert_eq!(row_widget_texts(&R::Error("err".into())), vec!["err"]);
+        assert_eq!(row_widget_texts(&R::Thinking), vec!["thinking\u{2026}"]);
+        assert_eq!(row_widget_texts(&R::SavedMark), vec!["\u{2713} saved"]);
+    }
+
+    /// The load-bearing case: a GlossAnswer must yield the RENDERED source
+    /// text ("CYMBELINE", "Stand by my side..."), never the raw
+    /// `<speaker>`/`<verse>`/`<gloss>` markup — proving `y` copies what the
+    /// user sees, matching `chat_gloss_rows_tests::speaker_verse_gloss_become_typed_rows`
+    /// in gloss_render.rs.
+    #[test]
+    fn gloss_answer_yields_rendered_text_not_raw_markup() {
+        let markup = "<speaker>CYMBELINE</speaker>\n\
+                       <verse>Stand by my side, you whom the gods have made</verse>\n\
+                       <gloss>Cymbeline honors the disguised Belarius.</gloss>";
+        let texts = row_widget_texts(&R::GlossAnswer(markup.to_string()));
+        assert_eq!(
+            texts,
+            vec![
+                "CYMBELINE".to_string(),
+                "Stand by my side, you whom the gods have made".to_string(),
+                "Cymbeline honors the disguised Belarius.".to_string(),
+            ]
+        );
+        for t in &texts {
+            assert!(!t.contains('<'), "row text must not contain raw markup: {t:?}");
+        }
+    }
+
+    #[test]
+    fn untagged_gloss_answer_falls_back_to_raw_text_as_one_widget() {
+        let texts = row_widget_texts(&R::GlossAnswer("no tags here".to_string()));
+        assert_eq!(texts, vec!["no tags here".to_string()]);
     }
 }
