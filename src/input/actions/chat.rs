@@ -610,24 +610,28 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         let source_markup =
             crate::input::actions::echoes::build_source_header(&seg.cursor_lines, &gctx.speaker);
         let (genre, unit, _units) = crate::gloss::genre_unit(&work.work_type);
-        let scene = crate::app::scene_synopsis::synopsis_label(&s, seg.div1, seg.div2);
-        let mut unit_label = unit.to_string();
-        if let Some(c) = unit_label.get_mut(0..1) {
-            c.make_ascii_uppercase();
-        }
+        // Derive genre/unit_label/scene_label EXACTLY as `ask_claude` does, so
+        // the shared `build_qa_answer_message` produces the journal Passage
+        // band's message byte-for-byte (titlecase_first, not make_ascii_uppercase;
+        // scene_label(div1,div2), not synopsis_label — the two surfaces stay in
+        // sync by construction).
+        let unit_label = crate::input::actions::journal::titlecase_first(unit);
+        let scene_label = crate::app::scene_synopsis::scene_label(seg.div1, seg.div2);
+        // The full scene text is the SAME window the journal Passage band sends
+        // (anchored on the journal's saved reader position via journal_band).
+        let scene_text = crate::input::actions::journal::current_scene_text(&s);
         let chip: String = seg.segments[seg.cursor_index].chars().take(120).collect();
-        // Everything chat_user_message needs to (re)build the user message once
-        // the question has been rewritten. Captured by value so the answer call
-        // — issued inside improve_question's callback — can build it there
+        // Everything build_qa_answer_message needs to (re)build the user message
+        // once the question has been rewritten. Captured by value so the answer
+        // call — issued inside improve_question's callback — can build it there
         // without re-borrowing the (possibly moved) cursor context.
         let msg_ctx = ChatMsgCtx {
             genre: genre.to_string(),
             title: work.title.clone(),
             author: work.author.clone(),
             unit_label,
-            scene,
-            segments: seg.segments.clone(),
-            cursor_index: seg.cursor_index,
+            scene_label,
+            scene_text,
         };
         let meta = (
             seg.div1,
@@ -683,12 +687,31 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         &[],
         move |st, improved| {
         let (div1, div2, start_citation, end_citation, source_markup) = meta.clone();
-        // Build the user message + wire turns with the IMPROVED question.
+        // Build the user message + wire turns with the IMPROVED question. The
+        // chat panel sends the journal's PASSAGE-band message — full scene text
+        // + the exact passage + question — via the ONE shared builder, so the
+        // two surfaces stay byte-identical by construction. The `.._citation`
+        // strings are the passage's own citations (the same div/citations the
+        // journal Passage band would use); the builder ignores div/start/end and
+        // keys only on the variant, but we thread them through faithfully.
+        let band = crate::app::JournalBand::Passage {
+            div1,
+            div2,
+            start: start_citation.clone(),
+            end: end_citation.clone(),
+        };
         let (user_msg, turns) = {
             let s = st.borrow();
-            let user_msg = crate::input::segments::chat_user_message(
-                &msg_ctx.genre, &msg_ctx.title, &msg_ctx.author, &msg_ctx.unit_label,
-                &msg_ctx.scene, &msg_ctx.segments, msg_ctx.cursor_index, &improved,
+            let user_msg = crate::input::actions::journal::build_qa_answer_message(
+                &band,
+                &msg_ctx.genre,
+                &msg_ctx.title,
+                &msg_ctx.author,
+                &msg_ctx.unit_label,
+                &msg_ctx.scene_label,
+                &msg_ctx.scene_text,
+                &source_markup,
+                &improved,
             );
             // Prior turns: capped and deduped by build_history_turns. The
             // current message is likewise sent question-only when its passage
@@ -791,18 +814,18 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Context captured at submit time to (re)build the chat user message once the
-/// question has been rewritten by `improve_question`. Everything
-/// `chat_user_message` needs EXCEPT the question itself — resolved from the
-/// cursor's passage at submit, so a cursor move during the two async round-trips
-/// can't change the passage that was asked about.
+/// question has been rewritten by `improve_question`. Everything the shared
+/// `build_qa_answer_message` (Passage band) needs EXCEPT the question and the
+/// passage source (the latter comes from `meta`) — resolved from the cursor's
+/// passage at submit, so a cursor move during the two async round-trips can't
+/// change the passage that was asked about.
 struct ChatMsgCtx {
     genre: String,
     title: String,
     author: String,
     unit_label: String,
-    scene: String,
-    segments: Vec<String>,
-    cursor_index: usize,
+    scene_label: String,
+    scene_text: String,
 }
 
 /// Wrap an exchange's answer as the right `TranscriptRow` variant: a
