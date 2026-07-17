@@ -7,7 +7,16 @@ use gtk4::prelude::*;
 
 pub enum TranscriptRow {
     Question(String),
+    /// Plain-prose answer (journal Q&A, revision, consolidation): rendered as
+    /// a single `chat-a` label, no markup parsing.
     Answer(String),
+    /// A reader-gloss answer, carrying the RAW `<speaker>`/`<verse>`/`<gloss>`
+    /// markup exactly as stored in lit.db. Rendered as several typed rows
+    /// (`gloss_render::chat_gloss_rows`) so the quoted source and the model's
+    /// commentary read distinctly instead of showing literal tags. Falls back
+    /// to a single plain `chat-a` label when the text carries no recognized
+    /// tags (defensive — should not happen for a real gloss answer).
+    GlossAnswer(String),
     /// Context chip: italic excerpt of the cursor segment an exchange was
     /// asked from (shown when it differs from the previous exchange).
     Chip(String),
@@ -176,6 +185,10 @@ impl ChatPanel {
             self.transcript_box.remove(&child);
         }
         for row in rows {
+            if let TranscriptRow::GlossAnswer(markup) = row {
+                self.append_gloss_answer(markup);
+                continue;
+            }
             let (text, class) = match row {
                 TranscriptRow::Question(t) => (t.as_str(), "chat-q"),
                 TranscriptRow::Answer(t) => (t.as_str(), "chat-a"),
@@ -183,15 +196,46 @@ impl ChatPanel {
                 TranscriptRow::Error(t) => (t.as_str(), "chat-error"),
                 TranscriptRow::Thinking => ("thinking\u{2026}", "chat-a"),
                 TranscriptRow::SavedMark => ("\u{2713} saved", "chat-saved"),
+                TranscriptRow::GlossAnswer(_) => unreachable!("handled above"),
             };
-            let label = gtk4::Label::new(Some(text));
-            label.set_wrap(true);
-            label.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
-            label.set_halign(gtk4::Align::Start);
-            label.set_xalign(0.0);
-            label.set_selectable(false);
-            label.add_css_class(class);
-            self.transcript_box.append(&label);
+            self.append_row_label(text, class);
+        }
+    }
+
+    fn append_row_label(&self, text: &str, class: &str) {
+        let label = gtk4::Label::new(Some(text));
+        label.set_wrap(true);
+        label.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        label.set_halign(gtk4::Align::Start);
+        label.set_xalign(0.0);
+        label.set_selectable(false);
+        label.add_css_class(class);
+        self.transcript_box.append(&label);
+    }
+
+    /// Render a reader-gloss's raw `<speaker>`/`<verse>`/`<gloss>` markup as
+    /// several typed labels (`gloss_render::chat_gloss_rows`) instead of one
+    /// plain label, so the quoted source (speaker/verse/stage) reads visually
+    /// distinct from the model's own commentary (gloss) — mirroring, at the
+    /// label level, how the gloss OVERLAY styles the same tags with
+    /// `TextTag`s. Falls back to one plain `chat-a` label with the raw text
+    /// when the markup carries none of the recognized tags (defensive: should
+    /// not happen for a real gloss answer, but never show a blank row).
+    fn append_gloss_answer(&self, markup: &str) {
+        use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
+        let rows = chat_gloss_rows(markup);
+        if rows.is_empty() {
+            self.append_row_label(markup, "chat-a");
+            return;
+        }
+        for (kind, text) in rows {
+            let class = match kind {
+                ChatGlossRowKind::Speaker => "chat-a-speaker",
+                ChatGlossRowKind::Verse => "chat-a-verse",
+                ChatGlossRowKind::Stage => "chat-a-stage",
+                ChatGlossRowKind::Gloss => "chat-a-gloss",
+            };
+            self.append_row_label(&text, class);
         }
     }
 

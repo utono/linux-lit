@@ -703,6 +703,18 @@ pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell
     if !crate::input::actions::chat::open_chat_pinned_to_selection(state_rc) {
         return; // callee already toasted why
     }
+    // open_chat_pinned_to_selection -> toggle_chat_layout opens the panel via
+    // focus_prompt (correct for Tab, whose whole purpose is to land the user
+    // ready to ask). '-' auto-glosses instead — no question was typed — so
+    // immediately retire that input and hand focus to the transcript, same
+    // shape as submit_chat_prompt's answer-arrived path. Without this the
+    // user lands in a focused, empty "Ask about this passage" input while the
+    // gloss is still generating.
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat_panel.close_input();
+        crate::input::actions::chat::focus_transcript(&mut s);
+    }
 
     let cached = crate::input::actions::chat::reload_gloss_list(&ctx.work_abbrev, &ctx.start_citation);
     {

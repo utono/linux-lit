@@ -1361,6 +1361,13 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::regloss_pinned(state);
             true
         }
+        // `c`: copy the currently-displayed gloss's id, mirroring the gloss
+        // overlay's `c` (handle_gloss_key below) — but reading the PANEL's own
+        // gloss_list/gloss_index, not the overlay's.
+        "c" => {
+            crate::input::actions::chat::copy_gloss_id(state);
+            true
+        }
         "l" if is_ctrl => {
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
             true

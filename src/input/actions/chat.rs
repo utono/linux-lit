@@ -605,6 +605,21 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
     );
 }
 
+/// Wrap an exchange's answer as the right `TranscriptRow` variant: a
+/// reader-gloss exchange (`push_gloss_exchange` always stores an empty
+/// `question` — "the user asked nothing", see its doc comment) carries RAW
+/// `<speaker>`/`<verse>`/`<gloss>` markup and must render through
+/// `GlossAnswer` (typed rows, styled) rather than `Answer` (one plain label,
+/// which would show the literal tags).
+fn answer_row(e: &Exchange) -> crate::ui::chat_panel::TranscriptRow {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    if e.question.is_empty() {
+        R::GlossAnswer(e.answer.clone())
+    } else {
+        R::Answer(e.answer.clone())
+    }
+}
+
 /// Build the transcript rows; also returns the row index of the cursor
 /// exchange's question, so renders can scroll the selection into view.
 fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize) {
@@ -622,7 +637,7 @@ fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, 
             cursor_row = rows.len();
         }
         rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
-        rows.push(R::Answer(e.answer.clone()));
+        rows.push(answer_row(e));
         if e.saved_id.is_some() {
             rows.push(R::SavedMark);
         }
@@ -705,6 +720,47 @@ pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
         s.chat.gloss_index + 1,
         n
     ));
+}
+
+/// `c` on the transcript: copy the currently-displayed gloss's id to the
+/// clipboard, mirroring the gloss OVERLAY's `c` (`gloss::copy_gloss_id`,
+/// bound in `handle_gloss_key`) — same "Gloss ID: {id}" label, same `wl-copy`
+/// spawn, same log line, same "Copied {}" toast.
+///
+/// Deliberately NOT a call to `gloss::copy_gloss_id`: that function reads
+/// `s.gloss_list`/`s.gloss_index` on `AppState`, which belong to the gloss
+/// OVERLAY — a same-named but entirely separate pair of fields from this
+/// panel's `s.chat.gloss_list`/`s.chat.gloss_index`. Calling the overlay's
+/// version from the panel would copy whatever the overlay last displayed (or
+/// nothing), not the gloss on screen in the chat panel.
+pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
+    let copied = {
+        let s = state.borrow();
+        s.chat.gloss_list.get(s.chat.gloss_index).map(|gloss| {
+            let copied = format!("Gloss ID: {}", gloss.gloss_id);
+            let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+            crate::logging::log(&format!("CHAT-GLOSS: copied \"{}\" to clipboard", copied));
+            copied
+        })
+    };
+    // Toast AFTER dropping the borrow above — show_chapter_toast_secs takes
+    // &AppState, so it re-borrows; mirrors copy_gloss_id's own toast-after-
+    // borrow-drop discipline.
+    let s = state.borrow();
+    match copied {
+        Some(copied) => {
+            crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 3);
+        }
+        // Panel opened via Tab (no gloss ever shown) or the gloss list failed
+        // to load: unlike the overlay (where `c` is unreachable without a
+        // displayed gloss), the transcript's `c` is reachable any time the
+        // panel is open, so silence would read as a dead key. A short toast
+        // gives the same feedback shape as every other no-op bind in this
+        // module (e.g. "No passage to regloss").
+        None => {
+            crate::input::navigation::show_chapter_toast_secs(&s, "No gloss to copy", 2);
+        }
+    }
 }
 
 /// The "n of N" chip for the gloss slot, so cycling shows which stored gloss
@@ -1144,12 +1200,23 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Revision view: the panel content IS the saved entry (Q + A), no history.
+///
+/// `question` empty means the saved exchange was a reader-gloss (see
+/// `answer_row`'s doc comment) — its `answer` is raw markup, so it must
+/// render through `GlossAnswer`. This path IS reachable for a gloss: `s` on
+/// the transcript saves whichever exchange the cursor is on, and the gloss
+/// lives at slot #1.
 pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
+    let answer_row = if question.is_empty() {
+        R::GlossAnswer(answer.to_string())
+    } else {
+        R::Answer(answer.to_string())
+    };
     s.chat_panel.render_rows(&[
         R::SavedMark,
         R::Question(format!("Q: {}", question)),
-        R::Answer(answer.to_string()),
+        answer_row,
     ]);
 }
 

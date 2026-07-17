@@ -118,6 +118,82 @@ pub(crate) fn rendered_verse_text(markup: &str) -> String {
     out
 }
 
+/// One display row of a gloss rendered for the chat panel's transcript,
+/// carrying enough type information for the caller to apply a distinct CSS
+/// class per row (the panel's `TranscriptRow::Answer` is a single plain
+/// label, so styling happens by emitting several typed rows instead of one).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChatGlossRowKind {
+    /// Speaker name heading a quoted source turn (e.g. "CYMBELINE").
+    Speaker,
+    /// A line of quoted verse/prose source text.
+    Verse,
+    /// A stage direction inside the quoted source turn.
+    Stage,
+    /// Explication prose — the gloss's own commentary (the "focus" body).
+    Gloss,
+}
+
+/// Split raw gloss markup (`<speaker>`/`<verse>`/`<stage>`/`<gloss>`/`<pron>`
+/// tags, as stored in lit.db) into typed display rows, so a caller with only
+/// plain-label widgets (no `TextTag` styling) can still visually distinguish
+/// the quoted source from the model's own commentary.
+///
+/// Mirrors `populate_verse_buffer`'s element filter (drops empty/"UNKNOWN"
+/// speakers, drops `<pron>` notes — TTS-only, no display text) and
+/// `rendered_verse_text`'s per-element cleanup (`strip_ipa`, `strip_hi_spans`,
+/// echo-bracket quote/citation split). Returns one row per source LINE (each
+/// `<verse>` may itself carry embedded `\n`-joined lines from
+/// `gloss_block_markups`, so those are split too) rather than joining verse
+/// lines into one paragraph — the chat panel wraps each row as its own
+/// label, so a joined multi-line block would lose its line breaks.
+///
+/// Returns an empty `Vec` when `markup` contains none of the recognized tags
+/// (e.g. a plain prose journal-Q&A answer) — callers should treat that as
+/// "not gloss markup" and fall back to rendering the text as-is.
+pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
+    let elements = parse_gloss_tags(markup);
+    let mut rows: Vec<(ChatGlossRowKind, String)> = Vec::new();
+    for el in &elements {
+        match el {
+            GlossElement::Speaker(name) => {
+                if is_displayed_speaker(name) {
+                    rows.push((ChatGlossRowKind::Speaker, name.clone()));
+                }
+            }
+            GlossElement::Verse(text) => {
+                let clean = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text)).0;
+                for line in clean.lines() {
+                    if !line.trim().is_empty() {
+                        rows.push((ChatGlossRowKind::Verse, line.to_string()));
+                    }
+                }
+            }
+            GlossElement::Stage(text) => {
+                let clean = crate::ui::gloss_block::strip_hi_spans(text).0;
+                if !clean.trim().is_empty() {
+                    rows.push((ChatGlossRowKind::Stage, clean));
+                }
+            }
+            GlossElement::Gloss(text) => {
+                if let Some((quote, citation)) = split_echo(text) {
+                    rows.push((ChatGlossRowKind::Verse, strip_ipa(&quote)));
+                    rows.push((ChatGlossRowKind::Stage, strip_ipa(&citation)));
+                } else {
+                    let clean = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text)).0;
+                    if !clean.trim().is_empty() {
+                        rows.push((ChatGlossRowKind::Gloss, clean));
+                    }
+                }
+            }
+            // <pron> is TTS-only (see rendered_verse_text's doc comment): no
+            // display row.
+            GlossElement::Pron(_) => {}
+        }
+    }
+    rows
+}
+
 pub(crate) fn apply_bracket_styling(
     buffer: &gtk4::TextBuffer,
     base_offset: i32,
@@ -647,5 +723,106 @@ mod rendered_text_tests {
         let light = rebuilt_render.find("what light").unwrap();
         let echo = rebuilt_render.find("echo").unwrap();
         assert!(soft < light && light < echo, "echo must trail both verses in the rebuilt basis: {rebuilt_render:?}");
+    }
+}
+
+#[cfg(test)]
+mod chat_gloss_rows_tests {
+    use super::{chat_gloss_rows, ChatGlossRowKind as K};
+
+    #[test]
+    fn speaker_verse_gloss_become_typed_rows() {
+        let m = "<speaker>CYMBELINE</speaker>\n\
+                 <verse>Stand by my side, you whom the gods have made</verse>\n\
+                 <gloss>Cymbeline honors the disguised Belarius.</gloss>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(
+            rows,
+            vec![
+                (K::Speaker, "CYMBELINE".to_string()),
+                (K::Verse, "Stand by my side, you whom the gods have made".to_string()),
+                (K::Gloss, "Cymbeline honors the disguised Belarius.".to_string()),
+            ]
+        );
+    }
+
+    // Dropped ("UNKNOWN"/empty) speakers vanish entirely, matching
+    // populate_verse_buffer's filter — no blank Speaker row.
+    #[test]
+    fn unknown_speaker_is_dropped() {
+        let m = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(rows, vec![(K::Verse, "a prose line".to_string())]);
+    }
+
+    // A multi-line <verse> body (as gloss_block_markups joins verse lines with
+    // "\n") splits into one row per non-blank line, so the panel doesn't lose
+    // line breaks by cramming them into one label.
+    #[test]
+    fn multiline_verse_splits_into_one_row_per_line() {
+        let m = "<verse>line one\nline two</verse>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(
+            rows,
+            vec![
+                (K::Verse, "line one".to_string()),
+                (K::Verse, "line two".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn stage_direction_is_its_own_row() {
+        let m = "<verse>Lay hands upon these traitors</verse>\n\
+                 <stage>[To Jourdain.]</stage>\n\
+                 <verse>Beldam, I think we watched you</verse>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(
+            rows,
+            vec![
+                (K::Verse, "Lay hands upon these traitors".to_string()),
+                (K::Stage, "[To Jourdain.]".to_string()),
+                (K::Verse, "Beldam, I think we watched you".to_string()),
+            ]
+        );
+    }
+
+    // IPA and <hi> are stripped for display, same as rendered_verse_text.
+    #[test]
+    fn strips_ipa_and_hi() {
+        let m = "<verse>Dread /drɛːd/ <hi>sovereign</hi></verse>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(rows, vec![(K::Verse, "Dread sovereign".to_string())]);
+    }
+
+    // An echo bracket inside a <gloss> splits into a quoted-verse-like row plus
+    // a citation row (mirrors rendered_verse_text's split_echo handling), not a
+    // plain Gloss row.
+    #[test]
+    fn echo_gloss_splits_quote_and_citation() {
+        let m = "<gloss>[\"a quote\" \u{2014} Macbeth 1.1]</gloss>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, K::Verse);
+        assert!(rows[0].1.contains("a quote"));
+        assert_eq!(rows[1].0, K::Stage);
+        assert!(rows[1].1.contains("Macbeth"));
+    }
+
+    // A <pron> note is TTS-only and produces no display row.
+    #[test]
+    fn pron_produces_no_row() {
+        let m = "<verse>To be</verse>\n<pron>BEE: /bi\u{720}/</pron>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(rows, vec![(K::Verse, "To be".to_string())]);
+    }
+
+    // Plain prose with none of the recognized tags yields an empty Vec — the
+    // caller's signal to fall back to rendering the text as-is (a journal Q&A
+    // answer, not a gloss).
+    #[test]
+    fn plain_prose_yields_no_rows() {
+        let rows = chat_gloss_rows("Just a plain prose answer, no tags here.");
+        assert!(rows.is_empty());
     }
 }

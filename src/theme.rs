@@ -1277,12 +1277,23 @@ pub fn generate_css(
            border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; }} \
          .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; }} \
          .chat-saved {{ color: alpha({chat_ink}, 0.65); }} \
+         .chat-a-speaker {{ color: {chat_ink}; font-weight: bold; font-variant: small-caps; \
+           letter-spacing: 1px; padding-top: 6px; }} \
+         .chat-a-verse {{ color: alpha({chat_ink}, 0.70); font-style: italic; \
+           padding-left: 6px; }} \
+         .chat-a-stage {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
+           padding-left: 6px; }} \
+         .chat-a-gloss {{ color: {chat_ink}; padding-top: 4px; }} \
          .chat-panel-float .chat-q {{ color: {dim}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \
            border-left: 2px solid alpha({fg}, 0.35); }} \
          .chat-panel-float .chat-error {{ color: alpha({fg}, 0.55); }} \
          .chat-panel-float .chat-saved {{ color: {dim}; }} \
+         .chat-panel-float .chat-a-speaker {{ color: {fg}; }} \
+         .chat-panel-float .chat-a-verse {{ color: {dim}; }} \
+         .chat-panel-float .chat-a-stage {{ color: alpha({fg}, 0.55); }} \
+         .chat-panel-float .chat-a-gloss {{ color: {fg}; }} \
          .chat-input {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.30); border-radius: 6px; \
            transition: border-color 320ms ease-out, \
