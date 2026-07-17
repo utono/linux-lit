@@ -1300,7 +1300,13 @@ pub fn generate_css(
          .title-bar {{ background-color: {root}; padding: 4px 12px; }} \
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
-         .chat-panel {{ background-color: transparent; }} \
+         /* Pinned (single-column) panel is a card surface too: it shares the \
+            main card's background and ink, so it reads like an extension of the \
+            card rather than pale text floating on the bare root. (The float \
+            placement gets the same treatment via .chat-panel-float below; the \
+            Pinned panel stands alone beside the card with its own outer margin, \
+            so it needs no border to separate it from a reading column.) */ \
+         .chat-panel {{ background-color: {bg}; padding: 12px; }} \
          /* No TOP and no BOTTOM border. The float panel sits directly below the \
             card's header band (Fix 6's margin_top clears it) and its bottom now \
             stops at the two-column divider's end (size_panel), so neither a top \
@@ -1517,7 +1523,12 @@ pub fn generate_css(
         header_border = blend_colors(&theme.dim_fg, &theme.text_bg, 0.5),
         font = font_family,
         size = font_size,
-        chat_ink = contrast_on(&theme.root_color),
+        // The panel (Pinned and float alike) now sits on the card background
+        // {bg}, so its ink must contrast the CARD, not the root — use the card
+        // foreground directly, matching the float overrides' {fg}. (Was
+        // contrast_on(root_color), correct only while the Pinned panel was
+        // transparent-over-root.)
+        chat_ink = theme.text_fg,
         divider_bottom = divider_bottom_px,
         q_body = CHAT_QUOTE_BODY_INDENT,
         q_speaker = CHAT_QUOTE_SPEAKER_INDENT,
