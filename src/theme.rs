@@ -1301,21 +1301,19 @@ pub fn generate_css(
          .title-bar-label {{ color: {dim}; font-size: 14px; }} \
          .title-bar-hint {{ color: {dim}; font-size: 12px; opacity: 0.6; }} \
          .chat-panel {{ background-color: transparent; }} \
-         /* No TOP border. The float panel sits directly below the card's own \
-            header band (Fix 6's margin_top clears it), so a top border drew a \
-            stray rule under the header with nothing above it to separate FROM. \
-            Left/right/bottom stay — they separate the floating panel from the \
-            reading column it overlaps and the space below. \
-            Corners: only the BOTTOM-RIGHT rounds, at the card's own 12px — the \
-            panel fills to the card's rounded bottom-right, so a square corner \
-            there juts a sharp bite past the card's curve. The other three stay \
-            square: top-left/-right butt the header band, bottom-left is the \
-            column divider. Order is TL TR BR BL. */ \
+         /* No TOP and no BOTTOM border. The float panel sits directly below the \
+            card's header band (Fix 6's margin_top clears it) and its bottom now \
+            stops at the two-column divider's end (size_panel), so neither a top \
+            rule (nothing above it to separate FROM) nor a bottom rule (the panel \
+            edge is already the divider's end) reads as a boundary. Only \
+            LEFT/RIGHT stay — they separate the floating panel from the reading \
+            column it overlaps. No border-radius: the bottom-right curve only \
+            made sense as a stroked corner nesting in the card, and there is no \
+            stroked bottom edge now. */ \
          .chat-panel-float {{ background-color: {bg}; \
            border-left: 1px solid alpha({fg}, 0.25); \
            border-right: 1px solid alpha({fg}, 0.25); \
-           border-bottom: 1px solid alpha({fg}, 0.25); \
-           border-radius: 0 0 12px 0; \
+           border-radius: 0; \
            padding: 12px; }} \
          /* Fix 5: the transcript renders at the CARD's own font_size, not a \
             shrunk one — source lines AND the explication/gloss paragraphs \
