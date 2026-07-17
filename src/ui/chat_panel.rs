@@ -237,6 +237,16 @@ impl ChatPanel {
         adj.set_value((adj.value() + dir * adj.page_size() * 0.35).clamp(0.0, max));
     }
 
+    /// Scroll a HALF page down (`down = true`) or up — vim `Ctrl-d`/`Ctrl-u`.
+    /// Half is `page_size * 0.5`, distinct from `scroll_transcript_step`'s 0.35
+    /// nudge.
+    pub fn scroll_transcript_half_page(&self, down: bool) {
+        let adj = self.transcript_scroll.vadjustment();
+        let max = (adj.upper() - adj.page_size()).max(0.0);
+        let delta = adj.page_size() * 0.5 * if down { 1.0 } else { -1.0 };
+        adj.set_value((adj.value() + delta).clamp(0.0, max));
+    }
+
     /// Jump the transcript viewport straight to the top (`to_end = false`) or
     /// bottom (`to_end = true`) — the scroll-only `gg`/`G` behavior for
     /// `PanelView::Journal`/`Question`, which have no row cursor for

@@ -1435,6 +1435,17 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::cycle_gloss(&mut state.borrow_mut(), -1);
             true
         }
+        // Ctrl-d / Ctrl-u: vim half-page down / up — a viewport scroll in
+        // EVERY view (Gloss/Journal/Question), not a cursor move, so no
+        // landable-row logic and no view gating.
+        "d" if is_ctrl => {
+            crate::input::actions::chat::transcript_half_page(&mut state.borrow_mut(), true);
+            true
+        }
+        "u" if is_ctrl => {
+            crate::input::actions::chat::transcript_half_page(&mut state.borrow_mut(), false);
+            true
+        }
         // Escape exits an active `V` selection FIRST and stays in the panel
         // (mirrors the reader's own visual-mode Escape); only a SECOND
         // Escape, with no selection active, focuses the reader.

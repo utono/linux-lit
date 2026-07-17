@@ -1478,6 +1478,14 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 /// selected" is a pure function of "which row the cursor is on". Keeping two
 /// independently-steppable cursors would let them drift out of sync (e.g. `s`
 /// saving an exchange the accent bar isn't even on).
+/// Ctrl-d / Ctrl-u: vim half-page scroll. A pure VIEWPORT move — it does not
+/// touch the row cursor or care which view is active, so unlike
+/// `transcript_cursor_move` it needs no landable-row logic or Gloss/Journal/
+/// Question gating.
+pub(crate) fn transcript_half_page(s: &mut AppState, down: bool) {
+    s.chat_panel.scroll_transcript_half_page(down);
+}
+
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
     // Journal and Question are both flat, uncycled views with no
     // row_cursor/row_owner of their own — neither goes through
