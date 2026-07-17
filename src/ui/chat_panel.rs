@@ -326,8 +326,12 @@ impl ChatPanel {
     /// 0 margin, set in `new`), so card_width is passed as 0 (the real `open`
     /// no-ops the margin re-align when `card_width <= 0`). No legend on the chat
     /// input ("" opts out).
-    pub fn open_input(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str) {
-        self.input.open(title, hint, "", 0, block_fill, block_fg);
+    pub fn open_input(&self, title: &str, hint: &str, block_fill: &str, block_fg: &str, insert: bool) {
+        if insert {
+            self.input.open_insert(title, hint, "", 0, block_fill, block_fg);
+        } else {
+            self.input.open(title, hint, "", 0, block_fill, block_fg);
+        }
     }
     pub fn take_input_text(&self) -> String {
         self.input.take_text()

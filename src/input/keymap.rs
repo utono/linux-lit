@@ -1371,8 +1371,10 @@ fn handle_chat_transcript_key(
             true
         }
         "a" => {
-            // Ask: re-show the retired input and focus it.
-            crate::input::actions::chat::focus_prompt(&mut state.borrow_mut());
+            // Ask: re-show the retired input, focus it, and land in INSERT —
+            // `a` already means "type now", so a NORMAL landing would force a
+            // second `i`/`a` press.
+            crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             true
         }
         "r" | "R" => {

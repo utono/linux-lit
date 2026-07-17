@@ -430,14 +430,25 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
 /// showing, retitle it — but ONLY when the input is empty (a draft always
 /// wins over a title refresh).
 pub(crate) fn focus_prompt(s: &mut AppState) {
+    focus_prompt_in_mode(s, false);
+}
+
+/// `focus_prompt`, but the ask input starts in vim INSERT — the caret is ready
+/// to type with no `i`/`a` press first. For the transcript's `a`, whose gesture
+/// already means "ask now"; the panel-open paths keep NORMAL via `focus_prompt`.
+pub(crate) fn focus_prompt_insert(s: &mut AppState) {
+    focus_prompt_in_mode(s, true);
+}
+
+fn focus_prompt_in_mode(s: &mut AppState, insert: bool) {
     s.input_mode = crate::app::InputMode::ChatPrompt;
     let (title, hint) = prompt_title_hint(s);
     if !s.chat_panel.input_is_open() {
-        s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+        s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg, insert);
     } else if s.chat_panel.peek_input_text().trim().is_empty() {
         // No draft to lose: re-titling via open_input is safe (it also
         // reseeds the vim engine, but there's nothing in it to destroy).
-        s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+        s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg, insert);
     }
     // Tab-cycle cue: flash the widget that just became active.
     s.chat_panel.flash_input();
@@ -1409,7 +1420,7 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
             // for open_input's vim reseed to destroy.
             if s.chat_panel.input_is_open() && s.chat_panel.peek_input_text().trim().is_empty() {
                 let (title, hint) = prompt_title_hint(&s);
-                s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+                s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg, false);
             }
             render_saved_entry(&s, &q, &a);
             // Re-derive the glossed-line tint so the just-saved passage colors
@@ -1558,7 +1569,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                     s.chat.revision_of = Some(id);
                     render_saved_entry(&s, &q, &a);
                     let (title, hint) = prompt_title_hint(&s);
-                    s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
+                    s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg, false);
                     s.input_mode = crate::app::InputMode::ChatPrompt;
                     // Same refresh as the `s` save path: the consolidated entry
                     // is a new journal page, so re-derive the glossed-line tint
