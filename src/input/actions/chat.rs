@@ -340,9 +340,11 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
             crate::logging::log(&format!("CHAT: placed from selection ({:?})", placement));
         }
     }
+    // No "pinned" toast: the panel appearing beside the still-highlighted
+    // passage already says it. Failure paths above DO toast — that is the case
+    // the reader can't see for themselves.
     let s = state_rc.borrow();
     crate::input::visual::apply_selection_highlight_range(&s, start, end);
-    crate::input::navigation::show_chapter_toast_secs(&s, "Chat pinned to selection", 2);
     true
 }
 
