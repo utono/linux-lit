@@ -1324,7 +1324,12 @@ pub fn generate_css(
             `chat_size`, removed); the narrower panel still wraps fine at \
             full size (labels wrap via WordChar, see append_row_label), so \
             nothing else in this stylesheet depended on the smaller size. */ \
-         .chat-transcript {{ font-family: {font}; font-size: {size}pt; }} \
+         /* padding-right keeps the wrapped text clear of the scrollbar — it \
+            is on the SCROLLED content Box (.chat-transcript), inside the \
+            viewport, so the gutter sits between the text's right edge and the \
+            bar rather than being eaten by it. */ \
+         .chat-transcript {{ font-family: {font}; font-size: {size}pt; \
+           padding-right: 14px; }} \
          .chat-transcript label {{ padding-bottom: 3px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
