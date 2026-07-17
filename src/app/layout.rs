@@ -403,11 +403,11 @@ pub(crate) fn apply_card_sizing(
     let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
     if chat_open {
-        // Chat layout: pin the card flush right (keep the normal right
-        // margin); ALL remaining slack becomes the left margin, which is the
-        // space the chat panel renders over.
-        let end = (slack / 2).clamp(0, CARD_OUTER_MARGIN).min(slack.max(0));
-        let start = (slack - end).max(0);
+        // Chat layout: pin the card flush left (keep the normal left margin);
+        // ALL remaining slack becomes the right margin, which is the space the
+        // chat panel renders over.
+        let start = (slack / 2).clamp(0, CARD_OUTER_MARGIN).min(slack.max(0));
+        let end = (slack - start).max(0);
         content_hbox.set_width_request(card_w);
         content_hbox.set_margin_start(start);
         content_hbox.set_margin_end(end);

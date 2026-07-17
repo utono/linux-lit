@@ -2184,9 +2184,13 @@ pub(crate) fn size_panel(s: &AppState) {
         ChatPlacement::Pinned => {
             let ww = s.window.width().max(0);
             let end = crate::app::layout::CARD_OUTER_MARGIN;
-            // left outer margin (24) + gap to the card (16)
+            // right outer margin (24) + gap to the card (16)
             let w = ww - card_w - end - 24 - 16;
-            s.chat_panel.container.set_margin_start(24);
+            // Card is pinned flush LEFT (see apply_card_sizing's chat branch),
+            // so the panel sits to its RIGHT: card left margin + card width +
+            // the 16px gap.
+            let start = crate::app::layout::CARD_OUTER_MARGIN + card_w + 16;
+            s.chat_panel.container.set_margin_start(start);
             s.chat_panel.container.set_margin_top(0);
             s.chat_panel.container.set_valign(gtk4::Align::Center);
             s.chat_panel.container.remove_css_class("chat-panel-float");
