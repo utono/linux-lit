@@ -20,6 +20,18 @@ pub(crate) enum ChatPlacement {
     FloatRight,
 }
 
+/// Which content the transcript pane is showing: the session's live
+/// gloss/Q&A exchanges (`ChatState.exchanges`), or the pinned passage's
+/// SAVED journal entries (`ChatState.journal_list`) — a read-only view over a
+/// different lit.db table (`journal_entries`, `scope='passage'`), toggled by
+/// `t`. Default is `Gloss` — the panel's existing, unchanged behavior.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum PanelView {
+    #[default]
+    Gloss,
+    Journal,
+}
+
 /// One question/answer turn in the chat transcript.
 pub(crate) struct Exchange {
     pub question: String,
@@ -89,6 +101,24 @@ pub(crate) struct ChatState {
     /// range. `None` outside visual mode. Resets with the rest of `ChatState`
     /// on panel close / work switch (`#[derive(Default)]` above).
     pub visual_anchor: Option<usize>,
+    /// Which content the transcript pane currently shows — `t` flips this.
+    /// Must track `pinned_passage`/`gloss_ctx` — a fresh pin (`-` or a new
+    /// `Tab` selection) resets it to `Gloss` in `open_chat_pinned_to_selection`,
+    /// same reset point as `gloss_ctx`/`gloss_list`, for the same reason: a
+    /// `t` toggle answers "is THIS passage's journal shown", and a new pin is
+    /// a different passage.
+    pub view: PanelView,
+    /// The pinned passage's saved journal entries (`scope='passage'`, exact
+    /// citation match — see `db::journal::find_passage_pages`), in the DB
+    /// query's own order (`timestamp ASC, id ASC`). Loaded lazily the first
+    /// time `t` switches TO `Journal` view (see `toggle_panel_view`) and
+    /// re-loaded on every subsequent switch so a `s` save made while viewing
+    /// Journal is reflected immediately on the next toggle back. Empty (not
+    /// None) when there are none — `render_journal_view` shows a placeholder
+    /// row in that case, so "not loaded yet" and "loaded, zero rows" are
+    /// never conflated (the load always runs before this is read for
+    /// render). Cleared alongside `view` at the same reset point.
+    pub journal_list: Vec<crate::db::journal::JournalPage>,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -346,6 +376,11 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
         s.chat.gloss_ctx = None;
         s.chat.gloss_list.clear();
         s.chat.gloss_index = 0;
+        // A new pin describes a NEW passage: any journal view/list from the
+        // OLD passage must not survive to be shown (or silently reused) for
+        // this one — same reasoning as the gloss_ctx/gloss_list reset above.
+        s.chat.view = PanelView::Gloss;
+        s.chat.journal_list.clear();
         s.chat.pinned_passage = Some(pinned);
         // Re-place from the SELECTION, overriding toggle_chat_layout's
         // cursor-derived side. Only floats: a Pinned panel (single-column) has
@@ -589,6 +624,11 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
     {
         let mut s = state_rc.borrow_mut();
         s.chat.pending = true;
+        // A submitted question always answers into `exchanges` (the Gloss
+        // view's axis) — switch back to Gloss so the "thinking…" row, and
+        // then the answer, are visible even if the reader asked this while
+        // looking at the Journal view (`t`).
+        s.chat.view = PanelView::Gloss;
         render_transcript_with_thinking(&s, &question, &chip);
     }
 
@@ -828,6 +868,12 @@ pub(crate) fn push_gloss_exchange(
     // the gloss axis into the j/k axis (cycle_gloss writes only gloss_index).
     s.chat.cursor = 0;
     snap_row_cursor_to_exchange(s);
+    // A pushed gloss is exactly the content the Gloss view renders — force
+    // back to it so `-`/regloss/gloss-cycling always show what they just
+    // produced, even if the reader had toggled to Journal view first (`t`)
+    // and then pressed `r`/Ctrl+n/p. Without this the gloss would update
+    // in-memory while the panel kept showing the (now stale) journal list.
+    s.chat.view = PanelView::Gloss;
     render_transcript(s);
 }
 
@@ -848,7 +894,18 @@ fn wrap_index(cur: usize, delta: i32, len: usize) -> usize {
 /// in-memory `exchanges`, while this moves over lit.db rows (including earlier
 /// sessions'). Swaps transcript slot #1 in place, so follow-up exchanges below
 /// are untouched.
+///
+/// No-op in `PanelView::Journal`: the journal view is a flat, uncycled list
+/// of every saved Q&A for the passage (see `toggle_panel_view`'s doc comment
+/// for why cycling was deliberately NOT built for it) — Ctrl+n/p has nothing
+/// to swap there. Toasts rather than silently doing nothing, matching this
+/// module's other reachable-but-inapplicable binds (e.g. `copy_gloss_id`'s
+/// "No gloss to copy").
 pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
+    if s.chat.view == PanelView::Journal {
+        crate::input::navigation::show_chapter_toast_secs(s, "Ctrl+n/p cycles glosses \u{2014} t for gloss view", 2);
+        return;
+    }
     let n = s.chat.gloss_list.len();
     if n <= 1 {
         return; // nothing to cycle to
@@ -864,6 +921,118 @@ pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
         s.chat.gloss_index + 1,
         n
     ));
+}
+
+/// Pure flip: `Gloss` <-> `Journal`. Pulled out of `toggle_panel_view` so the
+/// toggle direction is unit-testable without an `AppState`/`Rc<RefCell<_>>`.
+fn flip_view(v: PanelView) -> PanelView {
+    match v {
+        PanelView::Gloss => PanelView::Journal,
+        PanelView::Journal => PanelView::Gloss,
+    }
+}
+
+/// Build the `Journal` view's transcript rows from a passage's saved journal
+/// pages: each entry as a `Q:` row + a plain-prose `Answer` row (never
+/// `GlossAnswer` — journal answers are prose, not `<speaker>`/`<verse>`
+/// markup, even for entries saved from a gloss's follow-up question). An
+/// empty list renders one `Answer` placeholder row rather than nothing, so a
+/// passage with no journal history reads as "checked, none found" instead of
+/// looking like a rendering bug. Pure (no `AppState`) so the row shape is
+/// unit-testable without a DB or GTK.
+fn journal_view_rows(pages: &[crate::db::journal::JournalPage]) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    if pages.is_empty() {
+        return vec![R::Answer("No journal entries for this passage".to_string())];
+    }
+    let mut rows = Vec::with_capacity(pages.len() * 2);
+    for p in pages {
+        rows.push(R::Question(format!("Q: {}", p.question)));
+        rows.push(R::Answer(p.answer.clone()));
+    }
+    rows
+}
+
+/// Load the pinned passage's saved journal entries (`scope='passage'`, exact
+/// citation match — see `db::journal::find_passage_pages`). Empty on any DB
+/// error or when there is no `gloss_ctx` to key the lookup from (mirrors
+/// `reload_gloss_list`'s own "empty on failure" contract).
+fn reload_journal_list(
+    work_abbrev: &str,
+    start_citation: &str,
+    end_citation: &str,
+) -> Vec<crate::db::journal::JournalPage> {
+    crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::journal::find_passage_pages(&conn, work_abbrev, start_citation, end_citation).ok()
+        })
+        .unwrap_or_default()
+}
+
+/// Render the `Journal` view at the current `s.chat.journal_list` — plain
+/// `render_rows` (no row-cursor accent bar, no visual-selection painting):
+/// the journal view is a deliberately flat, uncycled list (see
+/// `toggle_panel_view`'s doc comment), so it does not participate in the
+/// `row_cursor`/`row_owner` machinery `render_transcript` drives for the
+/// Gloss view's `j`/`k`/`V`/`y`. `j`/`k` while this view is showing instead
+/// fall back to plain viewport scrolling (see `handle_chat_transcript_key`'s
+/// `t`/`j`/`k` arms in keymap.rs).
+fn render_journal_view(s: &AppState) {
+    let rows = journal_view_rows(&s.chat.journal_list);
+    s.chat_panel.render_rows(&rows);
+}
+
+/// `t` on the transcript: toggle the panel between showing the pinned
+/// passage's stored GLOSS(es) (the existing `exchanges`-driven view) and its
+/// saved JOURNAL Q&As (`scope='passage'`, exact citation match — the entries
+/// `s` on THIS passage saved, not the whole scene's journal).
+///
+/// No-op with a toast when there is no `gloss_ctx` — the panel was opened
+/// with `Tab` (not `-`), so there is no glossed passage to look up a journal
+/// for. This mirrors `regloss_pinned`'s "No passage to regloss" no-op for the
+/// same missing-context reason.
+///
+/// Switching TO `Journal` (re)loads `journal_list` from lit.db every time,
+/// not just on first entry: a `s` save made while looking at the journal (or
+/// a follow-up `a` saved earlier in this session) must show up on the very
+/// next toggle back, not a stale snapshot from whenever the view was first
+/// opened. This is one DB read gated behind an explicit keypress — cheap
+/// compared to the gloss-cache reload the panel already does on every `-`
+/// and every gloss save, and simpler than trying to invalidate a cached copy
+/// from every save site.
+///
+/// Deliberately does NOT cycle journal entries with `Ctrl+n`/`Ctrl+p` — a
+/// flat list that `j`/`k` scrolls is simpler and the spec explicitly allows
+/// it ("Decide and justify; don't over-build"). A passage rarely accumulates
+/// more than a handful of saved Q&As, so paging one at a time (mirroring
+/// gloss cycling) would add a second cursor axis for little benefit; showing
+/// them all at once, newest last (`find_passage_pages`' own insertion order),
+/// reads like the reader's own running notes on the passage.
+pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
+    let ctx = state_rc.borrow().chat.gloss_ctx.clone();
+    let Some(ctx) = ctx else {
+        let s = state_rc.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No passage to show a journal for", 2);
+        return;
+    };
+    let mut s = state_rc.borrow_mut();
+    s.chat.view = flip_view(s.chat.view);
+    match s.chat.view {
+        PanelView::Journal => {
+            s.chat.journal_list =
+                reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
+            render_journal_view(&s);
+            crate::logging::log(&format!(
+                "CHAT-JOURNAL: view toggled to journal ({} entries)",
+                s.chat.journal_list.len()
+            ));
+        }
+        PanelView::Gloss => {
+            render_transcript(&mut s);
+            crate::logging::log("CHAT-JOURNAL: view toggled to gloss");
+        }
+    }
 }
 
 /// `c` on the transcript: copy the currently-displayed gloss's id to the
@@ -1165,6 +1334,15 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 /// independently-steppable cursors would let them drift out of sync (e.g. `s`
 /// saving an exchange the accent bar isn't even on).
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
+    // Journal view is a flat, uncycled list (see `toggle_panel_view`'s doc
+    // comment) with no row_cursor/row_owner of its own — it never went
+    // through `render_journal_view`'s sibling `render_transcript`, so reading
+    // `transcript_rows` (the Gloss-view's `exchanges`) here would move a
+    // cursor over content that isn't even on screen. j/k just scrolls.
+    if s.chat.view == PanelView::Journal {
+        s.chat_panel.scroll_transcript_step(delta as f64);
+        return;
+    }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let landable = landable_mask(&rows);
     let Some(clamped) = step_row_cursor_landable(s.chat.row_cursor, delta, &landable) else {
@@ -1254,6 +1432,15 @@ fn first_landable_at_or_after(from: usize, landable: &[bool]) -> usize {
 /// check only fires in that all-unlandable case, and exists purely so `V`
 /// cannot anchor a selection on a speaker label by construction.
 pub(crate) fn toggle_transcript_visual(s: &mut AppState) {
+    // No row_cursor/row_owner axis in Journal view (see
+    // `transcript_cursor_move`'s same guard) — `V` has nothing to anchor a
+    // selection over there, so it's a no-op rather than silently entering a
+    // selection state that `y`/render_transcript would then act on over the
+    // WRONG (Gloss-view) content.
+    if s.chat.view == PanelView::Journal {
+        crate::logging::log("CHAT-VISUAL: V ignored (journal view)");
+        return;
+    }
     if s.chat.visual_anchor.take().is_some() {
         render_transcript(s);
         crate::logging::log("CHAT-VISUAL: exited");
@@ -1324,6 +1511,15 @@ fn visual_selection_range(anchor: usize, cursor: usize) -> (usize, usize) {
 /// `landable_mask`, which gates j/k/V-anchor landing, not what `V`+`y` copies
 /// once spanned.
 pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
+    // Journal view has no row_cursor/row_owner axis (see
+    // `transcript_cursor_move`'s guard) — `y` would otherwise copy whatever
+    // stale Gloss-view row_cursor points at, silently yanking content that
+    // isn't even the one on screen.
+    if state_rc.borrow().chat.view == PanelView::Journal {
+        let s = state_rc.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "Nothing to copy in journal view", 2);
+        return;
+    }
     // Collect text and drop the borrow BEFORE toasting: show_chapter_toast_secs
     // takes &AppState and re-borrows, so toasting under this borrow_mut would
     // double-borrow and panic (mirrors copy_gloss_id's own toast-after-
@@ -1412,6 +1608,14 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     match saved {
         Ok(id) => {
             s.chat.exchanges[idx].saved_id = Some(id);
+            // render_saved_entry below always shows the just-saved exchange
+            // directly (it bypasses transcript_rows/journal_view_rows
+            // entirely — see its own doc comment), so line up `view` with
+            // what is actually on screen: if `s` was pressed while looking
+            // at the Journal view, the panel is about to show Gloss-shaped
+            // content, and a later `t` should read as "leaving Gloss", not
+            // "leaving a Journal view that's no longer what's rendered".
+            s.chat.view = PanelView::Gloss;
             // Revision mode is ARMED but not entered: `revision_of` makes a
             // later Ctrl+Enter refine this row (and the input title read
             // "Revise this entry" via prompt_title_hint) WITHOUT opening the
@@ -1524,6 +1728,10 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
     {
         let mut s = state_rc.borrow_mut();
         s.chat.pending = true;
+        // Same reasoning as submit_chat_prompt's pending-start: consolidation
+        // reads/renders `exchanges` (the Gloss view's axis), so switch back
+        // to Gloss even if the reader triggered this from Journal view.
+        s.chat.view = PanelView::Gloss;
         let (mut rows, _, _) = transcript_rows(&s);
         rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
         s.chat_panel.render_rows(&rows);
@@ -2488,5 +2696,109 @@ mod visual_selection_tests {
         let (start, end) = visual_selection_range(anchor, cursor);
         let yanked = all_texts[start..=end].join("\n");
         assert_eq!(yanked, "Stand by my side\nBELARIUS\nI will, my liege");
+    }
+}
+
+/// `t`'s view-toggle logic (this feature): the pure flip direction and the
+/// row-building for `PanelView::Journal` (a `JournalPage` list -> transcript
+/// rows, including the empty-placeholder case). House style per
+/// `gloss_cycle_tests`/`visual_selection_tests` above — pure functions, no
+/// `AppState`/GTK. GTK painting (`render_journal_view`'s actual widget
+/// rebuild) is not unit-testable and is exercised only by manual/headless
+/// on-screen verification.
+#[cfg(test)]
+mod panel_view_toggle_tests {
+    use super::{flip_view, journal_view_rows, PanelView};
+    use crate::db::journal::JournalPage;
+    use crate::ui::chat_panel::TranscriptRow as R;
+
+    #[test]
+    fn flip_is_its_own_inverse() {
+        assert_eq!(flip_view(PanelView::Gloss), PanelView::Journal);
+        assert_eq!(flip_view(PanelView::Journal), PanelView::Gloss);
+        assert_eq!(flip_view(flip_view(PanelView::Gloss)), PanelView::Gloss);
+    }
+
+    #[test]
+    fn default_view_is_gloss() {
+        // The panel's existing behavior (unchanged) must be what a freshly
+        // reset ChatState (Default::default(), e.g. close_chat_layout /
+        // on_work_switched) shows.
+        assert_eq!(PanelView::default(), PanelView::Gloss);
+    }
+
+    fn page(question: &str, answer: &str) -> JournalPage {
+        JournalPage {
+            id: 1,
+            div1: 1,
+            div2: 0,
+            question: question.to_string(),
+            answer: answer.to_string(),
+            claude_model: String::new(),
+            timestamp: String::new(),
+            start_citation: Some("W.1.0.1".to_string()),
+            end_citation: Some("W.1.0.1".to_string()),
+            source_text: None,
+            kind: "qa".to_string(),
+        }
+    }
+
+    #[test]
+    fn empty_list_renders_a_placeholder_row() {
+        let rows = journal_view_rows(&[]);
+        assert_eq!(rows.len(), 1);
+        match &rows[0] {
+            R::Answer(text) => assert_eq!(text, "No journal entries for this passage"),
+            other => panic!("expected a placeholder Answer row, got a different variant: {}",
+                match other {
+                    R::Question(_) => "Question",
+                    R::GlossAnswer(_) => "GlossAnswer",
+                    R::Chip(_) => "Chip",
+                    R::Error(_) => "Error",
+                    R::Thinking => "Thinking",
+                    R::SavedMark => "SavedMark",
+                    R::Answer(_) => unreachable!(),
+                }),
+        }
+    }
+
+    #[test]
+    fn one_entry_renders_question_then_plain_answer() {
+        let pages = vec![page("What does York mean?", "He is plotting.")];
+        let rows = journal_view_rows(&pages);
+        assert_eq!(rows.len(), 2);
+        match &rows[0] {
+            R::Question(t) => assert_eq!(t, "Q: What does York mean?"),
+            _ => panic!("row 0 must be a Question row"),
+        }
+        // Journal answers are prose: must render as a plain Answer row, never
+        // GlossAnswer (which would try to parse <speaker>/<verse> markup out
+        // of ordinary prose text).
+        match &rows[1] {
+            R::Answer(t) => assert_eq!(t, "He is plotting."),
+            _ => panic!("row 1 must be a plain Answer row, not GlossAnswer"),
+        }
+    }
+
+    #[test]
+    fn multiple_entries_render_in_list_order_with_no_placeholder() {
+        let pages = vec![
+            page("Q1?", "A1."),
+            page("Q2?", "A2."),
+            page("Q3?", "A3."),
+        ];
+        let rows = journal_view_rows(&pages);
+        assert_eq!(rows.len(), 6); // Q/A pair per entry, no placeholder mixed in
+        let texts: Vec<&str> = rows
+            .iter()
+            .map(|r| match r {
+                R::Question(t) | R::Answer(t) => t.as_str(),
+                _ => panic!("unexpected row kind in journal view"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["Q: Q1?", "A1.", "Q: Q2?", "A2.", "Q: Q3?", "A3."]
+        );
     }
 }

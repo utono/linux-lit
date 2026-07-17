@@ -1381,6 +1381,14 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::regloss_pinned(state);
             true
         }
+        // `t`: toggle the panel between the pinned passage's GLOSS(es) and its
+        // saved JOURNAL Q&As (scope='passage', exact citation match). Distinct
+        // from the reader-level `t` (ThemeNext) — this arm only fires while
+        // InputMode::ChatTranscript owns the key.
+        "t" => {
+            crate::input::actions::chat::toggle_panel_view(state);
+            true
+        }
         // `c`: copy the currently-displayed gloss's id, mirroring the gloss
         // overlay's `c` (handle_gloss_key below) — but reading the PANEL's own
         // gloss_list/gloss_index, not the overlay's.
