@@ -5,6 +5,16 @@
 use gtk4::glib;
 use gtk4::prelude::*;
 
+/// The placeholder text of a `Thinking` row, and the label of a `SavedMark`.
+///
+/// Shared by the two paths that must agree on what a row SAYS: `rebuild_rows`
+/// (which paints the label) and `row_widget_texts` (which `y` yanks). They are
+/// separate code paths by necessity — one builds widgets, the other extracts
+/// text — so a literal spelled out in both would let `y` silently copy stale
+/// text with nothing failing to compile.
+const THINKING_TEXT: &str = "thinking\u{2026}";
+const SAVED_MARK_TEXT: &str = "\u{2713} saved";
+
 pub enum TranscriptRow {
     Question(String),
     /// Plain-prose answer (journal Q&A, revision, consolidation): rendered as
@@ -217,8 +227,8 @@ impl ChatPanel {
                 TranscriptRow::Answer(t) => (t.as_str(), "chat-a"),
                 TranscriptRow::Chip(t) => (t.as_str(), "chat-chip"),
                 TranscriptRow::Error(t) => (t.as_str(), "chat-error"),
-                TranscriptRow::Thinking => ("thinking\u{2026}", "chat-a"),
-                TranscriptRow::SavedMark => ("\u{2713} saved", "chat-saved"),
+                TranscriptRow::Thinking => (THINKING_TEXT, "chat-a"),
+                TranscriptRow::SavedMark => (SAVED_MARK_TEXT, "chat-saved"),
                 TranscriptRow::GlossAnswer(_) => unreachable!("handled above"),
             };
             self.append_row_label(text, class);
@@ -361,8 +371,8 @@ pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
         TranscriptRow::Answer(t) => vec![t.clone()],
         TranscriptRow::Chip(t) => vec![t.clone()],
         TranscriptRow::Error(t) => vec![t.clone()],
-        TranscriptRow::Thinking => vec!["thinking\u{2026}".to_string()],
-        TranscriptRow::SavedMark => vec!["\u{2713} saved".to_string()],
+        TranscriptRow::Thinking => vec![THINKING_TEXT.to_string()],
+        TranscriptRow::SavedMark => vec![SAVED_MARK_TEXT.to_string()],
     }
 }
 
