@@ -49,6 +49,17 @@ pub(crate) struct ChatState {
     /// follow-ups keep discussing the same passage even if the cursor drifts.
     /// Cleared with the rest of ChatState when the panel closes.
     pub pinned_passage: Option<crate::input::segments::SegmentContext>,
+    /// Stored reader-glosses for the pinned passage, newest first, as
+    /// `find_glosses_by_start` orders them. A DIFFERENT axis from `exchanges`:
+    /// these are lit.db rows (including earlier sessions'), where `exchanges`
+    /// is this session's in-memory transcript. `Ctrl+n`/`Ctrl+p` moves over
+    /// this list; `j`/`k` moves over `exchanges`. Never share `cursor`.
+    pub gloss_list: Vec<crate::db::queries::SavedGloss>,
+    /// Index into `gloss_list` of the gloss currently shown in exchange #1.
+    pub gloss_index: usize,
+    /// The pinned passage as a gloss context — what regloss re-sends and what
+    /// a save needs for the `passages` row. Set when `-` opens the panel.
+    pub gloss_ctx: Option<crate::gloss::GlossContext>,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -582,6 +593,186 @@ fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, 
 pub(crate) fn render_transcript(s: &AppState) {
     let (rows, cursor_row) = transcript_rows(s);
     s.chat_panel.render_rows_focused(&rows, cursor_row);
+}
+
+/// Put a reader-gloss into transcript slot #1 — replacing the gloss already
+/// there if any, so cycling and reglossing swap the gloss IN PLACE and leave
+/// follow-up exchanges below untouched.
+pub(crate) fn push_gloss_exchange(
+    s: &mut AppState,
+    ctx: &crate::gloss::GlossContext,
+    gloss_text: &str,
+) {
+    let ex = Exchange {
+        question: String::new(), // auto-gloss: the user asked nothing
+        answer: gloss_text.to_string(),
+        chip: gloss_chip(s),
+        user_msg: String::new(),
+        div1: ctx.act,
+        div2: ctx.scene,
+        start_citation: ctx.start_citation.clone(),
+        end_citation: ctx.end_citation.clone(),
+        source_markup: ctx.source_text.clone(),
+        // Tracks JOURNAL saves only. The gloss is saved to `glosses`, a
+        // different store, so this stays None — `s` on this exchange
+        // deliberately files a second copy in the journal.
+        saved_id: None,
+    };
+    if s.chat.exchanges.is_empty() {
+        s.chat.exchanges.push(ex);
+    } else {
+        s.chat.exchanges[0] = ex;
+    }
+    s.chat.cursor = 0;
+    render_transcript(s);
+}
+
+/// The "n of N" chip for the gloss slot, so cycling shows which stored gloss
+/// is on screen.
+fn gloss_chip(s: &AppState) -> String {
+    let n = s.chat.gloss_list.len();
+    if n <= 1 {
+        "Reader gloss".to_string()
+    } else {
+        format!("Reader gloss {} of {}", s.chat.gloss_index + 1, n)
+    }
+}
+
+/// Persist a reader-gloss to lit.db and refresh the panel's gloss list.
+///
+/// Deliberately NOT `gloss::persist_render_install_gloss`: despite its name
+/// that function drives the GLOSS OVERLAY (show_gloss_with_color/set_position,
+/// and it sets gloss_list/gloss_index/gloss_context/input_mode), which would
+/// throw the user out of the chat panel. Only the save is wanted here.
+///
+/// Returns the new gloss id on success.
+pub(crate) fn save_reader_gloss(
+    s: &mut AppState,
+    ctx: &crate::gloss::GlossContext,
+    gloss_text: &str,
+    model: &str,
+) -> Option<i64> {
+    let new_id = match crate::db::queries::open_db_rw() {
+        Ok(conn) => crate::db::queries::save_gloss(
+            &conn,
+            &ctx.hash,
+            &ctx.work_abbrev,
+            &ctx.start_citation,
+            &ctx.end_citation,
+            ctx.act,
+            ctx.scene,
+            &ctx.speaker,
+            &ctx.source_text,
+            gloss_text,
+            "reader-gloss",
+            model,
+        )
+        .ok(),
+        Err(_) => None,
+    };
+
+    // Re-read so the cycling list includes the row just written, ordered
+    // newest-first (Task 1's id DESC tiebreak makes this deterministic even
+    // when two saves share a one-second timestamp).
+    s.chat.gloss_list = reload_gloss_list(&ctx.work_abbrev, &ctx.start_citation);
+    s.chat.gloss_index = new_id
+        .and_then(|id| s.chat.gloss_list.iter().position(|g| g.gloss_id == id))
+        .unwrap_or(0);
+
+    // Re-derive the glossed-line tint so the passage colors IMMEDIATELY. The
+    // panel STAYS OPEN, so recompute directly rather than via a
+    // return-to-reader path (which would wrongly switch the input mode) —
+    // same reasoning as save_selected_exchange.
+    crate::app::apply_reader_gloss_highlighting(s);
+
+    if let Some(id) = new_id {
+        crate::logging::log(&format!("CHAT-GLOSS: saved reader-gloss {}", id));
+    } else {
+        crate::logging::log("CHAT-GLOSS: save failed");
+    }
+    new_id
+}
+
+/// Fire READER_GLOSS_PROMPT for a passage and install the answer: save it to
+/// lit.db and put it in transcript slot #1. Shared by `-` (cache miss) and
+/// `r`/`R` (regloss).
+///
+/// Deliberately NOT via submit_chat_prompt: that drains a typed draft from the
+/// ask card and intercepts the literal strings "s"/"S" as save/consolidate
+/// aliases. The ask input never opens on this path.
+pub(crate) fn request_reader_gloss(
+    state_rc: &Rc<RefCell<AppState>>,
+    ctx: crate::gloss::GlossContext,
+    model: String,
+) {
+    if state_rc.borrow().chat.pending {
+        return; // in flight; a second '-' or 'r' must not double-fire
+    }
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat.pending = true;
+        render_transcript_thinking_gloss(&s);
+    }
+
+    let model_for_db = model.clone();
+    let ctx_ok = ctx.clone();
+    let on_success = move |sr: &Rc<RefCell<AppState>>, reply: String| {
+        let mut s = sr.borrow_mut();
+        s.chat.pending = false;
+        save_reader_gloss(&mut s, &ctx_ok, &reply, &model_for_db);
+        push_gloss_exchange(&mut s, &ctx_ok, &reply);
+        focus_transcript(&mut s);
+    };
+    let on_error = move |sr: &Rc<RefCell<AppState>>, e: &str| {
+        let mut s = sr.borrow_mut();
+        s.chat.pending = false;
+        // No gloss row is written on failure — the DB write only happens on a
+        // successful reply. The panel stays open.
+        render_transcript(&s);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Gloss failed", 3);
+        crate::logging::log(&format!("CHAT-GLOSS: API error: {}", e));
+    };
+
+    // READER_GLOSS_PROMPT is a LazyLock<String> (gloss.rs:430), and
+    // run_claude_request wants an owned String — deref the lock, then clone.
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        (*crate::gloss::READER_GLOSS_PROMPT).clone(),
+        user_msg,
+        model,
+        on_success,
+        on_error,
+    );
+}
+
+/// The transcript with a "Glossing…" row appended, so the panel shows work in
+/// flight rather than sitting blank.
+fn render_transcript_thinking_gloss(s: &AppState) {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    let (mut rows, _) = transcript_rows(s);
+    rows.push(R::Chip("Reader gloss".to_string()));
+    rows.push(R::Thinking);
+    s.chat_panel.render_rows(&rows);
+}
+
+/// Stored reader-glosses for a passage, newest first. Empty on any DB error.
+pub(crate) fn reload_gloss_list(
+    work_abbrev: &str,
+    start_citation: &str,
+) -> Vec<crate::db::queries::SavedGloss> {
+    crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_glosses_by_start(
+                &conn,
+                work_abbrev,
+                start_citation,
+                &["reader-gloss"],
+            )
+            .ok()
+        })
+        .unwrap_or_default()
 }
 
 fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {

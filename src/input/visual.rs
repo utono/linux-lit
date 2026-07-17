@@ -660,11 +660,70 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
 /// the passage immediately — no ask input. Sibling to `Ctrl+a` (Journal Q&A
 /// ask card) and `Tab` (chat pinned, empty input) on the same select-then-act
 /// flow.
+///
+/// On a cache hit the stored gloss is shown and NO API call is made, so
+/// pressing `-` twice on a passage is cheap. `r`/`R` in the panel is the way
+/// to force a fresh gloss.
 pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    // Build the gloss context BEFORE opening the panel: open_chat_pinned_to_selection
+    // exits visual mode, which clears the selection this reads.
+    let prepared = {
+        let state = state_rc.borrow();
+        let (start, end) = match &state.visual_selection {
+            Some(s) => s.range(),
+            None => return,
+        };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        let selected_lines: Vec<crate::db::models::Line> = (start..=end)
+            .filter_map(|buf_line| {
+                state
+                    .work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
+        match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
+            Some(ctx) => Some((ctx, state.config.claude_model.clone())),
+            None => None,
+        }
+    };
+    let Some((ctx, model)) = prepared else { return };
+
     // Pins the passage, exits visual mode, opens and places the panel. Bails
     // with its own toast when the selection has no passage, or when a
     // single-column layout has no room for the panel.
     crate::input::actions::chat::open_chat_pinned_to_selection(state_rc);
+    {
+        let s = state_rc.borrow();
+        if !s.chat_layout_open {
+            return; // no room for the panel; its toast already explained
+        }
+    }
+
+    let cached = crate::input::actions::chat::reload_gloss_list(&ctx.work_abbrev, &ctx.start_citation);
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat.gloss_ctx = Some(ctx.clone());
+        s.chat.gloss_list = cached;
+        s.chat.gloss_index = 0;
+    }
+
+    // Cache hit: show the newest stored gloss, spend no API call.
+    let hit = {
+        let s = state_rc.borrow();
+        s.chat.gloss_list.first().map(|g| g.gloss_text.clone())
+    };
+    if let Some(text) = hit {
+        let mut s = state_rc.borrow_mut();
+        crate::input::actions::chat::push_gloss_exchange(&mut s, &ctx, &text);
+        crate::input::actions::chat::focus_transcript(&mut s);
+        crate::logging::log("CHAT-GLOSS: showing cached gloss");
+        return;
+    }
+
+    crate::input::actions::chat::request_reader_gloss(state_rc, ctx, model);
 }
 
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
