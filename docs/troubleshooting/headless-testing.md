@@ -12,6 +12,48 @@ synopsis **overlay** surfaces without a manual review — rect/band contract,
 phantom-press detector, pixel invariants, agent visual review). Both docs share
 the launch stack and env overrides described below.
 
+## Prerequisites (packages the headless stack needs)
+
+The headless harness shells out to external tools; a missing one fails the run
+with a confusing error far from the real cause (e.g. the pixel checker aborting
+with `ModuleNotFoundError: No module named 'PIL'` surfaces as an
+`assert_ink_within_band` failure, not a "install pillow" message). Install all
+of these before the first headless run. Package names are for CachyOS/Arch
+(`pacman`/`paru`); document any install in the `ccinstall` paclists.
+
+Compositor + capture + input (the launch stack):
+
+- **`cage`** (pkg `cage`) — the single-client headless Wayland compositor the
+  app runs inside. Nothing paints without it (see "The launch stack" below).
+- **`grim`** (pkg `grim`) — screenshots the cage output to `target/ui/*.png`.
+- **`wtype`** (pkg `wtype`) — injects keystrokes over the virtual-keyboard
+  protocol.
+- **`wlr-randr`** (pkg `wlr-randr`) — resizes cage's headless output to
+  production geometry (1920×1200); pagination differs at cage's 720p default.
+- **`dbus-run-session`** (pkg `dbus`) — `e2e-env.sh` wraps the run in a private
+  session bus so AT-SPI/portals activate. Without it the app logs only
+  `STARTUP: main entry` and never fully initializes.
+
+Pixel-assertion checkers (`scripts/check_ink_outside.py`,
+`scripts/check_line_clipping.py`) — used by `assert_ink_within_band` /
+`assert_no_line_clipping`, i.e. the overlay-fill and line-clip e2e tests:
+
+- **`python`** (pkg `python`) — the `python3` the harness invokes.
+- **`python-numpy`** (pkg `python-numpy`) — array math over the screenshot.
+- **`python-pillow`** (pkg `python-pillow`) — PNG decode (`from PIL import
+  Image`). The checkers fail closed if it can't import.
+
+One-liner to install the whole set:
+
+```bash
+paru -S --needed cage grim wtype wlr-randr dbus python python-numpy python-pillow
+```
+
+The Rust side needs nothing beyond the normal toolchain — the tests are
+`#[ignore]`d integration tests run with `--ignored` through `e2e-env.sh`; a bare
+`cargo test` skips them, so the packages above are only needed when you actually
+run the headless suite.
+
 ## The two things the skill does
 
 1. **Screenshot UI tests** — launch the reader in a throwaway headless `cage`,

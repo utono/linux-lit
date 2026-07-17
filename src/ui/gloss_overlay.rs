@@ -30,7 +30,7 @@ struct BlockRange {
 /// via `populate_gloss_buffer` over the page's `<speaker>`/`<verse>`/`<gloss>`
 /// markup slice (the speaker tags `gloss_blocks` drops cannot be reconstructed
 /// from `GlossBlock.display`). Irrelevant when `paginated` is false.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PaginatedMode {
     Synopsis,
     Gloss,
@@ -1797,25 +1797,35 @@ impl GlossOverlay {
 
         // Headless test: emit the overlay viewport rect once layout settles, so
         // tests/overlay_clipping.rs can target the synopsis card's region.
-        // GlossOverlay is not Clone, so capture the scrolled window and inline.
-        if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
-            let sc = self.gloss_scrolled.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
-                    crate::logging::log(&format!(
-                        "TEST_OVERLAY_VIEWPORT_RECT {} {} {} {}",
-                        r.x().round() as i32,
-                        r.y().round() as i32,
-                        r.width().round() as i32,
-                        r.height().round() as i32
-                    ));
-                } else {
-                    crate::logging::log(
-                        "TEST_OVERLAY_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
-                    );
-                }
-            });
+        self.emit_test_viewport_rect();
+    }
+
+    /// Under `LIT_HEADLESS_TEST`, log `TEST_OVERLAY_VIEWPORT_RECT x y w h` for the
+    /// scrolled display viewport once layout settles, so the cage e2e harness
+    /// (`Harness::wait_for_overlay_viewport_rect`) can target the card's region.
+    /// Shared by the synopsis (`show_synopsis`) and gloss-result
+    /// (`render_gloss_page`) paths — both fill `gloss_scrolled`.
+    fn emit_test_viewport_rect(&self) {
+        if std::env::var_os("LIT_HEADLESS_TEST").is_none() {
+            return;
         }
+        // GlossOverlay is not Clone, so capture the scrolled window and inline.
+        let sc = self.gloss_scrolled.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+                crate::logging::log(&format!(
+                    "TEST_OVERLAY_VIEWPORT_RECT {} {} {} {}",
+                    r.x().round() as i32,
+                    r.y().round() as i32,
+                    r.width().round() as i32,
+                    r.height().round() as i32
+                ));
+            } else {
+                crate::logging::log(
+                    "TEST_OVERLAY_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
+                );
+            }
+        });
     }
 
     /// Snap the overlay's scroll position to the top and cover the open's
@@ -2250,6 +2260,14 @@ impl GlossOverlay {
             }
         };
         drop(blocks);
+        // Headless test + debugging: the page count is the fill signal (an
+        // underfill splits N units across more pages than the ink needs).
+        crate::log_fmt!(
+            "GLOSS-PAGES: n={} mode={:?} budget={}",
+            pages.len(),
+            self.paginated_mode.get(),
+            budget,
+        );
         *self.pages.borrow_mut() = pages;
     }
 
@@ -2454,6 +2472,9 @@ impl GlossOverlay {
         self.bar_drawing.queue_draw();
         self.update_bottom_clip();
         self.update_position_label();
+        // Headless test: emit the display viewport rect so the gloss e2e
+        // (tests/gloss_markdown.rs) can target the card region + assert fill.
+        self.emit_test_viewport_rect();
     }
 
     /// Set the floating page marker for the current gloss/synopsis page: `⌄` when
@@ -3080,7 +3101,8 @@ const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 /// models, so we must over-estimate. A SPEAKERLESS source (prose gloss) renders
 /// no heading and no per-line verse gaps — plain wrapped lines — so charging the
 /// speaker reserve there only underfills pages (the "why is this 2 pages?"
-/// artifact): it pays the paragraph pad like an explication instead.
+/// artifact): it pays only a small `SPEAKERLESS_SOURCE_PAD` (see below), not the
+/// speaker reserve and not a full explication `line_h`.
 ///
 /// For Explication (prose/synopsis) blocks we charge `text_h + line_h` — ONE
 /// real measured line-height per block, mirroring journal_overlay.rs's
@@ -3099,10 +3121,26 @@ const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 /// TWWLN Ch.1 "Gist:" bug: 8 blocks per page, shortfall > 1 line_h). NEVER
 /// under-estimate a source-with-speaker block: too-tall just gives it its own
 /// page; too-small clips the speaker label.
+///
+/// A SPEAKERLESS source (prose gloss's quoted verse) renders as plain wrapped
+/// verse lines with NO trailing paragraph gap (`gloss-verse` sets no
+/// `pixels_below_lines`; the inter-unit gap lives on the FOLLOWING explication's
+/// `gloss-para` pad, charged with that block). Charging it a full `line_h` like
+/// an explication was phantom height: on an alternating prose gloss (every
+/// other block a speakerless source) it front-loaded ~line_h/unit and closed
+/// pages a whole unit early — the TT "mock Dedication" 3-pages-at-53%-fill
+/// underfill (2026-07). Charge only a small view-wide `pixels_below_lines(4)` +
+/// leading pad; the leaded `text_h` already over-counts the wrap leading, so
+/// this stays clip-safe.
+const SPEAKERLESS_SOURCE_PAD: i32 = 8;
+
 fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32, line_h: i32) -> i32 {
     if is_source && has_speaker {
         // verse lines carry per-line gaps too -> 1.15 slack on the text height.
         (text_h as f32 * 1.15) as i32 + SPEAKER_BLOCK_OVERHEAD
+    } else if is_source {
+        // Speakerless verse: no trailing paragraph gap — just a small safety pad.
+        text_h + SPEAKERLESS_SOURCE_PAD
     } else {
         text_h + line_h
     }
@@ -3223,9 +3261,15 @@ mod block_height_tests {
         );
         // Prose overhead is the journal's per-block `text_h + line_h` pattern.
         assert_eq!(block_height_overhead(false, false, 100, line_h), 100 + line_h);
-        // A SPEAKERLESS source (prose gloss) renders no heading and no verse
-        // gaps — it pays only the per-block line_h reserve, same as an
-        // Explication, so pages fill instead of splitting on phantom height.
-        assert_eq!(block_height_overhead(true, false, 100, line_h), 100 + line_h);
+        // A SPEAKERLESS source (prose gloss) renders no heading, no verse gaps,
+        // and NO trailing paragraph gap (the inter-unit gap lives on the following
+        // explication). It pays only a small safety pad — NOT a full line_h — so an
+        // alternating prose gloss packs full pages instead of closing a unit early
+        // (the TT "mock Dedication" 3-pages-at-53% underfill).
+        assert_eq!(
+            block_height_overhead(true, false, 100, line_h),
+            100 + super::SPEAKERLESS_SOURCE_PAD
+        );
+        assert!(block_height_overhead(true, false, 100, line_h) < 100 + line_h);
     }
 }

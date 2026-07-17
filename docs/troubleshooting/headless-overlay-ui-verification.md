@@ -80,8 +80,10 @@ JOURNAL-CURSOR: cursor#<page-local> full#<whole-entry> bar lines [s, e]
 
 ## Pixel invariants
 
-`scripts/check_ink_outside.py` (fails closed, needs numpy/pillow — the env
-wrapper provides them):
+`scripts/check_ink_outside.py` (fails closed, needs the `python-numpy` +
+`python-pillow` system packages — see `headless-testing.md` → Prerequisites;
+a missing PIL surfaces as an `assert_ink_within_band` failure, not an install
+hint):
 
 - `--region x,y,w,h` + `--band x0,x1`: no ink column outside the band →
   catches styled blocks escaping the column.

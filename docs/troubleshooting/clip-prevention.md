@@ -663,6 +663,37 @@ When a half line clips at the bottom edge of a scrolled surface:
     (`viewport.rs`/`scroll.rs`/`page_table.rs`, 2026-07-16;
     docs/superpowers/specs/2026-07-15-two-column-fill-reserve-design.md.)
 
+16. **GLOSS OVERLAY, prose gloss — pages underfill by ~one unit (page fills to
+    ~55%, a `⌄` marker floats mid-card over a wide blank band, and the footer
+    shows 3 pages where 2 would do).** A prose gloss (e.g. a novel/essay reader
+    gloss, or the TT front-matter "mock Dedication") alternates a SPEAKERLESS
+    Source block (the quoted verse, `<speaker>UNKNOWN</speaker>` dropped from
+    display) with its Explication paragraph. `repaginate` measured every block
+    with `block_height_overhead`, whose old `else` branch charged EVERY non-
+    speaker-source block a full `text_h + line_h` — including the speakerless
+    source. But a speakerless source renders as plain wrapped verse lines with
+    NO trailing paragraph gap (`gloss-verse` sets no `pixels_below_lines`; the
+    inter-unit gap lives entirely on the FOLLOWING explication's `gloss-para`
+    pad). So each Source paid ~one phantom `line_h` (~28px at Charter 17): on a
+    page of 6 blocks that front-loaded ~84px, closing the page a whole unit
+    early (3 units / 721px against a 974px budget → 253px wasted; four units
+    would fit at 930px).
+    - Tell: an alternating prose gloss paginates into more pages than the ink
+      needs, each non-last page ending ~200-250px short with the `⌄` marker
+      hovering over blank space (NOT flush at the card bottom).
+    - Root cause: `block_height_overhead(is_source=true, has_speaker=false, …)`
+      fell through to the explication `text_h + line_h` charge.
+    - Fix: give the speakerless-source case its own branch charging only
+      `text_h + SPEAKERLESS_SOURCE_PAD` (8px, covering the view-wide
+      `pixels_below_lines(4)` + sub-pixel leading). Speaker-carrying sources
+      (plays) and synopsis blocks (always `Explication`-kind) are untouched, so
+      the "Gist:" synopsis clip guard (#14-ish, the per-block `line_h` reserve)
+      still stands. Diagnose by dumping `repaginate`'s per-block charged heights
+      vs. the budget (a temporary log/test) — the leaded `text_h` IS the true
+      rendered text height, so the over-count is exactly the sum of the phantom
+      per-source `line_h`s. (`gloss_overlay.rs::block_height_overhead`,
+      2026-07-17.)
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
