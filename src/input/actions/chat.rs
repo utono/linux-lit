@@ -1121,12 +1121,19 @@ pub(crate) fn reload_gloss_list(
         .unwrap_or_default()
 }
 
-fn render_transcript_with_thinking(s: &AppState, question: &str, chip: &str) {
+fn render_transcript_with_thinking(s: &AppState, question: &str, _chip: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let (mut rows, _, _) = transcript_rows(s);
-    rows.push(R::Chip(chip.to_string()));
-    rows.push(R::Question(format!("Q: {}", question)));
-    rows.push(R::Thinking);
+    // While a question answers, show ONLY the question and "thinking…" — NOT
+    // the prior transcript (the gloss + any earlier exchanges). The gloss is
+    // what the question is ABOUT; leaving it above the pending answer made the
+    // panel a wall of text with the live question buried at the bottom. The
+    // gloss returns when the answer lands (the success path re-renders the full
+    // transcript). The source-preview chip is dropped with the rest — the
+    // question names its own subject.
+    let rows = vec![
+        R::Question(format!("Q: {}", question)),
+        R::Thinking,
+    ];
     s.chat_panel.render_rows(&rows);
 }
 
