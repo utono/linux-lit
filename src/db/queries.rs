@@ -2166,7 +2166,7 @@ pub fn find_glosses_by_start(
          WHERE p.work_abbrev = ?1 \
            AND p.start_citation = ?2 \
            AND g.gloss_type IN ({}) \
-         ORDER BY (g.gloss_type = 'reader-gloss') DESC, g.timestamp DESC",
+         ORDER BY (g.gloss_type = 'reader-gloss') DESC, g.timestamp DESC, g.id DESC",
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -4331,5 +4331,81 @@ mod passages_div1_div2_tests {
                 ("Cym".to_string(), 1, 2, "only-variant".to_string()),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod gloss_ordering_tests {
+    use super::*;
+
+    /// Two reader-glosses on ONE passage sharing a timestamp: `CURRENT_TIMESTAMP`
+    /// has one-second granularity, so reglossing twice in a second ties. The
+    /// newest (highest id) must still win.
+    ///
+    /// The rows are inserted in REVERSE id order (id 2 first) on purpose: with
+    /// only `timestamp DESC` to go on, SQLite's tie order tracks the scan, so
+    /// the pre-fix query returns 'older' first and this test genuinely FAILS
+    /// red. Inserting in ascending id order could pass by luck and prove
+    /// nothing.
+    #[test]
+    fn same_timestamp_glosses_order_newest_id_first() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER,
+                claude_model TEXT, timestamp TEXT
+             );
+             INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
+                VALUES (1, 'h', 'Err', 'Err.2.2.1', 'Err.2.2.12', 2, 2, 'Antipholus', 'text');
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
+                VALUES (2, 1, 'reader-gloss', 'newer', 'complete', NULL, 'm', '2026-07-16 10:00:00'),
+                       (1, 1, 'reader-gloss', 'older', 'complete', NULL, 'm', '2026-07-16 10:00:00');",
+        ).unwrap();
+
+        let gs = find_glosses_by_start(&conn, "Err", "Err.2.2.1", &["reader-gloss"]).unwrap();
+        assert_eq!(gs.len(), 2);
+        assert_eq!(gs[0].gloss_text, "newer");
+        assert_eq!(gs[0].gloss_id, 2);
+        assert_eq!(gs[1].gloss_text, "older");
+    }
+
+    /// The pre-existing ordering rules must survive the new tiebreak:
+    /// reader-gloss outranks other types, and a newer timestamp still wins.
+    #[test]
+    fn reader_gloss_and_timestamp_still_outrank_id() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER,
+                claude_model TEXT, timestamp TEXT
+             );
+             INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
+                VALUES (1, 'h', 'Err', 'Err.2.2.1', 'Err.2.2.12', 2, 2, 'Antipholus', 'text');
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
+                VALUES (9, 1, 'teacher-generic', 'teacher', 'complete', NULL, 'm', '2026-07-16 12:00:00'),
+                       (1, 1, 'reader-gloss', 'old-reader', 'complete', NULL, 'm', '2026-07-16 10:00:00'),
+                       (2, 1, 'reader-gloss', 'new-reader', 'complete', NULL, 'm', '2026-07-16 11:00:00');",
+        ).unwrap();
+
+        let gs = find_glosses_by_start(
+            &conn, "Err", "Err.2.2.1", &["teacher-generic", "reader-gloss"],
+        ).unwrap();
+        assert_eq!(gs.len(), 3);
+        // reader-gloss first (despite the teacher gloss having the newest timestamp)
+        assert_eq!(gs[0].gloss_text, "new-reader");
+        assert_eq!(gs[1].gloss_text, "old-reader");
+        assert_eq!(gs[2].gloss_text, "teacher");
     }
 }
