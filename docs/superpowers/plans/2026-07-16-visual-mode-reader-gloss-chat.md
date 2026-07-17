@@ -56,6 +56,12 @@ mod gloss_ordering_tests {
     /// Two reader-glosses on ONE passage sharing a timestamp: `CURRENT_TIMESTAMP`
     /// has one-second granularity, so reglossing twice in a second ties. The
     /// newest (highest id) must still win.
+    ///
+    /// The rows are inserted in REVERSE id order (id 2 first) on purpose: with
+    /// only `timestamp DESC` to go on, SQLite's tie order tracks the scan, so
+    /// the pre-fix query returns 'older' first and this test genuinely FAILS
+    /// red. Inserting in ascending id order could pass by luck and prove
+    /// nothing.
     #[test]
     fn same_timestamp_glosses_order_newest_id_first() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -73,8 +79,8 @@ mod gloss_ordering_tests {
              INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
                 VALUES (1, 'h', 'Err', 'Err.2.2.1', 'Err.2.2.12', 2, 2, 'Antipholus', 'text');
              INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
-                VALUES (1, 1, 'reader-gloss', 'older', 'complete', NULL, 'm', '2026-07-16 10:00:00'),
-                       (2, 1, 'reader-gloss', 'newer', 'complete', NULL, 'm', '2026-07-16 10:00:00');",
+                VALUES (2, 1, 'reader-gloss', 'newer', 'complete', NULL, 'm', '2026-07-16 10:00:00'),
+                       (1, 1, 'reader-gloss', 'older', 'complete', NULL, 'm', '2026-07-16 10:00:00');",
         ).unwrap();
 
         let gs = find_glosses_by_start(&conn, "Err", "Err.2.2.1", &["reader-gloss"]).unwrap();
@@ -126,7 +132,9 @@ mod gloss_ordering_tests {
 cargo test --bins gloss_ordering_tests -- --nocapture
 ```
 
-Expected: `same_timestamp_glosses_order_newest_id_first` FAILS (it may pass by luck of SQLite's row order — if it passes, verify the fix still makes it deterministic and note it). `reader_gloss_and_timestamp_still_outrank_id` PASSES already (it documents behavior the fix must preserve).
+Expected: `same_timestamp_glosses_order_newest_id_first` FAILS red, with `assertion `left == right`` showing `left: "older"` / `right: "newer"` — the pre-fix query has only `timestamp DESC` to break the tie, so it returns the row it scanned first. `reader_gloss_and_timestamp_still_outrank_id` PASSES already: it documents behavior the fix must preserve.
+
+If the tie test PASSES here, stop and report it — the reverse-order insert is meant to force red, and a green test would prove nothing about the fix.
 
 - [ ] **Step 3: Add the tiebreak**
 
