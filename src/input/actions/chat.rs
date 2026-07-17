@@ -148,6 +148,49 @@ fn float_side_for_cursor(s: &AppState) -> ChatPlacement {
     }
 }
 
+/// The float side for a SELECTED RANGE, not just the cursor.
+///
+/// A selection inside one column floats over the other column, as with the
+/// cursor. A selection SPANNING both columns has no free column — either side
+/// covers half the passage — so it floats LEFT by rule. Pure (no AppState) so
+/// the column arithmetic is unit-testable.
+fn placement_for_range(
+    start: usize,
+    end: usize,
+    split: Option<usize>,
+    page_end: usize,
+) -> ChatPlacement {
+    let start_right = line_in_right_column(start, split, page_end);
+    let end_right = line_in_right_column(end, split, page_end);
+    if start_right != end_right {
+        return ChatPlacement::FloatLeft; // spans both columns
+    }
+    if start_right {
+        ChatPlacement::FloatLeft
+    } else {
+        ChatPlacement::FloatRight
+    }
+}
+
+/// `placement_for_range` against the CURRENT page geometry, reading the split
+/// from the same two sources as `cursor_in_right_column`, in the same order:
+/// the active page table's spread when in table mode, else the live
+/// `viewport::column_split` with its `split > page_end` "no right column"
+/// normalization.
+fn placement_for_selection(s: &AppState, start: usize, end: usize) -> ChatPlacement {
+    if s.column_count() != 2 {
+        return ChatPlacement::FloatRight;
+    }
+    if let Some(table) = crate::input::page_table::active_page_table(s) {
+        if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top_line) {
+            return placement_for_range(start, end, sp.split, sp.end);
+        }
+    }
+    let cs = crate::input::viewport::column_split(s, s.page_top_line);
+    let split = (cs.split <= cs.page_end).then_some(cs.split);
+    placement_for_range(start, end, split, cs.page_end)
+}
+
 /// Ctrl+l: flip a floating panel to the other column. No-op when closed or
 /// pinned (single-column has no "other side").
 pub(crate) fn flip_panel_side(s: &mut AppState) {
@@ -215,9 +258,14 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
         let s = state_rc.borrow();
         let Some(sel) = s.visual_selection.as_ref() else { return };
         let (start, end) = sel.range();
-        crate::input::segments::selection_context(&s, start, end).map(|ctx| (ctx, start, end))
+        // Placement MUST be computed here, while the selection still exists:
+        // exit_visual_mode below clears it, and toggle_chat_layout then picks a
+        // side from s.current_line alone — which cannot see a spanning range.
+        let placement = placement_for_selection(&s, start, end);
+        crate::input::segments::selection_context(&s, start, end)
+            .map(|ctx| (ctx, start, end, placement))
     };
-    let Some((pinned, start, end)) = picked else {
+    let Some((pinned, start, end, placement)) = picked else {
         let s = state_rc.borrow();
         crate::input::navigation::show_chapter_toast_secs(&s, "No passage in the selection", 2);
         return;
@@ -229,7 +277,19 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) {
     // Opens when closed, else focuses the panel — neither path touches
     // ChatState, so the pin below survives either way.
     toggle_chat_layout(state_rc);
-    state_rc.borrow_mut().chat.pinned_passage = Some(pinned);
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat.pinned_passage = Some(pinned);
+        // Re-place from the SELECTION, overriding toggle_chat_layout's
+        // cursor-derived side. Only floats: a Pinned panel (single-column) has
+        // no other side to choose.
+        if s.chat_placement != ChatPlacement::Pinned && s.chat_placement != placement {
+            s.chat_placement = placement;
+            // size_panel takes &AppState (chat.rs:790), so reborrow immutably.
+            size_panel(&s);
+            crate::logging::log(&format!("CHAT: placed from selection ({:?})", placement));
+        }
+    }
     let s = state_rc.borrow();
     crate::input::visual::apply_selection_highlight_range(&s, start, end);
     crate::input::navigation::show_chapter_toast_secs(&s, "Chat pinned to selection", 2);
@@ -1085,6 +1145,40 @@ mod placement_tests {
         assert!(line_in_right_column(20, Some(20), 40)); // first right line
         assert!(line_in_right_column(40, Some(20), 40)); // last line
         assert!(!line_in_right_column(41, Some(20), 40)); // off-page
+    }
+
+    // A page whose left column is lines 0..=9 and right column 10..=19:
+    // split = Some(10), page_end = 19.
+    const SPLIT: Option<usize> = Some(10);
+    const PAGE_END: usize = 19;
+
+    #[test]
+    fn selection_wholly_in_left_column_floats_right() {
+        assert_eq!(placement_for_range(2, 5, SPLIT, PAGE_END), ChatPlacement::FloatRight);
+    }
+
+    #[test]
+    fn selection_wholly_in_right_column_floats_left() {
+        assert_eq!(placement_for_range(12, 15, SPLIT, PAGE_END), ChatPlacement::FloatLeft);
+    }
+
+    /// The whole point: neither side keeps a spanning passage visible, so pick
+    /// LEFT by rule rather than by whichever end the cursor sat on.
+    #[test]
+    fn selection_spanning_both_columns_floats_left() {
+        assert_eq!(placement_for_range(5, 15, SPLIT, PAGE_END), ChatPlacement::FloatLeft);
+    }
+
+    #[test]
+    fn single_line_selection_uses_its_own_column() {
+        assert_eq!(placement_for_range(3, 3, SPLIT, PAGE_END), ChatPlacement::FloatRight);
+        assert_eq!(placement_for_range(14, 14, SPLIT, PAGE_END), ChatPlacement::FloatLeft);
+    }
+
+    /// A single-column page has no right column; every selection floats right.
+    #[test]
+    fn no_right_column_floats_right() {
+        assert_eq!(placement_for_range(2, 8, None, PAGE_END), ChatPlacement::FloatRight);
     }
 }
 
