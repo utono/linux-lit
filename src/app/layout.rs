@@ -403,9 +403,13 @@ pub(crate) fn apply_card_sizing(
     let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
     if chat_open {
-        // Chat layout: pin the card flush left (keep the normal left margin);
-        // ALL remaining slack becomes the right margin, which is the space the
-        // chat panel renders over.
+        // Chat layout: pin the card flush left. content_hbox is halign:Center,
+        // so to land its fixed-width card flush against the left margin we must
+        // RESERVE the panel's region as margin_end — otherwise the centered card
+        // floats into the middle of the window and the panel overlaps (clips)
+        // its right half. The panel abuts the card's right edge 1px away
+        // (size_panel), so margin_end is exactly the panel-plus-seam region and
+        // nothing but the hairline shows between card and panel.
         let start = (slack / 2).clamp(0, CARD_OUTER_MARGIN).min(slack.max(0));
         let end = (slack - start).max(0);
         content_hbox.set_width_request(card_w);

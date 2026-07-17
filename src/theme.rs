@@ -1307,6 +1307,14 @@ pub fn generate_css(
             Pinned panel stands alone beside the card with its own outer margin, \
             so it needs no border to separate it from a reading column.) */ \
          .chat-panel {{ background-color: {bg}; padding: 12px; }} \
+         /* Pinned placement: the panel abuts the card's right edge, separated \
+            only by a 1px hairline seam (its border-left, painting over the 1px \
+            gap size_panel leaves). Rounded on the RIGHT (outer) corners only — \
+            the left/seam corners stay square so card+panel read as one cream \
+            block split by the hairline. 12px matches the card's own \
+            .page-turn-overlay radius. */ \
+         .chat-panel-pinned {{ border-left: 1px solid alpha({fg}, 0.25); \
+           border-radius: 0 12px 12px 0; }} \
          /* No TOP and no BOTTOM border. The float panel sits directly below the \
             card's header band (Fix 6's margin_top clears it) and its bottom now \
             stops at the two-column divider's end (size_panel), so neither a top \

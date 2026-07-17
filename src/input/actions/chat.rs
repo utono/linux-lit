@@ -10,6 +10,11 @@ use std::rc::Rc;
 /// Minimum freed left space (px) required to open the chat layout.
 const CHAT_MIN_PANEL_W: i32 = 500;
 
+/// Width (px) of the hairline seam between the card and a Pinned panel — the
+/// panel starts this far past the card's right edge, and its `border-left`
+/// (`.chat-panel-pinned`) paints the crisp 1px line.
+const PINNED_DIVIDER_W: i32 = 1;
+
 /// Where the open chat panel sits. Pinned = single-column layout (card pinned
 /// right, panel in the freed left space). Float* = two-column layout (panel
 /// overlays one reading column; the card is untouched).
@@ -162,6 +167,7 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.chat_layout_open = false;
     s.chat_placement = ChatPlacement::Pinned;
     s.chat_panel.container.remove_css_class("chat-panel-float");
+    s.chat_panel.container.remove_css_class("chat-panel-pinned");
     s.chat_panel.container.set_margin_start(24);
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
@@ -310,7 +316,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
     }
     s.chat_placement = ChatPlacement::Pinned;
     s.chat_panel.container.remove_css_class("chat-panel-float");
-    reapply_card_margins(s); // pin the card right again
+    reapply_card_margins(s); // pin the card left again (panel abuts on the right)
     let ww = s.window.width().max(0);
     let (card_w, _) = crate::app::layout::main_card_rect(s);
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
@@ -2183,17 +2189,18 @@ pub(crate) fn size_panel(s: &AppState) {
     match s.chat_placement {
         ChatPlacement::Pinned => {
             let ww = s.window.width().max(0);
-            let end = crate::app::layout::CARD_OUTER_MARGIN;
-            // right outer margin (24) + gap to the card (16)
-            let w = ww - card_w - end - 24 - 16;
-            // Card is pinned flush LEFT (see apply_card_sizing's chat branch),
-            // so the panel sits to its RIGHT: card left margin + card width +
-            // the 16px gap.
-            let start = crate::app::layout::CARD_OUTER_MARGIN + card_w + 16;
+            // Card is pinned flush LEFT with no right margin (see
+            // apply_card_sizing's chat branch); the panel abuts it 1px to the
+            // right — that 1px is the hairline seam, painted crisp by the
+            // panel's own border-left (.chat-panel-pinned). The panel then fills
+            // to the right outer margin, so card+panel read as one cream block.
+            let start = crate::app::layout::CARD_OUTER_MARGIN + card_w + PINNED_DIVIDER_W;
+            let w = (ww - crate::app::layout::CARD_OUTER_MARGIN - start).max(0);
             s.chat_panel.container.set_margin_start(start);
             s.chat_panel.container.set_margin_top(0);
             s.chat_panel.container.set_valign(gtk4::Align::Center);
             s.chat_panel.container.remove_css_class("chat-panel-float");
+            s.chat_panel.container.add_css_class("chat-panel-pinned");
             s.chat_panel.size_to(w, card_h);
         }
         ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
@@ -2220,6 +2227,7 @@ pub(crate) fn size_panel(s: &AppState) {
                 }
             }
             s.chat_panel.container.set_margin_start(x.max(0));
+            s.chat_panel.container.remove_css_class("chat-panel-pinned");
             s.chat_panel.container.add_css_class("chat-panel-float");
             // Clear the header band: `valign: Center` + full `card_h` used to
             // put the panel's top edge at the CARD's own top edge (same y as
