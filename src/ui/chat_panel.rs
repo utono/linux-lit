@@ -37,7 +37,6 @@ pub enum TranscriptRow {
 
 pub struct ChatPanel {
     pub container: gtk4::Box,
-    header_scene: gtk4::Label,
     transcript_box: gtk4::Box,
     transcript_scroll: gtk4::ScrolledWindow,
     input: crate::ui::ask_card::AskCard,
@@ -49,12 +48,6 @@ impl ChatPanel {
         container.add_css_class("chat-panel");
         container.set_margin_start(24);
         container.set_visible(false);
-
-        let header_scene = gtk4::Label::new(None);
-        header_scene.set_halign(gtk4::Align::Start);
-        header_scene.add_css_class("chat-panel-header");
-        let rule = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-        rule.add_css_class("chat-panel-rule");
 
         let transcript_box = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
         // Reader font, slightly smaller than the main card (theme.rs sets
@@ -77,25 +70,15 @@ impl ChatPanel {
         // is awkward to type multi-line questions into.
         input.set_input_height(420);
 
-        container.append(&header_scene);
-        container.append(&rule);
         container.append(&transcript_scroll);
         container.append(input.container());
 
         Self {
             container,
-            header_scene,
             transcript_box,
             transcript_scroll,
             input,
         }
-    }
-
-    /// Header shows ONLY the journal Q&A band (chapter/scene label) — the
-    /// work title/author line was dropped by request (the title bar already
-    /// names the work).
-    pub fn set_header(&self, scene: &str) {
-        self.header_scene.set_text(scene);
     }
 
     pub fn size_to(&self, w: i32, h: i32) {
@@ -197,6 +180,43 @@ impl ChatPanel {
                     c.add_css_class("chat-visual-row");
                 } else {
                     c.remove_css_class("chat-visual-row");
+                }
+                child = c.next_sibling();
+                i += 1;
+            }
+        });
+    }
+
+    /// Flash the transcript row WIDGETS in `(start, end)` (widget-row space,
+    /// inclusive) as the "copied to clipboard" confirmation that replaces
+    /// `y`'s old toast — the wash lands on the lines actually copied, not the
+    /// whole scroll area (`flash_transcript` washes the whole area for a
+    /// different cue, the Tab-cycle "now active" signal; do not conflate the
+    /// two).
+    ///
+    /// Deferred via `idle_add_local_once`, same as `render_rows_focused_cursor`'s
+    /// own class application: when `y` copies a VISUAL selection, the caller
+    /// clears `visual_anchor` and calls `render_transcript` (full rebuild,
+    /// itself idle-deferred) BEFORE flashing, so the transcript-box children at
+    /// the moment `flash_rows` is CALLED may still be the OLD widgets about to
+    /// be destroyed. Queuing this flash on the idle loop too means it runs
+    /// after that pending rebuild's own idle closure has already replaced the
+    /// children, so `boxx.first_child()`/`next_sibling()` here walk the LIVE
+    /// widget tree the copied text actually came from. In the no-selection
+    /// case no rebuild happens, so the extra idle hop is a harmless no-op
+    /// delay.
+    pub fn flash_rows(&self, start: usize, end: usize) {
+        let boxx = self.transcript_box.clone();
+        glib::idle_add_local_once(move || {
+            let mut child = boxx.first_child();
+            let mut i = 0usize;
+            while let Some(c) = child {
+                if i >= start && i <= end {
+                    c.add_css_class("chat-flash-row");
+                    let w = c.clone();
+                    glib::timeout_add_local_once(std::time::Duration::from_millis(160), move || {
+                        w.remove_css_class("chat-flash-row");
+                    });
                 }
                 child = c.next_sibling();
                 i += 1;

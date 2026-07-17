@@ -1289,11 +1289,6 @@ pub fn generate_css(
          .chat-panel-float {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.25); border-radius: 8px; \
            padding: 12px; }} \
-         .chat-panel-header {{ color: alpha({bg}, 0.92); font-variant: small-caps; \
-           font-size: 15px; letter-spacing: 1px; }} \
-         .chat-panel-rule {{ background-color: alpha({bg}, 0.45); min-height: 1px; }} \
-         .chat-panel-float .chat-panel-header {{ color: {dim}; }} \
-         .chat-panel-float .chat-panel-rule {{ background-color: alpha({fg}, 0.25); }} \
          .chat-transcript {{ font-family: {font}; font-size: {chat_size}pt; }} \
          .chat-transcript label {{ padding-bottom: 3px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
@@ -1367,6 +1362,24 @@ pub fn generate_css(
             (cursor's box-shadow accent bar stays on top), so no override
             is needed. */ \
          .chat-visual-row {{ background-color: {selection_bg}; }} \
+         /* `y` copy-confirmation flash (replaces the old \"Copied N lines\" \
+            toast): a brief wash on the ROW(S) actually copied, reusing \
+            cursor_bg so it reads as the same accent color as the cursor bar \
+            / flash-active input border - one \"this is the active accent\" \
+            color across the panel. Asymmetric transition, mirroring \
+            .chat-transcript-scroll.chat-flash-wash: `transition: none` here \
+            so the wash appears INSTANTLY on add (a confirmation should not \
+            fade in, that reads as sluggish), while the base \
+            .chat-transcript label rule (implicit, inherited) has no \
+            transition of its own - so add scripted `remove_css_class` after \
+            160ms is a hard cut, not a fade. Kept quiet (low alpha, no \
+            border/shadow) so it does not fight `.chat-cursor-row`'s inset \
+            accent bar or `.chat-visual-row`'s selection wash when a flashed \
+            row is ALSO the cursor row or in the just-cleared selection - the \
+            three backgrounds simply layer like chat-cursor-row/chat-visual-row \
+            already do (see that comment above). */ \
+         .chat-flash-row {{ background-color: alpha({cursor_bg}, 0.22); \
+           transition: none; }} \
          .chat-input {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.30); border-radius: 6px; \
            transition: border-color 320ms ease-out, \

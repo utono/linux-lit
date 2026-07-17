@@ -259,7 +259,6 @@ pub(crate) fn regate_panel(s: &mut AppState) {
         s.chat_placement = float_side_for_cursor(s);
         reapply_card_margins(s); // un-pin the card if we arrived from Pinned
         size_panel(s);
-        set_panel_header(s);
         crate::logging::log(&format!(
             "CHAT: regate floated panel ({:?})",
             s.chat_placement
@@ -278,7 +277,6 @@ pub(crate) fn regate_panel(s: &mut AppState) {
         return;
     }
     size_panel(s);
-    set_panel_header(s);
     crate::logging::log(&format!("CHAT: regate kept panel (free={}px)", free));
 }
 
@@ -388,7 +386,6 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
         s.chat_layout_open = true;
         reapply_card_margins(&s); // chat_pinned()==false → card untouched
         size_panel(&s);
-        set_panel_header(&s);
         s.chat_panel.show();
         crate::logging::log(&format!(
             "CHAT: layout opened floating ({:?})",
@@ -442,7 +439,6 @@ pub(crate) fn focus_prompt(s: &mut AppState) {
         // reseeds the vim engine, but there's nothing in it to destroy).
         s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg);
     }
-    set_panel_header(s);
     // Tab-cycle cue: flash the widget that just became active.
     s.chat_panel.flash_input();
 }
@@ -1208,7 +1204,7 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
     // takes &AppState and re-borrows, so toasting under this borrow_mut would
     // double-borrow and panic (mirrors copy_gloss_id's own toast-after-
     // borrow-drop discipline — see its comment).
-    let (text, n_rows, had_selection) = {
+    let (text, n_rows, had_selection, flash_range) = {
         let mut s = state_rc.borrow_mut();
         let (rows, _cursor_row, _row_owner) = transcript_rows(&s);
         let all_texts: Vec<String> = rows
@@ -1229,12 +1225,18 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
         };
         let count = selected.len();
         let text = selected.join("\n");
+        let flash_range = if n == 0 { None } else { Some((range.0.min(n - 1), range.1.min(n - 1))) };
         if had_selection {
             // Copy-then-exit, mirroring the reader's yank_selection contract.
+            // This rebuild destroys the current row widgets and (via
+            // render_rows_focused_cursor) queues their replacements on the
+            // idle loop — see flash_rows' doc comment for why the flash below
+            // still lands on the resulting LIVE widgets rather than the ones
+            // being torn down here.
             s.chat.visual_anchor = None;
             render_transcript(&mut s);
         }
-        (text, count, had_selection)
+        (text, count, had_selection, flash_range)
     };
 
     if n_rows == 0 {
@@ -1244,19 +1246,19 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
     }
 
     let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+    // No success toast: the row flash below is the visual confirmation that
+    // replaces it — `y` is a reflex, and the flash lands right on the copied
+    // line(s), which a toast never did. The failure toast above stays — an
+    // empty transcript is the case the reader cannot see for themselves.
+    if let Some((start, end)) = flash_range {
+        let s = state_rc.borrow();
+        s.chat_panel.flash_rows(start, end);
+    }
     crate::logging::log(&format!(
         "CHAT-YANK: copied {} row(s){} to clipboard",
         n_rows,
         if had_selection { " (visual)" } else { "" }
     ));
-
-    let s = state_rc.borrow();
-    let label = if n_rows == 1 {
-        "Copied 1 line".to_string()
-    } else {
-        format!("Copied {} lines", n_rows)
-    };
-    crate::input::navigation::show_chapter_toast_secs(&s, &label, 2);
 }
 
 /// `s` on the transcript: save the selected exchange as a passage journal
@@ -1544,19 +1546,6 @@ pub(crate) fn size_panel(s: &AppState) {
             s.chat_panel.size_to(w, card_h);
         }
     }
-}
-
-pub(crate) fn set_panel_header(s: &AppState) {
-    let Some(w) = s.current_work.as_ref() else {
-        return;
-    };
-    let (d1, d2) = s
-        .work_line_for_buffer(s.current_line)
-        .and_then(|wi| w.lines.get(wi))
-        .map(|l| (l.div1, l.div2))
-        .unwrap_or((0, 0));
-    let scene = crate::app::scene_synopsis::synopsis_label(s, d1, d2);
-    s.chat_panel.set_header(&scene);
 }
 
 /// How many most-recent exchanges are sent as conversation history (each is
