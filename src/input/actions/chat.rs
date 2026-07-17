@@ -48,17 +48,27 @@ pub(crate) struct ChatState {
     /// text instead of re-deriving the cursor's segment ±2 neighbors — so
     /// follow-ups keep discussing the same passage even if the cursor drifts.
     /// Cleared with the rest of ChatState when the panel closes.
+    ///
+    /// INVARIANT: `gloss_ctx` must always describe the SAME passage as
+    /// `pinned_passage` (or be `None` if `-` hasn't glossed it yet). Any path
+    /// that rewrites one must clear or set the other in the same operation —
+    /// see `open_chat_pinned_to_selection`, which clears `gloss_ctx`/
+    /// `gloss_list`/`gloss_index` whenever it installs a new `pinned_passage`,
+    /// and the `-` path in `visual.rs`, which re-populates all three
+    /// immediately after a successful pin.
     pub pinned_passage: Option<crate::input::segments::SegmentContext>,
     /// Stored reader-glosses for the pinned passage, newest first, as
     /// `find_glosses_by_start` orders them. A DIFFERENT axis from `exchanges`:
     /// these are lit.db rows (including earlier sessions'), where `exchanges`
     /// is this session's in-memory transcript. `Ctrl+n`/`Ctrl+p` moves over
-    /// this list; `j`/`k` moves over `exchanges`. Never share `cursor`.
+    /// this list; `j`/`k` moves over `exchanges`. Never share `cursor`. Must
+    /// track `pinned_passage` — see the invariant note there.
     pub gloss_list: Vec<crate::db::queries::SavedGloss>,
     /// Index into `gloss_list` of the gloss currently shown in exchange #1.
     pub gloss_index: usize,
     /// The pinned passage as a gloss context — what regloss re-sends and what
     /// a save needs for the `passages` row. Set when `-` opens the panel.
+    /// Must track `pinned_passage` — see the invariant note there.
     pub gloss_ctx: Option<crate::gloss::GlossContext>,
 }
 
@@ -265,12 +275,16 @@ pub(crate) fn regate_panel(s: &mut AppState) {
 /// So the mark always shows precisely what the chat is discussing.
 /// No-op when the selection maps to no work lines.
 ///
-/// Returns `true` only when a new pin was actually installed into
-/// `s.chat.pinned_passage`. Returns `false` on both early-return paths (no
-/// selection at all; selection maps to no passage) — in neither case does
-/// this touch any existing pin, so callers MUST NOT infer success from
-/// `chat_layout_open` alone: a panel opened by a PREVIOUS call stays open
-/// (and still pinned to the OLD passage) even when this call fails.
+/// Returns `true` only when the panel is OPEN and a new pin was actually
+/// installed into `s.chat.pinned_passage`. Returns `false` on three failure
+/// paths: no selection at all; selection maps to no passage; or
+/// `toggle_chat_layout` itself failed to open the panel (single-column
+/// layout with no room — it toasts "No room for chat panel at this layout"
+/// and returns without setting `chat_layout_open = true`). In NONE of these
+/// cases does this touch any existing pin, so callers MUST NOT infer success
+/// from `chat_layout_open` alone before calling this: a panel opened by a
+/// PREVIOUS call stays open (and still pinned to the OLD passage) even when
+/// THIS call fails to pin a new one.
 pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) -> bool {
     let picked = {
         let s = state_rc.borrow();
@@ -293,10 +307,28 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
     // chat discusses it.
     crate::input::visual::exit_visual_mode(&mut state_rc.borrow_mut());
     // Opens when closed, else focuses the panel — neither path touches
-    // ChatState, so the pin below survives either way.
+    // ChatState, so the pin below survives either way. BUT on a single-column
+    // layout with no free space, toggle_chat_layout bails WITHOUT setting
+    // chat_layout_open = true (it already toasted why) — check that outcome
+    // before installing a pin into a panel that isn't actually on screen.
     toggle_chat_layout(state_rc);
     {
+        let s = state_rc.borrow();
+        if !s.chat_layout_open {
+            return false;
+        }
+    }
+    {
         let mut s = state_rc.borrow_mut();
+        // A fresh pin describes a NEW passage: clear any stale gloss context
+        // from a previously pinned passage so `r`/`R`/Ctrl+n/Ctrl+p can't act
+        // on it while the panel shows this one. The '-' path (visual.rs)
+        // re-populates all three immediately after this call returns true;
+        // Tab (keymap.rs) leaves them cleared, which is correct — Tab never
+        // glosses.
+        s.chat.gloss_ctx = None;
+        s.chat.gloss_list.clear();
+        s.chat.gloss_index = 0;
         s.chat.pinned_passage = Some(pinned);
         // Re-place from the SELECTION, overriding toggle_chat_layout's
         // cursor-derived side. Only floats: a Pinned panel (single-column) has
