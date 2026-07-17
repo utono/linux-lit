@@ -183,7 +183,7 @@ fn extract_scene_terms(
     );
 }
 
-fn improve_question(
+pub(crate) fn improve_question(
     state: &Rc<RefCell<AppState>>,
     question: String,
     terms: &[String],

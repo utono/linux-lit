@@ -571,7 +571,11 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         chat_revision::submit_revision(state_rc);
         return;
     }
-    let (question, system, user_msg, turns, model, chip, meta) = {
+    // Passage-derived context is resolved at SUBMIT time (the cursor may move
+    // during the two async round-trips below); only the pieces that embed the
+    // QUESTION (user_msg, wire turns) are (re)built later, inside
+    // improve_question's callback, using the rewritten question.
+    let (question, system, model, chip, meta, msg_ctx) = {
         let s = state_rc.borrow();
         if s.chat.pending {
             crate::input::navigation::show_chapter_toast_secs(&s, "Waiting for the previous reply\u{2026}", 2);
@@ -611,23 +615,20 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         if let Some(c) = unit_label.get_mut(0..1) {
             c.make_ascii_uppercase();
         }
-        let user_msg = crate::input::segments::chat_user_message(
-            genre, &work.title, &work.author, &unit_label, &scene,
-            &seg.segments, seg.cursor_index, &question,
-        );
-        // Prior turns: capped and deduped by build_history_turns. The
-        // current message is likewise sent question-only when its passage
-        // matches the last history turn's; the FULL user_msg is still
-        // stored on the Exchange (revision/consolidation and any future
-        // context-bearing turn read from there).
         let chip: String = seg.segments[seg.cursor_index].chars().take(120).collect();
-        let (mut turns, last_chip) = build_history_turns(&s.chat.exchanges);
-        let wire_current = if last_chip.as_deref() == Some(chip.as_str()) {
-            same_passage_question(&question)
-        } else {
-            user_msg.clone()
+        // Everything chat_user_message needs to (re)build the user message once
+        // the question has been rewritten. Captured by value so the answer call
+        // — issued inside improve_question's callback — can build it there
+        // without re-borrowing the (possibly moved) cursor context.
+        let msg_ctx = ChatMsgCtx {
+            genre: genre.to_string(),
+            title: work.title.clone(),
+            author: work.author.clone(),
+            unit_label,
+            scene,
+            segments: seg.segments.clone(),
+            cursor_index: seg.cursor_index,
         };
-        turns.push(crate::claude::ChatTurn { role: "user", content: wire_current });
         let meta = (
             seg.div1,
             seg.div2,
@@ -638,11 +639,10 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         (
             question,
             crate::gloss::journal_qa_prompt(&work.work_type),
-            user_msg,
-            turns,
             s.config.claude_model.clone(),
             chip,
             meta,
+            msg_ctx,
         )
     };
 
@@ -655,6 +655,10 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         // alone even if the reader asked this while looking at the Gloss or
         // Journal view. `t` from here returns to Gloss (see `flip_view`).
         s.chat.view = PanelView::Question;
+        // Show the reader's ORIGINAL question in the "thinking…" row while BOTH
+        // Claude calls (rewrite, then answer) run — the panel is never blank
+        // through the wait. The FINAL Q: row (rendered with the answer) shows
+        // the IMPROVED question, matching what was actually answered.
         render_transcript_with_thinking(&s, &question, &chip);
         // Hide the ask input the INSTANT the question is submitted, not when
         // the answer arrives — the input stays gone through the whole
@@ -663,14 +667,52 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         focus_transcript(&mut s);
     }
 
-    let (div1, div2, start_citation, end_citation, source_markup) = meta;
-    let question_ok = question.clone();
-    let question_err = question;
-    crate::input::actions::claude_bridge::run_claude_chat_request(
+    // Match the journal Q&A overlay: rewrite the reader's question via Claude
+    // (system prompt journal.improve-question) BEFORE answering it, so a terse
+    // or malformed ask is sharpened first. No scene-terms extraction here (the
+    // overlay's first call) — improve_question is called with an EMPTY terms
+    // slice, so the rewrite proceeds with no term-preservation guidance. The
+    // ANSWER request is issued from INSIDE this callback: pending stays true
+    // across BOTH round-trips, and improve_question ALWAYS calls on_done
+    // (rewritten text on success, ORIGINAL on empty/error — see journal.rs), so
+    // the answer is always reached and pending always clears.
+    let state_for_answer = Rc::clone(state_rc);
+    crate::input::actions::journal::improve_question(
         state_rc,
-        system,
+        question,
+        &[],
+        move |st, improved| {
+        let (div1, div2, start_citation, end_citation, source_markup) = meta.clone();
+        // Build the user message + wire turns with the IMPROVED question.
+        let (user_msg, turns) = {
+            let s = st.borrow();
+            let user_msg = crate::input::segments::chat_user_message(
+                &msg_ctx.genre, &msg_ctx.title, &msg_ctx.author, &msg_ctx.unit_label,
+                &msg_ctx.scene, &msg_ctx.segments, msg_ctx.cursor_index, &improved,
+            );
+            // Prior turns: capped and deduped by build_history_turns. The
+            // current message is likewise sent question-only when its passage
+            // matches the last history turn's; the FULL user_msg is still
+            // stored on the Exchange (revision/consolidation and any future
+            // context-bearing turn read from there).
+            let (mut turns, last_chip) = build_history_turns(&s.chat.exchanges);
+            let wire_current = if last_chip.as_deref() == Some(chip.as_str()) {
+                same_passage_question(&improved)
+            } else {
+                user_msg.clone()
+            };
+            turns.push(crate::claude::ChatTurn { role: "user", content: wire_current });
+            (user_msg, turns)
+        };
+
+        let question_ok = improved.clone();
+        let question_err = improved;
+        let chip = chip.clone();
+        crate::input::actions::claude_bridge::run_claude_chat_request(
+        &state_for_answer,
+        system.clone(),
         turns,
-        model,
+        model.clone(),
         move |st, answer| {
             let mut s = st.borrow_mut();
             s.chat.pending = false;
@@ -744,6 +786,23 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             s.chat_panel.paste_input_text(&question_err);
         },
     );
+    }, // end improve_question on_done (issues the answer request above)
+    );
+}
+
+/// Context captured at submit time to (re)build the chat user message once the
+/// question has been rewritten by `improve_question`. Everything
+/// `chat_user_message` needs EXCEPT the question itself — resolved from the
+/// cursor's passage at submit, so a cursor move during the two async round-trips
+/// can't change the passage that was asked about.
+struct ChatMsgCtx {
+    genre: String,
+    title: String,
+    author: String,
+    unit_label: String,
+    scene: String,
+    segments: Vec<String>,
+    cursor_index: usize,
 }
 
 /// Wrap an exchange's answer as the right `TranscriptRow` variant: a
