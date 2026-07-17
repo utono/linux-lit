@@ -44,8 +44,8 @@ pub(crate) struct ChatState {
     /// `chat_panel::TranscriptRow` — a gloss answer explodes into several,
     /// speaker/verse/gloss/etc.), not into `exchanges`. This is what the
     /// accent bar (`.chat-cursor-row`) paints on and what j/k actually steps.
-    /// `cursor` (the EXCHANGE cursor, used by `s` save / the `▶` marker /
-    /// Ctrl+n/p gloss cycling) is derived from it via `build_transcript_rows`'
+    /// `cursor` (the EXCHANGE cursor, used by `s` save and Ctrl+n/p gloss
+    /// cycling) is derived from it via `build_transcript_rows`'
     /// `row_owner` map — see `transcript_cursor_move`. Reset to the new
     /// exchange's leading row alongside every `cursor` write (new answer,
     /// gloss push, consolidate) — see `snap_row_cursor_to_exchange`.
@@ -691,39 +691,24 @@ fn build_transcript_rows(
     let mut prev_chip: Option<&str> = None;
     for (i, e) in exchanges.iter().enumerate() {
         let is_cursor = i == cursor;
-        let marker = if is_cursor { "\u{25b8} " } else { "" };
         let show_question = has_question_row(e);
-        let chip_is_new = prev_chip != Some(e.chip.as_str());
-        // The `▶` cursor marker needs a row to prefix. Normally that's the
-        // `Q:` row; a question-less (gloss) exchange has none, so the marker
-        // falls back to the chip row when one renders fresh, and finally to
-        // the answer row so a cursor is ALWAYS shown somewhere. A gloss
-        // exchange always occupies transcript slot #1, so its chip is always
-        // freshly pushed (`prev_chip` starts `None`) — the fallback chain's
-        // first branch always applies in practice today.
-        let marker_row = if show_question {
-            None // Question row (pushed below) carries it.
-        } else if chip_is_new {
-            Some(widget_row) // Chip row (pushed next) carries it.
-        } else {
-            None // Falls through to the answer row (pushed further below).
-        };
+        // An EMPTY chip renders no row: `gloss_chip` empties it for a lone
+        // gloss, where the label added nothing the content didn't already say.
+        let chip_is_new = !e.chip.is_empty() && prev_chip != Some(e.chip.as_str());
         if chip_is_new {
-            let chip_marker = if is_cursor && marker_row.is_some() { marker } else { "" };
-            rows.push(R::Chip(format!("{chip_marker}{}", e.chip)));
+            rows.push(R::Chip(e.chip.clone()));
             row_owner.push(i);
             widget_row += 1;
         }
         prev_chip = Some(e.chip.as_str());
-        if let Some(r) = marker_row {
-            if is_cursor {
-                cursor_row = r;
-            }
-        } else if is_cursor {
+        // No `▸` glyph: j/k paints an accent bar on the cursor ROW, which says
+        // the same thing in the same place the reading card says it. The
+        // exchange cursor lands on the first row this exchange owns.
+        if is_cursor {
             cursor_row = widget_row;
         }
         if show_question {
-            rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
+            rows.push(R::Question(format!("Q: {}", e.question)));
             row_owner.push(i);
             widget_row += 1;
         }
@@ -886,10 +871,15 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
 
 /// The "n of N" chip for the gloss slot, so cycling shows which stored gloss
 /// is on screen.
+/// The gloss slot's chip. EMPTY for a lone gloss — the label said nothing the
+/// panel's own content didn't, and a bare "Reader gloss" row above the gloss
+/// read as noise. It earns its row only once a passage has several stored
+/// glosses, where "2 of 5" is the sole cue telling `Ctrl+n`/`Ctrl+p` which one
+/// is on screen. An empty chip renders no row (see `transcript_rows`).
 fn gloss_chip(s: &AppState) -> String {
     let n = s.chat.gloss_list.len();
     if n <= 1 {
-        "Reader gloss".to_string()
+        String::new()
     } else {
         format!("Reader gloss {} of {}", s.chat.gloss_index + 1, n)
     }
@@ -1042,12 +1032,13 @@ pub(crate) fn regloss_pinned(state_rc: &Rc<RefCell<AppState>>) {
     request_reader_gloss(state_rc, ctx, model);
 }
 
-/// The transcript with a "Glossing…" row appended, so the panel shows work in
-/// flight rather than sitting blank.
+/// The transcript with a "thinking…" row appended, so the panel shows work in
+/// flight rather than sitting blank. No "Reader gloss" chip above it — the
+/// Thinking row already says what is happening, and the label was the same
+/// noise `gloss_chip` drops for a lone gloss.
 fn render_transcript_thinking_gloss(s: &AppState) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let (mut rows, _, _) = transcript_rows(s);
-    rows.push(R::Chip("Reader gloss".to_string()));
     rows.push(R::Thinking);
     s.chat_panel.render_rows(&rows);
 }
@@ -1927,12 +1918,29 @@ mod row_cursor_widget_tests {
         let exchanges = vec![gloss_ex("chipA", markup)];
         let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0);
         // Chip + exploded gloss (3 widgets) = 4 widget rows, all owned by
-        // exchange 0.
+        // exchange 0. (This exchange carries an explicit chip; a real lone
+        // gloss has an empty one and renders no chip row at all — see
+        // `lone_gloss_renders_no_chip_row`.)
         assert_eq!(row_owner, vec![0, 0, 0, 0]);
         assert_eq!(row_owner.len(), 4);
         assert_eq!(rows.len(), 2); // Vec<TranscriptRow> space: Chip + GlossAnswer(1)
-        // Cursor lands on the chip row (the gloss exchange's marker fallback
-        // — see build_transcript_rows' marker_row doc comment).
+        // The cursor lands on the exchange's first CONTENT row, past the chip:
+        // the accent bar belongs on the gloss, not on a "2 of 5" label.
+        assert_eq!(cursor_row, 1);
+    }
+
+    /// A lone gloss's chip is empty (`gloss_chip`), so no chip row renders and
+    /// the accent bar sits on the gloss's first line — the panel shows the
+    /// gloss and nothing else.
+    #[test]
+    fn lone_gloss_renders_no_chip_row() {
+        let markup = "<speaker>CYMBELINE</speaker>\n\
+                       <verse>Stand by my side</verse>\n\
+                       <gloss>Cymbeline honors him.</gloss>";
+        let exchanges = vec![gloss_ex("", markup)];
+        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0);
+        assert_eq!(rows.len(), 1); // GlossAnswer only — no Chip
+        assert_eq!(row_owner, vec![0, 0, 0]); // the 3 exploded gloss widgets
         assert_eq!(cursor_row, 0);
     }
 
