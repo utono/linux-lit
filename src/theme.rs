@@ -1327,7 +1327,7 @@ pub fn generate_css(
             viewport, so the gutter sits between the text's right edge and the \
             bar rather than being eaten by it. */ \
          .chat-transcript {{ font-family: {font}; font-size: {size}pt; \
-           padding-right: 14px; }} \
+           padding-right: 14px; padding-top: 16px; padding-bottom: 16px; }} \
          .chat-transcript label {{ padding-bottom: 3px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
