@@ -1051,6 +1051,25 @@ fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
 }
 
 /// Generate GTK CSS for a theme.
+///
+/// `.chat-a-speaker`/`.chat-a-verse` (the chat panel's typed reader-gloss
+/// rows, see `gloss_render::chat_gloss_rows`) mirror the MAIN READING CARD's
+/// own dialogue typography: `src/app/formatting.rs`'s `speaker-name` TextTag
+/// is small-caps, weight 400, scale 0.75 — subordinate to the dialogue line
+/// purely via size/weight, not color-dimming. The verse is the star (quoted
+/// Shakespeare), so `.chat-a-verse` renders at FULL ink, not the dimmed
+/// `alpha(chat_ink, 0.70)` / `{dim}` it used before — that made the quoted
+/// source read lighter than the reader's own verse on the same screen.
+/// Vertical rhythm: a gloss block is `[speaker?; verse/stage lines; gloss]`.
+/// `padding-top: 14px` on the speaker (mirrors the main card's own 14px
+/// `speaker-gap` tag) is the only large gap — it opens each new block.
+/// Verse/stage lines that follow sit tight (2px) so a multi-line quotation
+/// reads as one grouped unit; the gloss gets a clearer break (10px) before
+/// the model's own commentary begins. The tightened `padding-bottom` rules
+/// need the `.chat-transcript label.chat-a-*` compound selector (class +
+/// type + class) to out-specificity the blanket `.chat-transcript label {
+/// padding-bottom: 3px }` rule — a bare `.chat-a-verse { padding-bottom }`
+/// alone loses that cascade and silently keeps the old 3px gap.
 pub fn generate_css(
     theme: &Theme,
     font_family: &str,
@@ -1277,21 +1296,25 @@ pub fn generate_css(
            border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; }} \
          .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; }} \
          .chat-saved {{ color: alpha({chat_ink}, 0.65); }} \
-         .chat-a-speaker {{ color: {chat_ink}; font-weight: bold; font-variant: small-caps; \
-           letter-spacing: 1px; padding-top: 6px; }} \
-         .chat-a-verse {{ color: alpha({chat_ink}, 0.70); font-style: italic; \
-           padding-left: 6px; }} \
+         .chat-a-speaker {{ color: alpha({chat_ink}, 0.75); font-weight: normal; \
+           font-variant: small-caps; font-size: 0.82em; letter-spacing: 0.5px; \
+           padding-top: 14px; }} \
+         .chat-transcript label.chat-a-speaker {{ padding-bottom: 1px; }} \
+         .chat-a-verse {{ color: {chat_ink}; font-style: italic; \
+           padding-left: 6px; padding-top: 0px; }} \
+         .chat-transcript label.chat-a-verse {{ padding-bottom: 2px; }} \
          .chat-a-stage {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           padding-left: 6px; }} \
-         .chat-a-gloss {{ color: {chat_ink}; padding-top: 4px; }} \
+           padding-left: 6px; padding-top: 0px; }} \
+         .chat-transcript label.chat-a-stage {{ padding-bottom: 2px; }} \
+         .chat-a-gloss {{ color: {chat_ink}; padding-top: 10px; }} \
          .chat-panel-float .chat-q {{ color: {dim}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \
            border-left: 2px solid alpha({fg}, 0.35); }} \
          .chat-panel-float .chat-error {{ color: alpha({fg}, 0.55); }} \
          .chat-panel-float .chat-saved {{ color: {dim}; }} \
-         .chat-panel-float .chat-a-speaker {{ color: {fg}; }} \
-         .chat-panel-float .chat-a-verse {{ color: {dim}; }} \
+         .chat-panel-float .chat-a-speaker {{ color: {dim}; }} \
+         .chat-panel-float .chat-a-verse {{ color: {fg}; }} \
          .chat-panel-float .chat-a-stage {{ color: alpha({fg}, 0.55); }} \
          .chat-panel-float .chat-a-gloss {{ color: {fg}; }} \
          .chat-input {{ background-color: {bg}; \

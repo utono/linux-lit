@@ -202,10 +202,20 @@ impl ChatPanel {
         }
     }
 
+    /// `WordChar` (break inside a word when a line is too narrow) is right
+    /// for verse/gloss prose, which legitimately needs to wrap at any width.
+    /// A speaker name (`chat-a-speaker`) must never hyphenate mid-word — e.g.
+    /// "CYMBELINE" rendering as "CYMBELIN-" / "E" — so it gets plain `Word`
+    /// wrapping instead (wraps at whitespace only; a single long name just
+    /// runs to its natural width, never split).
     fn append_row_label(&self, text: &str, class: &str) {
         let label = gtk4::Label::new(Some(text));
         label.set_wrap(true);
-        label.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+        label.set_wrap_mode(if class == "chat-a-speaker" {
+            gtk4::pango::WrapMode::Word
+        } else {
+            gtk4::pango::WrapMode::WordChar
+        });
         label.set_halign(gtk4::Align::Start);
         label.set_xalign(0.0);
         label.set_selectable(false);

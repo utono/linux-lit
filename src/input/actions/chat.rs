@@ -620,23 +620,57 @@ fn answer_row(e: &Exchange) -> crate::ui::chat_panel::TranscriptRow {
     }
 }
 
+/// Whether `e` should render a `Q:` row at all. An auto-gloss exchange
+/// (`push_gloss_exchange`) deliberately stores an empty `question` — "the
+/// user asked nothing" — so a literal `▶ Q:` row with nothing after it reads
+/// as a Q&A affordance on content that isn't Q&A (a reader-gloss). A
+/// follow-up exchange asked with `a` always has a real question and keeps its
+/// row.
+fn has_question_row(e: &Exchange) -> bool {
+    !e.question.is_empty()
+}
+
 /// Build the transcript rows; also returns the row index of the cursor
-/// exchange's question, so renders can scroll the selection into view.
+/// exchange's leading row, so renders can scroll the selection into view.
 fn transcript_rows(s: &AppState) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
     let mut cursor_row = 0;
     let mut prev_chip: Option<&str> = None;
     for (i, e) in s.chat.exchanges.iter().enumerate() {
-        if prev_chip != Some(e.chip.as_str()) {
-            rows.push(R::Chip(e.chip.clone()));
+        let is_cursor = i == s.chat.cursor;
+        let marker = if is_cursor { "\u{25b8} " } else { "" };
+        let show_question = has_question_row(e);
+        let chip_is_new = prev_chip != Some(e.chip.as_str());
+        // The `▶` cursor marker needs a row to prefix. Normally that's the
+        // `Q:` row; a question-less (gloss) exchange has none, so the marker
+        // falls back to the chip row when one renders fresh, and finally to
+        // the answer row so a cursor is ALWAYS shown somewhere. A gloss
+        // exchange always occupies transcript slot #1, so its chip is always
+        // freshly pushed (`prev_chip` starts `None`) — the fallback chain's
+        // first branch always applies in practice today.
+        let marker_row = if show_question {
+            None // Question row (pushed below) carries it.
+        } else if chip_is_new {
+            Some(rows.len()) // Chip row (pushed next) carries it.
+        } else {
+            None // Falls through to the answer row (pushed further below).
+        };
+        if chip_is_new {
+            let chip_marker = if is_cursor && marker_row.is_some() { marker } else { "" };
+            rows.push(R::Chip(format!("{chip_marker}{}", e.chip)));
         }
         prev_chip = Some(e.chip.as_str());
-        let marker = if i == s.chat.cursor { "\u{25b8} " } else { "" };
-        if i == s.chat.cursor {
+        if let Some(r) = marker_row {
+            if is_cursor {
+                cursor_row = r;
+            }
+        } else if is_cursor {
             cursor_row = rows.len();
         }
-        rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
+        if show_question {
+            rows.push(R::Question(format!("{}Q: {}", marker, e.question)));
+        }
         rows.push(answer_row(e));
         if e.saved_id.is_some() {
             rows.push(R::SavedMark);
@@ -1332,6 +1366,41 @@ pub(crate) fn parse_revised_qa(reply: &str, fallback_q: &str) -> (String, String
         }
     }
     (fallback_q.to_string(), trimmed.to_string())
+}
+
+#[cfg(test)]
+mod question_row_tests {
+    use super::{has_question_row, Exchange};
+
+    fn ex(question: &str) -> Exchange {
+        Exchange {
+            question: question.to_string(),
+            answer: String::new(),
+            chip: String::new(),
+            user_msg: String::new(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id: None,
+        }
+    }
+
+    // An auto-gloss exchange (`push_gloss_exchange`) stores an empty
+    // question — no `Q:` row (Bug 1: a bare "▶ Q:" is a Q&A affordance on
+    // content that isn't Q&A).
+    #[test]
+    fn gloss_exchange_has_no_question_row() {
+        assert!(!has_question_row(&ex("")));
+    }
+
+    // A follow-up exchange asked with `a` always carries a real question and
+    // must keep its `Q:` row — this must NOT regress.
+    #[test]
+    fn followup_exchange_keeps_question_row() {
+        assert!(has_question_row(&ex("What does this line mean?")));
+    }
 }
 
 #[cfg(test)]
