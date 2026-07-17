@@ -237,6 +237,22 @@ impl ChatPanel {
         adj.set_value((adj.value() + dir * adj.page_size() * 0.35).clamp(0.0, max));
     }
 
+    /// Jump the transcript viewport straight to the top (`to_end = false`) or
+    /// bottom (`to_end = true`) — the scroll-only `gg`/`G` behavior for
+    /// `PanelView::Journal`/`Question`, which have no row cursor for
+    /// `render_rows_focused_cursor` to center (see
+    /// `transcript_cursor_move`'s Journal/Question guard for why those views
+    /// degrade to plain scrolling). Mirrors `render_rows`'s own
+    /// scroll-to-end (`adj.set_value(adj.upper())`) for the `G` case.
+    pub fn scroll_transcript_to_edge(&self, to_end: bool) {
+        let adj = self.transcript_scroll.vadjustment();
+        if to_end {
+            adj.set_value(adj.upper());
+        } else {
+            adj.set_value(0.0);
+        }
+    }
+
     fn rebuild_rows(&self, rows: &[TranscriptRow]) {
         while let Some(child) = self.transcript_box.first_child() {
             self.transcript_box.remove(&child);

@@ -250,7 +250,7 @@ pub fn handle_key(
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
-            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_name, is_ctrl),
+            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -1325,9 +1325,23 @@ fn handle_chat_prompt_key(
 /// Ctrl+Tab closes.
 fn handle_chat_transcript_key(
     state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
 ) -> bool {
+    // gg chord -> first landable row (mirrors the journal/gloss/synopsis
+    // overlays' block cursor; see keymap.rs:1457 for the sibling this
+    // mirrors). Checked BEFORE the match below so a completed `gg` never
+    // falls through to the plain `_ => true` catch-all arm.
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            crate::input::actions::chat::transcript_cursor_first(&mut state.borrow_mut());
+            return true;
+        }
+        // Falls through to the match below so the second key still does its
+        // own thing (e.g. `g` then `j` should not eat the `j`).
+    }
     match key_name {
         // Ctrl+Tab closes the panel (same chord as the reader's
         // CloseChatLayout — the whole Tab cap owns the chat). Guarded arm must
@@ -1346,6 +1360,19 @@ fn handle_chat_transcript_key(
         }
         "k" => {
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), -1);
+            true
+        }
+        // `gg`/`G`: jump the row cursor to the first/last LANDABLE row (Gloss
+        // view) or scroll to the top/bottom (Journal/Question view — see
+        // transcript_cursor_first/last's doc comments). `g` alone just arms
+        // the PendingG chord (checked above, before this match); the
+        // completing `g` is consumed there and never reaches this arm.
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "G" => {
+            crate::input::actions::chat::transcript_cursor_last(&mut state.borrow_mut());
             true
         }
         // `V`: enter/exit a panel-local visual selection anchored at the row

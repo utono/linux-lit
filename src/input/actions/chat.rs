@@ -1563,6 +1563,60 @@ fn first_landable_at_or_after(from: usize, landable: &[bool]) -> usize {
         .unwrap_or(from)
 }
 
+/// The first LANDABLE row index in `landable`, or `None` if the transcript is
+/// empty or entirely unlandable (Fix 2's all-speaker edge case). Pure helper
+/// for `gg`'s jump-to-first-landable-row.
+fn first_landable_index(landable: &[bool]) -> Option<usize> {
+    landable.iter().position(|&l| l)
+}
+
+/// The last LANDABLE row index in `landable`, or `None` if the transcript is
+/// empty or entirely unlandable. Pure helper for `G`'s
+/// jump-to-last-landable-row.
+fn last_landable_index(landable: &[bool]) -> Option<usize> {
+    landable.iter().rposition(|&l| l)
+}
+
+/// `gg` on the transcript: move the row cursor to the FIRST landable row (in
+/// `PanelView::Gloss`) and scroll it to the top of the viewport via
+/// `render_transcript`'s `render_rows_focused_cursor` call — the same
+/// cursor-follows-scroll behavior `transcript_cursor_move` already gets from
+/// that path. In `PanelView::Journal`/`Question` (no row cursor — see
+/// `transcript_cursor_move`'s guard) this is instead a plain scroll-to-top,
+/// mirroring how `j`/`k` degrade to scrolling in those views.
+pub(crate) fn transcript_cursor_first(s: &mut AppState) {
+    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+        s.chat_panel.scroll_transcript_to_edge(false);
+        return;
+    }
+    let (rows, _cursor_row, row_owner) = transcript_rows(s);
+    let landable = landable_mask(&rows);
+    let Some(first) = first_landable_index(&landable) else {
+        return;
+    };
+    s.chat.row_cursor = first;
+    s.chat.cursor = row_owner[first];
+    render_transcript(s);
+}
+
+/// `G` on the transcript: symmetric counterpart to `transcript_cursor_first`
+/// — moves the row cursor to the LAST landable row (Gloss view) or scrolls to
+/// the bottom (Journal/Question view).
+pub(crate) fn transcript_cursor_last(s: &mut AppState) {
+    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+        s.chat_panel.scroll_transcript_to_edge(true);
+        return;
+    }
+    let (rows, _cursor_row, row_owner) = transcript_rows(s);
+    let landable = landable_mask(&rows);
+    let Some(last) = last_landable_index(&landable) else {
+        return;
+    };
+    s.chat.row_cursor = last;
+    s.chat.cursor = row_owner[last];
+    render_transcript(s);
+}
+
 /// `V` on the transcript: toggle a panel-local visual selection anchored at
 /// the current `row_cursor`. A second `V` (or `Escape` — see
 /// `handle_chat_transcript_key`) exits WITHOUT copying, mirroring the
@@ -2609,7 +2663,10 @@ mod gloss_cycle_tests {
 /// per `row_cursor_step_tests` above — pure index math, no `AppState`.
 #[cfg(test)]
 mod step_row_cursor_landable_tests {
-    use super::{first_landable_at_or_after, step_row_cursor_landable};
+    use super::{
+        first_landable_at_or_after, first_landable_index, last_landable_index,
+        step_row_cursor_landable,
+    };
 
     /// [Speaker, Verse, Verse, Speaker, Verse] — a block boundary mid-list.
     /// Stepping forward from the first Verse must land on the second Verse
@@ -2702,6 +2759,49 @@ mod step_row_cursor_landable_tests {
     fn first_landable_falls_back_to_from_when_nothing_found() {
         let landable = [true, false, false];
         assert_eq!(first_landable_at_or_after(1, &landable), 1);
+    }
+
+    // --- first_landable_index / last_landable_index (gg/G's helpers) ---
+
+    /// Leading speaker skipped: `gg` must land on the first Verse, not the
+    /// Speaker row at index 0.
+    #[test]
+    fn first_landable_index_skips_a_leading_speaker() {
+        let landable = [false, true, true, false, true];
+        assert_eq!(first_landable_index(&landable), Some(1));
+    }
+
+    /// Trailing speaker skipped: `G` must land on the last Verse, not a
+    /// Speaker row dangling at the end.
+    #[test]
+    fn last_landable_index_skips_a_trailing_speaker() {
+        let landable = [true, false, true, true, false];
+        assert_eq!(last_landable_index(&landable), Some(3));
+    }
+
+    /// Single-row transcript: one landable row is both first and last.
+    #[test]
+    fn single_row_transcript_is_first_and_last() {
+        let landable = [true];
+        assert_eq!(first_landable_index(&landable), Some(0));
+        assert_eq!(last_landable_index(&landable), Some(0));
+    }
+
+    /// All-speaker (no-landable) transcript: both return `None` rather than
+    /// panicking, matching `step_row_cursor_landable`'s no-landable contract
+    /// so `gg`/`G` no-op instead of crashing on a degenerate gloss.
+    #[test]
+    fn all_speaker_transcript_returns_none() {
+        let landable = [false, false, false];
+        assert_eq!(first_landable_index(&landable), None);
+        assert_eq!(last_landable_index(&landable), None);
+    }
+
+    /// Empty transcript: guards against an out-of-range index/panic.
+    #[test]
+    fn empty_transcript_returns_none() {
+        assert_eq!(first_landable_index(&[]), None);
+        assert_eq!(last_landable_index(&[]), None);
     }
 }
 
