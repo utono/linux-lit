@@ -107,7 +107,7 @@ pub(crate) fn vocab_user_message(
     corpus_block: &str,
 ) -> String {
     format!(
-        "Work type: {genre}\nWork: {title} by {author}\n{unit_label}: {scene_label}\nVocabulary word: {word}\n\n\
+        "Work type: {genre}\nWork: \"{title}\" by {author}\n{unit_label}: {scene_label}\nVocabulary word: {word}\n\n\
          Segment (the reader's cursor segment, verbatim):\n{segment}\n\n\
          CORPUS OCCURRENCES \u{2014} lines containing the word elsewhere in {author}'s works:\n{corpus_block}\n\n\
          Reader's request:\nDiscuss the use of \u{201c}{word}\u{201d} in this segment, and how {author} uses the word elsewhere in the corpus.",
@@ -392,7 +392,7 @@ mod tests {
             "franklin", "A riding suit no costlier\u{2026}", "(none found)",
         );
         assert!(msg.contains("Work type: play"));
-        assert!(msg.contains("Work: Cymbeline by William Shakespeare"));
+        assert!(msg.contains("Work: \"Cymbeline\" by William Shakespeare"));
         assert!(msg.contains("Scene: 3.2"));
         assert!(msg.contains("Vocabulary word: franklin"));
         assert!(msg.contains("Segment (the reader's cursor segment, verbatim):\nA riding suit"));

@@ -129,7 +129,7 @@ fn run_synopsis_revision(
         )
     };
     let user_msg = format!(
-        "Play: {}\n{}\n\nCurrent synopsis:\n{}\n\n---\nReader's request: {}",
+        "Play: \"{}\"\n{}\n\nCurrent synopsis:\n{}\n\n---\nReader's request: {}",
         work_title, label, original, instruction,
     );
 

@@ -1379,14 +1379,14 @@ fn rewrite_context(
     let unit_label = titlecase_first(unit);
     match band {
         JournalBand::Work => {
-            format!("Work: {} by {}\nThis Q&A is filed under the WHOLE WORK (not a single scene).", title, author)
+            format!("Work: \"{}\" by {}\nThis Q&A is filed under the WHOLE WORK (not a single scene).", title, author)
         }
         JournalBand::Scene(d1, d2) => {
             let scene_text = crate::app::scene_synopsis::scene_text_windowed(
                 s, *d1, *d2, anchor_work_line, PROSE_CONTEXT_RADIUS,
             );
             format!(
-                "Work: {} by {}\nThis Q&A is filed under: {}\n\n{} text:\n{}",
+                "Work: \"{}\" by {}\nThis Q&A is filed under: {}\n\n{} text:\n{}",
                 title, author, crate::app::scene_synopsis::scene_label(*d1, *d2), unit_label, scene_text,
             )
         }
@@ -1395,7 +1395,7 @@ fn rewrite_context(
                 s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
             );
             format!(
-                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\n{} text:\n{}\n\nPassage:\n{}",
+                "Work: \"{}\" by {}\nThis Q&A is filed under a PASSAGE in {}\n\n{} text:\n{}\n\nPassage:\n{}",
                 title, author, crate::app::scene_synopsis::scene_label(*div1, *div2),
                 unit_label, scene_text, passage_source,
             )
@@ -2145,11 +2145,11 @@ pub(crate) fn build_qa_answer_message(
 ) -> String {
     match band {
         JournalBand::Work => format!(
-            "Work type: {}\nWork: {} by {}\n\nReader's question about the {} as a whole:\n{}",
+            "Work type: {}\nWork: \"{}\" by {}\n\nReader's question about the {} as a whole:\n{}",
             genre, title, author, genre, question,
         ),
         JournalBand::Scene(_, _) => format!(
-            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nReader's question:\n{}",
+            "Work type: {}\nWork: \"{}\" by {}\n{}: {}\n\n{} text:\n{}\n\nReader's question:\n{}",
             genre,
             title,
             author,
@@ -2160,7 +2160,7 @@ pub(crate) fn build_qa_answer_message(
             question,
         ),
         JournalBand::Passage { .. } => format!(
-            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            "Work type: {}\nWork: \"{}\" by {}\n{}: {}\n\n{} text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
             genre,
             title,
             author,
@@ -2651,7 +2651,7 @@ mod tests {
         );
         assert_eq!(
             got,
-            "Work type: play\nWork: Cymbeline by William Shakespeare\n\n\
+            "Work type: play\nWork: \"Cymbeline\" by William Shakespeare\n\n\
              Reader's question about the play as a whole:\n\
              What is the play about?",
         );
@@ -2667,7 +2667,7 @@ mod tests {
         );
         assert_eq!(
             got,
-            "Work type: play\nWork: Cymbeline by William Shakespeare\n\
+            "Work type: play\nWork: \"Cymbeline\" by William Shakespeare\n\
              Scene: Act 3, Scene 4\n\n\
              Scene text:\nSCENE TEXT HERE\n\n\
              Reader's question:\nWhy does she weep?",
@@ -2691,7 +2691,7 @@ mod tests {
         );
         assert_eq!(
             got,
-            "Work type: play\nWork: Cymbeline by William Shakespeare\n\
+            "Work type: play\nWork: \"Cymbeline\" by William Shakespeare\n\
              Scene: Act 3, Scene 4\n\n\
              Scene text:\nFULL SCENE TEXT\n\n\
              Passage:\n<speaker>IMOGEN</speaker>\n<verse>the passage</verse>\n\n\
@@ -2737,7 +2737,7 @@ mod tests {
             scene_text, passage, question,
         );
         let expected = format!(
-            "Work type: play\nWork: Cymbeline by William Shakespeare\n\
+            "Work type: play\nWork: \"Cymbeline\" by William Shakespeare\n\
              Scene: Act 2, Scene 5\n\n\
              Scene text:\n{}\n\n\
              Passage:\n{}\n\n\
@@ -2812,7 +2812,7 @@ mod tests {
     #[test]
     fn rewrite_user_message_includes_context_and_all_three_parts() {
         let msg = rewrite_user_message(
-            "Work: Bleak House by Charles Dickens\nThis Q&A is filed under the WHOLE WORK (not a single scene).",
+            "Work: \"Bleak House\" by Charles Dickens\nThis Q&A is filed under the WHOLE WORK (not a single scene).",
             "Who is Esther?",
             "She narrates half the book.",
             "Add her surname.",
@@ -2843,7 +2843,7 @@ mod tests {
         // still yield a coherent request — context + question + current answer
         // + the revise directive, just with no custom steering appended.
         let msg = rewrite_user_message(
-            "Work: Bleak House by Charles Dickens",
+            "Work: \"Bleak House\" by Charles Dickens",
             "Who is Esther?",
             "She narrates half the book.",
             "",

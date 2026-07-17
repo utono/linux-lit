@@ -2032,7 +2032,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         let scene = crate::app::scene_synopsis::synopsis_label(&s, first.div1, first.div2);
         let transcript = consolidate_transcript(&s.chat.exchanges);
         let user_msg = format!(
-            "Work: {} by {}\nThis conversation is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nConversation:\n{}Consolidate this conversation into a single cohesive journal Q&A: one question capturing what the conversation was really asking, one answer synthesizing its insights (drop dead ends, false starts, and meta-chatter). Return the consolidated Q&A in exactly this format:\nQ: <question>\nA: <answer>",
+            "Work: \"{}\" by {}\nThis conversation is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nConversation:\n{}Consolidate this conversation into a single cohesive journal Q&A: one question capturing what the conversation was really asking, one answer synthesizing its insights (drop dead ends, false starts, and meta-chatter). Return the consolidated Q&A in exactly this format:\nQ: <question>\nA: <answer>",
             work.title, work.author, scene, first.source_markup, transcript,
         );
         let meta = (
@@ -2573,7 +2573,7 @@ pub(crate) mod chat_revision {
             let Some(work) = s.current_work.as_ref() else { return };
             let scene = crate::app::scene_synopsis::synopsis_label(&s, e.div1, e.div2);
             let context = format!(
-                "Work: {} by {}\nThis Q&A is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nReturn the revised Q&A in exactly this format:\nQ: <revised question>\nA: <revised answer>",
+                "Work: \"{}\" by {}\nThis Q&A is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nReturn the revised Q&A in exactly this format:\nQ: <revised question>\nA: <revised answer>",
                 work.title, work.author, scene, e.source_markup,
             );
             (

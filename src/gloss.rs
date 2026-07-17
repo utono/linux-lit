@@ -702,7 +702,7 @@ pub fn build_user_message(
     existing_gloss: Option<&str>,
 ) -> String {
     let mut msg = format!(
-        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n{}",
+        "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n{}",
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker, ctx.source_text
     );
 
@@ -752,7 +752,7 @@ pub fn build_inner_monologue_message(
     };
 
     format!(
-        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+        "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
          --- FULL SCENE ---\n{}\n\
          --- HIGHLIGHTED PASSAGE ---\n{}",
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
@@ -782,7 +782,7 @@ pub fn build_inner_monologue_add_message(
     pasted_lines: &str,
 ) -> String {
     format!(
-        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+        "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
          --- ORIGINAL PASSAGE ---\n{}\n\n\
          --- CROSS-WORK LINES (inner voice) ---\n{}",
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
@@ -797,7 +797,7 @@ pub fn build_edit_gloss_message(
     pasted_lines: &str,
 ) -> String {
     format!(
-        "Play: {}\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+        "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
          --- ORIGINAL PASSAGE ---\n{}\n\n\
          --- EXISTING GLOSS ---\n{}\n\n\
          --- USER-PROVIDED LINES (use as subtext/context) ---\n{}",
