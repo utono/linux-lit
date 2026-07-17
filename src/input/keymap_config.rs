@@ -429,7 +429,7 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
 fn app_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("Escape"), Action::EscapeReaderMode),
-        (KeyCombo::ctrl("d"), Action::ToggleDebugLogging),
+        (KeyCombo::ctrl_alt("d"), Action::ToggleDebugLogging),
         // Moved off Ctrl+Alt+t (2026-07-12); Ctrl+t/Ctrl+Shift+t are theme cycling.
         (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
