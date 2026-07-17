@@ -770,6 +770,29 @@ pub(crate) fn request_reader_gloss(
     );
 }
 
+/// `r`/`R` in the transcript: regloss the pinned passage.
+///
+/// Bypasses the cache check `-` makes. That check exists to avoid re-spending
+/// an API call on an already-glossed span; regloss wants precisely the
+/// opposite, so it always calls Claude. The result is a NEW glosses row —
+/// history is kept, nothing is overwritten.
+pub(crate) fn regloss_pinned(state_rc: &Rc<RefCell<AppState>>) {
+    let prepared = {
+        let s = state_rc.borrow();
+        match &s.chat.gloss_ctx {
+            Some(ctx) => Some((ctx.clone(), s.config.claude_model.clone())),
+            None => None,
+        }
+    };
+    let Some((ctx, model)) = prepared else {
+        let s = state_rc.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No passage to regloss", 2);
+        return;
+    };
+    crate::logging::log("CHAT-GLOSS: reglossing pinned passage");
+    request_reader_gloss(state_rc, ctx, model);
+}
+
 /// The transcript with a "Glossing…" row appended, so the panel shows work in
 /// flight rather than sitting blank.
 fn render_transcript_thinking_gloss(s: &AppState) {

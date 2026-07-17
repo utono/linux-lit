@@ -1357,6 +1357,10 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::focus_prompt(&mut state.borrow_mut());
             true
         }
+        "r" | "R" => {
+            crate::input::actions::chat::regloss_pinned(state);
+            true
+        }
         "l" if is_ctrl => {
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
             true
