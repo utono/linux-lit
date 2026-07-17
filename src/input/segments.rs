@@ -81,40 +81,14 @@ pub(crate) fn collect_neighbor_blocks(
     blocks
 }
 
-/// Assemble the chat user message: work header, the consecutive segments with
-/// the cursor's segment marked, and the reader's question (pure).
-pub(crate) fn chat_user_message(
-    genre: &str,
-    title: &str,
-    author: &str,
-    unit_label: &str,
-    scene_label: &str,
-    segments: &[String],
-    cursor_index: usize,
-    question: &str,
-) -> String {
-    let mut ctx = String::new();
-    for (i, seg) in segments.iter().enumerate() {
-        if i == cursor_index {
-            ctx.push_str("[READER'S CURSOR SEGMENT]\n");
-        }
-        ctx.push_str(seg);
-        ctx.push_str("\n\n");
-    }
-    format!(
-        "Work type: {}\nWork: {} by {}\n{}: {}\n\nContext (consecutive segments; the reader's cursor segment is marked):\n{}Reader's question:\n{}",
-        genre, title, author, unit_label, scene_label, ctx, question,
-    )
-}
-
 /// A context holding ONLY the buffer lines `[start, end]` as a single segment —
 /// the reader's visual selection, verbatim. Used by the chat panel's pinned
 /// passage (`Tab` from V-mode): the chat then sends exactly what was
 /// highlighted, with NO neighbor segments, for every question in the session.
 ///
 /// Shaped as a one-segment `SegmentContext` (`cursor_index = 0`) so the whole
-/// downstream path — `chat_user_message`, the source header, the citations —
-/// works unchanged; it simply has nothing to add around the passage.
+/// downstream path — the source header, the citations — works unchanged; it
+/// simply has nothing to add around the passage.
 /// None when there is no work or the range maps to no work lines.
 pub(crate) fn selection_context(
     state: &AppState,
@@ -182,7 +156,7 @@ pub(crate) fn segment_context(state: &AppState, n: usize) -> Option<SegmentConte
 
 #[cfg(test)]
 mod tests {
-    use super::{chat_user_message, collect_neighbor_blocks};
+    use super::collect_neighbor_blocks;
 
     /// Blocks laid out as [0..1] [3..4] [6..7] [9..10] [12..13] with blank
     /// boundary lines between; section starts at the given lines.
@@ -226,19 +200,5 @@ mod tests {
         let (count, block_at, is_start) = harness(&[6]);
         let got = collect_neighbor_blocks(count, (6, 7), 2, block_at, is_start);
         assert_eq!(got, vec![(6, 7), (9, 10), (12, 13)]);
-    }
-
-    #[test]
-    fn user_message_marks_cursor_segment() {
-        let segs = vec!["before".to_string(), "here".to_string(), "after".to_string()];
-        let msg = chat_user_message(
-            "novel", "Bleak House", "Charles Dickens", "Chapter", "Chapter 7",
-            &segs, 1, "Why the fog?",
-        );
-        assert!(msg.contains("Work type: novel"));
-        assert!(msg.contains("Chapter: Chapter 7"));
-        assert!(msg.contains("[READER'S CURSOR SEGMENT]\nhere"));
-        assert!(!msg.contains("[READER'S CURSOR SEGMENT]\nbefore"));
-        assert!(msg.trim_end().ends_with("Reader's question:\nWhy the fog?"));
     }
 }

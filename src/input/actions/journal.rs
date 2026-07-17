@@ -17,8 +17,10 @@ fn current_work_abbrev(s: &AppState) -> String {
 
 /// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
 /// Used to turn a unit noun (`chapter`) into a user-message field label
-/// (`Chapter:`). Empty input returns empty.
-fn titlecase_first(s: &str) -> String {
+/// (`Chapter:`). Empty input returns empty. `pub(crate)` so the chat panel
+/// derives the unit label identically to `ask_claude` when it shares
+/// `build_qa_answer_message`.
+pub(crate) fn titlecase_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
@@ -183,7 +185,7 @@ fn extract_scene_terms(
     );
 }
 
-fn improve_question(
+pub(crate) fn improve_question(
     state: &Rc<RefCell<AppState>>,
     question: String,
     terms: &[String],
@@ -2091,7 +2093,10 @@ pub(crate) fn spawn_retag(
 /// reader's saved position — the same context `ask_claude` sends to the answer
 /// prompt. Empty for Work/Author bands and unresolvable positions. Factored so
 /// the answer path and the first-ask term extractor build it identically.
-fn current_scene_text(s: &AppState) -> String {
+/// `pub(crate)` so the chat panel can fetch the SAME scene text the journal
+/// Passage band sends (the two surfaces build one shared answer message — see
+/// `build_qa_answer_message`).
+pub(crate) fn current_scene_text(s: &AppState) -> String {
     let anchor_work_line = s
         .journal
         .return_pos
@@ -2106,6 +2111,71 @@ fn current_scene_text(s: &AppState) -> String {
             s, *div1, *div2, anchor_work_line, PROSE_CONTEXT_RADIUS,
         ),
         JournalBand::Author(_) => String::new(),
+    }
+}
+
+/// Build the passage-context ANSWER-request user message for a journal band.
+///
+/// This is the ONE builder shared by BOTH surfaces that ask Claude a
+/// passage-context question — the journal Q&A overlay (`ask_claude`) and the
+/// chat panel (`submit_chat_prompt`, which always calls it with the Passage
+/// band). Extracting it keeps the two prompts in sync by construction: any
+/// future change to "what the journal sends" automatically applies to the chat
+/// panel, with no drift. It is pure (no `AppState`), so it is unit-tested
+/// per-band as the regression guard that pins each band's exact wording.
+///
+/// Per-band field usage (matches the arms verbatim):
+/// - `Work`: genre, title, author, question.
+/// - `Scene`: genre, title, author, unit_label, scene_label, scene_text, question.
+/// - `Passage`: as Scene plus `passage_source`.
+/// - `Author`: the band's OWN author name + question (title/author args ignored).
+// One flat arg per message field, mirroring the format!() calls it replaces —
+// grouping them into a struct would only add indirection at both call sites.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_qa_answer_message(
+    band: &JournalBand,
+    genre: &str,
+    title: &str,
+    author: &str,
+    unit_label: &str,
+    scene_label: &str,
+    scene_text: &str,
+    passage_source: &str,
+    question: &str,
+) -> String {
+    match band {
+        JournalBand::Work => format!(
+            "Work type: {}\nWork: {} by {}\n\nReader's question about the {} as a whole:\n{}",
+            genre, title, author, genre, question,
+        ),
+        JournalBand::Scene(_, _) => format!(
+            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nReader's question:\n{}",
+            genre,
+            title,
+            author,
+            unit_label,
+            scene_label,
+            unit_label,
+            scene_text,
+            question,
+        ),
+        JournalBand::Passage { .. } => format!(
+            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
+            genre,
+            title,
+            author,
+            unit_label,
+            scene_label,
+            unit_label,
+            scene_text,
+            passage_source,
+            question,
+        ),
+        // Author band: corpus-scope question, not tied to a specific work.
+        JournalBand::Author(author_name) => format!(
+            "Author: {}\n\nReader's question about the author's corpus:\n{}",
+            author_name, question,
+        ),
     }
 }
 
@@ -2159,40 +2229,26 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
 
     let (genre, unit, _units) = crate::gloss::genre_unit(&work_type);
     let unit_label = titlecase_first(unit);
-    let user_msg = match band {
-        JournalBand::Work => format!(
-            "Work type: {}\nWork: {} by {}\n\nReader's question about the {} as a whole:\n{}",
-            genre, work_title, work_author, genre, question,
-        ),
-        JournalBand::Scene(d1, d2) => format!(
-            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nReader's question:\n{}",
-            genre,
-            work_title,
-            work_author,
-            unit_label,
-            crate::app::scene_synopsis::scene_label(d1, d2),
-            unit_label,
-            scene_text,
-            question,
-        ),
-        JournalBand::Passage { div1, div2, .. } => format!(
-            "Work type: {}\nWork: {} by {}\n{}: {}\n\n{} text:\n{}\n\nPassage:\n{}\n\nReader's question:\n{}",
-            genre,
-            work_title,
-            work_author,
-            unit_label,
-            crate::app::scene_synopsis::scene_label(div1, div2),
-            unit_label,
-            scene_text,
-            passage_source_text,
-            question,
-        ),
-        // Author band: corpus-scope question, not tied to a specific work.
-        JournalBand::Author(ref author_name) => format!(
-            "Author: {}\n\nReader's question about the author's corpus:\n{}",
-            author_name, question,
-        ),
+    // scene_label is band-relevant only for Scene/Passage; the builder ignores
+    // it for Work/Author, so computing it unconditionally is harmless.
+    let scene_label = match band {
+        JournalBand::Scene(d1, d2) => crate::app::scene_synopsis::scene_label(d1, d2),
+        JournalBand::Passage { div1, div2, .. } => {
+            crate::app::scene_synopsis::scene_label(div1, div2)
+        }
+        _ => String::new(),
     };
+    let user_msg = build_qa_answer_message(
+        &band,
+        genre,
+        &work_title,
+        &work_author,
+        &unit_label,
+        &scene_label,
+        &scene_text,
+        &passage_source_text,
+        question,
+    );
     let question_owned = question.to_string();
     let model_for_db = model.clone();
     crate::input::actions::claude_bridge::run_claude_request(
@@ -2580,6 +2636,117 @@ mod tests {
         assert_eq!(super::titlecase_first(""), "");
     }
 
+    // build_qa_answer_message is the ONE builder shared by the journal Q&A
+    // overlay and the chat panel. These tests pin each band's EXACT wording:
+    // if someone edits one band's format string, the matching test fails —
+    // that is the regression guard that keeps the two surfaces in sync.
+
+    #[test]
+    fn qa_message_work_band() {
+        let got = super::build_qa_answer_message(
+            &JournalBand::Work,
+            "play", "Cymbeline", "William Shakespeare",
+            "IGNORED_UNIT", "IGNORED_SCENE", "IGNORED_SCENE_TEXT", "IGNORED_PASSAGE",
+            "What is the play about?",
+        );
+        assert_eq!(
+            got,
+            "Work type: play\nWork: Cymbeline by William Shakespeare\n\n\
+             Reader's question about the play as a whole:\n\
+             What is the play about?",
+        );
+    }
+
+    #[test]
+    fn qa_message_scene_band() {
+        let got = super::build_qa_answer_message(
+            &JournalBand::Scene(3, 4),
+            "play", "Cymbeline", "William Shakespeare",
+            "Scene", "Act 3, Scene 4", "SCENE TEXT HERE", "IGNORED_PASSAGE",
+            "Why does she weep?",
+        );
+        assert_eq!(
+            got,
+            "Work type: play\nWork: Cymbeline by William Shakespeare\n\
+             Scene: Act 3, Scene 4\n\n\
+             Scene text:\nSCENE TEXT HERE\n\n\
+             Reader's question:\nWhy does she weep?",
+        );
+    }
+
+    #[test]
+    fn qa_message_passage_band() {
+        let band = JournalBand::Passage {
+            div1: 3,
+            div2: 4,
+            start: "3.4.1".to_string(),
+            end: "3.4.9".to_string(),
+        };
+        let got = super::build_qa_answer_message(
+            &band,
+            "play", "Cymbeline", "William Shakespeare",
+            "Scene", "Act 3, Scene 4",
+            "FULL SCENE TEXT", "<speaker>IMOGEN</speaker>\n<verse>the passage</verse>",
+            "What does she mean?",
+        );
+        assert_eq!(
+            got,
+            "Work type: play\nWork: Cymbeline by William Shakespeare\n\
+             Scene: Act 3, Scene 4\n\n\
+             Scene text:\nFULL SCENE TEXT\n\n\
+             Passage:\n<speaker>IMOGEN</speaker>\n<verse>the passage</verse>\n\n\
+             Reader's question:\nWhat does she mean?",
+        );
+    }
+
+    #[test]
+    fn qa_message_author_band() {
+        let got = super::build_qa_answer_message(
+            &JournalBand::Author("William Shakespeare".to_string()),
+            "IGNORED_GENRE", "IGNORED_TITLE", "IGNORED_AUTHOR",
+            "IGNORED_UNIT", "IGNORED_SCENE", "IGNORED_SCENE_TEXT", "IGNORED_PASSAGE",
+            "What are his recurring themes?",
+        );
+        assert_eq!(
+            got,
+            "Author: William Shakespeare\n\n\
+             Reader's question about the author's corpus:\n\
+             What are his recurring themes?",
+        );
+    }
+
+    #[test]
+    fn qa_message_passage_band_is_what_both_surfaces_send() {
+        // The chat panel now builds the SAME Passage-band message as the journal
+        // overlay for a given (scene_text, passage, question). This test fixes
+        // that shared output: both surfaces call build_qa_answer_message with the
+        // Passage band, so this string is what BOTH now send on the wire.
+        let scene_text = "First line of the scene.\nSecond line of the scene.";
+        let passage = "<speaker>POSTHUMUS</speaker>\n<verse>Is there no way for men to be, but women</verse>";
+        let question = "Is he being fair to women here?";
+        let band = JournalBand::Passage {
+            div1: 2,
+            div2: 5,
+            start: "2.5.1".to_string(),
+            end: "2.5.2".to_string(),
+        };
+        let got = super::build_qa_answer_message(
+            &band,
+            "play", "Cymbeline", "William Shakespeare",
+            "Scene", "Act 2, Scene 5",
+            scene_text, passage, question,
+        );
+        let expected = format!(
+            "Work type: play\nWork: Cymbeline by William Shakespeare\n\
+             Scene: Act 2, Scene 5\n\n\
+             Scene text:\n{}\n\n\
+             Passage:\n{}\n\n\
+             Reader's question:\n{}",
+            scene_text, passage, question,
+        );
+        assert_eq!(got, expected);
+    }
+
     #[test]
     fn first_passage_line_reads_first_verse() {
         let markup = "<speaker>FIRST GENTLEMAN</speaker>\n\
@@ -2667,6 +2834,27 @@ mod tests {
         // present, between the current answer and the instruction.
         let r_pos = msg.find("FOCUS:").expect("focus directive present");
         assert!(r_pos > a_pos && r_pos < i_pos, "focus directive sits after the answer, before the instruction");
+    }
+
+    #[test]
+    fn rewrite_user_message_with_empty_instruction_is_still_well_formed() {
+        // The "rewrite afresh under the default prompt" path (journal `R` and,
+        // now, the chat panel's empty-Ctrl+Enter): an empty instruction must
+        // still yield a coherent request — context + question + current answer
+        // + the revise directive, just with no custom steering appended.
+        let msg = rewrite_user_message(
+            "Work: Bleak House by Charles Dickens",
+            "Who is Esther?",
+            "She narrates half the book.",
+            "",
+        );
+        assert!(msg.contains("Bleak House"), "context present");
+        assert!(msg.contains("Who is Esther?"), "question present");
+        assert!(msg.contains("She narrates half the book."), "current answer present");
+        assert!(msg.contains("return only the revised answer"), "revise directive present");
+        // The message is non-trivial even with no instruction (not just the
+        // instruction line collapsed to nothing).
+        assert!(msg.len() > 100, "empty-instruction message is still substantive");
     }
 
     /// Build a `JournalPage` for band-classification tests.

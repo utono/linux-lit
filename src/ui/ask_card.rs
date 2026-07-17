@@ -173,6 +173,36 @@ impl AskCard {
         block_fill: &str,
         block_fg: &str,
     ) {
+        self.open_in_mode(title, hint, legend, card_width, block_fill, block_fg, false);
+    }
+
+    /// Like `open`, but the vim engine starts in INSERT — the caret is ready to
+    /// type with no `i`/`a` press first. Used where the gesture that opened the
+    /// card already means "type now" (the transcript's `a`), as opposed to a
+    /// re-title where NORMAL is correct.
+    pub fn open_insert(
+        &self,
+        title: &str,
+        hint: &str,
+        legend: &str,
+        card_width: i32,
+        block_fill: &str,
+        block_fg: &str,
+    ) {
+        self.open_in_mode(title, hint, legend, card_width, block_fill, block_fg, true);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_in_mode(
+        &self,
+        title: &str,
+        hint: &str,
+        legend: &str,
+        card_width: i32,
+        block_fill: &str,
+        block_fg: &str,
+        insert: bool,
+    ) {
         self.title.set_text(title);
         *self.base_hint.borrow_mut() = hint.to_string();
         *self.cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
@@ -187,9 +217,14 @@ impl AskCard {
             self.container.set_margin_end(margin);
         }
         self.container.set_visible(true);
-        // Seed an empty vim engine in NORMAL mode (press `i`/`a` to type). The
-        // input mirrors it; focus is grabbed so the caret paints.
-        *self.vim.borrow_mut() = Some(crate::input::vim::VimEngine::new(String::new()));
+        // Seed an empty vim engine — NORMAL by default (press `i`/`a` to type),
+        // or INSERT when the opener already means "type now". The input mirrors
+        // it; focus is grabbed so the caret paints.
+        *self.vim.borrow_mut() = Some(if insert {
+            crate::input::vim::VimEngine::new_insert(String::new())
+        } else {
+            crate::input::vim::VimEngine::new(String::new())
+        });
         self.set_focus(AskFocus::Ask);
         let _ = self.input.grab_focus();
         self.mirror_vim();

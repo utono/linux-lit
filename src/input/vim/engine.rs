@@ -84,6 +84,16 @@ impl VimEngine {
         }
     }
 
+    /// Like `new`, but starting in INSERT with the cursor at the end of the
+    /// buffer — ready to type. For openers whose gesture already means "type
+    /// now" (see `AskCard::open_insert`).
+    pub fn new_insert(buffer: String) -> Self {
+        let mut e = Self::new(buffer);
+        e.cursor = e.buffer.len();
+        e.mode = Mode::Insert;
+        e
+    }
+
     pub fn buffer(&self) -> &str {
         &self.buffer
     }
@@ -1298,6 +1308,16 @@ mod tests {
 
     fn eng(s: &str) -> VimEngine {
         VimEngine::new(s.to_string())
+    }
+
+    #[test]
+    fn new_insert_starts_in_insert_at_buffer_end() {
+        let e = VimEngine::new_insert("draft".to_string());
+        assert_eq!(e.mode(), Mode::Insert);
+        assert_eq!(e.cursor(), 5); // end of "draft", ready to type
+        let empty = VimEngine::new_insert(String::new());
+        assert_eq!(empty.mode(), Mode::Insert);
+        assert_eq!(empty.cursor(), 0);
     }
 
     // Task 4: motions, counts, insert

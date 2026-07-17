@@ -656,6 +656,90 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     });
 }
 
+/// `-` in visual mode: open the chat panel pinned to the selection and gloss
+/// the passage immediately — no ask input. Sibling to `Ctrl+a` (Journal Q&A
+/// ask card) and `Tab` (chat pinned, empty input) on the same select-then-act
+/// flow.
+///
+/// On a cache hit the stored gloss is shown and NO API call is made, so
+/// pressing `-` twice on a passage is cheap. `r`/`R` in the panel is the way
+/// to force a fresh gloss.
+pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    // Build the gloss context BEFORE opening the panel: open_chat_pinned_to_selection
+    // exits visual mode, which clears the selection this reads.
+    let prepared = {
+        let state = state_rc.borrow();
+        let (start, end) = match &state.visual_selection {
+            Some(s) => s.range(),
+            None => return,
+        };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        let selected_lines: Vec<crate::db::models::Line> = (start..=end)
+            .filter_map(|buf_line| {
+                state
+                    .work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
+        match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
+            Some(ctx) => Some((ctx, state.config.claude_model.clone())),
+            None => None,
+        }
+    };
+    let Some((ctx, model)) = prepared else { return };
+
+    // Pins the passage, exits visual mode, opens and places the panel. Bails
+    // with its own toast (returning false) when the selection has no
+    // passage, or when a single-column layout has no room for the panel.
+    //
+    // MUST branch on the return value, not on `chat_layout_open`: if a panel
+    // was already open from a PREVIOUS passage, `chat_layout_open` stays
+    // true even when THIS call fails to pin (e.g. this selection has no
+    // passage) — that would gloss the new (empty) selection into a panel
+    // still pinned to the old one.
+    if !crate::input::actions::chat::open_chat_pinned_to_selection(state_rc) {
+        return; // callee already toasted why
+    }
+    // open_chat_pinned_to_selection -> toggle_chat_layout opens the panel via
+    // focus_prompt (correct for Tab, whose whole purpose is to land the user
+    // ready to ask). '-' auto-glosses instead — no question was typed — so
+    // immediately retire that input and hand focus to the transcript, same
+    // shape as submit_chat_prompt's answer-arrived path. Without this the
+    // user lands in a focused, empty "Ask about this passage" input while the
+    // gloss is still generating.
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat_panel.close_input();
+        crate::input::actions::chat::focus_transcript(&mut s);
+    }
+
+    let cached = crate::input::actions::chat::reload_gloss_list(&ctx.work_abbrev, &ctx.start_citation);
+    {
+        let mut s = state_rc.borrow_mut();
+        s.chat.gloss_ctx = Some(ctx.clone());
+        s.chat.gloss_list = cached;
+        s.chat.gloss_index = 0;
+    }
+
+    // Cache hit: show the newest stored gloss, spend no API call.
+    let hit = {
+        let s = state_rc.borrow();
+        s.chat.gloss_list.first().map(|g| g.gloss_text.clone())
+    };
+    if let Some(text) = hit {
+        let mut s = state_rc.borrow_mut();
+        crate::input::actions::chat::push_gloss_exchange(&mut s, &ctx, &text);
+        crate::input::actions::chat::focus_transcript(&mut s);
+        crate::logging::log("CHAT-GLOSS: showing cached gloss");
+        return;
+    }
+
+    crate::input::actions::chat::request_reader_gloss(state_rc, ctx, model);
+}
+
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
         let state = state_rc.borrow();

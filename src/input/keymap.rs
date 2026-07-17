@@ -250,7 +250,7 @@ pub fn handle_key(
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
-            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_name, is_ctrl),
+            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -1325,9 +1325,23 @@ fn handle_chat_prompt_key(
 /// Ctrl+Tab closes.
 fn handle_chat_transcript_key(
     state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
 ) -> bool {
+    // gg chord -> first landable row (mirrors the journal/gloss/synopsis
+    // overlays' block cursor; see keymap.rs:1457 for the sibling this
+    // mirrors). Checked BEFORE the match below so a completed `gg` never
+    // falls through to the plain `_ => true` catch-all arm.
+    if key_state.borrow().chord == ChordState::PendingG {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "g" {
+            crate::input::actions::chat::transcript_cursor_first(&mut state.borrow_mut());
+            return true;
+        }
+        // Falls through to the match below so the second key still does its
+        // own thing (e.g. `g` then `j` should not eat the `j`).
+    }
     match key_name {
         // Ctrl+Tab closes the panel (same chord as the reader's
         // CloseChatLayout — the whole Tab cap owns the chat). Guarded arm must
@@ -1348,21 +1362,99 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), -1);
             true
         }
+        // `gg`/`G`: jump the row cursor to the first/last LANDABLE row (Gloss
+        // view) or scroll to the top/bottom (Journal/Question view — see
+        // transcript_cursor_first/last's doc comments). `g` alone just arms
+        // the PendingG chord (checked above, before this match); the
+        // completing `g` is consumed there and never reaches this arm.
+        "g" => {
+            KeyState::start_chord(key_state, ChordState::PendingG);
+            true
+        }
+        "G" => {
+            crate::input::actions::chat::transcript_cursor_last(&mut state.borrow_mut());
+            true
+        }
+        // `V`: enter/exit a panel-local visual selection anchored at the row
+        // cursor. Distinct from the reader's `V` (a different InputMode, over
+        // AppState.visual_selection) — see ChatState.visual_anchor's doc
+        // comment. `j`/`k` above already extend it (they just move
+        // row_cursor; render_transcript reads visual_anchor to repaint the
+        // highlighted range).
+        "V" => {
+            crate::input::actions::chat::toggle_transcript_visual(&mut state.borrow_mut());
+            true
+        }
+        // `y`: copy the visual selection (if active) or just the cursor row
+        // to the system clipboard via wl-copy. See
+        // yank_transcript_row_or_selection's doc comment for the
+        // selection-vs-single-row contract.
+        "y" => {
+            crate::input::actions::chat::yank_transcript_row_or_selection(state);
+            true
+        }
         "s" => {
             crate::input::actions::chat::save_selected_exchange(state);
             true
         }
         "a" => {
-            // Ask: re-show the retired input and focus it.
-            crate::input::actions::chat::focus_prompt(&mut state.borrow_mut());
+            // Ask: re-show the retired input, focus it, and land in INSERT —
+            // `a` already means "type now", so a NORMAL landing would force a
+            // second `i`/`a` press.
+            crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
+            true
+        }
+        "r" | "R" => {
+            crate::input::actions::chat::regloss_pinned(state);
+            true
+        }
+        // `t`: toggle the panel between the pinned passage's GLOSS(es) and its
+        // saved JOURNAL Q&As (scope='passage', exact citation match). Distinct
+        // from the reader-level `t` (ThemeNext) — this arm only fires while
+        // InputMode::ChatTranscript owns the key.
+        "t" => {
+            crate::input::actions::chat::toggle_panel_view(state);
+            true
+        }
+        // `c`: copy the currently-displayed gloss's id, mirroring the gloss
+        // overlay's `c` (handle_gloss_key below) — but reading the PANEL's own
+        // gloss_list/gloss_index, not the overlay's.
+        "c" => {
+            crate::input::actions::chat::copy_gloss_id(state);
             true
         }
         "l" if is_ctrl => {
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
             true
         }
+        "n" if is_ctrl => {
+            crate::input::actions::chat::cycle_gloss(&mut state.borrow_mut(), 1);
+            true
+        }
+        "p" if is_ctrl => {
+            crate::input::actions::chat::cycle_gloss(&mut state.borrow_mut(), -1);
+            true
+        }
+        // Ctrl-d / Ctrl-u: vim half-page down / up — a viewport scroll in
+        // EVERY view (Gloss/Journal/Question), not a cursor move, so no
+        // landable-row logic and no view gating.
+        "d" if is_ctrl => {
+            crate::input::actions::chat::transcript_half_page(&mut state.borrow_mut(), true);
+            true
+        }
+        "u" if is_ctrl => {
+            crate::input::actions::chat::transcript_half_page(&mut state.borrow_mut(), false);
+            true
+        }
+        // Escape exits an active `V` selection FIRST and stays in the panel
+        // (mirrors the reader's own visual-mode Escape); only a SECOND
+        // Escape, with no selection active, focuses the reader.
         "Escape" => {
-            crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
+            let mut s = state.borrow_mut();
+            if crate::input::actions::chat::exit_transcript_visual(&mut s) {
+                return true;
+            }
+            crate::input::actions::chat::focus_reader(&mut s);
             true
         }
         _ => true,
@@ -3259,7 +3351,13 @@ fn handle_visual_key(
         // session (no neighbor segments, cursor-independent). Mirrors the
         // reader's Tab = chat, but with the passage fixed.
         "Tab" | "ISO_Left_Tab" => {
-            crate::input::actions::chat::open_chat_pinned_to_selection(state);
+            // Result unused here: this bind has no follow-on action gated on
+            // success (unlike the reader-gloss '-' path in visual.rs).
+            let _ = crate::input::actions::chat::open_chat_pinned_to_selection(state);
+            true
+        }
+        "minus" => {
+            crate::input::visual::action_reader_gloss_chat(state);
             true
         }
         "j" => {

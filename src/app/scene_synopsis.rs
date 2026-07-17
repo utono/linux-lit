@@ -223,7 +223,21 @@ pub(crate) fn prose_window_text(
     // — the window is then the division opening ±radius.
     let anchor_pos = idxs.iter().position(|&i| i == anchor_work_line).unwrap_or(0);
     let (lo, hi) = window_range(anchor_pos, radius, idxs.len());
-    render_speaker_interleaved(work, &idxs[lo..=hi])
+    // Tell the model when the window is a FRAGMENT of a longer chapter, exactly
+    // as `play_scene_text_lean` does for a clipped scene — otherwise a
+    // long-chapter answer is given as if the whole chapter were in view. A
+    // chapter that fits entirely within ±radius gets no markers.
+    let mut out = String::new();
+    if lo > 0 {
+        out.push_str(
+            "[\u{2026} chapter continues above \u{2014} this is an excerpt around the reader's position \u{2026}]\n\n",
+        );
+    }
+    out.push_str(&render_speaker_interleaved(work, &idxs[lo..=hi]));
+    if hi + 1 < idxs.len() {
+        out.push_str("\n[\u{2026} chapter continues below \u{2026}]\n");
+    }
+    out
 }
 
 /// Non-prose scene text for a journal ask, budgeted: the WHOLE scene when it
@@ -658,7 +672,9 @@ mod window_tests {
 
 #[cfg(test)]
 mod lean_scene_tests {
-    use super::{play_scene_text_lean, SCENE_TEXT_MAX_CHARS, VERSE_WINDOW_RADIUS};
+    use super::{
+        play_scene_text_lean, prose_window_text, SCENE_TEXT_MAX_CHARS, VERSE_WINDOW_RADIUS,
+    };
     use crate::db::models::{Line, Work};
 
     fn line(id: i64, speaker: Option<&str>, text: &str) -> Line {
@@ -747,6 +763,50 @@ mod lean_scene_tests {
         assert!(text.contains("scene continues above"));
         assert!(!text.contains("scene continues below"));
         assert!(text.contains(&format!("{:060}", 399)));
+    }
+
+    // Prose windows carry the same fragment markers as plays (chapter wording).
+    // `play(n, w)` fixtures all sit at div1=1/div2=1, so prose_window_text
+    // windows them the same way.
+
+    #[test]
+    fn prose_window_in_the_middle_has_both_chapter_markers() {
+        let w = play(400, 60);
+        let text = prose_window_text(&w, 1, 1, 200, 10);
+        assert!(text.contains("chapter continues above"), "top marker");
+        assert!(text.contains("chapter continues below"), "bottom marker");
+        assert!(text.contains(&format!("{:060}", 200)), "anchor present");
+        assert!(!text.contains(&format!("{:060}", 0)), "chapter opening cut");
+        assert!(!text.contains(&format!("{:060}", 399)), "chapter end cut");
+    }
+
+    #[test]
+    fn prose_window_at_start_has_only_bottom_marker() {
+        let w = play(400, 60);
+        let text = prose_window_text(&w, 1, 1, 0, 10);
+        assert!(!text.contains("chapter continues above"));
+        assert!(text.contains("chapter continues below"));
+        assert!(text.contains(&format!("{:060}", 0)));
+    }
+
+    #[test]
+    fn prose_window_at_end_has_only_top_marker() {
+        let w = play(400, 60);
+        let text = prose_window_text(&w, 1, 1, 399, 10);
+        assert!(text.contains("chapter continues above"));
+        assert!(!text.contains("chapter continues below"));
+        assert!(text.contains(&format!("{:060}", 399)));
+    }
+
+    #[test]
+    fn prose_chapter_that_fits_the_window_has_no_markers() {
+        // 15 paragraphs, radius 10 → the whole chapter fits, no clipping.
+        let w = play(15, 60);
+        let text = prose_window_text(&w, 1, 1, 7, 10);
+        assert!(!text.contains("chapter continues above"));
+        assert!(!text.contains("chapter continues below"));
+        assert!(text.contains(&format!("{:060}", 0)), "first para present");
+        assert!(text.contains(&format!("{:060}", 14)), "last para present");
     }
 
     #[test]
