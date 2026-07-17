@@ -675,6 +675,30 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             // j/k/s work immediately.
             s.chat_panel.close_input();
             focus_transcript(&mut s);
+            // Auto-save the FIRST follow-up Q&A on this passage so the
+            // reader doesn't have to press `s`. Any further follow-up in the
+            // same panel session (count > 1) still requires `s` — this fires
+            // exactly once per session. Deliberately does NOT arm
+            // `revision_of`: the reader didn't press `s`, they may just keep
+            // asking, and arming it would silently retitle a later `a` as
+            // "Revise this entry" — surprising when nothing was manually
+            // saved yet. `s` still works afterward and arms revision then,
+            // same as it always has for a not-yet-revision-armed save.
+            if is_first_question_exchange(&s.chat.exchanges) {
+                let idx = s.chat.exchanges.len() - 1;
+                match persist_exchange_to_journal(&mut s, idx) {
+                    Some(_id) => {
+                        crate::input::navigation::show_chapter_toast_secs(
+                            &s, "Saved to journal", 2,
+                        );
+                    }
+                    None => {
+                        crate::input::navigation::show_chapter_toast_secs(
+                            &s, "Not saved", 3,
+                        );
+                    }
+                }
+            }
         },
         move |st, msg| {
             let mut s = st.borrow_mut();
@@ -728,6 +752,16 @@ fn widget_row_count(row: &crate::ui::chat_panel::TranscriptRow) -> usize {
 /// row.
 fn has_question_row(e: &Exchange) -> bool {
     !e.question.is_empty()
+}
+
+/// Whether the exchange list's Q&A-bearing entries (per `has_question_row`)
+/// number exactly one — i.e. whether the LAST push was the first real
+/// follow-up question asked in this panel session (the auto-gloss exchange,
+/// `exchanges[0]` with its empty question, never counts). Used right after
+/// pushing a new Q&A exchange to decide whether to auto-save it: further
+/// follow-ups (count > 1) still require `s`.
+fn is_first_question_exchange(exchanges: &[Exchange]) -> bool {
+    exchanges.iter().filter(|e| has_question_row(e)).count() == 1
 }
 
 /// Build the transcript rows. Returns `(rows, cursor_row, row_owner)`:
@@ -1593,6 +1627,50 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
     ));
 }
 
+/// Pure persistence core shared by `save_selected_exchange` (`s`) and the
+/// first-Q&A auto-save (`submit_chat_prompt`'s success callback): write
+/// `exchanges[idx]` to `journal_entries` via `save_passage_page` (always
+/// `scope='passage'`, keyed by the exchange's own citations — this is what
+/// makes the row show up in the `t` Journal view's `find_passage_pages`
+/// lookup), set `saved_id` on success, and re-derive the glossed-line tint so
+/// the passage colors immediately (mirrors every gloss.rs save/edit/delete
+/// path). Returns the new journal row id, or `None` if the exchange/work is
+/// missing or the write failed. Callers own everything ELSE that differs
+/// between the two save paths (revision arming, retitle, `render_saved_entry`
+/// vs plain toast, view pivot) — this function only ever touches
+/// `exchanges[idx].saved_id` and the tint.
+///
+/// Takes `&mut AppState` directly (no `Rc<RefCell<..>>`) so it composes under
+/// a borrow the caller already holds — both call sites are inside an existing
+/// `state_rc.borrow_mut()`.
+fn persist_exchange_to_journal(s: &mut AppState, idx: usize) -> Option<i64> {
+    let e = s.chat.exchanges.get(idx)?;
+    let work = s.current_work.as_ref()?;
+    let abbrev = work.canonical_abbrev.clone();
+    let model = s.config.claude_model.clone();
+    let saved = crate::db::queries::open_db_rw().and_then(|conn| {
+        crate::db::journal::save_passage_page(
+            &conn, &abbrev, e.div1, e.div2,
+            &e.start_citation, &e.end_citation, &e.source_markup,
+            &e.question, &e.answer, &model,
+        )
+    });
+    match saved {
+        Ok(id) => {
+            s.chat.exchanges[idx].saved_id = Some(id);
+            // See doc comment: without this the entry existed but its
+            // passage stayed unmarked until some other path recomputed.
+            crate::app::apply_reader_gloss_highlighting(s);
+            crate::logging::log(&format!("CHAT: saved exchange as journal page {}", id));
+            Some(id)
+        }
+        Err(err) => {
+            crate::logging::log(&format!("CHAT: save failed: {}", err));
+            None
+        }
+    }
+}
+
 /// `s` on the transcript: save the selected exchange as a passage journal
 /// page, mark it, and pivot the panel into the revision loop on that entry.
 pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
@@ -1606,20 +1684,9 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     }
     let idx = s.chat.cursor;
     let Some(e) = s.chat.exchanges.get(idx) else { return };
-    let Some(work) = s.current_work.as_ref() else { return };
-    let abbrev = work.canonical_abbrev.clone();
-    let model = s.config.claude_model.clone();
     let (q, a) = (e.question.clone(), e.answer.clone());
-    let saved = crate::db::queries::open_db_rw().and_then(|conn| {
-        crate::db::journal::save_passage_page(
-            &conn, &abbrev, e.div1, e.div2,
-            &e.start_citation, &e.end_citation, &e.source_markup,
-            &e.question, &e.answer, &model,
-        )
-    });
-    match saved {
-        Ok(id) => {
-            s.chat.exchanges[idx].saved_id = Some(id);
+    match persist_exchange_to_journal(&mut s, idx) {
+        Some(id) => {
             // render_saved_entry below always shows the just-saved exchange
             // directly (it bypasses transcript_rows/journal_view_rows
             // entirely — see its own doc comment), so line up `view` with
@@ -1646,21 +1713,10 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
                 s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg, false);
             }
             render_saved_entry(&s, &q, &a);
-            // Re-derive the glossed-line tint so the just-saved passage colors
-            // IMMEDIATELY, mirroring every gloss.rs save/edit/delete path.
-            // Without this the entry existed but its passage stayed unmarked
-            // until some other path recomputed — opening the journal overlay on
-            // it and escaping out was the only way to see it (the overlay's
-            // close path runs the same recompute). The chat panel STAYS OPEN
-            // here, so recompute directly rather than via a return-to-reader
-            // path (which would wrongly switch the input mode).
-            crate::app::apply_reader_gloss_highlighting(&mut s);
             crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
-            crate::logging::log(&format!("CHAT: saved exchange as journal page {}", id));
         }
-        Err(err) => {
+        None => {
             crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);
-            crate::logging::log(&format!("CHAT: save failed: {}", err));
         }
     }
 }
@@ -2039,6 +2095,63 @@ mod question_row_tests {
     #[test]
     fn followup_exchange_keeps_question_row() {
         assert!(has_question_row(&ex("What does this line mean?")));
+    }
+}
+
+#[cfg(test)]
+mod first_question_tests {
+    use super::{is_first_question_exchange, Exchange};
+
+    fn ex(question: &str) -> Exchange {
+        Exchange {
+            question: question.to_string(),
+            answer: String::new(),
+            chip: String::new(),
+            user_msg: String::new(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id: None,
+        }
+    }
+
+    // The auto-gloss exchange (exchanges[0], empty question) never counts —
+    // an empty list, or a list with only the gloss, has zero Q&A exchanges,
+    // not one.
+    #[test]
+    fn empty_list_is_not_the_first_question() {
+        assert!(!is_first_question_exchange(&[]));
+    }
+
+    #[test]
+    fn gloss_only_is_not_the_first_question() {
+        assert!(!is_first_question_exchange(&[ex("")]));
+    }
+
+    // Gloss followed by the reader's first `a` question: exactly one Q&A
+    // exchange — this is the auto-save trigger.
+    #[test]
+    fn gloss_then_one_question_is_first() {
+        assert!(is_first_question_exchange(&[ex(""), ex("What does this mean?")]));
+    }
+
+    // No gloss at all (panel opened straight into `a`, if that's ever
+    // possible): still the first Q&A on a single real question.
+    #[test]
+    fn single_question_with_no_gloss_is_first() {
+        assert!(is_first_question_exchange(&[ex("What does this mean?")]));
+    }
+
+    // A second follow-up question must NOT re-trigger auto-save.
+    #[test]
+    fn second_question_is_not_first() {
+        assert!(!is_first_question_exchange(&[
+            ex(""),
+            ex("First question?"),
+            ex("Second question?"),
+        ]));
     }
 }
 
