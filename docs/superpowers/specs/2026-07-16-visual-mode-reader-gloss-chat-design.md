@@ -226,7 +226,17 @@ handler is a separate context and those binds are untouched.
 **Two different lists.** `j`/`k` move `transcript_cursor_move`
 (`keymap.rs:1343`), a cursor over this session's in-memory `chat.exchanges`.
 `Ctrl+n`/`Ctrl+p` moves over stored `glosses` rows from lit.db. These are
-distinct axes and need distinct state — cycling must not reuse `chat.cursor`.
+distinct axes and need distinct state — cycling must not reuse `chat.cursor`
+as its index.
+
+Cycling does, however, leave the transcript cursor ON the gloss: the shared
+`push_gloss_exchange` sets `chat.cursor = 0` when it rewrites slot #1, so a
+`Ctrl+n` pressed while the cursor sits on a follow-up snaps it back up to the
+gloss. That is intended, and consistent with `-` and `r`/`R`, which reset the
+cursor through the same helper. Slot #1's content has changed under the user;
+selecting it beats leaving the cursor on a follow-up while the gloss silently
+swaps above. The invariant is about the INDEX (`cycle_gloss` writes only
+`gloss_index`), not about the cursor never moving.
 
 **Cycling swaps exchange #1 in place.** The auto-gloss occupies the first
 transcript slot; `Ctrl+n`/`Ctrl+p` replaces the gloss text shown there with

@@ -12,4 +12,9 @@ leading `[X]`; never delete them.
 'Return' should be bound to what 'a' is bound in main card.
 
 If into the works picker opened by ctrl+\, the use enters a work abbrev, the list should
+
 put at the top works with work abbreviations that match the pattern.
+
+/home/mlj/Screenshots/screenshot-2026-07-17_13-23-50.png the diffing / highlighting of
+rewrites of journal q&a should only highlight continuous blocks of text, to focus the
+reader
