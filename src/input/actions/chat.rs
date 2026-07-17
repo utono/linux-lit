@@ -168,6 +168,7 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.chat_placement = ChatPlacement::Pinned;
     s.chat_panel.container.remove_css_class("chat-panel-float");
     s.chat_panel.container.remove_css_class("chat-panel-pinned");
+    s.page_turn_overlay.remove_css_class("card-chat-seam");
     s.chat_panel.container.set_margin_start(24);
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
@@ -2201,6 +2202,9 @@ pub(crate) fn size_panel(s: &AppState) {
             s.chat_panel.container.set_valign(gtk4::Align::Center);
             s.chat_panel.container.remove_css_class("chat-panel-float");
             s.chat_panel.container.add_css_class("chat-panel-pinned");
+            // Square the card's right corners so it meets the panel's hairline
+            // seam flush (no rounded sliver of root at top-right/bottom-right).
+            s.page_turn_overlay.add_css_class("card-chat-seam");
             s.chat_panel.size_to(w, card_h);
         }
         ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
@@ -2229,6 +2233,9 @@ pub(crate) fn size_panel(s: &AppState) {
             s.chat_panel.container.set_margin_start(x.max(0));
             s.chat_panel.container.remove_css_class("chat-panel-pinned");
             s.chat_panel.container.add_css_class("chat-panel-float");
+            // Float placement leaves the card alone (it overlays a column), so
+            // the card keeps all four rounded corners.
+            s.page_turn_overlay.remove_css_class("card-chat-seam");
             // Clear the header band: `valign: Center` + full `card_h` used to
             // put the panel's top edge at the CARD's own top edge (same y as
             // `content_hbox`), painting over the running-head/act-scene

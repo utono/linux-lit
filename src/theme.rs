@@ -1110,6 +1110,11 @@ pub fn generate_css(
            font-family: {font}; font-size: 10pt; }} \
          .tiled {{ background-color: {bg}; }} \
          .page-turn-overlay {{ background-color: {bg}; border-radius: 12px; }} \
+         /* Pinned chat layout: the card's RIGHT edge is the hairline seam the \
+            panel abuts, so square its right corners (keep the left ones rounded) \
+            — the card + panel then read as one surface with no root sliver at the \
+            seam. Toggled on page_turn_overlay only while a Pinned panel shows. */ \
+         .page-turn-overlay.card-chat-seam {{ border-radius: 12px 0 0 12px; }} \
          .page-image-overlay {{ background-color: {bg}; border-radius: 12px; }} \
          .page-image-caption {{ color: {fg}; font-size: 12px; \
            background-color: {bg}; padding: 4px 14px; border-radius: 10px; \
@@ -1443,8 +1448,10 @@ pub fn generate_css(
             background wash makes a bare-on-root Answer/Question row (no \
             indent of its own) still read as the current line, not just a \
             thin rule. */ \
-         .chat-cursor-row {{ box-shadow: inset 3px 0 0 {cursor_bg}; \
-           background-color: alpha({cursor_bg}, 0.10); }} \
+         /* Cursor row: the inset accent bar alone marks it — NO background \
+            wash (it read as a distracting highlight over the cursor segment; \
+            the bar suffices, matching the reading card's own cursor cue). */ \
+         .chat-cursor-row {{ box-shadow: inset 3px 0 0 {cursor_bg}; }} \
          /* V panel-local visual selection (chat panel's own y yank -
             distinct from the reader's AppState.visual_selection, a
             different space entirely). Reuses selection_bg, the SAME blue
