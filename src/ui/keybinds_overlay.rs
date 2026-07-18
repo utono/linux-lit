@@ -75,7 +75,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("t", "T", "dlg back", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
     key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}"), ("C-M-n", "nav test")]),
     bare("s", "S", "toggle sync"),
-    key("-", "_", "", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
+    key("-", "_", "gloss chat", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -282,6 +282,11 @@ picker via ChordState::PendingPeriod) — src/input/keymap.rs",
         "prev match" => "Action::SearchPrevMatch — src/input/search.rs",
 
         // ── Gloss / echo system ──
+        "gloss chat" => "Action::ReaderGlossChatAtCursor — opens the chat panel \
+on the reader-gloss covering the cursor line (reader mode). No-op (toasts \
+\"No gloss on this line\") if the line has no reader-gloss. In visual (`V`) \
+mode, `-` instead glosses the selection (action_reader_gloss_chat) — see the \
+`visual mode` entry. — src/input/actions/chat.rs",
         "gloss tog" => "Action::ToggleGlossOverlay — src/input/actions/gloss.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
         "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
@@ -475,6 +480,7 @@ fn expand_action(label: &str) -> String {
         "conc picker" => "concordance picker",
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
+        "gloss chat" => "reader-gloss chat at cursor",
         "gloss pick" => "gloss picker",
         "last gloss" => "reopen last gloss",
         "BCP echo turns" => "BCP echo turns picker",
