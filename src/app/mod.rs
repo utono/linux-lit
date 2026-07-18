@@ -644,7 +644,7 @@ pub struct AppState {
     pub concordance_word_picker: crate::ui::concordance_word_picker::ConcordanceWordPicker,
     pub voice_picker: crate::ui::voice_picker::VoicePicker,
     pub echo_line_picker: crate::ui::echo_line_picker::EchoLinePicker,
-    pub echo_keybinds_overlay: crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay,
+    pub echo_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub gloss_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub synopsis_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub journal_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
@@ -1636,7 +1636,10 @@ pub fn build_window(
 
     // Echo keybinds legend (Ctrl+/ in the echoes overlay). add_overlay panel,
     // NOT a chain link (chain insertion collapses the reader layout).
-    let echo_keybinds_overlay = crate::ui::echo_keybinds_overlay::EchoKeybindsOverlay::new();
+    let echo_keybinds_overlay = crate::ui::keybinds_legend::KeybindsLegend::new(
+        crate::ui::echo_keybinds_overlay::TITLE,
+        crate::ui::echo_keybinds_overlay::GROUPS,
+    );
     echo_keybinds_overlay.attach_to(&authorship_picker.overlay);
 
     // Per-overlay Ctrl+/ keybind legends (gloss, synopsis, journal). add_overlay
