@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation, Overlay};
 
-use crate::db::queries::EchoCandidate;
+use crate::db::echoes::EchoCandidate;
 
 /// Picker for selecting a semantic-search echo candidate before
 /// generating an inner-monologue gloss. Matches the library-picker

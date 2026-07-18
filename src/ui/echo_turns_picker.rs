@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Label, ListBox, ListBoxRow, Orientation};
 
-use crate::db::queries::EchoTurnSummary;
+use crate::db::echoes::EchoTurnSummary;
 
 /// Picker listing every turn in the current work that has echoes
 /// (Ctrl+Shift+G). Selecting a turn jumps the cursor there and opens the
