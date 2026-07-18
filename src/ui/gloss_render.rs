@@ -365,6 +365,10 @@ pub(crate) fn populate_verse_buffer(
     let speaker_tag = header_dim(
         header_tag_base("gloss-speaker", quote_speaker)
             .variant(pango::Variant::SmallCaps)
+            // Match the main reading card's speaker-name size: the card uses
+            // scale 0.75 (see formatting.rs `speaker-name`), so override the
+            // 0.9 header scale here — the verse tag keeps the 0.9 header size.
+            .scale(0.75)
             .pixels_above_lines(36)
             .pixels_below_lines(10),
     )
@@ -416,6 +420,9 @@ pub(crate) fn populate_verse_buffer(
     let speaker_first_tag = header_dim(
         header_tag_base("gloss-speaker-first", quote_speaker)
             .variant(pango::Variant::SmallCaps)
+            // Match the main reading card's speaker-name size (scale 0.75), like
+            // `gloss-speaker` above; the 0.9 header scale is for the verse tag.
+            .scale(0.75)
             .pixels_below_lines(10),
     )
     .build();
@@ -426,6 +433,8 @@ pub(crate) fn populate_verse_buffer(
     let speaker_source_tag = header_dim(
         header_tag_base("gloss-speaker-source", quote_speaker)
             .variant(pango::Variant::SmallCaps)
+            // Match the main reading card's speaker-name size (scale 0.75).
+            .scale(0.75)
             .pixels_above_lines(8)
             .pixels_below_lines(10),
     )
