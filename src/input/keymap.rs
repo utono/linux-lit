@@ -803,10 +803,7 @@ fn handle_corpus_search_key(
             true
         }
         PickerAction::Confirm => {
-            // STUB (Task 5 implements real select/jump): hide and return.
-            let mut s = state.borrow_mut();
-            s.corpus_search_popup.hide();
-            s.input_mode = s.corpus_search_return_mode;
+            crate::input::actions::corpus_search::select(state);
             true
         }
         PickerAction::MoveDown => {

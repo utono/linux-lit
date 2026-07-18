@@ -365,6 +365,27 @@ pub fn find_pages_by_term(
     rows.collect()
 }
 
+/// Fetch a single journal entry (plus its work_abbrev) by id, for the Ctrl+f
+/// cross-corpus search jump. Returns the same `TermMatch` shape the term-browse
+/// filter renders, so the caller can drop it straight into `JournalFilter` and
+/// reuse `render_filtered_match` (no new rendering path). `Ok(None)` if the id
+/// no longer exists (entry deleted between popup-load and Enter).
+pub fn find_page_by_id(
+    conn: &Connection,
+    id: i64,
+) -> Result<Option<TermMatch>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS}, work_abbrev \
+         FROM journal_entries WHERE id = ?1"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query_map([id], map_term_match_row)?;
+    match rows.next() {
+        Some(r) => Ok(Some(r?)),
+        None => Ok(None),
+    }
+}
+
 fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Error> {
     let page = map_journal_page_row(row)?;
     // work_abbrev is the column AFTER the JOURNAL_PAGE_COLUMNS list (index 11).

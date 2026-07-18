@@ -2107,6 +2107,28 @@ pub fn find_existing_gloss(
     .optional()
 }
 
+/// The passage a single gloss belongs to, looked up by the gloss's own id — for
+/// the Ctrl+f cross-corpus search jump. Returns the passage (work_abbrev +
+/// start_citation + source_text + act/scene/speaker) so the caller can rebuild
+/// the gloss overlay the same way `open_gloss_at_cursor` does (find_glossed_passages
+/// + find_glosses_by_start + open_gloss_overlay). `Ok(None)` if the gloss id no
+/// longer exists (deleted between popup-load and Enter).
+pub fn find_gloss_passage_by_id(
+    conn: &Connection,
+    gloss_id: i64,
+) -> Result<Option<GlossedPassage>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT p.id, p.work_abbrev, COALESCE(p.start_citation, ''), \
+                COALESCE(p.end_citation, ''), p.div1, p.div2, p.character, p.source_text \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         WHERE g.id = ?1",
+        [gloss_id],
+        row_to_glossed_passage,
+    )
+    .optional()
+}
+
 pub fn find_all_glosses(
     conn: &Connection,
     work_abbrev: &str,
