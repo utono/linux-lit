@@ -850,6 +850,17 @@ fn answer_row(e: &Exchange) -> crate::ui::chat_panel::TranscriptRow {
     }
 }
 
+/// A `Question` row with the `Q: ` display label. Routes through
+/// `journal_overlay::prefix_question` — the single source of that label — so
+/// the prefix cannot drift across the render paths, and so a question already
+/// beginning `Q:` is not double-prefixed (the raw `format!("Q: {}", …)` these
+/// call sites used to inline had no such guard).
+fn question_row(question: &str) -> crate::ui::chat_panel::TranscriptRow {
+    crate::ui::chat_panel::TranscriptRow::Question(
+        crate::ui::journal_overlay::prefix_question(question),
+    )
+}
+
 /// How many actual WIDGETS (label rows in `transcript_box`) a single
 /// `TranscriptRow` renders as. Every variant is one widget
 /// (`chat_panel::rebuild_rows`'s `append_row_label`) EXCEPT `GlossAnswer`,
@@ -935,7 +946,7 @@ fn build_transcript_rows(
             cursor_row = widget_row;
         }
         if show_question {
-            rows.push(R::Question(format!("Q: {}", e.question)));
+            rows.push(question_row(&e.question));
             row_owner.push(i);
             widget_row += 1;
         }
@@ -970,7 +981,7 @@ fn build_single_exchange_rows(e: &Exchange) -> Vec<crate::ui::chat_panel::Transc
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
     if has_question_row(e) {
-        rows.push(R::Question(format!("Q: {}", e.question)));
+        rows.push(question_row(&e.question));
     }
     rows.push(answer_row(e));
     if e.saved_id.is_some() {
@@ -1175,7 +1186,7 @@ fn journal_view_rows(pages: &[crate::db::journal::JournalPage]) -> Vec<crate::ui
     }
     let mut rows = Vec::with_capacity(pages.len() * 2);
     for p in pages {
-        rows.push(R::Question(format!("Q: {}", p.question)));
+        rows.push(question_row(&p.question));
         rows.push(R::Answer(p.answer.clone()));
     }
     rows
@@ -1537,7 +1548,7 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, _chip: &str) {
     // return until `t`. The source-preview chip is dropped with the rest —
     // the question names its own subject.
     let rows = vec![
-        R::Question(format!("Q: {}", question)),
+        question_row(question),
         R::Thinking,
     ];
     s.chat_panel.render_rows(&rows);
@@ -2162,7 +2173,7 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     };
     s.chat_panel.render_rows_to_top(&[
         R::SavedMark,
-        R::Question(format!("Q: {}", question)),
+        question_row(question),
         answer_row,
     ]);
 }
