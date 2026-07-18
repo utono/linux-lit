@@ -676,76 +676,29 @@ pub(crate) fn escape_filtered_entry_to_source(state: &Rc<RefCell<AppState>>) -> 
     clear_filter(state);
     close_overlay(state);
 
-    let state_clone = Rc::clone(state);
+    // Load the entry's Arkangel edition (base if none), then land the cursor on
+    // its source first line — resolved against the freshly-loaded edition. The
+    // shared loader handles the same-work skip, the MPV-media discovery, and the
+    // error toast; `on_ready` just does the source-line jump (runs in both the
+    // same-work and cross-work paths).
     let handle = state.borrow().tokio_handle.clone();
-    glib::spawn_future_local(async move {
-        let base_for_load = base_abbrev.clone();
-        let current_for_load = current_abbrev.clone();
-        let result = handle
-            .spawn_blocking(move || {
-                let conn = crate::db::queries::open_db()
-                    .expect(crate::db::queries::OPEN_DB_PANIC_MSG);
-                // Prefer the Arkangel edition; fall back to the base abbrev.
-                let target =
-                    crate::db::queries::preferred_arkangel_abbrev(&conn, &base_for_load);
-                // Already on the target edition -> skip the work load entirely.
-                if current_for_load.as_deref() == Some(target.as_str()) {
-                    return Ok::<_, rusqlite::Error>((target, None));
-                }
-                let work = crate::db::queries::load_work(&conn, &target)?;
-                let prepared = crate::app::text_prep::prepare_text_for_display(&work);
-                Ok::<_, rusqlite::Error>((target, Some((work, prepared))))
-            })
-            .await;
-        match result {
-            Ok(Ok((_target, None))) => {
-                // Already on the target edition: just move the cursor. Compute the
-                // buffer line under the immutable borrow, drop it, then jump mut.
-                let mut s = state_clone.borrow_mut();
-                let buf = s.current_work.as_ref().and_then(|work| {
-                    source_first_buffer_line(
-                        work,
-                        s.line_map.as_ref(),
-                        &start_citation,
-                        &source_text,
-                    )
-                });
-                if let Some(bi) = buf {
-                    crate::input::navigation::jump_to_line(&mut s, bi);
-                }
+    crate::input::actions::pickers::load_arkangel_edition_then(
+        state,
+        &handle,
+        base_abbrev,
+        current_abbrev,
+        move |state| {
+            let mut s = state.borrow_mut();
+            // Compute the buffer line under the immutable borrow of current_work
+            // (which ends with the `and_then` closure), then do the mutable jump.
+            let buf = s.current_work.as_ref().and_then(|work| {
+                source_first_buffer_line(work, s.line_map.as_ref(), &start_citation, &source_text)
+            });
+            if let Some(bi) = buf {
+                crate::input::navigation::jump_to_line(&mut s, bi);
             }
-            Ok(Ok((_target, Some((work, prepared))))) => {
-                let mut s = state_clone.borrow_mut();
-                // Let MPV discovery load the target edition's media (the Arkangel
-                // `.m4b`) — matching the Ctrl+\ library-picker load.
-                s.skip_mpv_discovery = false;
-                crate::app::clear_display(&mut s);
-                crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
-                // Resolve the source line against the freshly-loaded edition:
-                // compute `buf` under the immutable borrow of current_work, which
-                // ends with the `and_then` closure, then do the mutable jump.
-                let buf = s.current_work.as_ref().and_then(|w| {
-                    source_first_buffer_line(
-                        w,
-                        s.line_map.as_ref(),
-                        &start_citation,
-                        &source_text,
-                    )
-                });
-                if let Some(bi) = buf {
-                    crate::input::navigation::jump_to_line(&mut s, bi);
-                }
-            }
-            _ => {
-                let s = state_clone.borrow();
-                crate::input::navigation::show_chapter_toast_secs(
-                    &s,
-                    &format!("Could not load {}", base_abbrev),
-                    3,
-                );
-            }
-        }
-    });
+        },
+    );
     true
 }
 

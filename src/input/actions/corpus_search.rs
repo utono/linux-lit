@@ -83,56 +83,19 @@ pub fn select(state: &Rc<RefCell<AppState>>) {
     // so `same_work` can't be decided here — the async task compares the resolved
     // target against `current_abbrev` and skips the reload when they match.
     let base_abbrev = hit.work_abbrev.clone();
-    let state_clone = Rc::clone(state);
+    // Load the hit's Arkangel edition (base if none), then open the entry's
+    // overlay + seed the `/` highlight. The shared loader handles the same-work
+    // skip, the MPV-media discovery, and the error toast; `on_ready` opens the
+    // overlay (runs in both the same-work and cross-work paths). The reader is
+    // behind the overlay, so no reader cursor target on the load.
     let handle = state.borrow().tokio_handle.clone();
-    glib::spawn_future_local(async move {
-        let base_for_load = base_abbrev.clone();
-        let current_for_load = current_abbrev.clone();
-        let result = handle
-            .spawn_blocking(move || {
-                let conn =
-                    crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
-                // Prefer the Arkangel edition; fall back to the base abbrev.
-                let target = crate::db::queries::preferred_arkangel_abbrev(&conn, &base_for_load);
-                // Already on the target edition -> skip the work load entirely.
-                if current_for_load.as_deref() == Some(target.as_str()) {
-                    return Ok::<_, rusqlite::Error>((target, None));
-                }
-                let work = crate::db::queries::load_work(&conn, &target)?;
-                let prepared = crate::app::text_prep::prepare_text_for_display(&work);
-                Ok::<_, rusqlite::Error>((target, Some((work, prepared))))
-            })
-            .await;
-        match result {
-            Ok(Ok((_target, None))) => {
-                // Reader is already on the Arkangel target edition: just open the
-                // overlay, no reload (and don't disturb MPV).
-                open_hit(&state_clone, &hit, &pattern);
-            }
-            Ok(Ok((_target, Some((work, prepared))))) => {
-                {
-                    let mut s = state_clone.borrow_mut();
-                    // Let MPV discovery load the target edition's media (the
-                    // Arkangel `.m4b`) — matching the Ctrl+\ library-picker load,
-                    // which starts the selected edition's audio.
-                    s.skip_mpv_discovery = false;
-                    crate::app::clear_display(&mut s);
-                    // No cursor target: the reader is behind the overlay; the
-                    // overlay's Escape restores the pre-jump reader position.
-                    crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
-                }
-                open_hit(&state_clone, &hit, &pattern);
-            }
-            _ => {
-                let s = state_clone.borrow();
-                crate::input::navigation::show_chapter_toast_secs(
-                    &s,
-                    &format!("Could not load {}", base_abbrev),
-                    3,
-                );
-            }
-        }
-    });
+    crate::input::actions::pickers::load_arkangel_edition_then(
+        state,
+        &handle,
+        base_abbrev,
+        current_abbrev,
+        move |state| open_hit(state, &hit, &pattern),
+    );
 }
 
 /// Open the overlay for `hit` (its work must already be the current work) and
