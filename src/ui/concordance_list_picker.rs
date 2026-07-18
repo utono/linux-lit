@@ -14,12 +14,10 @@ impl ConcordanceListPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = GtkBox::new(Orientation::Vertical, 0);
-        picker_box.set_halign(Align::Center);
-        picker_box.set_valign(Align::Start);
-        picker_box.set_margin_top(40);
-        picker_box.set_width_request(900);
-        picker_box.add_css_class("picker-box");
+        let picker_box = super::picker_nav::new_top_anchored_picker_box(
+            super::picker_nav::PICKER_WIDE_W,
+            "picker-box",
+        );
 
         let header = Label::new(Some("Concordance occurrences"));
         header.add_css_class("picker-header");
