@@ -444,6 +444,10 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("minus"), Action::JumpToNextVocab),
         (KeyCombo::ctrl_shift("underscore"), Action::JumpToPrevVocab),
         (KeyCombo::ctrl_shift("minus"), Action::JumpToPrevVocab),
+        // Plain `-` opens the chat panel on the reader-gloss covering the
+        // cursor line (reader mode; no V-select). Ctrl+- / Ctrl+Shift+- keep
+        // their vocab-jump binds below.
+        (KeyCombo::plain("minus"), Action::ReaderGlossChatAtCursor),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
@@ -507,9 +511,13 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("Tab")), Some(&Action::ToggleChatLayout));
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
-        // minus and # freed; Ctrl+r = vocab journal Q&A (was R, now unbound;
-        // VocabPopupNext dropped from Ctrl+r); Ctrl+n/p page its answer.
-        assert_eq!(m.get(&KeyCombo::plain("minus")), None);
+        // # freed; plain minus now opens the reader-gloss chat at the cursor
+        // (ReaderGlossChatAtCursor); Ctrl+r = vocab journal Q&A (was R, now
+        // unbound; VocabPopupNext dropped from Ctrl+r); Ctrl+n/p page its answer.
+        assert_eq!(
+            m.get(&KeyCombo::plain("minus")),
+            Some(&Action::ReaderGlossChatAtCursor)
+        );
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabJournalAsk));
         assert_eq!(m.get(&KeyCombo::plain("R")), None);

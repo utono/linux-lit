@@ -204,6 +204,9 @@ pub enum Action {
     /// Works from the reader AND from inside the panel (prompt/transcript),
     /// so one chord always dismisses it. No-op when the panel isn't open.
     CloseChatLayout,
+    /// Reader-mode `-`: open the chat panel pinned to the reader-gloss covering
+    /// the cursor line (no `V` needed). No-op toast if the line isn't glossed.
+    ReaderGlossChatAtCursor,
     /// Ctrl+l: flip a floating chat panel to the other reading column.
     ChatPanelFlipSide,
     ThemeNext,
@@ -336,6 +339,7 @@ impl Action {
             | Action::ToggleDim
             | Action::ToggleChatLayout
             | Action::CloseChatLayout
+            | Action::ReaderGlossChatAtCursor
             | Action::ChatPanelFlipSide
             | Action::ThemeNext
             | Action::ThemePrev
@@ -492,6 +496,7 @@ impl Action {
             Action::ToggleDim => "ToggleDim",
             Action::ToggleChatLayout => "ToggleChatLayout",
             Action::CloseChatLayout => "CloseChatLayout",
+            Action::ReaderGlossChatAtCursor => "ReaderGlossChatAtCursor",
             Action::ChatPanelFlipSide => "ChatPanelFlipSide",
             Action::ThemeNext => "ThemeNext",
             Action::ThemePrev => "ThemePrev",
