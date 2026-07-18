@@ -3698,6 +3698,7 @@ fn dispatch_action(
         }
         ToggleChatLayout => crate::input::actions::chat::toggle_chat_layout(state),
         CloseChatLayout => crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut()),
+        ReaderGlossChatAtCursor => crate::input::visual::reader_gloss_chat_at_cursor(state),
         ChatPanelFlipSide => {
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut())
         }
