@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod corpus_search;
 pub mod gamepad;
 pub mod highlight;
 pub mod keymap;
