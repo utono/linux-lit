@@ -1268,7 +1268,7 @@ fn handle_segment_vim_key(
         EditorAction::CopyToClipboard(text) => {
             copy_to_clipboard(&text);
             let s = state.borrow();
-            crate::input::navigation::show_chapter_toast_secs(&s, "Copied", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_COPIED, 2);
             true
         }
         EditorAction::ToggleHighlight | EditorAction::Nop => true,
@@ -2642,7 +2642,7 @@ fn handle_block_visual_key(
                 (cfg.yank_exit)(&s.gloss_overlay);
                 s.input_mode = cfg.return_mode;
                 (cfg.set_hint)(&s.gloss_overlay);
-                crate::input::navigation::show_chapter_toast_secs(&s, "Copied", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_COPIED, 2);
             }
             true
         }
@@ -2707,7 +2707,7 @@ fn handle_journal_visual_key(
                 s.journal_overlay.exit_visual();
                 s.input_mode = crate::app::InputMode::JournalOverlay;
                 s.journal_overlay.set_journal_hint();
-                crate::input::navigation::show_chapter_toast_secs(&s, "Copied", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_COPIED, 2);
             }
             true
         }

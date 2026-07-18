@@ -357,10 +357,10 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
         render_synopsis(state, div1, div2, &raw);
         let mut s = state.borrow_mut();
         s.input_mode = crate::app::InputMode::SynopsisOverlay;
-        crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED, 2);
     } else {
         state.borrow().gloss_overlay.reseed_edit_buffer(&raw);
-        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Saved (:q to exit)", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), crate::input::navigation::TOAST_SAVED_IN_OVERLAY, 2);
     }
 }
 

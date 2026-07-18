@@ -2582,6 +2582,15 @@ fn restore_chapter_toast(
 /// Show `text` in the chapter-toast widget for `secs` seconds, then restore the
 /// persistent act/scene pill (or hide the strip if the pill is off).
 ///
+/// Transient toast strings reused across overlays, hoisted so a wording change
+/// happens once. `TOAST_SAVED` and `TOAST_SAVED_IN_OVERLAY` are deliberately two
+/// separate consts (not one helper with a flag): the in-overlay branch adds the
+/// `:q` exit hint, and each caller already picks the branch it's in.
+pub(crate) const TOAST_SAVED: &str = "Saved";
+pub(crate) const TOAST_SAVED_IN_OVERLAY: &str = "Saved (:q to exit)";
+pub(crate) const TOAST_NO_MATCHES: &str = "No matches";
+pub(crate) const TOAST_COPIED: &str = "Copied";
+
 /// This is the single entry point for EVERY transient that borrows the
 /// bottom-center act/scene strip on the shared `chapter_toast` widget ("Sync:
 /// on", "Copied", "No timestamp…", "Saved", calibration messages, …). It:

@@ -735,7 +735,7 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
         current: 0,
     };
     if search.matches.is_empty() {
-        crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_NO_MATCHES, 2);
     } else if let Some((off, _)) = search.matches.first() {
         // Turn to the page holding the first match before painting it.
         s.journal_overlay.jump_to_whole_offset(*off as usize);
@@ -768,7 +768,7 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
             current: 0,
         };
         if search.matches.is_empty() {
-            crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_NO_MATCHES, 2);
             return;
         }
         if let Some((off, _)) = search.matches.first() {
@@ -1476,11 +1476,11 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
                     land_on_current_band_id(&mut s, id);
                 }
             }
-            crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED, 2);
         } else {
             // Stay in the editor; the buffer is now the saved baseline so the
             // dirty-check resets. Re-seed the seed to the just-saved buffer.
-            crate::input::navigation::show_chapter_toast_secs(&s, "Saved (:q to exit)", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED_IN_OVERLAY, 2);
         }
     }
     // After a non-quit `:w`, reset the editor's dirty baseline to the saved text
