@@ -314,6 +314,17 @@ pub struct JournalState {
     /// MRU search pattern for post-Escape n/N revival: cleared search drops
     /// `search` but keeps this, so the next n/N rebuilds the search from it.
     pub last_pattern: Option<String>,
+    /// True when the term input was opened from the READING CARD (reader `f`)
+    /// rather than inside the journal overlay. Consumed by the term-input Escape
+    /// path so cancel returns to the reader, not the overlay. Mirrors
+    /// `picker_from_reader`.
+    pub term_input_from_reader: bool,
+}
+
+/// True when the term input, opened while in `mode`, should return to the reader
+/// on cancel (opened from the reading card) rather than the journal overlay.
+pub(crate) fn term_input_opened_from_reader(mode: crate::app::InputMode) -> bool {
+    matches!(mode, crate::app::InputMode::Reader)
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
@@ -632,6 +643,112 @@ pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
     render_current(&mut s); // restore the band the user was in
 }
 
+/// Escape from a journal entry shown under an active term filter: if it is a
+/// PASSAGE entry (has a source citation), close the overlay + clear the filter,
+/// load its `<work>-Arkangel` edition (base if none) with the Arkangel media,
+/// and land the cursor on the entry's source first line. Returns `true` when it
+/// handled a passage entry; `false` for a non-passage note (no citation) — the
+/// caller then falls back to clear-filter + close-to-reader.
+pub(crate) fn escape_filtered_entry_to_source(state: &Rc<RefCell<AppState>>) -> bool {
+    // Gather the filtered entry's abbrev + citation + source under a short borrow.
+    let (base_abbrev, start_citation, source_text, current_abbrev) = {
+        let s = state.borrow();
+        let Some(filter) = s.journal.filter.as_ref() else {
+            return false;
+        };
+        let Some(m) = filter.matches.get(filter.pos) else {
+            return false;
+        };
+        let Some(cite) = m.page.start_citation.clone() else {
+            return false; // non-passage note: caller falls back
+        };
+        (
+            m.work_abbrev.clone(),
+            cite,
+            m.page.source_text.clone().unwrap_or_default(),
+            s.current_work.as_ref().map(|w| w.abbrev.clone()),
+        )
+    };
+
+    // Leave the overlay: clear the filter + close to the reader BEFORE loading.
+    // Both take `&Rc<RefCell<AppState>>` and re-borrow internally, so the gather
+    // borrow above must already be dropped (it is).
+    clear_filter(state);
+    close_overlay(state);
+
+    let state_clone = Rc::clone(state);
+    let handle = state.borrow().tokio_handle.clone();
+    glib::spawn_future_local(async move {
+        let base_for_load = base_abbrev.clone();
+        let current_for_load = current_abbrev.clone();
+        let result = handle
+            .spawn_blocking(move || {
+                let conn = crate::db::queries::open_db()
+                    .expect(crate::db::queries::OPEN_DB_PANIC_MSG);
+                // Prefer the Arkangel edition; fall back to the base abbrev.
+                let target =
+                    crate::db::queries::preferred_arkangel_abbrev(&conn, &base_for_load);
+                // Already on the target edition -> skip the work load entirely.
+                if current_for_load.as_deref() == Some(target.as_str()) {
+                    return Ok::<_, rusqlite::Error>((target, None));
+                }
+                let work = crate::db::queries::load_work(&conn, &target)?;
+                let prepared = crate::app::text_prep::prepare_text_for_display(&work);
+                Ok::<_, rusqlite::Error>((target, Some((work, prepared))))
+            })
+            .await;
+        match result {
+            Ok(Ok((_target, None))) => {
+                // Already on the target edition: just move the cursor. Compute the
+                // buffer line under the immutable borrow, drop it, then jump mut.
+                let mut s = state_clone.borrow_mut();
+                let buf = s.current_work.as_ref().and_then(|work| {
+                    source_first_buffer_line(
+                        work,
+                        s.line_map.as_ref(),
+                        &start_citation,
+                        &source_text,
+                    )
+                });
+                if let Some(bi) = buf {
+                    crate::input::navigation::jump_to_line(&mut s, bi);
+                }
+            }
+            Ok(Ok((_target, Some((work, prepared))))) => {
+                let mut s = state_clone.borrow_mut();
+                // Let MPV discovery load the target edition's media (the Arkangel
+                // `.m4b`) — matching the Ctrl+\ library-picker load.
+                s.skip_mpv_discovery = false;
+                crate::app::clear_display(&mut s);
+                crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
+                // Resolve the source line against the freshly-loaded edition:
+                // compute `buf` under the immutable borrow of current_work, which
+                // ends with the `and_then` closure, then do the mutable jump.
+                let buf = s.current_work.as_ref().and_then(|w| {
+                    source_first_buffer_line(
+                        w,
+                        s.line_map.as_ref(),
+                        &start_citation,
+                        &source_text,
+                    )
+                });
+                if let Some(bi) = buf {
+                    crate::input::navigation::jump_to_line(&mut s, bi);
+                }
+            }
+            _ => {
+                let s = state_clone.borrow();
+                crate::input::navigation::show_chapter_toast_secs(
+                    &s,
+                    &format!("Could not load {}", base_abbrev),
+                    3,
+                );
+            }
+        }
+    });
+    true
+}
+
 /// Open the term input box (with distinct-tag suggestions) from inside the
 /// overlay (the `f` key). The user types a term freely; existing tags are
 /// suggested beneath.
@@ -644,6 +761,8 @@ pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
 /// (Holding the borrow across `set_text` is what caused the RefCell
 /// non-unwinding panic in the GTK callback.)
 pub(crate) fn open_term_input(state: &Rc<RefCell<AppState>>) {
+    let from_reader = term_input_opened_from_reader(state.borrow().input_mode);
+    state.borrow_mut().journal.term_input_from_reader = from_reader;
     let terms = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_distinct_terms(&conn).ok())
@@ -844,6 +963,47 @@ fn first_plain_source_line(source_text: &str) -> String {
     String::new()
 }
 
+/// Buffer index of the first dialogue line of the passage at `start_citation`
+/// within `work`. Primary match is the citation tuple `(div1,div2,line_in_div)`;
+/// the fallback matches the first plain source line of `source_text` (which
+/// carries `<speaker>/<verse>` markup) against line text. Advances to the first
+/// `is_dialogue` line, then maps through `line_map.work_to_buffer`. `None` when
+/// the citation/text doesn't resolve.
+pub(crate) fn source_first_buffer_line(
+    work: &crate::db::models::Work,
+    line_map: Option<&crate::text_file_map::LineMap>,
+    start_citation: &str,
+    source_text: &str,
+) -> Option<usize> {
+    // start_citation is `ABBR.div1.div2.line_in_div`; match on the numeric tail
+    // (the abbrev may carry an edition suffix), same as the gloss path.
+    let target = crate::app::parse_citation(start_citation);
+
+    // Citation tuple is unique → primary match; citationless text match is the
+    // .txt-only fallback (source_text carries <speaker>/<verse> markup, so strip
+    // to the first bare content line before comparing).
+    let by_citation = target
+        .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
+    let first_src = first_plain_source_line(source_text);
+    let start_idx = by_citation.or_else(|| {
+        if first_src.is_empty() {
+            None
+        } else {
+            work.lines.iter().position(|l| l.text.trim() == first_src)
+        }
+    })?;
+    let work_idx = work.lines[start_idx..]
+        .iter()
+        .position(|l| l.is_dialogue)
+        .map(|off| start_idx + off)
+        .unwrap_or(start_idx);
+
+    match line_map {
+        Some(lm) => lm.work_to_buffer.get(work_idx).copied(),
+        None => Some(work_idx),
+    }
+}
+
 /// Land the cursor on the first dialogue line of the CURRENT journal page's
 /// source passage, when that page is a passage page whose source resolves in the
 /// current work. Returns `true` on a successful jump, `false` for scene/corpus
@@ -859,44 +1019,14 @@ pub(crate) fn jump_to_journal_source_start(s: &mut AppState) -> bool {
         None => return false,
     };
 
-    // start_citation is `ABBR.div1.div2.line_in_div`; match on the numeric tail
-    // (the abbrev may carry an edition suffix), same as the gloss path.
-    let target = crate::app::parse_citation(&start_citation);
-
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return false,
     };
 
-    // Citation tuple is unique → primary match; citationless text match is the
-    // .txt-only fallback (source_text carries <speaker>/<verse> markup, so strip
-    // to the first bare content line before comparing).
-    let by_citation = target
-        .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
-    let first_src = first_plain_source_line(&source_text);
-    let start_idx = match by_citation.or_else(|| {
-        if first_src.is_empty() {
-            None
-        } else {
-            work.lines.iter().position(|l| l.text.trim() == first_src)
-        }
-    }) {
+    let buf_idx = match source_first_buffer_line(work, s.line_map.as_ref(), &start_citation, &source_text) {
         Some(i) => i,
         None => return false,
-    };
-    let work_idx = work.lines[start_idx..]
-        .iter()
-        .position(|l| l.is_dialogue)
-        .map(|off| start_idx + off)
-        .unwrap_or(start_idx);
-
-    let buf_idx = if let Some(ref lm) = s.line_map {
-        match lm.work_to_buffer.get(work_idx) {
-            Some(&bi) => bi,
-            None => return false,
-        }
-    } else {
-        work_idx
     };
 
     crate::input::navigation::jump_to_line(s, buf_idx);
@@ -2607,6 +2737,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn term_input_from_reader_only_in_reader_mode() {
+        use crate::app::InputMode;
+        assert!(term_input_opened_from_reader(InputMode::Reader));
+        assert!(!term_input_opened_from_reader(InputMode::JournalOverlay));
+    }
+
+    #[test]
     fn improve_terms_line_guidance_or_empty() {
         // empty -> empty string (prompt reads clean)
         assert_eq!(super::improve_terms_line(&[]), "");
@@ -2960,5 +3097,88 @@ mod tests {
         // empty / whitespace -> keep the original (never lose the question)
         assert_eq!(parse_improved_question("", "the original q"), "the original q");
         assert_eq!(parse_improved_question("   \n  ", "the original q"), "the original q");
+    }
+
+    fn source_test_line(id: i64, div1: i64, div2: i64, line_in_div: i64, is_dialogue: bool, text: &str) -> crate::db::models::Line {
+        crate::db::models::Line {
+            id,
+            citation: format!("T.{div1}.{div2}.{line_in_div}"),
+            text: text.to_string(),
+            normalized: text.to_lowercase(),
+            speaker: if is_dialogue { Some("FIRST".to_string()) } else { None },
+            is_dialogue,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    fn source_test_work(lines: Vec<crate::db::models::Line>) -> crate::db::models::Work {
+        crate::db::models::Work {
+            abbrev: "Cym".into(),
+            canonical_abbrev: "Cym".into(),
+            title: "Test".into(),
+            author: "Nobody".into(),
+            work_type: "play".into(),
+            text_file: None,
+            vocab_highlight: false,
+            lines,
+            timestamps: vec![],
+            media_paths: vec![],
+            media_ids: vec![],
+            media_id: None,
+        }
+    }
+
+    #[test]
+    fn source_first_buffer_line_resolves_citation() {
+        // Scene heading (non-dialogue) at (5,5,1), then the first dialogue line
+        // at (5,5,2). A citation matching the heading's tuple should advance to
+        // the first dialogue line at-or-after it, then map through line_map.
+        let work = source_test_work(vec![
+            source_test_line(1, 5, 5, 1, false, "SCENE V."),
+            source_test_line(2, 5, 5, 2, true, "Enter Posthumus."),
+            source_test_line(3, 5, 5, 3, true, "Another line."),
+        ]);
+
+        // line_map: work index -> buffer index 1:1, offset by 10 to prove the
+        // mapping (not the raw work index) is what gets returned.
+        let line_map = crate::text_file_map::LineMap {
+            buffer_to_work: vec![],
+            work_to_buffer: vec![10, 11, 12],
+            dialogue_buffer_lines: vec![],
+            sentence_groups: vec![],
+            chapter_breaks: vec![],
+            section_starts: vec![],
+        };
+
+        // Citation resolves to the heading (work idx 0), advances to the first
+        // dialogue line (work idx 1), maps to buffer idx 11.
+        assert_eq!(
+            source_first_buffer_line(&work, Some(&line_map), "Cym.5.5.1", ""),
+            Some(11)
+        );
+
+        // Citation matching the dialogue line directly (work idx 1) maps to 11.
+        assert_eq!(
+            source_first_buffer_line(&work, Some(&line_map), "Cym.5.5.2", ""),
+            Some(11)
+        );
+
+        // No line_map: returns the raw work index instead of a buffer index.
+        assert_eq!(
+            source_first_buffer_line(&work, None, "Cym.5.5.1", ""),
+            Some(1)
+        );
+
+        // Unresolvable citation and empty source_text fallback -> None.
+        assert_eq!(
+            source_first_buffer_line(&work, Some(&line_map), "Cym.9.9.9", ""),
+            None
+        );
     }
 }

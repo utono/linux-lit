@@ -523,7 +523,14 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::JournalMovePicker => { s.journal_move_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
-                InputMode::JournalTermInput => { s.journal_term_input.hide(); s.input_mode = InputMode::JournalOverlay; }
+                InputMode::JournalTermInput => {
+                    s.journal_term_input.hide();
+                    if s.journal.term_input_from_reader {
+                        crate::app::return_to_reader_mode(&mut s);
+                    } else {
+                        s.input_mode = InputMode::JournalOverlay;
+                    }
+                }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {
                     if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {
@@ -1874,10 +1881,22 @@ fn handle_journal_key(
             state.borrow_mut().rewrite_browse = None;
             if state.borrow().journal_overlay.rewrite_diff_active() {
                 state.borrow().journal_overlay.clear_rewrite_diff();
-            } else if crate::input::actions::journal::clear_overlay_search(state) {
-                // cleared a live search; stay in the overlay
             } else if state.borrow().journal.filter.is_some() {
-                crate::input::actions::journal::clear_filter(state);
+                // A term filter is active: Escape from a filtered PASSAGE entry
+                // jumps to its Arkangel source; a non-passage note (no citation)
+                // falls back to clearing the filter + returning to the reader.
+                // This precedes the overlay-search clear below because the term
+                // filter SEEDS its own search highlight (the matched term); that
+                // highlight is part of presenting the filter, not a separate `/`
+                // search to dismiss first, so one Escape must jump — not clear
+                // the highlight and stay. `escape_filtered_entry_to_source` /
+                // `clear_filter` both clear the seeded search as they go.
+                if !crate::input::actions::journal::escape_filtered_entry_to_source(state) {
+                    crate::input::actions::journal::clear_filter(state);
+                    crate::input::actions::journal::close_overlay(state);
+                }
+            } else if crate::input::actions::journal::clear_overlay_search(state) {
+                // cleared a live (non-filter) `/` search; stay in the overlay
             } else {
                 crate::input::actions::journal::close_overlay(state);
             }
