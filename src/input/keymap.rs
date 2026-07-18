@@ -1884,7 +1884,13 @@ fn handle_journal_key(
             } else if crate::input::actions::journal::clear_overlay_search(state) {
                 // cleared a live search; stay in the overlay
             } else if state.borrow().journal.filter.is_some() {
-                crate::input::actions::journal::clear_filter(state);
+                // Filtered PASSAGE entry -> jump to its Arkangel source; a
+                // non-passage note (no citation) -> fall back to clearing the
+                // filter + returning to the reader.
+                if !crate::input::actions::journal::escape_filtered_entry_to_source(state) {
+                    crate::input::actions::journal::clear_filter(state);
+                    crate::input::actions::journal::close_overlay(state);
+                }
             } else {
                 crate::input::actions::journal::close_overlay(state);
             }
