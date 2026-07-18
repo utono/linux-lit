@@ -236,6 +236,9 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // the AE04/AE05 symbol binds (`(`/`&`) were dropped as redundant; bookmarks
         // moved fully to the `;`/`'` home-region pair below.
         (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
+        // Ctrl+[ sets an audio track/chapter mark (moved off Ctrl+c, which now
+        // toggles the previous work).
+        (KeyCombo::ctrl("bracketleft"), Action::SetChapter),
         (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         // Shift+; emits ("colon", shift=true) on this layout (same class as
@@ -257,7 +260,10 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // `.` is overloaded (Action::BookmarkTap): single tap toggles the
         // bookmark; .. reverts the toggle and opens the picker.
         (KeyCombo::plain("period"), Action::BookmarkTap),
-        (KeyCombo::ctrl("c"), Action::SetChapter),
+        // Ctrl+c toggles between the current work and the previous one, restoring
+        // each work's exact cursor line + its MPV media (A<->B). SetChapter moved
+        // to Ctrl+[ to free this cap.
+        (KeyCombo::ctrl("c"), Action::TogglePreviousWork),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
@@ -362,8 +368,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // `Tab` is the chat panel's one key: it OPENS the layout when closed and
         // CYCLES FOCUS when open (reader -> panel; inside the panel prompt ->
         // transcript -> reader — see the chat handlers in keymap.rs). Ctrl+Tab
-        // closes it. TogglePreviousWork is unbound (Ctrl+minus recent picker
-        // covers it).
+        // closes it. (TogglePreviousWork is on Ctrl+c; the Ctrl+minus recent
+        // picker also reaches the previous work.)
         (KeyCombo::plain("Tab"), Action::ToggleChatLayout),
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::ctrl("t"), Action::ThemeNext),
