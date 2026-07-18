@@ -1989,7 +1989,7 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
                 s.chat_panel.open_input(title, hint, &s.theme.cursor_bg, &s.theme.cursor_fg, false);
             }
             render_saved_entry(&s, &q, &a);
-            crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED, 2);
         }
         None => {
             crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);

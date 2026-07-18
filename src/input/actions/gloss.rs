@@ -246,7 +246,7 @@ pub(crate) fn confirm_overlay_search(state: &Rc<RefCell<AppState>>) {
         current: 0,
     };
     if search.matches.is_empty() {
-        crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_NO_MATCHES, 2);
     } else if let Some((off, _)) = search.matches.first() {
         s.gloss_overlay.jump_to_whole_offset(*off as usize);
     }
@@ -279,7 +279,7 @@ pub(crate) fn step_overlay_search(state: &Rc<RefCell<AppState>>, forward: bool) 
             current: 0,
         };
         if search.matches.is_empty() {
-            crate::input::navigation::show_chapter_toast_secs(&s, "No matches", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_NO_MATCHES, 2);
             return;
         }
         if let Some((off, _)) = search.matches.first() {
@@ -1182,7 +1182,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
         let mut s = state.borrow_mut();
         s.gloss_overlay.exit_edit_buffer();
         s.input_mode = crate::app::InputMode::GlossOverlay;
-        crate::input::navigation::show_chapter_toast_secs(&s, "Saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED, 2);
     } else {
         // `update_and_render_gloss_in_place` re-rendered the COLORED read display
         // and does not know about the editor, so the editor view is now gone.
@@ -1197,7 +1197,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
             s.gloss_overlay.enter_edit_buffer(&raw, &fill, &fg);
             s.gloss_overlay.reseed_edit_buffer(&raw);
             s.input_mode = crate::app::InputMode::GlossEdit;
-            crate::input::navigation::show_chapter_toast_secs(&s, "Saved (:q to exit)", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED_IN_OVERLAY, 2);
         }
     }
 }
