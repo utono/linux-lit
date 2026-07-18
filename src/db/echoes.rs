@@ -418,7 +418,6 @@ pub fn delete_echo_link(conn: &Connection, link_id: i64) -> Result<(), rusqlite:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::echo_channel::EchoChannel;
 
     #[test]
     fn set_echo_link_rank_updates_rank_and_curated() {
