@@ -740,6 +740,40 @@ pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell
     crate::input::actions::chat::request_reader_gloss(state_rc, ctx, model);
 }
 
+/// Reader-mode `-`: open the chat panel pinned to the reader-gloss covering
+/// the cursor line and show the stored gloss — the same end state as
+/// visual-mode `-`, WITHOUT the `V`-select step. No-op (toast) when no
+/// reader-gloss covers the cursor line.
+///
+/// Reuses `action_reader_gloss_chat` verbatim by staging a transient
+/// `SelectionState` over the gloss's authored passage span (the
+/// `enter_visual_block_mode` pattern). `action_reader_gloss_chat` ->
+/// `open_chat_pinned_to_selection` reads that selection, pins, then
+/// `exit_visual_mode` clears it — so the transient selection never outlives
+/// this call.
+pub(crate) fn reader_gloss_chat_at_cursor(
+    state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
+) {
+    let span = crate::input::actions::gloss::reader_gloss_passage_at_cursor(&state_rc.borrow());
+    let Some((start, end)) = span else {
+        let s = state_rc.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No gloss on this line", 2);
+        return;
+    };
+    {
+        let mut s = state_rc.borrow_mut();
+        s.visual_selection = Some(SelectionState {
+            anchor_line: start,
+            cursor_line: end,
+            pending_ask: false,
+        });
+        s.input_mode = crate::app::InputMode::Visual;
+    }
+    // Reads the staged selection, builds the reader-gloss context, pins the
+    // panel, exits visual mode (clearing the selection), shows the cached gloss.
+    action_reader_gloss_chat(state_rc);
+}
+
 fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc) = {
         let state = state_rc.borrow();
