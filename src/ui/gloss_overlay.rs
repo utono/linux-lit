@@ -1703,10 +1703,15 @@ impl GlossOverlay {
         // edge.
         let inset = crate::ui::prose_column_margin(card_width);
         // Prose synopses use the main card's fixed pixel left padding; plays/verse
-        // use the proportional `card_width/5` inset. The accent bar sits one
-        // "breathing room" (60px) to the LEFT of the prose body so text aligns to
-        // the card while the bar is still visible.
-        let body_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset + 60);
+        // anchor the bar at the proportional `card_width/5` inset with the body one
+        // `QUOTE_BODY_INDENT` past it — IDENTICAL to the gloss overlay's explication
+        // (`bar_left + QUOTE_BODY_INDENT`), so a play/verse synopsis line sits at the
+        // same left edge as a gloss explication. (Prose keeps the card's pixel
+        // padding for the body and pulls the bar 60px left of it.)
+        let body_left = prose_card
+            .as_ref()
+            .map(|p| p.left_margin)
+            .unwrap_or(inset + crate::ui::gloss_render::QUOTE_BODY_INDENT);
         let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
         let title_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset);
         self.title.set_text(title);
