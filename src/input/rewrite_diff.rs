@@ -124,9 +124,12 @@ fn paragraphs(text: &str) -> Vec<Para> {
 ///   word) to some `old` paragraph via a paragraph LCS is "changed". A paragraph
 ///   split therefore flags BOTH resulting paragraphs (neither equals the original
 ///   merged one), and a merge flags the merged paragraph — each tinted in FULL.
-/// - **Word level:** an unchanged-boundary paragraph that only had words
-///   substituted/added is NOT flagged whole; instead the changed words inside it
-///   are tinted precisely.
+/// - **Sentence level:** an unchanged-boundary paragraph that only had words
+///   substituted/added is NOT flagged whole; instead each SENTENCE that contains
+///   a changed word is tinted in full. Sentence granularity (not word) is
+///   deliberate: it lets the reader locate the rewritten passage as a contiguous
+///   run, rather than scattering the highlight across the shared function words a
+///   word-level diff leaves untinted between edits.
 ///
 /// Empty only when the texts are word-for-word identical AND identically
 /// paragraphed.
@@ -145,25 +148,35 @@ pub fn changed_ranges(old: &str, new: &str) -> Vec<(i32, i32)> {
         }
         // A changed paragraph. If its words all still exist in `old` (a pure
         // reflow — split/merge with no wording change), tint the WHOLE paragraph
-        // so the user sees the reshaped block. Otherwise tint just the word-level
-        // changes within it (substitutions/additions).
-        let word_ranges = word_level_changes(old, np.start, np.end, new);
-        if word_ranges.is_empty() {
+        // so the user sees the reshaped block. Otherwise tint the sentences that
+        // contain substituted/added words.
+        let sentence_ranges = sentence_level_changes(old, np.start, np.end, new);
+        if sentence_ranges.is_empty() {
             // Pure reflow: no word changed, but the paragraph boundary did.
             ranges.push((np.start, np.end));
         } else {
-            ranges.extend(word_ranges);
+            ranges.extend(sentence_ranges);
         }
     }
     ranges
 }
 
-/// Word-level changed spans WITHIN the `new` paragraph `[para_start, para_end)`,
-/// diffed against the whole `old` text. Returns empty when every word in the
-/// paragraph is matched in `old` (a pure reflow — the caller then tints the
-/// whole paragraph). Adjacent changed words separated only by intra-paragraph
-/// whitespace merge into one range.
-fn word_level_changes(old: &str, para_start: i32, para_end: i32, new: &str) -> Vec<(i32, i32)> {
+/// True if `w` ends a sentence — its last non-quote/bracket char is `.`/`!`/`?`.
+/// Trailing quotes and closing brackets after the terminator still count (e.g.
+/// `door."`, `earth?)`).
+fn ends_sentence(w: &str) -> bool {
+    let trimmed = w.trim_end_matches(['"', '\'', ')', ']', '}', '»', '”', '’']);
+    matches!(trimmed.chars().last(), Some('.') | Some('!') | Some('?'))
+}
+
+/// Sentence-level changed spans WITHIN the `new` paragraph `[para_start,
+/// para_end)`, diffed against the whole `old` text. Groups the paragraph's words
+/// into sentences (split after a word whose text ends in `.`/`!`/`?`) and emits
+/// one span — first word start to last word end — for each sentence that
+/// contains at least one changed (LCS-unpaired) word. Returns empty when every
+/// word in the paragraph is matched in `old` (a pure reflow — the caller then
+/// tints the whole paragraph).
+fn sentence_level_changes(old: &str, para_start: i32, para_end: i32, new: &str) -> Vec<(i32, i32)> {
     let old_spans = word_spans(old);
     let new_spans = word_spans(new);
     let old_words: Vec<&str> = old_spans.iter().map(|(_, _, w)| *w).collect();
@@ -176,28 +189,38 @@ fn word_level_changes(old: &str, para_start: i32, para_end: i32, new: &str) -> V
     };
 
     let mut ranges: Vec<(i32, i32)> = Vec::new();
-    let mut prev_changed = false;
-    for idx in 0..new_spans.len() {
-        if !in_para(idx) {
-            prev_changed = false;
-            continue;
-        }
-        let changed = pair[idx].is_none();
-        if !changed {
-            prev_changed = false;
-            continue;
-        }
-        let (s, e, _) = new_spans[idx];
-        if prev_changed && !leading_gap_has_break(new, &new_spans, idx) {
-            if let Some(last) = ranges.last_mut() {
-                last.1 = e;
-                prev_changed = true;
-                continue;
+    // Accumulate the current sentence's span + whether any word in it changed.
+    let mut sent_start: Option<i32> = None;
+    let mut sent_end = 0i32;
+    let mut sent_changed = false;
+
+    let flush = |start: &mut Option<i32>, end: i32, changed: &mut bool, out: &mut Vec<(i32, i32)>| {
+        if let Some(s) = start.take() {
+            if *changed {
+                out.push((s, end));
             }
         }
-        ranges.push((s, e));
-        prev_changed = true;
+        *changed = false;
+    };
+
+    for idx in 0..new_spans.len() {
+        if !in_para(idx) {
+            continue;
+        }
+        let (s, e, w) = new_spans[idx];
+        if sent_start.is_none() {
+            sent_start = Some(s);
+        }
+        sent_end = e;
+        if pair[idx].is_none() {
+            sent_changed = true;
+        }
+        if ends_sentence(w) {
+            flush(&mut sent_start, sent_end, &mut sent_changed, &mut ranges);
+        }
     }
+    // Trailing sentence with no terminal punctuation.
+    flush(&mut sent_start, sent_end, &mut sent_changed, &mut ranges);
     ranges
 }
 
@@ -207,48 +230,63 @@ mod tests {
 
     #[test]
     fn identical_text_has_no_changes() {
-        assert!(changed_ranges("the cat sat", "the cat sat").is_empty());
+        assert!(changed_ranges("the cat sat.", "the cat sat.").is_empty());
     }
 
     #[test]
-    fn single_word_substitution() {
-        // "cat" -> "dog": the paragraph boundary is unchanged, so word-level:
-        // only the middle word is tinted. "the dog sat": d=4..7
-        assert_eq!(changed_ranges("the cat sat", "the dog sat"), vec![(4, 7)]);
+    fn single_word_substitution_tints_the_whole_sentence() {
+        // "cat" -> "dog" inside one sentence: the whole sentence is tinted so the
+        // reader locates the rewritten sentence, not an isolated word.
+        // "the dog sat." = 0..12.
+        assert_eq!(changed_ranges("the cat sat.", "the dog sat."), vec![(0, 12)]);
     }
 
     #[test]
-    fn appended_words_are_ranges() {
-        // "the cat" -> "the cat sat down": same single paragraph, word-level —
-        // "sat down" is new (chars 8..16)
-        assert_eq!(changed_ranges("the cat", "the cat sat down"), vec![(8, 16)]);
+    fn only_the_changed_sentence_is_tinted() {
+        // Two sentences in one paragraph; only the second is reworded. The first
+        // stays clean; the second is tinted whole.
+        // "One stays. Two changed." — "Two changed." starts at char 11, ends 23.
+        assert_eq!(
+            changed_ranges("One stays. Two stays.", "One stays. Two changed."),
+            vec![(11, 23)]
+        );
     }
 
     #[test]
-    fn adjacent_changed_words_merge_across_whitespace() {
-        // both new words changed, same paragraph, separated only by a space -> one range
-        assert_eq!(changed_ranges("a b", "a X Y"), vec![(2, 5)]);
+    fn appended_words_tint_their_sentence() {
+        // Appending to the lone sentence tints the whole (now-longer) sentence.
+        // "the cat sat down." = 0..17.
+        assert_eq!(
+            changed_ranges("the cat.", "the cat sat down."),
+            vec![(0, 17)]
+        );
     }
 
     #[test]
     fn char_offsets_not_byte_offsets() {
-        // leading multibyte char: "é the cat" -> "é the dog" (one paragraph)
-        // char offsets: é=0 sp=1 t=2 h=3 e=4 sp=5 d=6 -> dog = 6..9
-        assert_eq!(changed_ranges("\u{e9} the cat", "\u{e9} the dog"), vec![(6, 9)]);
+        // leading multibyte char: "é the cat." -> "é the dog." (one sentence).
+        // The whole sentence is tinted; it spans the entire string: 0..10.
+        assert_eq!(
+            changed_ranges("\u{e9} the cat.", "\u{e9} the dog."),
+            vec![(0, 10)]
+        );
     }
 
     #[test]
-    fn intra_paragraph_whitespace_change_has_no_ranges() {
-        // Double space -> single space keeps the same single paragraph with the
-        // same words, so nothing is highlighted.
-        assert!(changed_ranges("the  cat", "the cat").is_empty());
+    fn intra_sentence_whitespace_change_has_no_ranges() {
+        // Double space -> single space keeps the same paragraph with the same
+        // words, so nothing is highlighted.
+        assert!(changed_ranges("the  cat.", "the cat.").is_empty());
     }
 
     #[test]
-    fn unchanged_words_between_changes_are_not_highlighted() {
-        // Same single paragraph, word-level: "a b c d" -> "a X c Y": b->X (2..3)
-        // and d->Y (6..7); c unchanged and not tinted.
-        assert_eq!(changed_ranges("a b c d", "a X c Y"), vec![(2, 3), (6, 7)]);
+    fn two_changed_sentences_each_tint_whole() {
+        // "a b c d" one word per token, two sentences: "A b. C d." -> "A X. C Y."
+        // Both sentences changed; each tinted whole. "A X." = 0..4, "C Y." = 5..9.
+        assert_eq!(
+            changed_ranges("A b. C d.", "A X. C Y."),
+            vec![(0, 4), (5, 9)]
+        );
     }
 
     #[test]
@@ -279,11 +317,23 @@ mod tests {
     }
 
     #[test]
-    fn word_change_inside_a_reflowed_paragraph_tints_word_level() {
+    fn word_change_inside_a_reflowed_paragraph_tints_its_sentence() {
         // Split AND a word change in the second new paragraph: "a b c d" ->
         // "a b\n\nc Z". Para "a b" (0..3) is a pure reflow -> whole. Para "c Z"
-        // (5..8) has a word change (d->Z), so word-level within it: "Z" only.
-        // c=5..6 Z=7..8. Since "c" is unchanged (matched) it's not tinted; only Z.
-        assert_eq!(changed_ranges("a b c d", "a b\n\nc Z"), vec![(0, 3), (7, 8)]);
+        // (5..8) has a word change (d->Z); its lone sentence "c Z" is tinted
+        // whole (5..8), not just the changed word.
+        assert_eq!(changed_ranges("a b c d", "a b\n\nc Z"), vec![(0, 3), (5, 8)]);
+    }
+
+    #[test]
+    fn heavy_rewrite_does_not_speckle() {
+        // A fully reworded sentence sharing only function words must NOT produce
+        // scattered per-word spans (the bug): the single reworded sentence is one
+        // contiguous range covering the whole sentence.
+        let old = "The cat sat on the mat by the door.";
+        let new = "The dog ran across the field near the gate.";
+        // One paragraph, one sentence, reworded -> whole sentence tinted: 0..len.
+        let len = new.chars().count() as i32;
+        assert_eq!(changed_ranges(old, new), vec![(0, len)]);
     }
 }

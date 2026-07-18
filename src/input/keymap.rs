@@ -251,6 +251,7 @@ pub fn handle_key(
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
             crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl),
+            crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -771,6 +772,51 @@ fn handle_settings_key(
                 _ => true, // consume all other keys when settings visible
             }
         }
+    }
+}
+
+/// Ctrl+f cross-corpus search popup. Typed text reaches the focused search
+/// entry via GTK (live-filtered by the GUARDED `connect_changed` in
+/// `app/mod.rs`); here we handle nav/toggle/confirm/cancel. `Return` selection
+/// (jump to the entry + seed highlight) is Task 5 — for now it's a minimal
+/// hide-and-return stub so Enter doesn't leave the popup stuck open.
+fn handle_corpus_search_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+    is_shift: bool,
+) -> bool {
+    let _ = is_shift; // Tab/ISO_Left_Tab already disambiguate shift-tab from GTK
+    if key_name == "Tab" || key_name == "ISO_Left_Tab" {
+        let s = state.borrow();
+        s.corpus_search_popup.toggle_corpus();
+        let query = s.corpus_search_popup.search_entry().text();
+        s.corpus_search_popup.populate_list(&query);
+        return true;
+    }
+    use crate::input::picker_keys::{resolve_picker_key, PickerAction};
+    match resolve_picker_key(key_name, is_ctrl) {
+        PickerAction::Hide => {
+            let mut s = state.borrow_mut();
+            s.corpus_search_popup.hide();
+            s.input_mode = s.corpus_search_return_mode;
+            true
+        }
+        PickerAction::Confirm => {
+            crate::input::actions::corpus_search::select(state);
+            true
+        }
+        PickerAction::MoveDown => {
+            state.borrow().corpus_search_popup.move_selection(1);
+            true
+        }
+        PickerAction::MoveUp => {
+            state.borrow().corpus_search_popup.move_selection(-1);
+            true
+        }
+        // Let typed characters fall through to the focused GTK entry so the
+        // live regex filter works; consume everything else.
+        PickerAction::Unhandled => false,
     }
 }
 
@@ -1524,6 +1570,13 @@ fn handle_journal_key(
         return true;
     }
 
+    // Ctrl+f: open the cross-corpus journal/gloss regex search popup, defaulting
+    // to the Journal corpus (this overlay's kind). Escape returns here.
+    if is_ctrl && key_name == "f" {
+        crate::input::actions::corpus_search::open(state);
+        return true;
+    }
+
     if is_alt {
         match key_name {
             "n" => {
@@ -1874,6 +1927,13 @@ fn handle_gloss_key(
     // the Ctrl modifier.
     if key_name == "space" && is_ctrl {
         crate::input::actions::gloss::read_current_block(state);
+        return true;
+    }
+
+    // Ctrl+f: open the cross-corpus journal/gloss regex search popup, defaulting
+    // to the Gloss corpus (this overlay's kind). Escape returns here.
+    if is_ctrl && key_name == "f" {
+        crate::input::actions::corpus_search::open(state);
         return true;
     }
 
@@ -3654,6 +3714,7 @@ fn dispatch_action(
         OpenJournalPicker => crate::input::actions::journal::open_picker_from_reader(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),
+        OpenCorpusSearch => crate::input::actions::corpus_search::open(state),
         ShowEchoesBcp => crate::input::actions::echoes::show_echoes_for_cursor_line(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
         ReopenEchoesBcp => crate::input::actions::echoes::reopen_echoes(state, crate::db::echo_channel::EchoChannel::Bcp, tokio_handle),
         ShowEchoTurnsBcp => crate::input::actions::echoes::open_echo_turns_picker(state, crate::db::echo_channel::EchoChannel::Bcp),

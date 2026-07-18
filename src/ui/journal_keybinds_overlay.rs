@@ -37,5 +37,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Cross-reference", &[
         ("\\", "cycle: → gloss (same segment)"),
+        ("Ctrl+f", "search all Q&As / glosses"),
     ]),
 ];

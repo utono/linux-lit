@@ -923,7 +923,7 @@ fn request_ipa_then_apply(
 /// `navigate_gloss` and `delete_current_gloss` (their render blocks were
 /// byte-identical). Clones the strings that must outlive the `gloss_list`
 /// borrow so `gloss_overlay` can be mutably borrowed in the same call.
-fn render_gloss_row(s: &mut AppState, new_idx: usize) {
+pub(crate) fn render_gloss_row(s: &mut AppState, new_idx: usize) {
     let gloss = &s.gloss_list[new_idx];
     let gloss_start = gloss.start_citation.clone();
     let gloss_end = gloss.end_citation.clone();
