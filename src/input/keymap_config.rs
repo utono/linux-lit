@@ -355,8 +355,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("exclam"), Action::AdjustFontSizeDown),
         (KeyCombo::ctrl("bar"), Action::AdjustFontSizeUp),
         (KeyCombo::plain("0"), Action::ResetFontSize),
-        (KeyCombo::plain("f"), Action::CycleFontForward),
-        (KeyCombo::plain("F"), Action::CycleFontBackward),
+        // `f`: open the cross-work journal term filter (tag/term Q&A search),
+        // matching the journal overlay's `f`. Font cycling used to live here.
+        (KeyCombo::plain("f"), Action::OpenJournalTermInput),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
         // `Tab` is the chat panel's one key: it OPENS the layout when closed and
         // CYCLES FOCUS when open (reader -> panel; inside the panel prompt ->
@@ -678,7 +679,11 @@ mod tests {
             km.lookup("Tab", false, false, false),
             km.lookup("Tab", true, false, false),
         );
-        assert_eq!(km.lookup("f", false, false, false), Some(Action::CycleFontForward));
+        // Plain f opens the journal term filter (matching the journal overlay);
+        // Shift+F is unbound (font cycling removed); Ctrl+f is the corpus search.
+        assert_eq!(km.lookup("f", false, false, false), Some(Action::OpenJournalTermInput));
+        assert_eq!(km.lookup("F", false, false, false), None);
+        assert_eq!(km.lookup("f", true, false, false), Some(Action::OpenCorpusSearch));
         assert_eq!(km.lookup("o", true, false, false), Some(Action::ToggleLastOverlay));
         assert_eq!(km.lookup("Tab", true, false, false), Some(Action::CloseChatLayout));
         assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
