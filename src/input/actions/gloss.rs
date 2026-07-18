@@ -2791,24 +2791,25 @@ pub(crate) fn reader_gloss_passage_at_cursor(s: &AppState) -> Option<(usize, usi
     // buffer lines through the line map (jump_to_gloss_source_start's pattern).
     let start_t = crate::app::parse_citation(&passage.start_citation)?;
     let end_t = crate::app::parse_citation(&passage.end_citation)?;
-    let start_wi = work
-        .lines
-        .iter()
-        .position(|l| (l.div1, l.div2, l.line_in_div) == start_t)?;
-    let end_wi = work
-        .lines
-        .iter()
-        .position(|l| (l.div1, l.div2, l.line_in_div) == end_t)?;
-
-    let to_buf = |wi: usize| -> Option<usize> {
-        if let Some(ref lm) = s.line_map {
-            lm.work_to_buffer.get(wi).copied()
-        } else {
-            Some(wi)
-        }
+    // A citation triple can match several work rows: the spoken line
+    // (`sub_line == 0`) and any stage directions sharing its `line_in_div`
+    // (`sub_line > 0`), which can sort ahead of it. A citation denotes the
+    // spoken line, so prefer the `sub_line == 0` row; fall back to any match.
+    let work_idx_for = |t: (i64, i64, i64)| -> Option<usize> {
+        work.lines
+            .iter()
+            .position(|l| (l.div1, l.div2, l.line_in_div) == t && l.sub_line == 0)
+            .or_else(|| {
+                work.lines
+                    .iter()
+                    .position(|l| (l.div1, l.div2, l.line_in_div) == t)
+            })
     };
-    let a = to_buf(start_wi)?;
-    let b = to_buf(end_wi)?;
+    let start_wi = work_idx_for(start_t)?;
+    let end_wi = work_idx_for(end_t)?;
+
+    let a = s.buffer_line_for_work(start_wi)?;
+    let b = s.buffer_line_for_work(end_wi)?;
     Some((a.min(b), a.max(b)))
 }
 
