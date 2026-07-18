@@ -1350,6 +1350,13 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
             true
         }
+        // Plain `-` closes the panel too — a one-key mirror of Ctrl+Tab that only
+        // fires while the transcript owns the key (in ChatPrompt `-` is a typeable
+        // character). Guarded arms above (Ctrl+Tab) still take precedence.
+        "minus" => {
+            crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
+            true
+        }
         "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
             true
