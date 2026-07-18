@@ -65,10 +65,6 @@ impl CorpusSearchPopup {
         *self.gloss_rows.borrow_mut() = gloss;
     }
 
-    pub fn corpus(&self) -> Corpus {
-        self.corpus.get()
-    }
-
     pub fn set_corpus(&self, c: Corpus) {
         self.corpus.set(c);
         self.header.set_text(match c {

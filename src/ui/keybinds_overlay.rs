@@ -54,7 +54,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl"), ("C-p", "Q&A page \u{25b2}")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
-    key("f", "F", "next font", "F: prev font", &[("M-f", "font info")]),
+    key("f", "F", "next font", "F: prev font", &[("M-f", "font info"), ("C-f", "corpus search")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
     key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
@@ -276,6 +276,9 @@ picker via ChordState::PendingPeriod) — src/input/keymap.rs",
         "conc works" => "Action::OpenConcordanceWorksPicker — src/input/actions/pickers.rs",
         "settings" => "Action::OpenSettingsOverlay — src/input/actions/settings.rs",
         "keybinds" => "Action::OpenKeybindsOverlay — src/input/actions/pickers.rs",
+        "corpus search" => "Action::OpenCorpusSearch (cross-corpus regex search over \
+journal Q&As / reader glosses; also wired directly, bypassing this table, from the \
+journal/gloss overlay key handlers) — src/input/actions/corpus_search.rs",
         "search" => "Action::OpenSearch — src/input/search.rs",
         "search back" => "Action::OpenSearchBackward — src/input/search.rs",
         "next match" => "Action::SearchNextMatch — src/input/search.rs",
