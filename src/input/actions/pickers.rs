@@ -221,6 +221,78 @@ fn jump_to_line_mapping_id(state: &Rc<RefCell<AppState>>, line_mapping_id: i64) 
     }
 }
 
+/// Load the Arkangel edition of `base_abbrev` (falling back to the base work
+/// when no `-Arkangel` sibling exists) off the reader thread, then run
+/// `on_ready`. When the reader is ALREADY on the resolved target edition
+/// (`current_abbrev` == the resolved target), the work load is skipped entirely
+/// and `on_ready` runs immediately. Otherwise the target work is loaded with
+/// `skip_mpv_discovery = false` so MPV discovery starts the target edition's
+/// media (the Arkangel `.m4b`), matching the Ctrl+\ library-picker load; then
+/// `on_ready` runs. On DB/load error a "Could not load {base_abbrev}" toast is
+/// shown and `on_ready` does NOT run.
+///
+/// `on_ready(&state)` is the caller's post-load action — open an overlay, seed a
+/// search, jump the cursor to a source line — and runs in BOTH the same-work and
+/// cross-work success paths, so a caller writes it once. It must re-borrow
+/// `state` itself (no borrow is held when it runs).
+///
+/// Shared by the Ctrl+f corpus-search select and the term-filter Escape jump —
+/// the two "open the Arkangel edition of a work I picked" surfaces.
+pub(crate) fn load_arkangel_edition_then<F>(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+    base_abbrev: String,
+    current_abbrev: Option<String>,
+    on_ready: F,
+) where
+    F: FnOnce(&Rc<RefCell<AppState>>) + 'static,
+{
+    let state_clone = Rc::clone(state);
+    let handle = tokio_handle.clone();
+    glib::spawn_future_local(async move {
+        let base_for_load = base_abbrev.clone();
+        let current_for_load = current_abbrev.clone();
+        let result = handle
+            .spawn_blocking(move || {
+                let conn =
+                    crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
+                // Prefer the Arkangel edition; fall back to the base abbrev.
+                let target = crate::db::queries::preferred_arkangel_abbrev(&conn, &base_for_load);
+                // Already on the target edition -> skip the work load entirely.
+                if current_for_load.as_deref() == Some(target.as_str()) {
+                    return Ok::<_, rusqlite::Error>(None);
+                }
+                let work = crate::db::queries::load_work(&conn, &target)?;
+                let prepared = crate::app::text_prep::prepare_text_for_display(&work);
+                Ok::<_, rusqlite::Error>(Some((work, prepared)))
+            })
+            .await;
+        match result {
+            // Already on the target edition: no reload, run the ready action.
+            Ok(Ok(None)) => on_ready(&state_clone),
+            // Cross-work: load the target edition (MPV discovery loads its media),
+            // then run the ready action.
+            Ok(Ok(Some((work, prepared)))) => {
+                {
+                    let mut s = state_clone.borrow_mut();
+                    s.skip_mpv_discovery = false;
+                    crate::app::clear_display(&mut s);
+                    crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
+                }
+                on_ready(&state_clone);
+            }
+            _ => {
+                let s = state_clone.borrow();
+                crate::input::navigation::show_chapter_toast_secs(
+                    &s,
+                    &format!("Could not load {}", base_abbrev),
+                    3,
+                );
+            }
+        }
+    });
+}
+
 pub(crate) fn load_work_at(
     state: &Rc<RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
