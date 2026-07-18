@@ -9,7 +9,7 @@ use gtk4::prelude::*;
 
 use crate::app::AppState;
 use crate::db::models::Line;
-use crate::db::queries::{EchoTurnKey, StoredEchoLink};
+use crate::db::echoes::{EchoTurnKey, StoredEchoLink};
 
 /// Grouped state for the echo overlay (the stored echo links for the current
 /// turn, the navigation index into them, the work-id→title map, the source
@@ -120,12 +120,12 @@ fn selection_turn_lines(work_lines: &[Line], start_wi: usize, end_wi: usize) -> 
 /// multi-speaker) selection. The speaker label is the first selected line's
 /// speaker, falling back to "?" when absent. `turn_text` joins the selected
 /// line texts with spaces, matching the cursor-turn key format.
-fn selection_key(work_abbrev: &str, turn: &[Line]) -> crate::db::queries::EchoTurnKey {
+fn selection_key(work_abbrev: &str, turn: &[Line]) -> crate::db::echoes::EchoTurnKey {
     let first = turn.first().expect("selection_key called with empty turn");
     let last = turn.last().unwrap();
     let speaker = first.speaker.clone().unwrap_or_else(|| "?".to_string());
     let turn_text = turn.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
-    crate::db::queries::EchoTurnKey {
+    crate::db::echoes::EchoTurnKey {
         work_abbrev: work_abbrev.to_string(),
         div1: first.div1,
         div2: first.div2,
@@ -179,10 +179,10 @@ fn show_bcp_reading_echoes(
 
     let resolved = crate::db::queries::open_db().ok().and_then(|conn| {
         let (turn_id, start_line, end_line, speaker, turn_text) =
-            crate::db::queries::find_echo_turn_containing(&conn, &work_abbrev, div1, line_in_div)
+            crate::db::echoes::find_echo_turn_containing(&conn, &work_abbrev, div1, line_in_div)
                 .ok()
                 .flatten()?;
-        let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).ok()?;
+        let links = crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok()?;
         if links.is_empty() {
             return None;
         }
@@ -193,7 +193,7 @@ fn show_bcp_reading_echoes(
     let mut s = state_rc.borrow_mut();
     match resolved {
         Some((turn_id, start_line, end_line, speaker, turn_text, links, titles)) => {
-            let key = crate::db::queries::EchoTurnKey {
+            let key = crate::db::echoes::EchoTurnKey {
                 work_abbrev: work_abbrev.clone(),
                 div1,
                 div2: 0,
@@ -268,7 +268,7 @@ pub(crate) fn show_echoes_for_cursor_line(
     let key = {
         let first = turn.first().unwrap();
         let last = turn.last().unwrap();
-        crate::db::queries::EchoTurnKey {
+        crate::db::echoes::EchoTurnKey {
             work_abbrev: source_work.clone(),
             div1: first.div1,
             div2: first.div2,
@@ -281,8 +281,8 @@ pub(crate) fn show_echoes_for_cursor_line(
 
     // Cache hit: load stored links and render immediately, no API call.
     let cached = crate::db::queries::open_db().ok().and_then(|conn| {
-        let turn_id = crate::db::queries::find_echo_turn(&conn, &key).ok().flatten()?;
-        let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).ok()?;
+        let turn_id = crate::db::echoes::find_echo_turn(&conn, &key).ok().flatten()?;
+        let links = crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok()?;
         if links.is_empty() { None } else { Some((turn_id, links)) }
     });
 
@@ -352,7 +352,7 @@ pub(crate) fn show_echoes_for_cursor_line(
                 .ok()
                 .and_then(|conn| {
                     // Over-fetch; dedup by displayed first line removes some.
-                    crate::db::queries::find_similar_passages(
+                    crate::db::echoes::find_similar_passages(
                         &conn, &embedding, &query_text, &source_work, 60, affect_weight,
                     )
                     .ok()
@@ -474,8 +474,8 @@ pub(crate) fn show_echoes_for_selection(
     let origin_line_id = turn.first().map(|l| l.id).unwrap_or(0);
 
     let cached = crate::db::queries::open_db().ok().and_then(|conn| {
-        let turn_id = crate::db::queries::find_echo_turn(&conn, &key).ok().flatten()?;
-        let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).ok()?;
+        let turn_id = crate::db::echoes::find_echo_turn(&conn, &key).ok().flatten()?;
+        let links = crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok()?;
         if links.is_empty() { None } else { Some((turn_id, links)) }
     });
 
@@ -541,7 +541,7 @@ pub(crate) fn show_echoes_for_selection(
             Ok(Ok(embedding)) => crate::db::queries::open_db()
                 .ok()
                 .and_then(|conn| {
-                    crate::db::queries::find_similar_passages(
+                    crate::db::echoes::find_similar_passages(
                         &conn, &embedding, &query_text, &source_work, 60, affect_weight,
                     )
                     .ok()
@@ -720,15 +720,15 @@ fn render_echoes(s: &mut AppState) {
 /// Persist the search candidates as echo links for the turn, then read them
 /// back (so display order is the stored, curated-first order).
 fn persist_and_load(
-    key: &crate::db::queries::EchoTurnKey,
-    candidates: &[crate::db::queries::EchoCandidate],
+    key: &crate::db::echoes::EchoTurnKey,
+    candidates: &[crate::db::echoes::EchoCandidate],
     channel: crate::db::echo_channel::EchoChannel,
-) -> (Option<i64>, Vec<crate::db::queries::StoredEchoLink>) {
+) -> (Option<i64>, Vec<crate::db::echoes::StoredEchoLink>) {
     let conn = match crate::db::queries::open_db_rw() {
         Ok(c) => c,
         Err(_) => return (None, Vec::new()),
     };
-    let turn_id = match crate::db::queries::save_echo_turn(&conn, key) {
+    let turn_id = match crate::db::echoes::save_echo_turn(&conn, key) {
         Ok(id) => id,
         Err(_) => return (None, Vec::new()),
     };
@@ -747,8 +747,8 @@ fn persist_and_load(
             )
         })
         .collect();
-    let _ = crate::db::queries::insert_echo_links(&conn, turn_id, &rows);
-    let links = crate::db::queries::load_echo_links(&conn, turn_id, channel).unwrap_or_default();
+    let _ = crate::db::echoes::insert_echo_links(&conn, turn_id, &rows);
+    let links = crate::db::echoes::load_echo_links(&conn, turn_id, channel).unwrap_or_default();
     (Some(turn_id), links)
 }
 
@@ -950,13 +950,13 @@ pub(crate) fn toggle_curated(state_rc: &Rc<RefCell<AppState>>) {
     };
 
     if let Ok(conn) = crate::db::queries::open_db_rw() {
-        let _ = crate::db::queries::toggle_echo_curated(&conn, link_id);
+        let _ = crate::db::echoes::toggle_echo_curated(&conn, link_id);
     }
 
     // Reload from DB to pick up the new curated-first ordering.
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
+        .and_then(|conn| crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
 
     let mut s = state_rc.borrow_mut();
@@ -987,12 +987,12 @@ pub(crate) fn delete_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
     };
 
     if let Ok(conn) = crate::db::queries::open_db_rw() {
-        let _ = crate::db::queries::delete_echo_link(&conn, link_id);
+        let _ = crate::db::echoes::delete_echo_link(&conn, link_id);
     }
 
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
+        .and_then(|conn| crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
 
     let mut s = state_rc.borrow_mut();
@@ -1016,7 +1016,7 @@ pub(crate) fn delete_all_echoes(state_rc: &Rc<RefCell<AppState>>) {
     };
 
     if let Ok(conn) = crate::db::queries::open_db_rw() {
-        let _ = crate::db::queries::delete_all_echo_links(&conn, turn_id);
+        let _ = crate::db::echoes::delete_all_echo_links(&conn, turn_id);
     }
 
     let mut s = state_rc.borrow_mut();
@@ -1071,14 +1071,14 @@ pub(crate) fn reorder_selected_echo(state_rc: &Rc<RefCell<AppState>>, delta: i32
     // Persist sequential ranks for the curated order; all curated=true.
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         for (rank, link_id) in curated.iter().enumerate() {
-            let _ = crate::db::queries::set_echo_link_rank(&conn, *link_id, rank as i64, true);
+            let _ = crate::db::echoes::set_echo_link_rank(&conn, *link_id, rank as i64, true);
         }
     }
 
     // Reload, keep selection on the moved link.
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
+        .and_then(|conn| crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
     let mut s = state_rc.borrow_mut();
     let new_idx = links.iter().position(|l| l.link_id == sel_link_id).unwrap_or(0);
@@ -1173,10 +1173,10 @@ pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
                 "UPDATE echo_links SET rank = rank + 1 WHERE turn_id = ?1 AND curated = 1",
                 [turn_id],
             );
-            let _ = crate::db::queries::set_echo_link_rank(&conn, id, 0, true);
+            let _ = crate::db::echoes::set_echo_link_rank(&conn, id, 0, true);
             Some(id)
         } else {
-            crate::db::queries::add_curated_echo_link(&conn, turn_id, &work, div1, div2, line_in_div, &text).ok()
+            crate::db::echoes::add_curated_echo_link(&conn, turn_id, &work, div1, div2, line_in_div, &text).ok()
         }
     } else {
         None
@@ -1185,7 +1185,7 @@ pub(crate) fn confirm_add_echo(state_rc: &Rc<RefCell<AppState>>) {
     let channel = state_rc.borrow().echo_session.as_ref().map(|x| x.channel).unwrap_or(crate::db::echo_channel::EchoChannel::Shakespeare);
     let links = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
+        .and_then(|conn| crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok())
         .unwrap_or_default();
     let mut s = state_rc.borrow_mut();
     s.echo_line_picker.hide();
@@ -1243,7 +1243,7 @@ pub(crate) fn refresh_echoes(
             Ok(Ok(embedding)) => crate::db::queries::open_db()
                 .ok()
                 .and_then(|conn| {
-                    crate::db::queries::find_similar_passages(
+                    crate::db::echoes::find_similar_passages(
                         &conn, &embedding, &query_text, &source_work, 60, affect_weight,
                     )
                     .ok()
@@ -1267,7 +1267,7 @@ pub(crate) fn refresh_echoes(
 
         // Delete non-curated, re-insert fresh; curated links untouched.
         if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::delete_noncurated_echo_links(&conn, turn_id);
+            let _ = crate::db::echoes::delete_noncurated_echo_links(&conn, turn_id);
             let rows: Vec<(String, i64, i64, i64, String, f32, i64)> = candidates
                 .iter()
                 .enumerate()
@@ -1276,12 +1276,12 @@ pub(crate) fn refresh_echoes(
                     first_sentence_verse(&c.passage_text), c.similarity, i as i64,
                 ))
                 .collect();
-            let _ = crate::db::queries::insert_echo_links(&conn, turn_id, &rows);
+            let _ = crate::db::echoes::insert_echo_links(&conn, turn_id, &rows);
         }
 
         let links = crate::db::queries::open_db()
             .ok()
-            .and_then(|conn| crate::db::queries::load_echo_links(&conn, turn_id, channel).ok())
+            .and_then(|conn| crate::db::echoes::load_echo_links(&conn, turn_id, channel).ok())
             .unwrap_or_default();
 
         let mut s = state_for_result.borrow_mut();
@@ -1580,7 +1580,7 @@ pub(crate) fn open_echo_turns_picker(state_rc: &Rc<RefCell<AppState>>, channel: 
                 return;
             }
         };
-        let turns = crate::db::queries::list_echo_turns_for_work(&conn, &work_abbrev, channel)
+        let turns = crate::db::echoes::list_echo_turns_for_work(&conn, &work_abbrev, channel)
             .unwrap_or_default();
         let titles = crate::db::queries::load_work_titles(&conn).unwrap_or_default();
         (turns, titles)

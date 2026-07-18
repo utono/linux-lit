@@ -951,7 +951,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             Ok(Ok(embedding)) => crate::db::queries::open_db()
                 .ok()
                 .and_then(|conn| {
-                    crate::db::queries::find_similar_passages(
+                    crate::db::echoes::find_similar_passages(
                         &conn, &embedding, &affect_text, &source_work, 10, affect_weight,
                     )
                     .ok()
@@ -1004,7 +1004,7 @@ fn build_echo_query(ctx: &crate::gloss::GlossContext, scene_lines: &[crate::db::
 pub fn run_pending_inner_monologue(
     state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
-    selected: Option<crate::db::queries::EchoCandidate>,
+    selected: Option<crate::db::echoes::EchoCandidate>,
 ) {
     run_pending_inner_monologue_blocking(state_rc, tokio_handle, selected);
 }
@@ -1025,7 +1025,7 @@ pub fn cancel_pending_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<
 fn run_pending_inner_monologue_blocking(
     state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
     tokio_handle: &tokio::runtime::Handle,
-    selected: Option<crate::db::queries::EchoCandidate>,
+    selected: Option<crate::db::echoes::EchoCandidate>,
 ) {
     let (ctx, scene_lines, model, titles) = {
         let mut s = state_rc.borrow_mut();

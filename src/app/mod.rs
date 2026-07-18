@@ -3062,7 +3062,7 @@ pub fn display_work_at_with_prepared(
     BOOKMARKS_INIT.call_once(|| {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
             let _ = crate::db::queries::ensure_bookmarks_table(&conn);
-            let _ = crate::db::queries::ensure_echo_tables(&conn);
+            let _ = crate::db::echoes::ensure_echo_tables(&conn);
             let _ = crate::db::queries::ensure_gloss_audio_table(&conn);
             let _ = crate::db::queries::ensure_characters_table(&conn);
             let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
