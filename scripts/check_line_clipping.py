@@ -68,6 +68,49 @@ def find_text_region(app_name, timeout):
     return None, f"no Text-interface widget for app '{app_name}'"
 
 
+DEFAULT_HEIGHT_FRAC = 0.7
+DEFAULT_MIN_MARGIN = 1
+# A short EDGE row counts as clipped only if it also sits within this many
+# background rows of the pane edge. A genuinely clipped line is short *because
+# the edge cut it*, so it is flush against the edge; a thin descender tip split
+# off by the ink projection can land far above the edge (35px in a real case)
+# and must not read as a clip. Sized well above descender-tail gaps (<=3px) yet
+# far below a whole body row (~22px), so a truly clipped half-row still trips.
+DEFAULT_EDGE_TOL = 8
+
+
+def decide_clip(first_h, last_h, median_h, min_interior, top_margin,
+                bottom_margin, region_h, height_frac=DEFAULT_HEIGHT_FRAC,
+                min_margin=DEFAULT_MIN_MARGIN, edge_tol=DEFAULT_EDGE_TOL):
+    """Pure top/bottom clip decision from row geometry. Returns a dict with
+    `clip_top` / `clip_bottom` (and the `short_*` intermediates, for tests).
+
+    A short edge row is clipped only if it is (a) shorter than the body median
+    AND every interior row (so a complete-but-small row like a 0.75-scale
+    speaker label is not flagged), AND (b) near the pane edge (so a detached
+    descender tip far from the edge is not flagged). A row flush against the
+    edge with no background margin is always a clip regardless of height.
+    """
+    short_top = (
+        first_h < height_frac * median_h
+        and first_h < min_interior
+        and top_margin <= edge_tol
+    )
+    short_bottom = (
+        last_h < height_frac * median_h
+        and last_h < min_interior
+        and bottom_margin <= edge_tol
+    )
+    clip_top = short_top or (top_margin < min_margin)
+    clip_bottom = short_bottom or (bottom_margin < min_margin)
+    return {
+        "short_top": short_top,
+        "short_bottom": short_bottom,
+        "clip_top": clip_top,
+        "clip_bottom": clip_bottom,
+    }
+
+
 def glyph_runs(rows_with_ink, merge_gap=2):
     """Group inked rows into glyph rows, merging runs separated by <= merge_gap
     blank rows. A descender tip ('y'/'g'/comma tails) tapers so thin that its
@@ -101,10 +144,13 @@ def main():
     p.add_argument("--app", default=None, help="accessible app name (for region detection)")
     p.add_argument("--region", default=None, help="explicit x,y,w,h instead of AT-SPI")
     p.add_argument("--delta", type=int, default=35, help="ink threshold vs background")
-    p.add_argument("--height-frac", type=float, default=0.7,
+    p.add_argument("--height-frac", type=float, default=DEFAULT_HEIGHT_FRAC,
                    help="edge row shorter than this fraction of median = clipped")
-    p.add_argument("--min-margin", type=int, default=1,
+    p.add_argument("--min-margin", type=int, default=DEFAULT_MIN_MARGIN,
                    help="min background rows expected before first / after last line")
+    p.add_argument("--edge-tol", type=int, default=DEFAULT_EDGE_TOL,
+                   help="a short edge row is a clip only within this many rows of the edge "
+                        "(guards against detached descender tips far from the edge)")
     p.add_argument("--timeout", type=float, default=5.0)
     args = p.parse_args()
 
@@ -155,10 +201,15 @@ def main():
     # the page top) is legitimately under the body-text median, while a real
     # top/bottom slice is shorter than anything else on the page.
     min_interior = float(min(interior))
-    short_top = first_h < args.height_frac * median_h and first_h < min_interior
-    short_bottom = last_h < args.height_frac * median_h and last_h < min_interior
-    clip_top = short_top or (top_margin < args.min_margin)
-    clip_bottom = short_bottom or (bottom_margin < args.min_margin)
+    verdict = decide_clip(
+        first_h=first_h, last_h=last_h, median_h=median_h,
+        min_interior=min_interior, top_margin=top_margin,
+        bottom_margin=bottom_margin, region_h=rh,
+        height_frac=args.height_frac, min_margin=args.min_margin,
+        edge_tol=args.edge_tol,
+    )
+    clip_top = verdict["clip_top"]
+    clip_bottom = verdict["clip_bottom"]
 
     # single-line panes can't establish a median; report low confidence.
     low_conf = len(heights) < 2

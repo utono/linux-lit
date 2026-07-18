@@ -750,16 +750,25 @@ knob is a no-op when unset. The `exact_end` branch also logs
 `BOTTOM_CLIP_EXACT: widget_h=.. total=.. allowance=.. clip=..` (it used to be
 the only silent clip path).
 
-**Detector calibration (scripts/check_line_clipping.py):** two lessons from the
+**Detector calibration (scripts/check_line_clipping.py):** three lessons from the
 descender-allowance work. (1) Row segmentation merges runs separated by ≤2px —
 a descender tip tapers so thin that its connecting rows fall under the 1%-width
 ink threshold, and the detached tip read as a fake 1px "clipped row" the moment
 the clip stopped covering real descender ink. (2) A short EDGE row counts as
 clipped only if it is also shorter than every interior row — a complete
 0.75-scale speaker label at the page top is legitimately under the body-text
-median. Both were detector false positives that only surfaced once production
-rendered MORE of the glyphs, i.e. "when a clip e2e fails, first ask whether the
-assertion is measuring the pre-fix rendering."
+median. (3) **A short EDGE row is a clip only if it sits within `--edge-tol`
+(default 8px) of the pane edge.** A genuinely clipped line is short *because the
+edge cut it*, so it is flush against the edge; a detached descender tip can land
+far above it (a real case: a 1px sliver 35px above the bottom edge, gap 3px so
+lesson (1)'s ≤2px merge did not fuse it, `median 22`, so it tripped `short_bottom`
+as a fake `last_h=1` BOTTOM clip). The `min_margin` edge-touch rule still flags a
+row with zero background margin regardless of height, so the guard cannot mask a
+real edge clip. The decision now lives in the pure `decide_clip()` helper, unit-
+tested by `scripts/test_check_line_clipping.py` (run `python3
+scripts/test_check_line_clipping.py`). All three were detector false positives
+that only surfaced once production rendered MORE of the glyphs, i.e. "when a clip
+e2e fails, first ask whether the assertion is measuring the pre-fix rendering."
 
 ## Key files
 
