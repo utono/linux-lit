@@ -314,6 +314,17 @@ pub struct JournalState {
     /// MRU search pattern for post-Escape n/N revival: cleared search drops
     /// `search` but keeps this, so the next n/N rebuilds the search from it.
     pub last_pattern: Option<String>,
+    /// True when the term input was opened from the READING CARD (reader `f`)
+    /// rather than inside the journal overlay. Consumed by the term-input Escape
+    /// path so cancel returns to the reader, not the overlay. Mirrors
+    /// `picker_from_reader`.
+    pub term_input_from_reader: bool,
+}
+
+/// True when the term input, opened while in `mode`, should return to the reader
+/// on cancel (opened from the reading card) rather than the journal overlay.
+pub(crate) fn term_input_opened_from_reader(mode: crate::app::InputMode) -> bool {
+    matches!(mode, crate::app::InputMode::Reader)
 }
 
 /// Resolve which band a stored journal page belongs to, for the Q&A picker. A
@@ -644,6 +655,8 @@ pub(crate) fn clear_filter(state: &Rc<RefCell<AppState>>) {
 /// (Holding the borrow across `set_text` is what caused the RefCell
 /// non-unwinding panic in the GTK callback.)
 pub(crate) fn open_term_input(state: &Rc<RefCell<AppState>>) {
+    let from_reader = term_input_opened_from_reader(state.borrow().input_mode);
+    state.borrow_mut().journal.term_input_from_reader = from_reader;
     let terms = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_distinct_terms(&conn).ok())
@@ -2616,6 +2629,13 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn term_input_from_reader_only_in_reader_mode() {
+        use crate::app::InputMode;
+        assert!(term_input_opened_from_reader(InputMode::Reader));
+        assert!(!term_input_opened_from_reader(InputMode::JournalOverlay));
+    }
 
     #[test]
     fn improve_terms_line_guidance_or_empty() {

@@ -523,7 +523,14 @@ fn handle_picker_key(
                     }
                 }
                 InputMode::JournalMovePicker => { s.journal_move_picker.hide(); s.input_mode = InputMode::JournalOverlay; }
-                InputMode::JournalTermInput => { s.journal_term_input.hide(); s.input_mode = InputMode::JournalOverlay; }
+                InputMode::JournalTermInput => {
+                    s.journal_term_input.hide();
+                    if s.journal.term_input_from_reader {
+                        crate::app::return_to_reader_mode(&mut s);
+                    } else {
+                        s.input_mode = InputMode::JournalOverlay;
+                    }
+                }
                 InputMode::EchoLinePicker => { drop(s); crate::input::actions::echoes::cancel_add_echo(state); }
                 _ => {
                     if let Some(p) = crate::input::picker_dispatch::picker_for_mode(&s, mode) {

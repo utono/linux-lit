@@ -2000,6 +2000,7 @@ pub fn build_window(
             filter: None,
             search: None,
             last_pattern: None,
+            term_input_from_reader: false,
         },
         page_image_overlay,
         page_image: PageImageState::default(),
