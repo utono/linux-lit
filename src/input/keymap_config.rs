@@ -330,6 +330,10 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("Z"), Action::OpenConcordanceListPicker),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
+        // Ctrl+f: cross-corpus journal/gloss regex search popup. Also wired
+        // directly (bypassing this table) from the journal/gloss overlay key
+        // handlers, which short-circuit before reaching keymap.lookup.
+        (KeyCombo::ctrl("f"), Action::OpenCorpusSearch),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::alt("j"), Action::OpenJournalPicker),
         // Ctrl+o reopens the last-closed gloss/journal overlay.

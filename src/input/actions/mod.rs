@@ -8,6 +8,7 @@ pub mod chapters;
 pub mod chat;
 pub(crate) mod claude_bridge;
 pub mod concordance;
+pub mod corpus_search;
 pub mod echoes;
 pub mod escape;
 pub mod gloss;
@@ -154,6 +155,8 @@ pub enum Action {
     OpenJournalPicker,
     OpenGlossPicker,
     OpenLastGloss,
+    /// Ctrl+f: open the cross-corpus journal/gloss regex search popup.
+    OpenCorpusSearch,
     ShowEchoesBcp,
     ReopenEchoesBcp,
     ShowEchoTurnsBcp,
@@ -315,6 +318,7 @@ impl Action {
             | Action::OpenJournalPicker
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
+            | Action::OpenCorpusSearch
             | Action::ShowEchoesBcp
             | Action::ReopenEchoesBcp
             | Action::ShowEchoTurnsBcp
@@ -466,6 +470,7 @@ impl Action {
             Action::OpenJournalPicker => "OpenJournalPicker",
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",
+            Action::OpenCorpusSearch => "OpenCorpusSearch",
             Action::ShowEchoesBcp => "ShowEchoesBcp",
             Action::ReopenEchoesBcp => "ReopenEchoesBcp",
             Action::ShowEchoTurnsBcp => "ShowEchoTurnsBcp",

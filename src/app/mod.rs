@@ -148,6 +148,10 @@ pub enum InputMode {
     ConcordanceListPicker,
     ConcordanceWorksPicker,
     AuthorshipPicker,
+    /// Ctrl+f cross-corpus regex search popup: live-filters journal or gloss
+    /// rows as you type; Tab toggles corpus, Up/Down moves selection, Return
+    /// selects, Escape restores `corpus_search_return_mode`.
+    CorpusSearch,
     ActionPopup,
     Visual,
     DeleteConfirm,
@@ -431,6 +435,11 @@ pub struct AppState {
     pub authorship_sets: Vec<crate::db::authorship::AttributionSet>,
     pub active_attribution_set_id: Option<i64>,
     pub authorship_picker: crate::ui::authorship_picker::AuthorshipPicker,
+    pub corpus_search_popup: crate::ui::corpus_search_popup::CorpusSearchPopup,
+    pub last_corpus: crate::input::corpus_search::Corpus,
+    /// Where to return `input_mode` when the corpus-search popup closes
+    /// (Escape) — the reader or whichever gloss/journal overlay opened it.
+    pub corpus_search_return_mode: InputMode,
     pub translations: HashMap<i64, String>,
     pub translations_visible: bool,
     /// Column count to assume BEFORE `current_work` is loaded — seeded at build
@@ -1603,18 +1612,26 @@ pub fn build_window(
     authorship_picker.attach(&concordance_list_picker.overlay);
     authorship_picker.overlay.set_vexpand(true);
 
+    // Corpus search popup (Ctrl+f: cross-corpus journal/gloss regex search)
+    // wraps the authorship picker. Downstream `add_overlay`/`attach_to` panels
+    // below chain off THIS overlay (not authorship_picker.overlay) so the new
+    // layer sits in the overlay stack like the others.
+    let corpus_search_popup = crate::ui::corpus_search_popup::CorpusSearchPopup::new();
+    corpus_search_popup.attach(&authorship_picker.overlay);
+    corpus_search_popup.overlay.set_vexpand(true);
+
     // Echo turns picker (Ctrl+Shift+G: list all turns in this work that have
     // echoes). add_overlay panel onto the outer overlay, NOT wrapped into the
     // reader's size-bearing chain (wrapping collapses the reader layout).
     let echo_turns_picker = crate::ui::echo_turns_picker::EchoTurnsPicker::new();
-    authorship_picker.overlay.add_overlay(echo_turns_picker.picker_box());
+    corpus_search_popup.overlay.add_overlay(echo_turns_picker.picker_box());
 
     // Echo line picker (add-echo: choose a line to attach an echo to).
     // Added as an overlay panel onto the outer overlay (like concordance_works
     // below), NOT wrapped into the reader's size-bearing chain — wrapping it
     // orphaned the reader content and collapsed the layout (sw_h stuck at 0).
     let echo_line_picker = crate::ui::echo_line_picker::EchoLinePicker::new();
-    authorship_picker.overlay.add_overlay(&echo_line_picker.picker_box);
+    corpus_search_popup.overlay.add_overlay(&echo_line_picker.picker_box);
 
     // Settings overlay panels (scrim + card). Added here as add_overlay panels
     // on the OUTERMOST overlay — NOT via the chain link at settings_overlay.attach
@@ -1625,14 +1642,14 @@ pub fn build_window(
     // above settings.
     {
         let (settings_scrim, settings_card) = settings_overlay.panels();
-        authorship_picker.overlay.add_overlay(settings_scrim);
-        authorship_picker.overlay.add_overlay(settings_card);
+        corpus_search_popup.overlay.add_overlay(settings_scrim);
+        corpus_search_popup.overlay.add_overlay(settings_card);
     }
 
     // Voice picker (settings overlay → Voice row). add_overlay panel, NOT a
     // chain link (chain insertion collapses the reader layout).
     let voice_picker = crate::ui::voice_picker::VoicePicker::new();
-    authorship_picker.overlay.add_overlay(&voice_picker.picker_box);
+    corpus_search_popup.overlay.add_overlay(&voice_picker.picker_box);
 
     // Echo keybinds legend (Ctrl+/ in the echoes overlay). add_overlay panel,
     // NOT a chain link (chain insertion collapses the reader layout).
@@ -1640,7 +1657,7 @@ pub fn build_window(
         crate::ui::echo_keybinds_overlay::TITLE,
         crate::ui::echo_keybinds_overlay::GROUPS,
     );
-    echo_keybinds_overlay.attach_to(&authorship_picker.overlay);
+    echo_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
 
     // Per-overlay Ctrl+/ keybind legends (gloss, synopsis, journal). add_overlay
     // panels on a persistent outer overlay, NOT chain links.
@@ -1649,22 +1666,22 @@ pub fn build_window(
         crate::ui::gloss_keybinds_overlay::TITLE,
         crate::ui::gloss_keybinds_overlay::GROUPS,
     );
-    gloss_keybinds_overlay.attach_to(&authorship_picker.overlay);
+    gloss_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let synopsis_keybinds_overlay = KeybindsLegend::new(
         crate::ui::synopsis_keybinds_overlay::TITLE,
         crate::ui::synopsis_keybinds_overlay::GROUPS,
     );
-    synopsis_keybinds_overlay.attach_to(&authorship_picker.overlay);
+    synopsis_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let journal_keybinds_overlay = KeybindsLegend::new(
         crate::ui::journal_keybinds_overlay::TITLE,
         crate::ui::journal_keybinds_overlay::GROUPS,
     );
-    journal_keybinds_overlay.attach_to(&authorship_picker.overlay);
+    journal_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
 
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
-    authorship_picker.overlay.add_overlay(&concordance_works_picker.scrim);
-    authorship_picker.overlay.add_overlay(&concordance_works_picker.container);
+    corpus_search_popup.overlay.add_overlay(&concordance_works_picker.scrim);
+    corpus_search_popup.overlay.add_overlay(&concordance_works_picker.container);
 
     // Page-scan image overlay (toggle the BCP card to its leaf PNG). Added onto
     // `page_turn_overlay`, which wraps `card_vbox` (the visible cream card), so it
@@ -1675,10 +1692,10 @@ pub fn build_window(
 
     // Action popup overlay for visual mode
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    authorship_picker.overlay.add_overlay(&action_popup_widget.container);
+    corpus_search_popup.overlay.add_overlay(&action_popup_widget.container);
 
     // Add vocab popup to full-width overlay so it appears to the right of the text card
-    vocab_popup.attach_to(&authorship_picker.overlay);
+    vocab_popup.attach_to(&corpus_search_popup.overlay);
 
     // Debug-mode indicator (lower-left corner, next to sync icon, hidden by default)
     let debug_icon = gtk4::Label::new(Some("⚙"));
@@ -1688,7 +1705,7 @@ pub fn build_window(
     debug_icon.set_margin_bottom(12);
     debug_icon.add_css_class("debug-icon");
     debug_icon.set_visible(false);
-    authorship_picker.overlay.add_overlay(&debug_icon);
+    corpus_search_popup.overlay.add_overlay(&debug_icon);
     // Flash the gear on launch if debug mode is already on.
     if crate::logging::debug_mode() {
         debug_icon.set_visible(true);
@@ -1706,7 +1723,7 @@ pub fn build_window(
     word_status_label.set_margin_bottom(40);
     word_status_label.add_css_class("word-status");
     word_status_label.set_visible(false);
-    authorship_picker.overlay.add_overlay(&word_status_label);
+    corpus_search_popup.overlay.add_overlay(&word_status_label);
 
     // Transient status toasts (Copied / Sync: on / No timestamp / Saved /
     // spinners) float at the TOP CENTER, inside the header band (the 64px
@@ -1780,10 +1797,10 @@ pub fn build_window(
     let search_bar = SearchBar::new();
     search_bar.container.set_width_request(config.column_width as i32 * 3 / 4);
     search_bar.container.set_margin_top(120);
-    authorship_picker.overlay.add_overlay(&search_bar.container);
+    corpus_search_popup.overlay.add_overlay(&search_bar.container);
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    vbox.append(&authorship_picker.overlay);
+    vbox.append(&corpus_search_popup.overlay);
 
     // Left chat panel (Tab chat layout): bare-on-root overlay, not in the
     // size-bearing widget chain (see feedback_picker_overlay_not_chain).
@@ -2110,6 +2127,9 @@ pub fn build_window(
         authorship_sets: Vec::new(),
         active_attribution_set_id: None,
         authorship_picker,
+        corpus_search_popup,
+        last_corpus: crate::input::corpus_search::Corpus::Journal,
+        corpus_search_return_mode: InputMode::Reader,
         input_mode: InputMode::Reader,
         tts_batch_running: std::cell::Cell::new(false),
     }));
@@ -2613,6 +2633,19 @@ pub fn build_window(
         s.journal_term_input.search_entry().connect_changed(move |entry| {
             if let Ok(st) = state_for_journal_term_filter.try_borrow() {
                 st.journal_term_input.populate_list(&entry.text());
+            }
+        });
+    }
+
+    // Connect corpus-search popup search entry filter (Ctrl+f). GUARDED:
+    // open() calls search_entry().set_text("") which fires this synchronously
+    // under its own borrow_mut; a plain borrow() would double-borrow and abort.
+    let state_for_corpus_search = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.corpus_search_popup.search_entry().connect_changed(move |entry| {
+            if let Ok(st) = state_for_corpus_search.try_borrow() {
+                st.corpus_search_popup.populate_list(&entry.text());
             }
         });
     }
