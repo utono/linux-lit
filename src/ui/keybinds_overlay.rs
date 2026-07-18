@@ -82,8 +82,8 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "cursor \u{2193}"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "dlg fwd", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
-    key("k", "K", "dlg back", "K: prev speaker", &[]),
+    key("j", "J", "next speaker", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
+    key("k", "K", "prev speaker", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     bare("b", "B", ""),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
