@@ -10,6 +10,12 @@ use gtk4::{Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Overlay};
 
 use crate::input::corpus_search::{self, Corpus, CorpusHit, GlossRow, JournalRow};
 
+/// Header title per active corpus. The active corpus is spelled out; the caret
+/// points at what Tab switches to. Kept terse so the styled title band reads
+/// cleanly (uppercase + letter-spacing come from `.library-picker-title` CSS).
+const HEADER_JOURNAL: &str = "JOURNAL  ·  regex  ·  ⇥ gloss";
+const HEADER_GLOSS: &str = "GLOSS  ·  regex  ·  ⇥ journal";
+
 pub struct CorpusSearchPopup {
     pub overlay: Overlay,
     scrim: GtkBox,
@@ -29,18 +35,18 @@ impl CorpusSearchPopup {
 
         let picker_box = crate::ui::picker_nav::build_picker_card();
 
-        let header = Label::builder()
-            .label("[JOURNAL | gloss]   (regex)")
-            .halign(gtk4::Align::Start)
-            .build();
+        // Styled header BAND (matches every other card picker) rather than a bare
+        // label jammed against the card's top edge. The title carries the active
+        // corpus + "regex" mode indicator; `set_corpus` rewrites it.
+        let (header_box, header) = crate::ui::picker_nav::build_picker_header(HEADER_JOURNAL);
 
         let search_entry = Entry::builder()
-            .placeholder_text("Search journal/gloss (regex)...")
+            .placeholder_text("Search journal / gloss  (regex)")
             .build();
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
-        picker_box.append(&header);
+        picker_box.append(&header_box);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
 
@@ -68,8 +74,8 @@ impl CorpusSearchPopup {
     pub fn set_corpus(&self, c: Corpus) {
         self.corpus.set(c);
         self.header.set_text(match c {
-            Corpus::Journal => "[JOURNAL | gloss]   (regex)",
-            Corpus::Gloss => "[journal | GLOSS]   (regex)",
+            Corpus::Journal => HEADER_JOURNAL,
+            Corpus::Gloss => HEADER_GLOSS,
         });
     }
 
@@ -92,10 +98,11 @@ impl CorpusSearchPopup {
         };
 
         for h in &hits {
-            let lbl = Label::new(Some(&h.label));
-            lbl.set_xalign(0.0);
-            lbl.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-            let row = ListBoxRow::builder().child(&lbl).build();
+            // Two-part row: the entry text (primary, ellipsized) + a dimmed,
+            // right-aligned work·location column (`picker-item-detail`), so the
+            // eye scans content first and the citation reads as a quiet index.
+            let hbox = crate::ui::picker_nav::two_label_row(&h.label, &h.detail);
+            let row = ListBoxRow::builder().child(&hbox).build();
             self.list_box.append(&row);
         }
 
