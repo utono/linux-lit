@@ -844,6 +844,47 @@ fn first_plain_source_line(source_text: &str) -> String {
     String::new()
 }
 
+/// Buffer index of the first dialogue line of the passage at `start_citation`
+/// within `work`. Primary match is the citation tuple `(div1,div2,line_in_div)`;
+/// the fallback matches the first plain source line of `source_text` (which
+/// carries `<speaker>/<verse>` markup) against line text. Advances to the first
+/// `is_dialogue` line, then maps through `line_map.work_to_buffer`. `None` when
+/// the citation/text doesn't resolve.
+pub(crate) fn source_first_buffer_line(
+    work: &crate::db::models::Work,
+    line_map: Option<&crate::text_file_map::LineMap>,
+    start_citation: &str,
+    source_text: &str,
+) -> Option<usize> {
+    // start_citation is `ABBR.div1.div2.line_in_div`; match on the numeric tail
+    // (the abbrev may carry an edition suffix), same as the gloss path.
+    let target = crate::app::parse_citation(start_citation);
+
+    // Citation tuple is unique → primary match; citationless text match is the
+    // .txt-only fallback (source_text carries <speaker>/<verse> markup, so strip
+    // to the first bare content line before comparing).
+    let by_citation = target
+        .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
+    let first_src = first_plain_source_line(source_text);
+    let start_idx = by_citation.or_else(|| {
+        if first_src.is_empty() {
+            None
+        } else {
+            work.lines.iter().position(|l| l.text.trim() == first_src)
+        }
+    })?;
+    let work_idx = work.lines[start_idx..]
+        .iter()
+        .position(|l| l.is_dialogue)
+        .map(|off| start_idx + off)
+        .unwrap_or(start_idx);
+
+    match line_map {
+        Some(lm) => lm.work_to_buffer.get(work_idx).copied(),
+        None => Some(work_idx),
+    }
+}
+
 /// Land the cursor on the first dialogue line of the CURRENT journal page's
 /// source passage, when that page is a passage page whose source resolves in the
 /// current work. Returns `true` on a successful jump, `false` for scene/corpus
@@ -859,44 +900,14 @@ pub(crate) fn jump_to_journal_source_start(s: &mut AppState) -> bool {
         None => return false,
     };
 
-    // start_citation is `ABBR.div1.div2.line_in_div`; match on the numeric tail
-    // (the abbrev may carry an edition suffix), same as the gloss path.
-    let target = crate::app::parse_citation(&start_citation);
-
     let work = match s.current_work.as_ref() {
         Some(w) => w,
         None => return false,
     };
 
-    // Citation tuple is unique → primary match; citationless text match is the
-    // .txt-only fallback (source_text carries <speaker>/<verse> markup, so strip
-    // to the first bare content line before comparing).
-    let by_citation = target
-        .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
-    let first_src = first_plain_source_line(&source_text);
-    let start_idx = match by_citation.or_else(|| {
-        if first_src.is_empty() {
-            None
-        } else {
-            work.lines.iter().position(|l| l.text.trim() == first_src)
-        }
-    }) {
+    let buf_idx = match source_first_buffer_line(work, s.line_map.as_ref(), &start_citation, &source_text) {
         Some(i) => i,
         None => return false,
-    };
-    let work_idx = work.lines[start_idx..]
-        .iter()
-        .position(|l| l.is_dialogue)
-        .map(|off| start_idx + off)
-        .unwrap_or(start_idx);
-
-    let buf_idx = if let Some(ref lm) = s.line_map {
-        match lm.work_to_buffer.get(work_idx) {
-            Some(&bi) => bi,
-            None => return false,
-        }
-    } else {
-        work_idx
     };
 
     crate::input::navigation::jump_to_line(s, buf_idx);
@@ -2960,5 +2971,88 @@ mod tests {
         // empty / whitespace -> keep the original (never lose the question)
         assert_eq!(parse_improved_question("", "the original q"), "the original q");
         assert_eq!(parse_improved_question("   \n  ", "the original q"), "the original q");
+    }
+
+    fn source_test_line(id: i64, div1: i64, div2: i64, line_in_div: i64, is_dialogue: bool, text: &str) -> crate::db::models::Line {
+        crate::db::models::Line {
+            id,
+            citation: format!("T.{div1}.{div2}.{line_in_div}"),
+            text: text.to_string(),
+            normalized: text.to_lowercase(),
+            speaker: if is_dialogue { Some("FIRST".to_string()) } else { None },
+            is_dialogue,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    fn source_test_work(lines: Vec<crate::db::models::Line>) -> crate::db::models::Work {
+        crate::db::models::Work {
+            abbrev: "Cym".into(),
+            canonical_abbrev: "Cym".into(),
+            title: "Test".into(),
+            author: "Nobody".into(),
+            work_type: "play".into(),
+            text_file: None,
+            vocab_highlight: false,
+            lines,
+            timestamps: vec![],
+            media_paths: vec![],
+            media_ids: vec![],
+            media_id: None,
+        }
+    }
+
+    #[test]
+    fn source_first_buffer_line_resolves_citation() {
+        // Scene heading (non-dialogue) at (5,5,1), then the first dialogue line
+        // at (5,5,2). A citation matching the heading's tuple should advance to
+        // the first dialogue line at-or-after it, then map through line_map.
+        let work = source_test_work(vec![
+            source_test_line(1, 5, 5, 1, false, "SCENE V."),
+            source_test_line(2, 5, 5, 2, true, "Enter Posthumus."),
+            source_test_line(3, 5, 5, 3, true, "Another line."),
+        ]);
+
+        // line_map: work index -> buffer index 1:1, offset by 10 to prove the
+        // mapping (not the raw work index) is what gets returned.
+        let line_map = crate::text_file_map::LineMap {
+            buffer_to_work: vec![],
+            work_to_buffer: vec![10, 11, 12],
+            dialogue_buffer_lines: vec![],
+            sentence_groups: vec![],
+            chapter_breaks: vec![],
+            section_starts: vec![],
+        };
+
+        // Citation resolves to the heading (work idx 0), advances to the first
+        // dialogue line (work idx 1), maps to buffer idx 11.
+        assert_eq!(
+            source_first_buffer_line(&work, Some(&line_map), "Cym.5.5.1", ""),
+            Some(11)
+        );
+
+        // Citation matching the dialogue line directly (work idx 1) maps to 11.
+        assert_eq!(
+            source_first_buffer_line(&work, Some(&line_map), "Cym.5.5.2", ""),
+            Some(11)
+        );
+
+        // No line_map: returns the raw work index instead of a buffer index.
+        assert_eq!(
+            source_first_buffer_line(&work, None, "Cym.5.5.1", ""),
+            Some(1)
+        );
+
+        // Unresolvable citation and empty source_text fallback -> None.
+        assert_eq!(
+            source_first_buffer_line(&work, Some(&line_map), "Cym.9.9.9", ""),
+            None
+        );
     }
 }
