@@ -208,11 +208,12 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("y"), Action::PageBackward),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
-        // Cursor / dialogue
-        (KeyCombo::plain("j"), Action::CursorNextDialogueNoSeek),
-        (KeyCombo::plain("k"), Action::CursorPrevDialogueNoSeek),
+        // Cursor / dialogue. j / k move to the next / prev segment AND seek
+        // (twins of q / comma) so the move survives live MPV sync during
+        // playback. h / t are the cursor-only NO-SEEK twins.
+        (KeyCombo::plain("j"), Action::JumpToNextSpeaker),
+        (KeyCombo::plain("k"), Action::JumpToPrevSpeaker),
         (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
-        // h / t jump to the next / prev line of dialogue (twins of Q / Alt+,).
         (KeyCombo::plain("h"), Action::CursorNextDialogueNoSeek),
         (KeyCombo::plain("t"), Action::CursorPrevDialogueNoSeek),
         (KeyCombo::plain("Up"), Action::CursorPrevLine),
@@ -481,8 +482,8 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("x")), Some(&Action::PageForward));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogueNoSeek));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevDialogueNoSeek));
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::JumpToNextSpeaker));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::JumpToPrevSpeaker));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
@@ -542,9 +543,12 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("J")), Some(&Action::JumpToNextSpeaker));
         assert_eq!(m.get(&KeyCombo::plain("K")), Some(&Action::JumpToPrevSpeaker));
-        // Lowercase j / k carry the no-seek dialogue steps (swapped off `'`/`;`).
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogueNoSeek));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevDialogueNoSeek));
+        // Lowercase j / k are the seeking speaker/paragraph jumps (twins of
+        // q / comma); h / t carry the no-seek cursor steps.
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::JumpToNextSpeaker));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::JumpToPrevSpeaker));
+        assert_eq!(m.get(&KeyCombo::plain("h")), Some(&Action::CursorNextDialogueNoSeek));
+        assert_eq!(m.get(&KeyCombo::plain("t")), Some(&Action::CursorPrevDialogueNoSeek));
     }
 
     #[test]
@@ -684,7 +688,7 @@ mod tests {
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageBackward));
         // Other defaults preserved:
         assert_eq!(km.lookup("y", false, false, false), Some(Action::PageBackward));
-        assert_eq!(km.lookup("j", false, false, false), Some(Action::CursorNextDialogueNoSeek));
+        assert_eq!(km.lookup("j", false, false, false), Some(Action::JumpToNextSpeaker));
     }
 
     #[test]
