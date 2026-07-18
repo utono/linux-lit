@@ -50,16 +50,18 @@ pub fn gloss_label(row: &GlossRow) -> String {
     clean.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string()
 }
 
-/// Detail column: "Cym.5.5.1 · BELARIUS" — citation + FIRST speaker (the stored
+/// Detail column: "Cym.5.5.1 · Belarius" — citation + FIRST speaker (the stored
 /// speaker field can be a long comma list of everyone in the passage; only the
 /// first is kept so the index column stays narrow and the primary prose keeps
-/// its width). Speaker omitted when empty.
+/// its width). The speaker is lowercased so the popup's `font-variant: small-caps`
+/// renders it as small capitals (already-uppercase letters would stay full-size).
+/// Speaker omitted when empty.
 pub fn gloss_detail(row: &GlossRow) -> String {
     let first_speaker = row.speaker.split(',').next().unwrap_or("").trim();
     if first_speaker.is_empty() {
         row.start_citation.clone()
     } else {
-        format!("{} · {}", row.start_citation, first_speaker)
+        format!("{} · {}", row.start_citation, first_speaker.to_lowercase())
     }
 }
 
@@ -242,7 +244,8 @@ mod tests {
     fn gloss_detail_is_citation_and_speaker() {
         let rows = vec![grow(1, "Cym.5.5.1", "BELARIUS", "text with nobility")];
         let hits = filter_gloss(&rows, &build_matcher("nobility"));
-        assert_eq!(hits[0].detail, "Cym.5.5.1 · BELARIUS");
+        // Speaker lowercased for small-caps rendering; citation stays as-is.
+        assert_eq!(hits[0].detail, "Cym.5.5.1 · belarius");
     }
 
     #[test]
@@ -259,6 +262,6 @@ mod tests {
         let rows = vec![grow(1, "2H6.2.1.43",
             "GLOUCESTER, CARDINAL, KING HENRY, CARDINAL", "text with nobility")];
         let hits = filter_gloss(&rows, &build_matcher("nobility"));
-        assert_eq!(hits[0].detail, "2H6.2.1.43 · GLOUCESTER");
+        assert_eq!(hits[0].detail, "2H6.2.1.43 · gloucester");
     }
 }

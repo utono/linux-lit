@@ -102,6 +102,13 @@ impl CorpusSearchPopup {
             // right-aligned work·location column (`picker-item-detail`), so the
             // eye scans content first and the citation reads as a quiet index.
             let hbox = crate::ui::picker_nav::two_label_row(&h.label, &h.detail);
+            // Render the detail column (citation · speaker) in small caps — the
+            // detail label is the hbox's last child (see `two_label_row`). The
+            // speaker text is lowercased in `gloss_detail` so smcp renders it as
+            // small capitals rather than leaving full-height caps.
+            if let Some(detail) = hbox.last_child() {
+                detail.add_css_class("corpus-search-detail");
+            }
             let row = ListBoxRow::builder().child(&hbox).build();
             self.list_box.append(&row);
         }
