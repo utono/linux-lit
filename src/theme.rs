@@ -1311,7 +1311,13 @@ pub fn generate_css(
             placement gets the same treatment via .chat-panel-float below; the \
             Pinned panel stands alone beside the card with its own outer margin, \
             so it needs no border to separate it from a reading column.) */ \
-         .chat-panel {{ background-color: {bg}; padding: 12px; }} \
+         /* Top padding is 0 (sides/bottom stay 12px): the panel is positioned \
+            (size_panel) so the transcript's FIRST line lands level with the \
+            main card's first reading line, and any top padding here would push \
+            that first line down below it. `chat_first_line_top_margin` assumes \
+            this zero — keep the two in sync (it also assumes .chat-transcript's \
+            zero padding-top below). */ \
+         .chat-panel {{ background-color: {bg}; padding: 0 12px 12px 12px; }} \
          /* Pinned placement: the panel abuts the card's right edge, separated \
             only by a 1px hairline seam (its border-left, painting over the 1px \
             gap size_panel leaves). Rounded on the RIGHT (outer) corners only — \
@@ -1345,8 +1351,12 @@ pub fn generate_css(
             is on the SCROLLED content Box (.chat-transcript), inside the \
             viewport, so the gutter sits between the text's right edge and the \
             bar rather than being eaten by it. */ \
+         /* padding-top is 0 so the transcript's first line sits at the panel's \
+            content top — the panel is positioned to align that first line with \
+            the card's first reading line (see .chat-panel's note and \
+            `chat_first_line_top_margin`). Bottom keeps its 16px breathing room. */ \
          .chat-transcript {{ font-family: {font}; font-size: {size}pt; \
-           padding-right: 14px; padding-top: 16px; padding-bottom: 16px; }} \
+           padding-right: 14px; padding-top: 0px; padding-bottom: 16px; }} \
          .chat-transcript label {{ padding-bottom: 3px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
