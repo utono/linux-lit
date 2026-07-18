@@ -1,6 +1,15 @@
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Label, ListBox, Orientation, ScrolledWindow};
 
+/// Top margin of a top-anchored (`valign: Start`) picker card.
+pub(crate) const PICKER_TOP_MARGIN: i32 = 40;
+/// Width of the wide top-anchored pickers (line / occurrence lists).
+pub(crate) const PICKER_WIDE_W: i32 = 900;
+/// Width of the narrow top-anchored pickers (word / voice lists).
+pub(crate) const PICKER_NARROW_W: i32 = 675;
+/// Scroll cap for a top-anchored picker's list.
+pub(crate) const PICKER_LIST_MAX_H: i32 = 750;
+
 /// Build the hidden full-bleed scrim box (`library-picker-scrim`) that sits
 /// behind the scrim-style pickers/overlays. Byte-identical (modulo source
 /// formatting) at every scrim site.
@@ -51,6 +60,21 @@ pub(crate) fn new_picker_list() -> (ListBox, ScrolledWindow) {
         .build();
 
     (list_box, scrolled)
+}
+
+/// The vertical outer box for a top-anchored picker card: centered, anchored to
+/// the top with `PICKER_TOP_MARGIN`, `width` wide, styled with `css_class`
+/// (`"picker-box"` for the dark pickers, `"library-picker"` for the cream-themed
+/// voice picker). The caller appends its own header/entry/list and controls
+/// visibility.
+pub(crate) fn new_top_anchored_picker_box(width: i32, css_class: &str) -> GtkBox {
+    let picker_box = GtkBox::new(Orientation::Vertical, 0);
+    picker_box.set_halign(Align::Center);
+    picker_box.set_valign(Align::Start);
+    picker_box.set_margin_top(PICKER_TOP_MARGIN);
+    picker_box.set_width_request(width);
+    picker_box.add_css_class(css_class);
+    picker_box
 }
 
 /// Remove every row of `list_box` (the "clear the list before repopulating"

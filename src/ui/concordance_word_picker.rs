@@ -14,12 +14,10 @@ impl ConcordanceWordPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = GtkBox::new(Orientation::Vertical, 0);
-        picker_box.set_halign(Align::Center);
-        picker_box.set_valign(Align::Start);
-        picker_box.set_margin_top(40);
-        picker_box.set_width_request(675);
-        picker_box.add_css_class("picker-box");
+        let picker_box = super::picker_nav::new_top_anchored_picker_box(
+            super::picker_nav::PICKER_NARROW_W,
+            "picker-box",
+        );
 
         let search_entry = Entry::new();
         search_entry.set_placeholder_text(Some("Search vocab words..."));
@@ -28,7 +26,7 @@ impl ConcordanceWordPicker {
 
         let scrolled = ScrolledWindow::new();
         scrolled.set_vexpand(true);
-        scrolled.set_max_content_height(750);
+        scrolled.set_max_content_height(super::picker_nav::PICKER_LIST_MAX_H);
         scrolled.set_propagate_natural_height(true);
 
         let list_box = ListBox::new();
