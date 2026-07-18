@@ -44,6 +44,8 @@ impl CorpusSearchPopup {
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
 
+        picker_box.set_visible(false);
+
         CorpusSearchPopup {
             overlay,
             scrim: crate::ui::picker_nav::build_picker_scrim(),
