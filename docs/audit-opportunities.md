@@ -682,3 +682,96 @@ scrim/box note and #85's `voice_picker` exclusion). Ranked by
 - `"Q: "` / `"\nA: "` prefixes (~9 sites) — same two chars, but they split into
   display vs wire/prompt vs parse formatting with different separators. Genuinely
   different concepts; not one const.
+
+## Batch 8 (audited 2026-07-17, post pinned-chat-panel + Question-view + transcript-nav batch)
+
+Fresh scan over the ~30-commit chat-panel batch merged since Batch 7 (right-pinned
+panel for single-column layouts, focused Question view, transcript gg/G + Ctrl-d/u
+nav, auto-save follow-up Q&As, gloss/journal `t` toggle). Two focused Explore
+finders (duplication + literals); the oversized-file finder was SKIPPED this batch
+— Batch 7 established navigation/keymap/viewport have no clean seam and #84 already
+claims queries.rs's one seam; the chat batch added no new large file. Every entry
+verified by direct read (the #11 lesson). The batch is cleanly built — the
+duplication finder returned **no qualifying duplication** (the render_transcript_*
+trio, the landable-mask helpers, and the scroll family are all already minimally
+decomposed). One numbered literal opportunity. Ranked trivially (only one).
+
+## #87 — "Q: " question-row display prefix → route to prefix_question
+
+- **Status:** OPEN (rank #1 — 5 raw sites of a display prefix that ALREADY has an
+  idempotent shared form one module over; a wording change needs 5 hand-edits and
+  the raw sites carry a latent double-prefix bug the shared form fixes).
+- **Signal:** `format!("Q: {}", …)` builds a `TranscriptRow::Question` label
+  byte-identically at **5 chat.rs sites** — build_transcript_rows:938,
+  build_single_exchange_rows:973, journal_view_rows:1178,
+  render_transcript_with_thinking:1540, render_saved_entry:2165 — while
+  `ui/journal_overlay.rs:152 prefix_question` is the SAME `format!("Q: {}", …)`
+  wrapped in an idempotent `starts_with("Q:")` guard. The five chat sites are the
+  raw, unguarded copies of a helper that already exists.
+- **Identical part (extract / route to):** the `"Q: "` display prefix. Route the
+  five sites through `prefix_question` (or a chat-panel `question_row(q) ->
+  TranscriptRow` wrapping it) so the label lives once. This is a route-to-shared
+  (#32/#67 precedent), not a bare const — and it fixes a latent bug: a stored
+  question already beginning `Q:` gets double-prefixed at the raw sites but not
+  through `prefix_question`. (If any of the five must stay raw for a
+  round-trip/parse reason, keep it and note why; verify each renders identically.)
+- **EXCLUDED — the OTHER two "Q:" concepts stay separate (this is the Batch 7
+  refinement):** Batch 7 rejected a single `"Q:"` const spanning all uses; that
+  was right, but it missed that the DISPLAY sub-family alone is a clean cut. Keep
+  excluded: (a) the WIRE/prompt form `"Q: {question}\nA: {answer}"` (journal.rs:2062,
+  chat.rs:2013-2015) — Claude-prompt format, different concept; (b) the PARSE form
+  `.strip_prefix("Q:")` (chat.rs:2339, vim/journal_doc.rs:8, journal_overlay.rs:153)
+  — input parsing, different concept; (c) all `"Q: …"` occurrences in tests and
+  doc comments. Only the display-label sub-family routes.
+- **Safe-scope:** yes — identical rendered label (verify the five rows paint the
+  same text; the double-prefix fix only changes already-`Q:`-prefixed input, which
+  the raw sites render wrong today).
+- **Rank inputs:** copies=5 (+1 shared form), drift_risk=med (5 hand-edits + a
+  latent double-prefix bug), scope=small.
+
+**Batch 8 — below the floor (flag; number only if the family grows):**
+
+- **New chat toast literals, each 2 real call sites, one file, no drift signal:**
+  `"No room for chat panel at this layout"`/3s (chat.rs:326,469 — +1 doc mention
+  at :349, NOT a site); `"Waiting for the previous reply…"`/2s (chat.rs:588,2026);
+  `"No passage at the cursor"`/2s (chat.rs:604,610); `"Entry is saved"`/2s
+  (chat.rs:1938,1947); `"Save failed"`/3s (chat.rs:1984,2135). All at the floor.
+  If a 3rd site of any lands, fold into #85's toast-const family (same precedent).
+- **`from_millis(160)` chat flash duration** (chat_panel.rs:125 flash_transcript,
+  :232 flash_rows) — 2 sites, same "brief wash fade-out" meaning; `CHAT_FLASH_MS`.
+  EXCLUDE the `240` (flash_input, chat_panel.rs:113 — different value/widget) and
+  the CSS `320ms` transitions (theme.rs — a distinct in-string value, not this
+  Rust literal). Floor.
+- **`reload_gloss_list` vs `reload_journal_list`** (chat.rs:1511 vs 1188) — the
+  `open_db().ok().and_then(|conn| …find…().ok()).unwrap_or_default()` empty-on-
+  failure skeleton, with a "mirrors reload_gloss_list's contract" comment at :1187
+  (a drift signal). BUT only that skeleton is identical; the inner query
+  (find_passage_pages vs find_glosses_by_start), its args, and the return type all
+  differ — sharing needs a generic over the query. This is the SAME shape the
+  Standing exclusions already retired for the citation-resolution / find_* query
+  families (load-bearing varying token). Confirmed by the duplication finder
+  independently. Do NOT number — record here so the "mirrors" comment doesn't lure
+  a future batch.
+- **chat.rs `"Q: {q}\nA: {a}"` wire/parse forms** — see #87's exclusions; the
+  wire (×2) and parse (×3) sub-families are each below the floor on their own AND
+  are different concepts from #87. Not one const.
+
+**Batch 8 — rejected outright (verified, do NOT re-propose):**
+
+- **render_transcript_thinking_gloss / _with_thinking / _with_error**
+  (chat.rs:1499, 1529, 1546) — look like a family, but each builds a
+  STRUCTURALLY different row set (`[GlossAnswer, Thinking]` vs `[Question,
+  Thinking]` vs `transcript_rows + Error`). Only the `use … as R;` +
+  `render_rows(&rows)` two-line scaffold repeats — too thin, same rejection basis
+  as Batch 7's save_passage_page shape.
+- **first/last/at-or-after landable helpers** (chat.rs:1660-1678) — each is a
+  distinct one-liner over the mask (`position`/`rposition`/`find`); already the
+  minimal decomposition, nothing to extract.
+- **transcript_cursor_first vs _last** (chat.rs:1687 vs 1705) — 2 sites, differ in
+  the edge arg (`false`/`true`) and index-fn (`first_`/`last_landable_index`);
+  sharing needs a passed-in fn-pointer = abstraction, out of scope.
+- **The `gg` PendingG chord preamble** (~9 sites incl. keymap.rs:1336) — a 2-line
+  `chord == PendingG { chord = None;` idiom that predates this batch and diverges
+  immediately after (different guards, returns, actions). Cross-overlay idiom, not
+  new chat drift; too small/divergent to lift. (Its real fix is the long-parked
+  picker/overlay key-dispatch project, already tracked.)
