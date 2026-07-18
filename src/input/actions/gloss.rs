@@ -2758,6 +2758,60 @@ fn passage_covers(start: (i64, i64, i64), end: (i64, i64, i64), cur: (i64, i64, 
     start <= cur && cur <= end
 }
 
+/// Inclusive `(start_buf, end_buf)` buffer-line span of the reader-gloss
+/// passage covering the cursor line, or `None` when the cursor line has no
+/// covering reader-gloss (or no work / DB). reader-gloss ONLY — the chat
+/// panel's gloss flow is the reader-gloss flow. Used by the reader-mode `-`
+/// bind (`reader_gloss_chat_at_cursor`) to stage a transient selection over
+/// the gloss's authored passage without the user entering visual mode.
+pub(crate) fn reader_gloss_passage_at_cursor(s: &AppState) -> Option<(usize, usize)> {
+    let work = s.current_work.as_ref()?;
+    // Glosses are keyed by canonical_abbrev (the -BBC/-Amb lookup rule).
+    let abbrev = work.canonical_abbrev.clone();
+    let wl = s.work_line_for_buffer(s.current_line)?;
+    let line = work.lines.get(wl)?;
+    let cur = (line.div1, line.div2, line.line_in_div);
+
+    let conn = crate::db::queries::open_db().ok()?;
+    let passages =
+        crate::db::queries::find_glossed_passages(&conn, &abbrev, &["reader-gloss"])
+            .unwrap_or_default();
+
+    let passage = passages.into_iter().find(|p| {
+        match (
+            crate::app::parse_citation(&p.start_citation),
+            crate::app::parse_citation(&p.end_citation),
+        ) {
+            (Some(start), Some(end)) => passage_covers(start, end, cur),
+            _ => false,
+        }
+    })?;
+
+    // Map the passage's start/end citations to work-line indices, then to
+    // buffer lines through the line map (jump_to_gloss_source_start's pattern).
+    let start_t = crate::app::parse_citation(&passage.start_citation)?;
+    let end_t = crate::app::parse_citation(&passage.end_citation)?;
+    let start_wi = work
+        .lines
+        .iter()
+        .position(|l| (l.div1, l.div2, l.line_in_div) == start_t)?;
+    let end_wi = work
+        .lines
+        .iter()
+        .position(|l| (l.div1, l.div2, l.line_in_div) == end_t)?;
+
+    let to_buf = |wi: usize| -> Option<usize> {
+        if let Some(ref lm) = s.line_map {
+            lm.work_to_buffer.get(wi).copied()
+        } else {
+            Some(wi)
+        }
+    };
+    let a = to_buf(start_wi)?;
+    let b = to_buf(end_wi)?;
+    Some((a.min(b), a.max(b)))
+}
+
 /// Open the gloss overlay for a resolved passage and its glosses, wiring up all
 /// the `gloss_*` state, painting the card, and coloring already-synthesized
 /// blocks. Shared by the cursor open path (`toggle_overlay`) and the gloss
