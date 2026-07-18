@@ -54,7 +54,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl"), ("C-p", "Q&A page \u{25b2}")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
-    key("f", "F", "next font", "F: prev font", &[("M-f", "font info"), ("C-f", "corpus search")]),
+    key("f", "F", "term filter", "", &[("M-f", "font info"), ("C-f", "corpus search")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "set track mark")]),
     key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
@@ -279,6 +279,8 @@ picker via ChordState::PendingPeriod) — src/input/keymap.rs",
         "corpus search" => "Action::OpenCorpusSearch (cross-corpus regex search over \
 journal Q&As / reader glosses; also wired directly, bypassing this table, from the \
 journal/gloss overlay key handlers) — src/input/actions/corpus_search.rs",
+        "term filter" => "Action::OpenJournalTermInput (cross-work journal term/tag \
+Q&A filter; same as the journal overlay's f) — src/input/actions/journal.rs",
         "search" => "Action::OpenSearch — src/input/search.rs",
         "search back" => "Action::OpenSearchBackward — src/input/search.rs",
         "next match" => "Action::SearchNextMatch — src/input/search.rs",
@@ -396,8 +398,6 @@ Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
         "clear AB" => "escape::escape_reader_mode — src/input/actions/escape.rs",
 
         // ── Fonts ──
-        "next font" => "Action::CycleFontForward — src/app.rs",
-        "prev font" => "Action::CycleFontBackward — src/app.rs",
         "font +" => "Action::AdjustFontSizeUp — src/app.rs",
         "font −" => "Action::AdjustFontSizeDown — src/app.rs",
         "reset font" => "Action::ResetFontSize — src/app.rs",

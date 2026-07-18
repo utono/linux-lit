@@ -561,6 +561,25 @@ mod merge_tests {
     }
 
     #[test]
+    fn default_font_is_charter_16() {
+        // A config with no font fields falls back to the compiled defaults.
+        let c = cfg();
+        assert_eq!(c.font_family, "Charter");
+        assert_eq!(c.font_size, 16);
+        // The default helpers agree (they feed both the serde default and the
+        // Default impl).
+        assert_eq!(default_font_family(), "Charter");
+        assert_eq!(default_font_size(), 16);
+    }
+
+    #[test]
+    fn font_cycle_starts_at_the_default_family() {
+        // Cycling fonts forward from the default should begin at the default
+        // family, so the cycle's first entry must equal it.
+        assert_eq!(FONT_CYCLE.first().copied(), Some(default_font_family().as_str()));
+    }
+
+    #[test]
     fn other_instances_positions_survive() {
         // Ours loaded Ham=5 at startup (stale) and only touched BH.
         // Disk meanwhile has Ham=99 (the other instance's newer save).

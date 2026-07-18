@@ -157,6 +157,8 @@ pub enum Action {
     OpenLastGloss,
     /// Ctrl+f: open the cross-corpus journal/gloss regex search popup.
     OpenCorpusSearch,
+    /// `f`: open the journal term filter (cross-work tag/term Q&A search).
+    OpenJournalTermInput,
     ShowEchoesBcp,
     ReopenEchoesBcp,
     ShowEchoTurnsBcp,
@@ -319,6 +321,7 @@ impl Action {
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
             | Action::OpenCorpusSearch
+            | Action::OpenJournalTermInput
             | Action::ShowEchoesBcp
             | Action::ReopenEchoesBcp
             | Action::ShowEchoTurnsBcp
@@ -471,6 +474,7 @@ impl Action {
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",
             Action::OpenCorpusSearch => "OpenCorpusSearch",
+            Action::OpenJournalTermInput => "OpenJournalTermInput",
             Action::ShowEchoesBcp => "ShowEchoesBcp",
             Action::ReopenEchoesBcp => "ReopenEchoesBcp",
             Action::ShowEchoTurnsBcp => "ShowEchoTurnsBcp",
