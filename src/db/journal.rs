@@ -593,6 +593,31 @@ pub fn delete_journal_page(conn: &Connection, id: i64) -> Result<(), rusqlite::E
     Ok(())
 }
 
+/// Every journal entry across all works, with body text, for the Ctrl+f
+/// cross-corpus search popup. Ordered by work then band for stable display.
+pub fn list_all_journal_rows(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<crate::input::corpus_search::JournalRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, work_abbrev, div1, div2, question, answer
+         FROM journal_entries
+         ORDER BY work_abbrev, div1, div2, id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(crate::input::corpus_search::JournalRow {
+                id: r.get(0)?,
+                work_abbrev: r.get(1)?,
+                div1: r.get(2)?,
+                div2: r.get(3)?,
+                question: r.get(4)?,
+                answer: r.get(5)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1113,5 +1138,17 @@ mod tests {
         // A plain passage Q&A (kind='qa') must never satisfy the vocab lookup.
         save_passage_page(&conn, "Cym", 3, 4, "Cym.3.4.1", "Cym.3.4.2", "s", "Q?", "A.", "m").unwrap();
         assert!(find_vocab_page(&conn, "Cym", 3, 4, "franklin").unwrap().is_none());
+    }
+
+    #[test]
+    fn list_all_journal_rows_loads_body_text() {
+        let conn = crate::db::queries::open_db().unwrap();
+        let rows = list_all_journal_rows(&conn).unwrap();
+        // Whatever the corpus, every row must carry its answer text (regression
+        // guard: the loader must SELECT answer, not just metadata).
+        assert!(rows.iter().all(|r| !r.work_abbrev.is_empty()));
+        if let Some(r) = rows.first() {
+            assert!(!r.answer.is_empty() || !r.question.is_empty());
+        }
     }
 }

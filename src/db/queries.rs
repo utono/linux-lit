@@ -2232,6 +2232,34 @@ pub fn find_glossed_passages(
     rows.collect()
 }
 
+/// Every reader-gloss gloss across all works, with body text + citation +
+/// speaker, for the Ctrl+f cross-corpus search popup. Joins passages for the
+/// work/citation/speaker that the glosses row lacks.
+pub fn list_all_gloss_rows(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<crate::input::corpus_search::GlossRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT g.id, p.work_abbrev, COALESCE(p.start_citation, ''),
+                COALESCE(p.character, ''), g.gloss_text
+         FROM glosses g
+         JOIN passages p ON p.id = g.passage_id
+         WHERE g.gloss_type = 'reader-gloss'
+         ORDER BY p.work_abbrev, p.start_citation, g.id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(crate::input::corpus_search::GlossRow {
+                gloss_id: r.get(0)?,
+                work_abbrev: r.get(1)?,
+                start_citation: r.get(2)?,
+                speaker: r.get(3)?,
+                gloss_text: r.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn save_gloss(
     conn: &Connection,
     hash: &str,
@@ -3621,6 +3649,17 @@ mod passages_div1_div2_tests {
         assert_eq!(ps.len(), 1);
         assert_eq!(ps[0].act, 2);   // field name unchanged; value comes from div1 column
         assert_eq!(ps[0].scene, 2); // from div2 column
+    }
+
+    #[test]
+    fn list_all_gloss_rows_loads_gloss_text() {
+        let conn = open_db().unwrap();
+        let rows = list_all_gloss_rows(&conn).unwrap();
+        // Regression guard for the citation-only gap: gloss_text MUST be loaded.
+        if let Some(r) = rows.first() {
+            assert!(!r.gloss_text.is_empty());
+            assert!(!r.work_abbrev.is_empty());
+        }
     }
 
     /// Seed a minimal `works` table for the canonical-abbrev tests: Cymbeline
