@@ -943,6 +943,32 @@ pub fn canonical_work_abbrev(conn: &Connection, abbrev: &str) -> String {
     cur
 }
 
+/// The Arkangel edition's abbrev for `abbrev` if one exists, else `abbrev`
+/// unchanged. Every Shakespeare play has a `{base}-Arkangel` sibling `works`
+/// row (its own full-audio edition); works without one (non-Shakespeare, or an
+/// already-`-Arkangel` abbrev) fall back to the input. Used so surfaces that
+/// pick a work by its canonical/base abbrev can open the Arkangel edition —
+/// mirroring picking the "(Arkangel)" row directly in the Ctrl+\ library
+/// picker. Idempotent on a `-Arkangel` abbrev (no `…-Arkangel-Arkangel` row).
+pub fn preferred_arkangel_abbrev(conn: &Connection, abbrev: &str) -> String {
+    let candidate = format!("{abbrev}-Arkangel");
+    let exists = conn
+        .query_row(
+            "SELECT 1 FROM works WHERE abbrev = ?1",
+            [&candidate],
+            |_| Ok(()),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .is_some();
+    if exists {
+        candidate
+    } else {
+        abbrev.to_string()
+    }
+}
+
 /// The abbrev prefix of a full citation string `{abbrev}.{div1}.{div2}.{line}`
 /// (abbrevs contain no dots, so it's everything before the last three).
 fn citation_abbrev(citation: &str) -> Option<&str> {
@@ -3694,12 +3720,44 @@ mod passages_div1_div2_tests {
              INSERT INTO works VALUES
                 ('Cym', 'Shakespeare'),
                 ('Cym-Amb', 'Shakespeare'),
+                ('Cym-Arkangel', 'Shakespeare'),
                 ('Cym-BBC', 'Shakespeare'),
                 ('Mac', 'Shakespeare'),
                 ('Mac-Ep-1', 'Diarmaid MacCulloch'),
                 ('Aen-MW', 'Virgil (trans. McGill-Wright)');",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn preferred_arkangel_prefers_arkangel_when_it_exists() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        seed_works(&conn);
+        // A base with an Arkangel sibling -> the Arkangel edition.
+        assert_eq!(preferred_arkangel_abbrev(&conn, "Cym"), "Cym-Arkangel");
+    }
+
+    #[test]
+    fn preferred_arkangel_falls_back_to_base_without_arkangel() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        seed_works(&conn);
+        // Mac has no Mac-Arkangel row -> unchanged base.
+        assert_eq!(preferred_arkangel_abbrev(&conn, "Mac"), "Mac");
+        // Non-Shakespeare / unknown -> unchanged.
+        assert_eq!(preferred_arkangel_abbrev(&conn, "Aen-MW"), "Aen-MW");
+        assert_eq!(preferred_arkangel_abbrev(&conn, "Nope"), "Nope");
+    }
+
+    #[test]
+    fn preferred_arkangel_is_idempotent_on_an_arkangel_abbrev() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        seed_works(&conn);
+        // Already an Arkangel edition: appending again would seek the
+        // non-existent Cym-Arkangel-Arkangel, so it stays put.
+        assert_eq!(preferred_arkangel_abbrev(&conn, "Cym-Arkangel"), "Cym-Arkangel");
     }
 
     #[test]

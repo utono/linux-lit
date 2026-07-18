@@ -66,45 +66,56 @@ pub fn select(state: &Rc<RefCell<AppState>>) {
         (hit, s.corpus_search_popup.search_entry().text().to_string())
     };
 
-    // Close the popup and record the chosen corpus for the next open's default.
-    let current_canonical = {
+    // Close the popup and record the chosen corpus for the next open's default,
+    // capturing the currently-loaded work's ACTUAL abbrev (not just canonical):
+    // "always open the Arkangel edition" must still switch when the reader is on
+    // the same play's BASE (or another) edition.
+    let current_abbrev = {
         let mut s = state.borrow_mut();
         s.corpus_search_popup.hide();
         s.last_corpus = hit.corpus;
-        s.current_work.as_ref().map(|w| w.canonical_abbrev.clone())
+        s.current_work.as_ref().map(|w| w.abbrev.clone())
     };
 
-    // Corpus rows are stored under the canonical (variant-base) abbrev, so
-    // `hit.work_abbrev` is already canonical — compare it to the current work's
-    // canonical abbrev to decide whether a cross-work load is needed.
-    let same_work = current_canonical.as_deref() == Some(hit.work_abbrev.as_str());
-
-    if same_work {
-        open_hit(state, &hit, &pattern);
-        return;
-    }
-
-    // Cross-work: load the hit's work off the reader thread, then open the
-    // overlay on the entry (mirrors concordance.rs CROSS-WORK jump).
-    let abbrev = hit.work_abbrev.clone();
-    let abbrev_for_load = abbrev.clone();
+    // The reader loads the Arkangel edition (`{work}-Arkangel`) when one exists,
+    // like picking the "(Arkangel)" row in the Ctrl+\ library picker; falls back
+    // to the base when it doesn't. Resolved off the reader thread (needs the DB),
+    // so `same_work` can't be decided here — the async task compares the resolved
+    // target against `current_abbrev` and skips the reload when they match.
+    let base_abbrev = hit.work_abbrev.clone();
     let state_clone = Rc::clone(state);
     let handle = state.borrow().tokio_handle.clone();
     glib::spawn_future_local(async move {
+        let base_for_load = base_abbrev.clone();
+        let current_for_load = current_abbrev.clone();
         let result = handle
             .spawn_blocking(move || {
                 let conn =
                     crate::db::queries::open_db().expect(crate::db::queries::OPEN_DB_PANIC_MSG);
-                let work = crate::db::queries::load_work(&conn, &abbrev_for_load)?;
+                // Prefer the Arkangel edition; fall back to the base abbrev.
+                let target = crate::db::queries::preferred_arkangel_abbrev(&conn, &base_for_load);
+                // Already on the target edition -> skip the work load entirely.
+                if current_for_load.as_deref() == Some(target.as_str()) {
+                    return Ok::<_, rusqlite::Error>((target, None));
+                }
+                let work = crate::db::queries::load_work(&conn, &target)?;
                 let prepared = crate::app::text_prep::prepare_text_for_display(&work);
-                Ok::<_, rusqlite::Error>((work, prepared))
+                Ok::<_, rusqlite::Error>((target, Some((work, prepared))))
             })
             .await;
         match result {
-            Ok(Ok((work, prepared))) => {
+            Ok(Ok((_target, None))) => {
+                // Reader is already on the Arkangel target edition: just open the
+                // overlay, no reload (and don't disturb MPV).
+                open_hit(&state_clone, &hit, &pattern);
+            }
+            Ok(Ok((_target, Some((work, prepared))))) => {
                 {
                     let mut s = state_clone.borrow_mut();
-                    s.skip_mpv_discovery = true;
+                    // Let MPV discovery load the target edition's media (the
+                    // Arkangel `.m4b`) — matching the Ctrl+\ library-picker load,
+                    // which starts the selected edition's audio.
+                    s.skip_mpv_discovery = false;
                     crate::app::clear_display(&mut s);
                     // No cursor target: the reader is behind the overlay; the
                     // overlay's Escape restores the pre-jump reader position.
@@ -116,7 +127,7 @@ pub fn select(state: &Rc<RefCell<AppState>>) {
                 let s = state_clone.borrow();
                 crate::input::navigation::show_chapter_toast_secs(
                     &s,
-                    &format!("Could not load {}", abbrev),
+                    &format!("Could not load {}", base_abbrev),
                     3,
                 );
             }
