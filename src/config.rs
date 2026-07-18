@@ -249,8 +249,8 @@ pub const DEFAULT_THEME: &str = "kindle-sepia";
 fn default_theme_cycle() -> Vec<String> {
     [
         "zenbones-light",
-        "zenwritten-light",
         "papercolor-light",
+        "zenwritten-light",
         "sepia-lightest",
         "green-lightest",
         "sepia-light",
