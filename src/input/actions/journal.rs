@@ -569,11 +569,11 @@ pub(crate) fn render_current(s: &mut AppState) {
         return;
     }
 
-    // Every Q&A — including passage pages — renders as a plain Q&A. The passage
-    // source block is intentionally NOT shown: the highlighted source stays in
-    // lit.db (`source_text` + citations) for provenance, but a Q&A's rendering
-    // never reproduces the source. (Previously passage pages used a verse
-    // renderer that printed the source above the answer.)
+    // A passage Q&A (source_text present) shows its quoted source — speaker,
+    // verse, citation, ——— separator — as leading navigable paragraphs above
+    // the question. Built here and passed to show_page, which prepends them to
+    // all_paragraphs (page 0 only; apply_source_style styles them). Notes and
+    // source-less entries pass None (unchanged plain Q&A).
     let current_page = if count == 0 {
         None
     } else {
@@ -582,8 +582,33 @@ pub(crate) fn render_current(s: &mut AppState) {
     let (q, a, kind) = current_page
         .map(|p| (p.question.clone(), p.answer.clone(), p.kind.clone()))
         .unwrap_or_else(|| (String::new(), String::new(), "qa".to_string()));
-    s.journal_overlay
-        .show_page(&footer_left, s.journal.page_index, count, &q, &a, &kind, cw, h);
+
+    let source_para = current_page.and_then(|p| {
+        let src = p.source_text.as_deref().unwrap_or("").trim();
+        if src.is_empty() {
+            return None;
+        }
+        let title = s
+            .current_work
+            .as_ref()
+            .map(|w| w.title.clone())
+            .unwrap_or_default();
+        let citation =
+            format_source_citation(&title, p.start_citation.as_deref(), p.end_citation.as_deref());
+        Some(source_paragraphs(src, citation.as_deref()))
+    });
+
+    s.journal_overlay.show_page(
+        &footer_left,
+        s.journal.page_index,
+        count,
+        &q,
+        &a,
+        &kind,
+        source_para,
+        cw,
+        h,
+    );
 
     s.journal.pages = pages;
     // Color any paragraphs whose TTS MP3 is already cached, like the gloss
@@ -648,8 +673,10 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     );
     let (cw, h) = crate::app::layout::overlay_card_size(s);
     // Filtered view shows one entry at a time: page_index 0 of page_count 1.
+    // No source block here — the term-browse filtered view is a distinct render
+    // path from nav_page (kept scoped to the main viewer for now).
     s.journal_overlay
-        .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, cw, h);
+        .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, None, cw, h);
     // Re-apply the overlay search against the just-rendered entry. For an
     // `f`-filtered entry no search is seeded (opens clean); for a Ctrl+f
     // corpus-search hit `open_journal_hit` seeds the `/` pattern AFTER this, so

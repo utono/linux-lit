@@ -361,7 +361,7 @@ fn render_journal_position(state: &Rc<RefCell<AppState>>, pos: usize) {
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
 
     s.journal_overlay
-        .show_page("", page_index, count, &question, &answer, "qa", cw, h);
+        .show_page("", page_index, count, &question, &answer, "qa", None, cw, h);
 
     if let Some(prev) = prev_answer {
         let base = journal_answer_prefix_chars(&question);
