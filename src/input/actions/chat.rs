@@ -1244,17 +1244,23 @@ fn reload_journal_list(
         .unwrap_or_default()
 }
 
-/// Render the `Journal` view at the current `s.chat.journal_list` — plain
-/// `render_rows` (no row-cursor accent bar, no visual-selection painting):
-/// the journal view is a deliberately flat, uncycled list (see
+/// Render the `Journal` view at the current `s.chat.journal_list` via
+/// `render_rows_to_top` (no row-cursor accent bar, no visual-selection
+/// painting): the journal view is a deliberately flat, uncycled list (see
 /// `toggle_panel_view`'s doc comment), so it does not participate in the
 /// `row_cursor`/`row_owner` machinery `render_transcript` drives for the
 /// Gloss view's `j`/`k`/`V`/`y`. `j`/`k` while this view is showing instead
 /// fall back to plain viewport scrolling (see `handle_chat_transcript_key`'s
-/// `t`/`j`/`k` arms in keymap.rs).
+/// `t`/`j`/`k` arms in keymap.rs). Scrolls to the TOP of the entry rather than
+/// pinning to the end the way `render_rows` does — every toggle to this view
+/// lands on the first `Q:` row, not scrolled past it.
 fn render_journal_view(s: &AppState) {
     let rows = journal_view_rows(&s.chat.journal_list);
-    s.chat_panel.render_rows(&rows);
+    // Land on the TOP of the entry (the first `Q:` row), not the bottom:
+    // `render_rows` pins the viewport to its end (newest-last transcript
+    // behavior), which left a long journal answer scrolled past its own top on
+    // every toggle to this view. `render_rows_to_top` scrolls to 0 instead.
+    s.chat_panel.render_rows_to_top(&rows);
 }
 
 /// `t` on the transcript: toggle the panel between showing the pinned

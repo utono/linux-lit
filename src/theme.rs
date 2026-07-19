@@ -1372,7 +1372,8 @@ pub fn generate_css(
             every row (spacing 10). It is padding now: the Box went to spacing \
             0 so SOURCE lines could sit at the main card's pure line-height, \
             and these rows would otherwise jam together. */ \
-         .chat-q {{ color: alpha({chat_ink}, 0.70); padding-top: 10px; }} \
+         .chat-q {{ color: {chat_ink}; padding-top: 10px; \
+           padding-left: {q_body}px; }} \
          .chat-a {{ color: {chat_ink}; padding-top: 10px; \
            padding-left: {q_body}px; }} \
          .chat-chip {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
@@ -1433,7 +1434,7 @@ pub fn generate_css(
            padding-left: {q_speaker}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
          .chat-a-gloss {{ color: {chat_ink}; padding-top: 18px; padding-left: {q_body}px; }} \
-         .chat-panel-float .chat-q {{ color: {dim}; }} \
+         .chat-panel-float .chat-q {{ color: {fg}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \
            border-left: 2px solid alpha({fg}, 0.35); }} \
