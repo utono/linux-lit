@@ -69,47 +69,88 @@ linux-lit source — the design rests on these, not assumptions:
   recognizes on passage pages).
 - **Paging:** the source block + citation appears on the entry's **first page
   only**. Continued-answer pages (Ctrl+n within a long Q&A) do **not** repeat
-  the source. First page = `page_index`'s first rendered page for the entry;
-  concretely, the source is prepended only when rendering the first buffer page
-  of the current entry.
+  the source. First page = `page_idx == 0` for the current entry.
+- **Styled:** the source renders with the mockup's styling — small-caps speaker
+  label + hang-indented verse + dim right-aligned citation.
+- **Stoppable:** the source lines are **navigable** — `j`/`k` stop on them and
+  read-aloud voices them, i.e. they are real Q&A blocks, not chrome.
+
+## Seam decision (finalized after code analysis)
+
+A `code-searcher` analysis established that `render_page`'s buffer is a plain
+`set_text(body)` where `body = paras[page_start..page_end].join("\n\n")`, and
+every downstream concern (blocks, `<hi>` highlight, overlay search, rewrite
+diff, cursor projection, `page_char_span`) is anchored to that plain body at
+buffer offset 0. Writing tagged content via `populate_verse_buffer` (which does
+its own `set_text("")` and owns the buffer) cannot coexist with that model, and
+threading a page-0 char/line offset through 5 functions is high-risk.
+
+**Chosen approach — source lines are REAL leading paragraphs, styled after
+`set_text`:**
+
+1. At the render call site (`journal.rs` `nav_page`, ~508–517), when
+   `page.source_text` is non-empty, build source paragraphs (speaker line,
+   verse line(s), citation line, `———`) and pass them to `show_page` as a new
+   `source_para: Option<Vec<String>>` argument.
+2. `show_page` prepends those paragraphs to `all_paragraphs` **before** the
+   question/answer paragraphs (only for the render — they are real entries in
+   the paragraph list). Because they are ordinary paragraphs, blocks, cursor,
+   char-span, search, and diff all keep working with **zero offset math** — the
+   analysis's main risk is avoided.
+3. Styling is a **post-`set_text` tag pass** (`apply_source_style`), gated to
+   `page_idx == 0`, mirroring the existing `apply_hi_color` pattern
+   (`journal_overlay.rs:1181`): it looks up/creates small-caps-speaker,
+   hang-verse, and dim-citation tags and applies them by line range over the
+   source paragraphs shown at the top of the buffer. Continued pages
+   (`page_idx > 0`) never include the source paragraphs, so nothing to style.
+4. Stoppability is automatic: the source paragraphs are real blocks, so `j`/`k`
+   and read-aloud include them, as decided.
+
+**Consequence noted:** prepending source paragraphs shifts the block index of
+the question/answer paragraphs for that entry, which shifts `journal_audio`
+cache keys `(entry_id, block_index)` for already-cached answers. This is a
+one-time stale-miss (re-render/re-synthesis on next play), **not** corruption.
+Acceptable.
 
 ## Architecture
 
 One rendering change, isolated to the passage-Q&A branch of the journal
-overlay's page render.
+overlay's page render, plus two pure helpers and one after-`set_text` tag pass.
 
 ### Components
 
 **1. Citation formatting (pure helper).**
-A small pure function — `format_source_citation(title, start_citation,
-end_citation) -> Option<String>` — producing `— Cymbeline, 1.1.1–3`, the single-
-locator collapse, and `None` when start_citation is absent. Lives beside the
-existing citation helpers in `src/input/actions/journal.rs` (near
-`band_label_for_page` at ~line 337–360, which already parses citations).
-Unit-testable in isolation.
+`format_source_citation(title, start_citation, end_citation) -> Option<String>`
+— produces `— Cymbeline, 1.1.1–3`, the single-locator collapse
+(`— Cymbeline, 1.1.1`), and `None` when `start_citation` is absent/unparseable.
+Lives beside the existing citation helpers in `src/input/actions/journal.rs`.
+Uses `crate::app::parse_citation` for `(div1,div2,line)`. Pure, unit-testable.
 
-**2. Source-block assembly.**
-Build the source document string the overlay renders: the page's `source_text`
-markup, plus a trailing citation line, plus the `———` separator, positioned
-above the Q&A. Two candidate seams (chosen in the plan):
+**2. Source-paragraph assembly (pure helper).**
+`source_paragraphs(source_text, citation) -> Vec<String>` — parses the
+`<speaker>/<verse>` markup into paragraph strings the overlay will style:
+one speaker paragraph (plain text, styled later), the verse line(s) as
+paragraph(s), the citation line, and a `———` separator paragraph. Reuses the
+existing markup parse (`gloss_render::parse_gloss_tags` or the local
+`first_plain_source_line` sibling) to strip tags to plain text. Pure,
+unit-testable.
 
-- **(a) Overlay-side (preferred):** extend `journal_overlay::show_page` with an
-  optional `source_doc: Option<&str>` argument. When `Some`, the overlay renders
-  it through `populate_gloss_buffer` (speaker/verse), appends the citation +
-  `———`, then renders the Q&A blocks below — reusing the exact machinery
-  `show_passage_source` already uses. This keeps buffer/paragraph/block bookkeeping
-  in the overlay, where `show_passage_source` and `show_page` both live, and
-  keeps the navigable Q&A blocks intact (unlike the transient card, which clears
-  blocks).
-- **(b) Caller-side string prepend:** `journal.rs` prepends a pre-rendered source
-  string to the question before calling `show_page`. Simpler call site but loses
-  the speaker/verse *rendering* (small-caps, hang-indent) that only
-  `populate_gloss_buffer` applies to live markup — so (a) is preferred.
+**3. `show_page` extension + source styling (overlay).**
+`journal_overlay::show_page` gains a `source_para: Option<Vec<String>>` argument.
+When `Some`, it prepends those paragraphs to `all_paragraphs` ahead of the Q&A
+paragraphs (so they are real navigable blocks), records how many source
+paragraphs precede the Q&A, and — after `render_page`'s `set_text` on page 0 —
+runs `apply_source_style`: a tag pass mirroring `apply_hi_color`
+(`journal_overlay.rs:1181`) that applies small-caps to the speaker paragraph,
+hang-indent to the verse paragraph(s), and a dim right-aligned tag to the
+citation, by line range within the shown buffer. Gated to `page_idx == 0`
+(continued pages don't carry the source paragraphs).
 
-**3. Render dispatch.**
+**4. Render dispatch (`journal.rs`).**
 Replace the `journal.rs:503–517` "plain Q&A only" branch: when
-`page.source_text` is non-empty **and** this is the entry's first page, pass the
-assembled source doc to `show_page`; otherwise pass `None` (unchanged behavior).
+`page.source_text` is non-empty, build `source_para` via the two helpers (title
+from `s.current_work`) and pass `Some(source_para)`; otherwise pass `None`
+(unchanged behavior for notes and source-less entries).
 
 ### Data flow
 
@@ -118,10 +159,13 @@ nav_page (journal.rs)
   └─ page = pages[page_index]              // JournalPage, already loaded
      ├─ if pending_passage matches band → show_passage_source   (unchanged)
      └─ else:
-         source_doc = (page.source_text non-empty && first page of entry)
-             ? Some(assemble(source_text, format_source_citation(title, start, end)))
+         source_para = page.source_text.non_empty()
+             ? Some(source_paragraphs(source_text,
+                      format_source_citation(current_work.title, start, end)))
              : None
-         show_page(..., q, a, kind, source_doc, cw, h)          // extended
+         show_page(..., q, a, kind, source_para, cw, h)         // extended
+             → all_paragraphs = [ ...source_para, Q, A... ]      (page 0)
+             → render_page set_text(body); apply_source_style() when page_idx==0
 ```
 
 ### What does NOT change
