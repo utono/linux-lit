@@ -216,6 +216,9 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     // leaves the tag applied outside visual mode).
     crate::input::visual::clear_selection_highlight(s);
     s.chat = Default::default();
+    // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
+    // for a rewrite (mirrors journal::close_prompt).
+    s.journal.vim_rewrite = None;
     s.chat_panel.render_rows(&[]);
     s.chat_layout_open = false;
     s.chat_placement = ChatPlacement::Pinned;
@@ -252,6 +255,9 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
         return;
     }
     s.chat = Default::default();
+    // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
+    // for a rewrite (mirrors journal::close_prompt).
+    s.journal.vim_rewrite = None;
     s.chat_panel.render_rows(&[]);
     s.chat_panel.size_to_natural();
     s.chat_regate_pending = true;
