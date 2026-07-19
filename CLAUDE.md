@@ -27,6 +27,23 @@ Mark completed items with a leading `[X]`; never delete them.
   check which file has fresh timestamps before trusting a tail.
 - Cleared on every launch. Add lines with `log_fmt!()` (`src/logging.rs`).
 - **When fixing bugs, read the log first.**
+- **Read the log yourself with `rg` whenever you can** — the debug logs live in
+  the repo dir and are readable from the agent's own shell, so run the `rg`
+  command against them directly rather than asking the user to paste log output.
+  Only ask the user to run it when the file genuinely isn't reachable (wrong
+  slot/worktree) or the user must reproduce a live-only state first. NOTE: an
+  ad-hoc `LIT_DEV=1 ./target/debug/linux-lit` run can still land on a
+  release/`-{n}` slot — search ALL `*.log` in the repo dir by mtime
+  (`rg -l PATTERN *.log`) instead of assuming `linux-lit-dev.log`.
+- **Verify on-screen edges/margins by PIXEL-MEASURING the screenshot, never by
+  eye.** A 24px margin at 1920px scaled into a chat reply is easy to misread as
+  "flush." Sample the actual cream/teal boundary (e.g. a short Python/PIL scan
+  of a row) before concluding a layout is wrong — and trust the logged
+  allocation numbers over a visual impression.
+- **Cage (software rendering) can disagree with the real GL renderer on layout.**
+  A margin/sizing fix that "passes" headless in cage is NOT confirmed — verify
+  the final result on the user's real renderer (or by pixel-measuring their
+  screenshot) before claiming a layout bug is fixed.
 - GLib/GTK criticals go to **stderr**, not the app log — capture with
   `cargo run 2>&1 | tee linux-lit-dev-stderr.log`; investigate with the
   `check-stderr-log` skill.
