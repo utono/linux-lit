@@ -39,6 +39,13 @@ pub struct ChatPanel {
     pub container: gtk4::Box,
     transcript_box: gtk4::Box,
     transcript_scroll: gtk4::ScrolledWindow,
+    /// Bottom-edge clip: an invisible card-colored Box overlaid on the scroll
+    /// area that masks the partial last row straddling the viewport bottom.
+    /// The transcript is a Box of whole-widget Labels, so `attach_box` (the
+    /// box-slack variant) clips cleanly at label boundaries — a wrapping Label
+    /// is allocated as ONE whole widget, never bisected at the edge like a
+    /// wrapping TextView. See docs/troubleshooting/clip-prevention.md.
+    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     input: crate::ui::ask_card::AskCard,
 }
 
@@ -83,15 +90,38 @@ impl ChatPanel {
         // is awkward to type multi-line questions into.
         input.set_input_height(420);
 
-        container.append(&transcript_scroll);
+        // Wrap the scroll in an Overlay so the bottom-clip Box can be an
+        // add_overlay sibling painted on top of the trailing partial row.
+        // attach_box builds the clip Box, tags it .gloss-bottom-clip, and wires
+        // the value_changed/page_size recompute — the same machinery the gloss
+        // and journal overlays use. The panel's own top row-snap
+        // (render_rows_focused_cursor) handles the TOP edge; the guard the
+        // BOTTOM edge.
+        let scroll_overlay = gtk4::Overlay::new();
+        scroll_overlay.set_child(Some(&transcript_scroll));
+        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach_box(
+            &scroll_overlay,
+            &transcript_scroll,
+        );
+
+        container.append(&scroll_overlay);
         container.append(input.container());
 
         Self {
             container,
             transcript_box,
             transcript_scroll,
+            clip_guard,
             input,
         }
+    }
+
+    /// Snap the transcript to the top and (re)compute the bottom clip across the
+    /// open's layout passes — call whenever the panel becomes visible / is
+    /// (re)rendered on open. Delegates to the shared BottomClipGuard, mirroring
+    /// the gloss/journal overlays' `reset_scroll_top`.
+    pub fn on_open(&self) {
+        self.clip_guard.on_open();
     }
 
     pub fn size_to(&self, w: i32, h: i32) {
@@ -139,6 +169,12 @@ impl ChatPanel {
 
     pub fn show(&self) {
         self.container.set_visible(true);
+        // Settle the bottom clip across the reveal's layout passes (path a).
+        // A cursor-positioned render runs after show() and moves the scroll via
+        // set_value, which the guard's value_changed catch-all picks up — so the
+        // snap-to-top in on_open is harmlessly overridden by that scroll; what we
+        // need here is the clip recompute once the viewport range settles.
+        self.clip_guard.on_open();
     }
 
     pub fn hide(&self) {
@@ -212,16 +248,21 @@ impl ChatPanel {
         let boxx = self.transcript_box.clone();
         let scroll = self.transcript_scroll.clone();
         glib::idle_add_local_once(move || {
+            // Pass 1: apply cursor/selection classes and collect each row's
+            // (y, height) in transcript-box coords + the cursor row's bounds.
             let mut child = boxx.first_child();
             let mut i = 0usize;
+            let mut row_tops: Vec<f64> = Vec::new();
+            let mut cursor_bounds: Option<(f64, f64)> = None;
             while let Some(c) = child {
+                if let Some(b) = c.compute_bounds(&boxx) {
+                    row_tops.push(b.y() as f64);
+                    if i == cursor {
+                        cursor_bounds = Some((b.y() as f64, b.height() as f64));
+                    }
+                }
                 if i == cursor {
                     c.add_css_class("chat-cursor-row");
-                    if let Some(b) = c.compute_bounds(&boxx) {
-                        let adj = scroll.vadjustment();
-                        let max = (adj.upper() - adj.page_size()).max(0.0);
-                        adj.set_value((b.y() as f64).clamp(0.0, max));
-                    }
                 } else {
                     c.remove_css_class("chat-cursor-row");
                 }
@@ -232,6 +273,51 @@ impl ChatPanel {
                 }
                 child = c.next_sibling();
                 i += 1;
+            }
+
+            // Pass 2: scroll the cursor row INTO VIEW only when it is off the
+            // visible viewport (a bar step within the page must not move the
+            // viewport), snapping the viewport top to a WHOLE-row boundary so the
+            // topmost visible row is never a sliver — while keeping the cursor
+            // row fully visible.
+            if let Some((ry, rh)) = cursor_bounds {
+                let adj = scroll.vadjustment();
+                let page = adj.page_size();
+                let max = (adj.upper() - page).max(0.0);
+                let top = adj.value();
+                let bottom = top + page;
+
+                // Largest row-top <= v (snap the top DOWN to a row boundary).
+                let snap_down = |v: f64| {
+                    row_tops
+                        .iter()
+                        .copied()
+                        .filter(|&t| t <= v + 0.5)
+                        .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.max(t))))
+                        .unwrap_or(v)
+                };
+
+                let new = if ry < top {
+                    // Cursor above the viewport: snap its OWN top to the edge.
+                    snap_down(ry)
+                } else if ry + rh > bottom {
+                    // Cursor below the viewport: the top must be a whole row AND
+                    // low enough that the cursor's bottom fits. Snapping the raw
+                    // target (ry+rh-page) DOWN scrolls up and re-hides the cursor
+                    // bottom (the bottom-clip bug), so instead take the SMALLEST
+                    // row-top that still keeps the cursor bottom visible
+                    // (t + page >= ry + rh) — a whole top row, cursor fully shown.
+                    row_tops
+                        .iter()
+                        .copied()
+                        .filter(|&t| t + page + 0.5 >= ry + rh && t <= ry + 0.5)
+                        .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.min(t))))
+                        .unwrap_or_else(|| snap_down(ry + rh - page))
+                } else {
+                    // Fully visible: don't move the viewport.
+                    top
+                };
+                adj.set_value(new.clamp(0.0, max));
             }
         });
     }
@@ -351,6 +437,25 @@ impl ChatPanel {
         self.transcript_box.append(&label);
     }
 
+    /// Like `append_row_label`, but adds `extra` as a second CSS class on the
+    /// row. Used to tag the block-leading source row (`chat-a-src-lead`) so it
+    /// gets the extra top gap separating it from the preceding gloss.
+    fn append_row_label_extra(&self, text: &str, class: &str, extra: &str) {
+        let label = gtk4::Label::new(Some(text));
+        label.set_wrap(true);
+        label.set_wrap_mode(if class == "chat-a-speaker" {
+            gtk4::pango::WrapMode::Word
+        } else {
+            gtk4::pango::WrapMode::WordChar
+        });
+        label.set_halign(gtk4::Align::Start);
+        label.set_xalign(0.0);
+        label.set_selectable(false);
+        label.add_css_class(class);
+        label.add_css_class(extra);
+        self.transcript_box.append(&label);
+    }
+
     /// Render a reader-gloss's raw `<speaker>`/`<verse>`/`<gloss>` markup as
     /// several typed labels (`gloss_render::chat_gloss_rows`) instead of one
     /// plain label, so the quoted source (speaker/verse/stage) reads visually
@@ -377,7 +482,14 @@ impl ChatPanel {
             return;
         }
         let has_speaker = rows.iter().any(|(k, _)| *k == ChatGlossRowKind::Speaker);
+        // Tag the FIRST source row that follows a gloss with `chat-a-src-lead`
+        // so it gets the extra top gap separating this block's source from the
+        // preceding block's gloss commentary. `prev_was_gloss` starts false so
+        // the very first source row (no preceding gloss) gets no extra gap —
+        // the panel's own top breathing room already spaces it.
+        let mut prev_was_gloss = false;
         for (kind, text) in rows {
+            let is_source = kind != ChatGlossRowKind::Gloss;
             let class = match kind {
                 ChatGlossRowKind::Speaker => "chat-a-speaker",
                 ChatGlossRowKind::Verse if has_speaker => "chat-a-verse",
@@ -386,7 +498,12 @@ impl ChatPanel {
                 ChatGlossRowKind::Stage => "chat-a-stage-flush",
                 ChatGlossRowKind::Gloss => "chat-a-gloss",
             };
-            self.append_row_label(&text, class);
+            if is_source && prev_was_gloss {
+                self.append_row_label_extra(&text, class, "chat-a-src-lead");
+            } else {
+                self.append_row_label(&text, class);
+            }
+            prev_was_gloss = kind == ChatGlossRowKind::Gloss;
         }
     }
 

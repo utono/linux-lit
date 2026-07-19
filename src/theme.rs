@@ -1321,6 +1321,12 @@ pub fn generate_css(
             this zero — keep the two in sync (it also assumes .chat-transcript's \
             zero padding-top below). */ \
          .chat-panel {{ background-color: {bg}; padding: 0 12px 12px 12px; }} \
+         /* The chat panel's bottom-clip Box (built by BottomClipGuard::attach_box, \
+            tagged .gloss-bottom-clip like every guard clip) must paint the PANEL \
+            background, not the gloss overlay's. Ancestor-scoped so it overrides \
+            the bare .gloss-bottom-clip rule for the clip box nested under \
+            .chat-panel, without a shared-code change. */ \
+         .chat-panel .gloss-bottom-clip {{ background-color: {bg}; }} \
          /* Pinned placement: the panel abuts the card's right edge, separated \
             only by a 1px hairline seam (its border-left, painting over the 1px \
             gap size_panel leaves). Rounded on the RIGHT (outer) corners only — \
@@ -1364,16 +1370,17 @@ pub fn generate_css(
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
            transition: background-color 320ms ease-out; }} \
-         /* Pinned panel: its top edge aligns with the reading card's top edge \
-            (size_panel's Pinned branch), so the transcript would otherwise jam \
-            against it. Breathing room goes on the SCROLL VIEWPORT (not the \
-            inner .chat-transcript content Box) so the gap is FIXED at the top \
-            of the viewport and persists as j/k scrolls the content — padding on \
-            the content box only spaces the very first line and scrolls away \
-            with it. Scoped to `.chat-panel-pinned` so FLOAT keeps its \
-            first-line alignment (`chat_first_line_top_margin` assumes no top \
-            gap here). */ \
-         .chat-panel-pinned .chat-transcript-scroll {{ padding-top: 40px; }} \
+         /* Pinned panel breathing room: a top MARGIN on the scroll viewport, \
+            NOT padding. The scroll node clips its content at its own top edge; \
+            padding is INSIDE that clip box, so scrolled content renders under \
+            it and the top line shows severed (the clipping bug). Margin sits \
+            OUTSIDE the clip box, so the viewport starts BELOW the gap: content \
+            scrolls cleanly under a clip edge that is now at the gap boundary, \
+            and the cursor-scroll (`render_rows_focused_cursor` sets vadjustment \
+            to the cursor row's box-y) lands the cursor row flush at that edge — \
+            a whole line just below the gap, never bisected. Float keeps 0 (it \
+            first-line-aligns via `chat_first_line_top_margin`). */ \
+         .chat-panel-pinned .chat-transcript-scroll {{ margin-top: 40px; }} \
          .chat-transcript-scroll.chat-flash-wash {{ \
            background-color: alpha({chat_ink}, 0.10); transition: none; }} \
          .chat-panel-float .chat-transcript-scroll.chat-flash-wash {{ \
@@ -1415,6 +1422,15 @@ pub fn generate_css(
          .chat-a-speaker {{ color: {chat_ink}; font-weight: normal; \
            font-variant: small-caps; font-size: 0.75em; \
            padding-top: 14px; padding-left: {q_speaker}px; }} \
+         /* The FIRST source row of a gloss block (tagged chat-a-src-lead by \
+            append_gloss_answer) carries the gap separating this block source \
+            from the PRECEDING block gloss commentary. GTK CSS has no sibling \
+            selector for source-after-gloss, so the row builder tags the block \
+            leading source line and this rule adds the gap — only ONCE per \
+            block, not per source line (multi-line prose source would otherwise \
+            get 18px between every line). Matched to the gloss 18px top so the \
+            rhythm reads evenly. */ \
+         .chat-a-src-lead {{ padding-top: 30px; }} \
          .chat-transcript label.chat-a-speaker {{ padding-bottom: 0px; }} \
          /* Fix 3: the main card never italicizes dialogue/verse — \
             formatting.rs's Style::Italic appears ONLY on stage directions \
