@@ -181,6 +181,16 @@ pub(crate) struct ChatState {
     /// `cursor` (exchanges); never shared. Clamped to `journal_list` on every
     /// render.
     pub journal_cursor: usize,
+    /// Widget index -> journal entry index for `PanelView::Journal`, the exact
+    /// analogue of the Gloss view's `build_transcript_rows` `row_owner`. Each
+    /// entry now emits several widgets (a `Q:` row plus one `Answer` row per
+    /// answer paragraph — see `journal_view_rows`/`split_answer_paragraphs`), so
+    /// the accent bar steps `row_cursor` over the journal `landable_mask` and
+    /// `journal_cursor` (the ENTRY that `R`/save act on) is derived as
+    /// `journal_row_owner[row_cursor]`. Rebuilt on every `render_journal_view`;
+    /// empty when the list renders only the "no entries" placeholder (nothing
+    /// landable). Resets with the rest of `ChatState` on panel close.
+    pub journal_row_owner: Vec<usize>,
     /// Set by `rewrite_journal_entry` while a panel-initiated `R` rewrite is in
     /// flight through the shared journal rewrite pipeline (which otherwise
     /// returns to the journal OVERLAY). The overlay-render / mode-restore sites
@@ -1229,25 +1239,54 @@ fn flip_view(v: PanelView) -> PanelView {
     }
 }
 
+/// Split a saved answer into paragraph chunks (blank-line separated), each a
+/// separate row so the panel cursor can traverse them. Never returns empty (an
+/// empty answer yields one empty chunk so the entry still has an answer row).
+fn split_answer_paragraphs(answer: &str) -> Vec<String> {
+    let parts: Vec<String> = answer
+        .split("\n\n")
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() { vec![String::new()] } else { parts }
+}
+
 /// Build the `Journal` view's transcript rows from a passage's saved journal
-/// pages: each entry as a `Q:` row + a plain-prose `Answer` row (never
-/// `GlossAnswer` — journal answers are prose, not `<speaker>`/`<verse>`
-/// markup, even for entries saved from a gloss's follow-up question). An
-/// empty list renders one `Answer` placeholder row rather than nothing, so a
+/// pages: each entry as a `Q:` row + one plain-prose `Answer` row per
+/// paragraph of the answer (split on blank lines by `split_answer_paragraphs`,
+/// never `GlossAnswer` — journal answers are prose, not `<speaker>`/`<verse>`
+/// markup, even for entries saved from a gloss's follow-up question). Returns
+/// the rows AND a parallel `row_owner` (widget index -> journal entry index),
+/// mirroring the Gloss view's `build_transcript_rows`, so the accent bar can
+/// traverse every emitted widget (Q and each answer paragraph) while `R`/save
+/// still resolve the owning ENTRY. An empty list renders one `Answer`
+/// placeholder row (with an empty `row_owner`, i.e. nothing landable) rather
+/// than nothing, so a
 /// passage with no journal history reads as "checked, none found" instead of
 /// looking like a rendering bug. Pure (no `AppState`) so the row shape is
 /// unit-testable without a DB or GTK.
-fn journal_view_rows(pages: &[crate::db::journal::JournalPage]) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+fn journal_view_rows(
+    pages: &[crate::db::journal::JournalPage],
+) -> (Vec<crate::ui::chat_panel::TranscriptRow>, Vec<usize>) {
     use crate::ui::chat_panel::TranscriptRow as R;
     if pages.is_empty() {
-        return vec![R::Answer("No journal entries for this passage".to_string())];
+        // Placeholder-only render: one non-landable Answer row, no owner.
+        return (
+            vec![R::Answer("No journal entries for this passage".to_string())],
+            Vec::new(),
+        );
     }
     let mut rows = Vec::with_capacity(pages.len() * 2);
-    for p in pages {
+    let mut row_owner: Vec<usize> = Vec::new();
+    for (entry, p) in pages.iter().enumerate() {
         rows.push(question_row(&p.question));
-        rows.push(R::Answer(p.answer.clone()));
+        row_owner.push(entry);
+        for para in split_answer_paragraphs(&p.answer) {
+            rows.push(R::Answer(para));
+            row_owner.push(entry);
+        }
     }
-    rows
+    (rows, row_owner)
 }
 
 /// Load the pinned passage's saved journal entries (`scope='passage'`, exact
@@ -1267,12 +1306,16 @@ fn reload_journal_list(
         .unwrap_or_default()
 }
 
-/// The `Q:` widget-row index for `journal_list` entry `entry`. Each entry
-/// renders as exactly two widget rows (a `Q:` row then an `Answer` row — see
-/// `journal_view_rows`), so entry `i` owns rows `2*i` (question) and `2*i + 1`
-/// (answer). The row cursor (and `R`'s target) anchors on the `Q:` row.
-fn journal_entry_qrow(entry: usize) -> usize {
-    entry * 2
+/// The first widget-row index owned by `journal_list` entry `entry`, i.e. its
+/// `Q:` row, found in the parallel `row_owner` map `journal_view_rows` builds.
+/// Each entry now emits a `Q:` row plus one `Answer` row per answer paragraph
+/// (see `journal_view_rows`/`split_answer_paragraphs`), so entry width varies
+/// and the old `entry*2` no longer holds — the accent bar anchors on this
+/// row. Falls back to `0` when the entry isn't in `row_owner` (empty list /
+/// stale cursor); the caller clamps `journal_cursor` first, so this is
+/// defensive.
+fn journal_entry_first_row(row_owner: &[usize], entry: usize) -> usize {
+    row_owner.iter().position(|&e| e == entry).unwrap_or(0)
 }
 
 /// Clamp a Journal-view row cursor to a list of `len` entries: `[0, len-1]`, or
@@ -1296,28 +1339,52 @@ fn step_journal_cursor(cursor: usize, delta: i32, len: usize) -> usize {
     next as usize
 }
 
-/// Render the `Journal` view at the current `s.chat.journal_list` — plain
-/// `render_rows` (no row-cursor accent bar, no visual-selection painting):
-/// the journal view is a deliberately flat, uncycled list (see
-/// `toggle_panel_view`'s doc comment), so it does not participate in the
-/// `row_cursor`/`row_owner` machinery `render_transcript` drives for the
-/// Gloss view's `j`/`k`/`V`/`y`. `j`/`k` while this view is showing instead
-/// fall back to plain viewport scrolling (see `handle_chat_transcript_key`'s
-/// `t`/`j`/`k` arms in keymap.rs).
-fn render_journal_view(s: &mut AppState) {
-    let rows = journal_view_rows(&s.chat.journal_list);
+/// Render the `Journal` view at the current `s.chat.journal_list`. Each entry
+/// now emits a `Q:` row plus one `Answer` row per answer paragraph (see
+/// `journal_view_rows`/`split_answer_paragraphs`), so the view participates in
+/// the SAME `row_cursor`/`landable_mask`/`row_owner` machinery the Gloss view
+/// uses: the accent bar paints on `row_cursor` (a widget index) and `j`/`k`
+/// traverse the answer paragraphs. `journal_cursor` (the ENTRY selected, what
+/// `R`/save act on) is derived from `row_owner[row_cursor]` after each move.
+/// The parallel `journal_row_owner` is rebuilt here and stashed on `ChatState`
+/// so the nav functions can map back to the entry without re-deriving rows.
+///
+/// `snap_to_entry`: when `true`, `row_cursor` is snapped to the FIRST widget
+/// row of the selected `journal_cursor` ENTRY — the entry-granularity entry
+/// points (toggle into Journal, `gg`/`G`, rewrite-return) set `journal_cursor`
+/// directly and need the accent bar to follow. `j`/`k` pass `false`: they
+/// already set `row_cursor` to the precise answer-paragraph row and derived
+/// `journal_cursor` from it, so re-snapping would strand the bar on the `Q:`
+/// row.
+fn render_journal_view_inner(s: &mut AppState, snap_to_entry: bool) {
+    let (rows, row_owner) = journal_view_rows(&s.chat.journal_list);
     let len = s.chat.journal_list.len();
     s.chat.journal_cursor = clamp_journal_cursor(s.chat.journal_cursor, len);
+    if snap_to_entry {
+        s.chat.row_cursor = journal_entry_first_row(&row_owner, s.chat.journal_cursor);
+    }
+    s.chat.journal_row_owner = row_owner;
     if len == 0 {
         // Placeholder-only list: no landable row, scroll to top, no accent bar.
         s.chat_panel.render_rows_to_top(&rows);
         return;
     }
-    // Land the accent bar on the cursor entry's `Q:` widget row;
-    // `render_rows_focused_cursor` scrolls that row to the top. No visual
-    // selection in Journal view.
-    let qrow = journal_entry_qrow(s.chat.journal_cursor);
-    s.chat_panel.render_rows_focused_cursor(&rows, qrow, None);
+    // Clamp the widget-space `row_cursor` into range, then land the accent bar
+    // on it; `render_rows_focused_cursor` scrolls that row to the top. No
+    // visual selection in Journal view.
+    let n = rows.len();
+    if s.chat.row_cursor >= n {
+        s.chat.row_cursor = n.saturating_sub(1);
+    }
+    let cursor_row = s.chat.row_cursor;
+    s.chat_panel.render_rows_focused_cursor(&rows, cursor_row, None);
+}
+
+/// Entry-granularity render: snap the accent bar to the selected entry's `Q:`
+/// row. The default for every caller EXCEPT `j`/`k` (which uses
+/// `render_journal_view_inner(s, false)`).
+fn render_journal_view(s: &mut AppState) {
+    render_journal_view_inner(s, true);
 }
 
 /// `R` in the chat panel's Journal view: rewrite the SELECTED saved Q&A by
@@ -1801,12 +1868,13 @@ pub(crate) fn transcript_half_page(s: &mut AppState, down: bool) {
 }
 
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
-    // Journal has its own row cursor (`journal_cursor`, entry-granularity —
-    // see `step_journal_cursor`/`render_journal_view`), stepped and clamped
-    // independently of the Gloss view's `row_cursor`/`row_owner` below (which
-    // reads `transcript_rows`, the Gloss-view's `exchanges` — content that
-    // isn't even on screen in Journal). An empty `journal_list` has no entry
-    // to land on, so it falls back to plain scrolling like Question.
+    // Journal now uses the SAME widget-space `row_cursor` + `landable_mask`
+    // machinery as the Gloss branch below, but over its own row source
+    // (`journal_view_rows`, not `transcript_rows`) and its own owner map
+    // (`journal_row_owner`, widget -> ENTRY). `j`/`k` step `row_cursor` across
+    // the answer paragraphs and derive `journal_cursor` (the ENTRY `R`/save
+    // act on) from the owner. An empty `journal_list` has no landable widget,
+    // so it falls back to plain scrolling like Question.
     //
     // Question is a flat, uncycled view with no row_cursor/row_owner of its
     // own — it doesn't go through `render_transcript` (it uses
@@ -1819,8 +1887,23 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
             s.chat_panel.scroll_transcript_step(delta as f64);
             return;
         }
-        s.chat.journal_cursor = step_journal_cursor(s.chat.journal_cursor, delta, len);
-        render_journal_view(s);
+        // Step the WIDGET row cursor over the journal landable mask (every
+        // emitted journal widget — the `Q:` row and each answer paragraph — is
+        // landable), then derive `journal_cursor` (the ENTRY `R`/save act on)
+        // from `journal_row_owner`. Mirrors the Gloss branch below.
+        let (rows, row_owner) = journal_view_rows(&s.chat.journal_list);
+        s.chat.journal_row_owner = row_owner;
+        let landable = landable_mask(&rows);
+        let Some(clamped) = step_row_cursor_landable(s.chat.row_cursor, delta, &landable) else {
+            // Already at the first/last landable row — degrade to scrolling.
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        };
+        s.chat.row_cursor = clamped;
+        if let Some(&entry) = s.chat.journal_row_owner.get(clamped) {
+            s.chat.journal_cursor = entry;
+        }
+        render_journal_view_inner(s, false);
         return;
     }
     if s.chat.view == PanelView::Question {
@@ -3438,8 +3521,8 @@ mod visual_selection_tests {
 #[cfg(test)]
 mod panel_view_toggle_tests {
     use super::{
-        clamp_journal_cursor, flip_view, journal_entry_qrow, journal_view_rows,
-        step_journal_cursor, PanelView,
+        clamp_journal_cursor, flip_view, journal_entry_first_row, journal_view_rows,
+        split_answer_paragraphs, step_journal_cursor, PanelView,
     };
     use crate::db::journal::JournalPage;
     use crate::ui::chat_panel::TranscriptRow as R;
@@ -3486,9 +3569,20 @@ mod panel_view_toggle_tests {
     }
 
     #[test]
+    fn split_answer_paragraphs_by_blank_lines() {
+        assert_eq!(split_answer_paragraphs("one\n\ntwo\n\nthree"),
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]);
+        // single paragraph → one chunk
+        assert_eq!(split_answer_paragraphs("just one"), vec!["just one".to_string()]);
+        // empty → one empty chunk (entry keeps an answer row)
+        assert_eq!(split_answer_paragraphs("   "), vec![String::new()]);
+    }
+
+    #[test]
     fn empty_list_renders_a_placeholder_row() {
-        let rows = journal_view_rows(&[]);
+        let (rows, row_owner) = journal_view_rows(&[]);
         assert_eq!(rows.len(), 1);
+        assert!(row_owner.is_empty()); // nothing landable in the placeholder
         match &rows[0] {
             R::Answer(text) => assert_eq!(text, "No journal entries for this passage"),
             other => panic!("expected a placeholder Answer row, got a different variant: {}",
@@ -3507,8 +3601,10 @@ mod panel_view_toggle_tests {
     #[test]
     fn one_entry_renders_question_then_plain_answer() {
         let pages = vec![page("What does York mean?", "He is plotting.")];
-        let rows = journal_view_rows(&pages);
+        let (rows, row_owner) = journal_view_rows(&pages);
+        // Single-paragraph answer → Q + one Answer row; both owned by entry 0.
         assert_eq!(rows.len(), 2);
+        assert_eq!(row_owner, vec![0, 0]);
         match &rows[0] {
             R::Question(t) => assert_eq!(t, "Q: What does York mean?"),
             _ => panic!("row 0 must be a Question row"),
@@ -3529,8 +3625,10 @@ mod panel_view_toggle_tests {
             page("Q2?", "A2."),
             page("Q3?", "A3."),
         ];
-        let rows = journal_view_rows(&pages);
-        assert_eq!(rows.len(), 6); // Q/A pair per entry, no placeholder mixed in
+        let (rows, row_owner) = journal_view_rows(&pages);
+        // Single-paragraph answers: Q/A pair per entry, no placeholder mixed in.
+        assert_eq!(rows.len(), 6);
+        assert_eq!(row_owner, vec![0, 0, 1, 1, 2, 2]);
         let texts: Vec<&str> = rows
             .iter()
             .map(|r| match r {
@@ -3544,11 +3642,37 @@ mod panel_view_toggle_tests {
         );
     }
 
+    /// The Task 3 shape change: a multi-paragraph answer is exploded into one
+    /// `Answer` row per paragraph, so an entry is now `1 + n_paragraphs`
+    /// widgets (not the old fixed 2), and every widget maps back to its entry
+    /// through `row_owner` (widget -> entry). This is what lets the accent bar
+    /// traverse the answer paragraphs instead of being stuck on the `Q:` row.
     #[test]
-    fn journal_entry_qrow_is_two_per_entry() {
-        assert_eq!(journal_entry_qrow(0), 0);
-        assert_eq!(journal_entry_qrow(1), 2);
-        assert_eq!(journal_entry_qrow(3), 6);
+    fn entry_is_one_plus_n_paragraph_rows_with_owner_map() {
+        // Entry 0: 2-paragraph answer → Q + 2 answer rows = 3 widgets.
+        // Entry 1: 1-paragraph answer → Q + 1 answer row  = 2 widgets.
+        let pages = vec![
+            page("Q0?", "First para.\n\nSecond para."),
+            page("Q1?", "Only para."),
+        ];
+        let (rows, row_owner) = journal_view_rows(&pages);
+        assert_eq!(rows.len(), 5); // 3 + 2
+        // Widget -> entry: entry 0 owns the first 3 widgets, entry 1 the next 2.
+        assert_eq!(row_owner, vec![0, 0, 0, 1, 1]);
+        let texts: Vec<&str> = rows
+            .iter()
+            .map(|r| match r {
+                R::Question(t) | R::Answer(t) => t.as_str(),
+                _ => panic!("unexpected row kind in journal view"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["Q: Q0?", "First para.", "Second para.", "Q: Q1?", "Only para."]
+        );
+        // journal_entry_first_row maps each entry to its leading (Q:) widget.
+        assert_eq!(journal_entry_first_row(&row_owner, 0), 0);
+        assert_eq!(journal_entry_first_row(&row_owner, 1), 3);
     }
 
     #[test]
