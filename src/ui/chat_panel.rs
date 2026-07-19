@@ -159,13 +159,23 @@ impl ChatPanel {
     /// per-widget explosion when queried before any geometry exists.
     pub fn transcript_budget(&self) -> i32 {
         let alloc = self.transcript_scroll.height();
-        if alloc > 1 {
-            return alloc;
-        }
-        // Not yet allocated: container height minus the input card height.
-        let container_h = self.container.height().max(self.container.height_request());
-        let input_h = self.input.container().height().max(0);
-        (container_h - input_h).max(200)
+        // TEMP DEBUG (chat-clip underfill diagnosis): dump every geometry input
+        // that feeds the budget so we can see whether the scroll is stale/short
+        // at paginate time and whether the closed input card still claims height.
+        let container_h = self.container.height();
+        let container_req = self.container.height_request();
+        let input_h = self.input.container().height();
+        let input_visible = self.input.container().is_visible();
+        let budget = if alloc > 1 {
+            alloc
+        } else {
+            (container_h.max(container_req) - input_h.max(0)).max(200)
+        };
+        crate::log_fmt!(
+            "CHAT-BUDGET: scroll.h={} container.h={} container.req={} input.h={} input.visible={} -> budget={}",
+            alloc, container_h, container_req, input_h, input_visible, budget
+        );
+        budget
     }
 
     /// The pixel wrap width a transcript label lays out at — the scroll's
@@ -233,7 +243,16 @@ impl ChatPanel {
     ) -> Vec<crate::ui::pagination::Page> {
         let (heights, group_start) =
             crate::ui::chat_pagination::widget_heights(specs, |t| self.measure_widget(t));
-        crate::ui::pagination::paginate_grouped(&heights, &group_start, self.transcript_budget())
+        let budget = self.transcript_budget();
+        let pages = crate::ui::pagination::paginate_grouped(&heights, &group_start, budget);
+        // TEMP DEBUG (chat-clip underfill diagnosis): total widget height vs the
+        // budget one page must fit within, and how many pages resulted.
+        let total_h: i32 = heights.iter().sum();
+        crate::log_fmt!(
+            "CHAT-PAGINATE: specs={} total_widget_h={} page_budget={} pages={}",
+            specs.len(), total_h, budget, pages.len()
+        );
+        pages
     }
 
     /// Render ONLY the widgets in `page` (`specs[page.start..page.end]`) — a
