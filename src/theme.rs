@@ -1432,7 +1432,7 @@ pub fn generate_css(
             (replaces, not adds), so this pins the rendered top to 44px for the \
             src-lead row whatever its base class is. Mirrors the padding-BOTTOM \
             compound rules below (.chat-transcript label.chat-a-X). */ \
-         .chat-transcript label.chat-a-src-lead {{ padding-top: 44px; }} \
+         .chat-transcript label.chat-a-src-lead {{ padding-top: 26px; }} \
          .chat-transcript label.chat-a-speaker {{ padding-bottom: 0px; }} \
          /* Fix 3: the main card never italicizes dialogue/verse — \
             formatting.rs's Style::Italic appears ONLY on stage directions \
@@ -1461,7 +1461,7 @@ pub fn generate_css(
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            padding-left: {q_speaker}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
-         .chat-a-gloss {{ color: {chat_ink}; padding-top: 18px; padding-left: {q_body}px; }} \
+         .chat-a-gloss {{ color: {chat_ink}; padding-top: 26px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {fg}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \

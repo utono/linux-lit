@@ -58,12 +58,12 @@ pub(crate) fn class_pad(class: &str) -> i32 {
         "chat-a-stage-flush" => 8,
         // padding-top 18 (theme.rs:1462) + blanket padding-bottom 3
         // (no override for chat-a-gloss) = 21.
-        "chat-a-gloss" => 21,
+        "chat-a-gloss" => 29,
         // padding-top 44 (theme.rs:1428) + blanket padding-bottom 3
         // (no override for chat-a-src-lead) = 47. NOTE: chat-a-src-lead is only
         // ever an extra_class, never a base class, so this arm is unused by
         // pagination — src_lead_extra_pad handles the effective extra instead.
-        "chat-a-src-lead" => 47,
+        "chat-a-src-lead" => 29,
         _ => 0,
     }
 }
@@ -100,9 +100,9 @@ pub(crate) fn class_pad(class: &str) -> i32 {
 /// source classes; (3) the per-class base padding-top values subtracted below
 /// match theme.rs. Change any one and update the others.
 pub(crate) fn src_lead_extra_pad(base_class: &str) -> i32 {
-    const SRC_LEAD_PADDING_TOP: i32 = 44; // theme.rs:1428
-    // Base padding-top of each source class (theme.rs). src-lead's 44 wins via
-    // its compound selector, so the extra it adds over the base is 44 - base_pt.
+    const SRC_LEAD_PADDING_TOP: i32 = 26; // theme.rs .chat-a-src-lead padding-top
+    // Base padding-top of each source class (theme.rs). src-lead's 26 wins via
+    // its compound selector, so the extra it adds over the base is 26 - base_pt.
     let base_pt = match base_class {
         "chat-a-speaker" => 14,
         "chat-a-verse" | "chat-a-verse-flush" => 0,
@@ -296,12 +296,12 @@ mod tests {
     fn src_lead_extra_pad_raises_every_source_class() {
         // .chat-a-src-lead is a COMPOUND selector, so its 44px padding-top wins
         // for EVERY source base class regardless of stylesheet order. The extra
-        // it adds over each base is 44 - base padding-top (clamped ≥0).
-        assert_eq!(src_lead_extra_pad("chat-a-speaker"), 30); // 44 - 14
-        assert_eq!(src_lead_extra_pad("chat-a-verse"), 44); // 44 - 0
-        assert_eq!(src_lead_extra_pad("chat-a-verse-flush"), 44); // 44 - 0
-        assert_eq!(src_lead_extra_pad("chat-a-stage"), 36); // 44 - 8
-        assert_eq!(src_lead_extra_pad("chat-a-stage-flush"), 36); // 44 - 8
+        // it adds over each base is 26 - base padding-top (clamped ≥0).
+        assert_eq!(src_lead_extra_pad("chat-a-speaker"), 12); // 26 - 14
+        assert_eq!(src_lead_extra_pad("chat-a-verse"), 26); // 26 - 0
+        assert_eq!(src_lead_extra_pad("chat-a-verse-flush"), 26); // 26 - 0
+        assert_eq!(src_lead_extra_pad("chat-a-stage"), 18); // 26 - 8
+        assert_eq!(src_lead_extra_pad("chat-a-stage-flush"), 18); // 26 - 8
     }
 
     #[test]
@@ -316,11 +316,11 @@ mod tests {
             group_start: true,
         };
         let (h, _) = widget_heights(std::slice::from_ref(&speaker_lead), |_t| 20);
-        assert_eq!(h[0], 20 + class_pad("chat-a-speaker") + 30);
+        assert_eq!(h[0], 20 + class_pad("chat-a-speaker") + 12);
 
         // A speakerless (verse-flush) source-after-gloss row also carries
         // chat-a-src-lead. Under the compound selector src-lead now WINS here
-        // too, so the height includes the +44 extra (44 - 0 base padding-top).
+        // too, so the height includes the +26 extra (26 - 0 base padding-top).
         let verse_lead = ChatWidget {
             text: "prose source".into(),
             class: "chat-a-verse-flush".into(),
@@ -328,6 +328,6 @@ mod tests {
             group_start: true,
         };
         let (h2, _) = widget_heights(std::slice::from_ref(&verse_lead), |_t| 20);
-        assert_eq!(h2[0], 20 + class_pad("chat-a-verse-flush") + 44);
+        assert_eq!(h2[0], 20 + class_pad("chat-a-verse-flush") + 26);
     }
 }
