@@ -39,13 +39,6 @@ pub struct ChatPanel {
     pub container: gtk4::Box,
     transcript_box: gtk4::Box,
     transcript_scroll: gtk4::ScrolledWindow,
-    /// Bottom-edge clip: an invisible card-colored Box overlaid on the scroll
-    /// area that masks the partial last row straddling the viewport bottom.
-    /// The transcript is a Box of whole-widget Labels, so `attach_box` (the
-    /// box-slack variant) clips cleanly at label boundaries — a wrapping Label
-    /// is allocated as ONE whole widget, never bisected at the edge like a
-    /// wrapping TextView. See docs/troubleshooting/clip-prevention.md.
-    clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     input: crate::ui::ask_card::AskCard,
 }
 
@@ -90,38 +83,19 @@ impl ChatPanel {
         // is awkward to type multi-line questions into.
         input.set_input_height(420);
 
-        // Wrap the scroll in an Overlay so the bottom-clip Box can be an
-        // add_overlay sibling painted on top of the trailing partial row.
-        // attach_box builds the clip Box, tags it .gloss-bottom-clip, and wires
-        // the value_changed/page_size recompute — the same machinery the gloss
-        // and journal overlays use. The panel's own top row-snap
-        // (render_rows_focused_cursor) handles the TOP edge; the guard the
-        // BOTTOM edge.
-        let scroll_overlay = gtk4::Overlay::new();
-        scroll_overlay.set_child(Some(&transcript_scroll));
-        let clip_guard = crate::ui::bottom_clip_guard::BottomClipGuard::attach_box(
-            &scroll_overlay,
-            &transcript_scroll,
-        );
-
-        container.append(&scroll_overlay);
+        // The panel now PAGINATES (renders only the whole widgets that fit —
+        // `render_page`), so a partial row can never straddle either edge and
+        // the old bottom-clip Overlay/guard is gone. The scroll is appended
+        // directly to the container again.
+        container.append(&transcript_scroll);
         container.append(input.container());
 
         Self {
             container,
             transcript_box,
             transcript_scroll,
-            clip_guard,
             input,
         }
-    }
-
-    /// Snap the transcript to the top and (re)compute the bottom clip across the
-    /// open's layout passes — call whenever the panel becomes visible / is
-    /// (re)rendered on open. Delegates to the shared BottomClipGuard, mirroring
-    /// the gloss/journal overlays' `reset_scroll_top`.
-    pub fn on_open(&self) {
-        self.clip_guard.on_open();
     }
 
     pub fn size_to(&self, w: i32, h: i32) {
@@ -169,104 +143,134 @@ impl ChatPanel {
 
     pub fn show(&self) {
         self.container.set_visible(true);
-        // Settle the bottom clip across the reveal's layout passes (path a).
-        // A cursor-positioned render runs after show() and moves the scroll via
-        // set_value, which the guard's value_changed catch-all picks up — so the
-        // snap-to-top in on_open is harmlessly overridden by that scroll; what we
-        // need here is the clip recompute once the viewport range settles.
-        self.clip_guard.on_open();
     }
 
     pub fn hide(&self) {
         self.container.set_visible(false);
     }
 
-    /// Rebuild the transcript from rows, newest last, and scroll to the end.
-    pub fn render_rows(&self, rows: &[TranscriptRow]) {
-        self.rebuild_rows(rows);
-        let adj = self.transcript_scroll.vadjustment();
-        glib::idle_add_local_once(move || adj.set_value(adj.upper()));
+    /// The transcript scroll's usable pixel budget for one page — the height a
+    /// page slice must fit within. Uses the scroll's allocated height once GTK
+    /// has laid it out; before first allocation falls back to the container's
+    /// requested height minus the input card's height (the two children of the
+    /// vertical container) so pagination has a sane budget on the very first
+    /// render. A small guard floor keeps `paginate_grouped` from producing a
+    /// per-widget explosion when queried before any geometry exists.
+    pub fn transcript_budget(&self) -> i32 {
+        let alloc = self.transcript_scroll.height();
+        if alloc > 1 {
+            return alloc;
+        }
+        // Not yet allocated: container height minus the input card height.
+        let container_h = self.container.height().max(self.container.height_request());
+        let input_h = self.input.container().height().max(0);
+        (container_h - input_h).max(200)
     }
 
-    /// Rebuild the transcript from rows and scroll to the TOP (not the end).
-    /// `render_saved_entry` uses this for the standalone 3-row saved/revision
-    /// view: the reader wants the `Q:` line at the top of the entry, so a long
-    /// answer must not pin the viewport to its own bottom the way `render_rows`
-    /// (newest-last, scroll-to-end) does. No accent bar: the saved view is a
-    /// static snapshot, not the j/k-navigable Gloss transcript, so painting a
-    /// row cursor here would leave a bar that j/k (which re-renders the FULL
-    /// transcript) can't move.
-    ///
-    /// Scroll robustness: a single `set_value(0.0)` on the first idle can race
-    /// the ScrolledWindow assigning its scroll range for a freshly-rebuilt LONG
-    /// answer — the range is still the old/short one on that idle, and once GTK
-    /// lays out the tall content the viewport ends up mid-answer. So also
-    /// re-assert 0.0 the first time the adjustment's range actually changes
-    /// (after layout), then disconnect (settle-on-`changed`, mirroring the
-    /// overlay's geometry-settle pattern).
-    pub fn render_rows_to_top(&self, rows: &[TranscriptRow]) {
-        self.rebuild_rows(rows);
-        let scroll = self.transcript_scroll.clone();
-        glib::idle_add_local_once(move || {
-            let adj = scroll.vadjustment();
-            adj.set_value(0.0);
-            let id_cell: std::rc::Rc<std::cell::Cell<Option<glib::SignalHandlerId>>> =
-                std::rc::Rc::new(std::cell::Cell::new(None));
-            let id_cell2 = id_cell.clone();
-            let id = adj.connect_changed(move |a| {
-                a.set_value(0.0);
-                if let Some(id) = id_cell2.take() {
-                    a.disconnect(id);
+    /// The pixel wrap width a transcript label lays out at — the scroll's
+    /// allocated width minus the transcript's horizontal padding (padding-right
+    /// 14px, theme.rs:1368). Falls back to the container's requested width when
+    /// unallocated so measurement matches the eventual wrap.
+    fn transcript_wrap_width(&self) -> i32 {
+        let w = self.transcript_scroll.width();
+        let w = if w > 1 {
+            w
+        } else {
+            self.container.width().max(self.container.width_request()).max(1)
+        };
+        (w - 14).max(1)
+    }
+
+    /// Pixel height one widget renders at: the pango-measured wrapped text
+    /// height (at the transcript wrap width, in the transcript's own font) plus
+    /// the CSS class padding. Injected into `widget_heights` as the `measure`
+    /// closure; `widget_heights` adds `class_pad` + the src-lead extra itself,
+    /// so this returns ONLY the text height (no padding).
+    pub fn measure_widget(&self, text: &str) -> i32 {
+        let pctx = self.transcript_box.pango_context();
+        let (family, size_pt) = self.transcript_font();
+        crate::ui::pagination::measure_text_height_leaded(
+            &pctx,
+            text,
+            size_pt,
+            &family,
+            self.transcript_wrap_width(),
+        )
+    }
+
+    /// The transcript's (font-family, size-pt) — the reader font applied to the
+    /// ask input, which the transcript labels also inherit. Read off the
+    /// pango context's font description so measurement uses the same font the
+    /// labels render with.
+    fn transcript_font(&self) -> (String, i32) {
+        let pctx = self.transcript_box.pango_context();
+        let desc = pctx.font_description();
+        let family = desc
+            .as_ref()
+            .and_then(|d| d.family())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Sans".to_string());
+        let size = desc
+            .as_ref()
+            .map(|d| {
+                if d.size() > 0 {
+                    (d.size() / gtk4::pango::SCALE).max(1)
+                } else {
+                    12
                 }
-            });
-            id_cell.set(Some(id));
-        });
+            })
+            .unwrap_or(12);
+        (family, size)
     }
 
-    /// Rebuild the transcript, paint the `.chat-cursor-row` accent bar
-    /// (`theme::generate_css`) on the WIDGET at index `cursor` (j/k's row
-    /// cursor — see `input::actions::chat::transcript_rows`' doc comment for
-    /// why this must be a widget index, not a `TranscriptRow` index: a
-    /// `GlossAnswer` row explodes into several widgets), and scroll it to the
-    /// top of the viewport. Unlike `render_rows`, this does NOT pin the
-    /// scroll to the end — pinning is what made j/k cursor moves look like
-    /// dead keys.
-    ///
-    /// `selection`, when `Some((start, end))` (widget-row space, inclusive,
-    /// `start <= end`), also paints `.chat-visual-row` on every widget in that
-    /// range — the `V` visual-mode highlight. `start`/`end` may equal
-    /// `cursor` (a one-row selection just anchored); both classes can land on
-    /// the same widget, and the CSS box-shadow/background compose fine
-    /// together (see `theme::generate_css`'s `.chat-visual-row` comment).
-    pub fn render_rows_focused_cursor(
+    /// Paginate a full spec vec at the current transcript budget. The single
+    /// entry point the whole-transcript callers share so measure + slice always
+    /// agree. Returns the page ranges (block indices into `specs`).
+    pub fn paginate_specs(
         &self,
-        rows: &[TranscriptRow],
-        cursor: usize,
+        specs: &[crate::ui::chat_pagination::ChatWidget],
+    ) -> Vec<crate::ui::pagination::Page> {
+        let (heights, group_start) =
+            crate::ui::chat_pagination::widget_heights(specs, |t| self.measure_widget(t));
+        crate::ui::pagination::paginate_grouped(&heights, &group_start, self.transcript_budget())
+    }
+
+    /// Render ONLY the widgets in `page` (`specs[page.start..page.end]`) — a
+    /// whole-widget slice that fits the transcript budget by construction, so no
+    /// partial row can straddle either edge (the pagination replacement for the
+    /// old free-scroll clip machinery). The `.chat-cursor-row` accent bar is
+    /// painted at the PAGE-LOCAL cursor (`cursor_widget - page.start`) when
+    /// `cursor_widget` falls inside this page; `.chat-visual-row` is painted over
+    /// the page-local intersection of `selection` (widget-space, inclusive) with
+    /// the page. The vadjustment is NOT touched — the page fits, so there is
+    /// nothing to scroll.
+    pub fn render_page(
+        &self,
+        specs: &[crate::ui::chat_pagination::ChatWidget],
+        page: crate::ui::pagination::Page,
+        cursor_widget: Option<usize>,
         selection: Option<(usize, usize)>,
     ) {
-        self.rebuild_rows(rows);
+        let start = page.start.min(specs.len());
+        let end = page.end.min(specs.len());
+        let slice = &specs[start..end];
+        self.rebuild_from_specs(slice);
+        // Page-local cursor index (None when the cursor isn't on this page).
+        let local_cursor =
+            cursor_widget.filter(|&c| c >= start && c < end).map(|c| c - start);
         let boxx = self.transcript_box.clone();
-        let scroll = self.transcript_scroll.clone();
         glib::idle_add_local_once(move || {
-            // Pass 1: apply cursor/selection classes and collect each row's
-            // (y, height) in transcript-box coords + the cursor row's bounds.
             let mut child = boxx.first_child();
-            let mut i = 0usize;
-            let mut row_tops: Vec<f64> = Vec::new();
-            let mut cursor_bounds: Option<(f64, f64)> = None;
+            let mut i = 0usize; // page-local widget index
             while let Some(c) = child {
-                if let Some(b) = c.compute_bounds(&boxx) {
-                    row_tops.push(b.y() as f64);
-                    if i == cursor {
-                        cursor_bounds = Some((b.y() as f64, b.height() as f64));
-                    }
-                }
-                if i == cursor {
+                if local_cursor == Some(i) {
                     c.add_css_class("chat-cursor-row");
                 } else {
                     c.remove_css_class("chat-cursor-row");
                 }
-                if selection.is_some_and(|(start, end)| i >= start && i <= end) {
+                // selection is in GLOBAL widget space; translate to page-local.
+                let global = start + i;
+                if selection.is_some_and(|(s, e)| global >= s && global <= e) {
                     c.add_css_class("chat-visual-row");
                 } else {
                     c.remove_css_class("chat-visual-row");
@@ -274,52 +278,35 @@ impl ChatPanel {
                 child = c.next_sibling();
                 i += 1;
             }
-
-            // Pass 2: scroll the cursor row INTO VIEW only when it is off the
-            // visible viewport (a bar step within the page must not move the
-            // viewport), snapping the viewport top to a WHOLE-row boundary so the
-            // topmost visible row is never a sliver — while keeping the cursor
-            // row fully visible.
-            if let Some((ry, rh)) = cursor_bounds {
-                let adj = scroll.vadjustment();
-                let page = adj.page_size();
-                let max = (adj.upper() - page).max(0.0);
-                let top = adj.value();
-                let bottom = top + page;
-
-                // Largest row-top <= v (snap the top DOWN to a row boundary).
-                let snap_down = |v: f64| {
-                    row_tops
-                        .iter()
-                        .copied()
-                        .filter(|&t| t <= v + 0.5)
-                        .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.max(t))))
-                        .unwrap_or(v)
-                };
-
-                let new = if ry < top {
-                    // Cursor above the viewport: snap its OWN top to the edge.
-                    snap_down(ry)
-                } else if ry + rh > bottom {
-                    // Cursor below the viewport: the top must be a whole row AND
-                    // low enough that the cursor's bottom fits. Snapping the raw
-                    // target (ry+rh-page) DOWN scrolls up and re-hides the cursor
-                    // bottom (the bottom-clip bug), so instead take the SMALLEST
-                    // row-top that still keeps the cursor bottom visible
-                    // (t + page >= ry + rh) — a whole top row, cursor fully shown.
-                    row_tops
-                        .iter()
-                        .copied()
-                        .filter(|&t| t + page + 0.5 >= ry + rh && t <= ry + 0.5)
-                        .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.min(t))))
-                        .unwrap_or_else(|| snap_down(ry + rh - page))
-                } else {
-                    // Fully visible: don't move the viewport.
-                    top
-                };
-                adj.set_value(new.clamp(0.0, max));
-            }
         });
+    }
+
+    /// Whole-transcript render for STREAMING/transient views (thinking, error,
+    /// current-question, pushed gloss) that have no persisted page state: build
+    /// specs, paginate, and render the LAST page (newest content) with no accent
+    /// bar. Replaces the old scroll-to-end `render_rows`.
+    pub fn render_rows(&self, rows: &[TranscriptRow]) {
+        let specs = row_widget_specs(rows);
+        let pages = self.paginate_specs(&specs);
+        let Some(&page) = pages.last() else {
+            self.rebuild_from_specs(&[]);
+            return;
+        };
+        self.render_page(&specs, page, None, None);
+    }
+
+    /// Whole-transcript render for the static saved/revision snapshot: build
+    /// specs, paginate, and render the FIRST page (the reader wants the `Q:`
+    /// line at the top of the entry). No accent bar — the saved view is a
+    /// static snapshot, not the j/k-navigable Gloss transcript.
+    pub fn render_rows_to_top(&self, rows: &[TranscriptRow]) {
+        let specs = row_widget_specs(rows);
+        let pages = self.paginate_specs(&specs);
+        let Some(&page) = pages.first() else {
+            self.rebuild_from_specs(&[]);
+            return;
+        };
+        self.render_page(&specs, page, None, None);
     }
 
     /// Flash the transcript row WIDGETS in `(start, end)` (widget-row space,
@@ -394,44 +381,35 @@ impl ChatPanel {
         }
     }
 
-    /// Rebuild the transcript by RENDERING FROM the shared widget expansion
-    /// (`row_widget_specs`/`gloss_answer_specs`) — one `gtk4::Label` per widget
-    /// spec, using its class. Both this and the pagination height model consume
-    /// the same expansion, so render and measure cannot drift. The
-    /// `chat-a-src-lead` extra class (carried by `gloss_answer_specs`) is applied
-    /// via `append_row_label_extra`, matching the old inline `append_gloss_answer`.
-    fn rebuild_rows(&self, rows: &[TranscriptRow]) {
+    /// Rebuild the transcript's widget children from a slice of already-expanded
+    /// widget specs (`row_widget_specs` output) — one `gtk4::Label` per spec, in
+    /// order, with its primary class and (when present) its `extra_class`
+    /// second class. This is the SINGLE render primitive: `render_page` passes a
+    /// page slice, the whole-transcript callers pass the full spec vec. Both this
+    /// and the pagination height model consume the same expansion, so render and
+    /// measure cannot drift.
+    fn rebuild_from_specs(&self, specs: &[crate::ui::chat_pagination::ChatWidget]) {
         while let Some(child) = self.transcript_box.first_child() {
             self.transcript_box.remove(&child);
         }
-        for row in rows {
-            match row {
-                TranscriptRow::GlossAnswer(markup) => {
-                    for (text, class, extra, _group_start) in gloss_answer_specs(markup) {
-                        match extra {
-                            Some(extra) => self.append_row_label_extra(&text, class, extra),
-                            None => self.append_row_label(&text, class),
-                        }
-                    }
-                }
-                other => {
-                    let (text, class) = plain_row_spec(other);
-                    self.append_row_label(text, class);
-                }
-            }
+        for w in specs {
+            self.append_spec_label(w);
         }
     }
 
-    /// `WordChar` (break inside a word when a line is too narrow) is right
-    /// for verse/gloss prose, which legitimately needs to wrap at any width.
-    /// A speaker name (`chat-a-speaker`) must never hyphenate mid-word — e.g.
+    /// Append one label for a widget spec.
+    ///
+    /// `WordChar` (break inside a word when a line is too narrow) is right for
+    /// verse/gloss prose, which legitimately needs to wrap at any width. A
+    /// speaker name (`chat-a-speaker`) must never hyphenate mid-word — e.g.
     /// "CYMBELINE" rendering as "CYMBELIN-" / "E" — so it gets plain `Word`
-    /// wrapping instead (wraps at whitespace only; a single long name just
-    /// runs to its natural width, never split).
-    fn append_row_label(&self, text: &str, class: &str) {
-        let label = gtk4::Label::new(Some(text));
+    /// wrapping instead. When present, `extra_class` (today only
+    /// `chat-a-src-lead`) is added as a second CSS class for the block-leading
+    /// source row's top gap.
+    fn append_spec_label(&self, w: &crate::ui::chat_pagination::ChatWidget) {
+        let label = gtk4::Label::new(Some(&w.text));
         label.set_wrap(true);
-        label.set_wrap_mode(if class == "chat-a-speaker" {
+        label.set_wrap_mode(if w.class == "chat-a-speaker" {
             gtk4::pango::WrapMode::Word
         } else {
             gtk4::pango::WrapMode::WordChar
@@ -439,26 +417,10 @@ impl ChatPanel {
         label.set_halign(gtk4::Align::Start);
         label.set_xalign(0.0);
         label.set_selectable(false);
-        label.add_css_class(class);
-        self.transcript_box.append(&label);
-    }
-
-    /// Like `append_row_label`, but adds `extra` as a second CSS class on the
-    /// row. Used to tag the block-leading source row (`chat-a-src-lead`) so it
-    /// gets the extra top gap separating it from the preceding gloss.
-    fn append_row_label_extra(&self, text: &str, class: &str, extra: &str) {
-        let label = gtk4::Label::new(Some(text));
-        label.set_wrap(true);
-        label.set_wrap_mode(if class == "chat-a-speaker" {
-            gtk4::pango::WrapMode::Word
-        } else {
-            gtk4::pango::WrapMode::WordChar
-        });
-        label.set_halign(gtk4::Align::Start);
-        label.set_xalign(0.0);
-        label.set_selectable(false);
-        label.add_css_class(class);
-        label.add_css_class(extra);
+        label.add_css_class(&w.class);
+        if let Some(extra) = &w.extra_class {
+            label.add_css_class(extra);
+        }
         self.transcript_box.append(&label);
     }
 
@@ -584,11 +546,14 @@ pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
 /// `group_start` is `true` for the FIRST widget of each `TranscriptRow` and
 /// `false` for a `GlossAnswer`'s continuation widgets (verse/stage/gloss labels
 /// after the first) — i.e. the flag marks an indivisible pagination unit's
-/// leading widget. Class + text assignment mirror `append_gloss_answer` EXACTLY
-/// (including the stateful `chat-a-src-lead` tag on the first source row that
-/// follows a gloss); `class` here is the PRIMARY class only (the `chat-a-src-lead`
-/// extra is carried as a distinct spec text but rendered via
-/// `append_row_label_extra` — see `rebuild_rows`).
+/// leading widget. Class + text assignment mirror `append_gloss_answer` EXACTLY.
+/// `class` is the PRIMARY class; `extra_class` carries the stateful
+/// `chat-a-src-lead` second class (the top gap on the first source row that
+/// follows a gloss) so pagination can account for its rendered height — it is
+/// rendered via `append_row_label_extra` (see `rebuild_rows`). Carrying the
+/// extra as DATA (not dropping it) is required: dropping it undercounts that
+/// row's height and pagination packs one row too many (the returning bottom
+/// clip).
 pub(crate) fn row_widget_specs(
     rows: &[TranscriptRow],
 ) -> Vec<crate::ui::chat_pagination::ChatWidget> {
@@ -597,10 +562,11 @@ pub(crate) fn row_widget_specs(
     for row in rows {
         match row {
             TranscriptRow::GlossAnswer(markup) => {
-                for (text, class, _extra, group_start) in gloss_answer_specs(markup) {
+                for (text, class, extra, group_start) in gloss_answer_specs(markup) {
                     out.push(ChatWidget {
                         text,
                         class: class.to_string(),
+                        extra_class: extra.map(|e| e.to_string()),
                         group_start,
                     });
                 }
@@ -610,6 +576,7 @@ pub(crate) fn row_widget_specs(
                 out.push(ChatWidget {
                     text: text.to_string(),
                     class: class.to_string(),
+                    extra_class: None,
                     group_start: true,
                 });
             }

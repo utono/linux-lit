@@ -200,6 +200,17 @@ pub(crate) struct ChatState {
     /// cleared on the terminal outcome (success re-render, error, or cancel);
     /// defaults `false` and resets with the rest of `ChatState` on panel close.
     pub rewrite_return: bool,
+    /// Page ranges for the CURRENT transcript render (widget-block indices into
+    /// `row_widget_specs`). Recomputed on every paginated render
+    /// (`render_transcript`/`render_journal_view_inner`) at the live transcript
+    /// budget. Empty until the first paginated render. Task 6 (page-turn nav)
+    /// reads these; the render here uses them to slice the visible page.
+    pub pages: Vec<crate::ui::pagination::Page>,
+    /// Which page of `pages` is currently shown. Kept in sync with `row_cursor`:
+    /// each paginated render derives the page holding `row_cursor` (via
+    /// `page_of_widget`) and stores it here. Clamped into `pages` on every
+    /// render. Resets with the rest of `ChatState` on panel close.
+    pub page_idx: usize,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -1086,8 +1097,46 @@ pub(crate) fn render_transcript(s: &mut AppState) {
         let cur = s.chat.row_cursor;
         if a <= cur { (a, cur) } else { (cur, a) }
     });
-    s.chat_panel
-        .render_rows_focused_cursor(&rows, s.chat.row_cursor, selection);
+    render_paginated(s, &rows, Some(s.chat.row_cursor), selection);
+}
+
+/// Paginate `rows` at the live transcript budget, store the pages on
+/// `ChatState`, derive/clamp the page holding `cursor_widget` (the accent-bar
+/// row cursor), and render ONLY that page slice via `ChatPanel::render_page`.
+/// The single paginated-render path shared by `render_transcript` and
+/// `render_journal_view_inner`: it computes `s.chat.pages`/`page_idx` so Task 6
+/// page-turn nav has authoritative page state, and renders the whole-widget
+/// page slice that fits by construction (no partial row at either edge).
+///
+/// `cursor_widget` is `None` for views with no row cursor (a placeholder-only
+/// list); then the FIRST page is shown and no accent bar is painted.
+fn render_paginated(
+    s: &mut AppState,
+    rows: &[crate::ui::chat_panel::TranscriptRow],
+    cursor_widget: Option<usize>,
+    selection: Option<(usize, usize)>,
+) {
+    use crate::ui::chat_pagination::page_of_widget;
+    let specs = crate::ui::chat_panel::row_widget_specs(rows);
+    let pages = s.chat_panel.paginate_specs(&specs);
+    let page_idx = match cursor_widget {
+        Some(c) => page_of_widget(&pages, c),
+        None => 0,
+    };
+    let page_idx = if pages.is_empty() {
+        0
+    } else {
+        page_idx.min(pages.len() - 1)
+    };
+    s.chat.pages = pages;
+    s.chat.page_idx = page_idx;
+    let Some(&page) = s.chat.pages.get(page_idx) else {
+        // No pages (empty transcript): render an empty slice.
+        s.chat_panel
+            .render_page(&specs, crate::ui::pagination::Page { start: 0, end: 0 }, None, None);
+        return;
+    };
+    s.chat_panel.render_page(&specs, page, cursor_widget, selection);
 }
 
 /// Render `PanelView::Question`: exactly the exchange at `s.chat.cursor` —
@@ -1370,14 +1419,14 @@ fn render_journal_view_inner(s: &mut AppState, snap_to_entry: bool) {
         return;
     }
     // Clamp the widget-space `row_cursor` into range, then land the accent bar
-    // on it; `render_rows_focused_cursor` scrolls that row to the top. No
-    // visual selection in Journal view.
+    // on it; `render_paginated` renders the page slice holding it. No visual
+    // selection in Journal view.
     let n = rows.len();
     if s.chat.row_cursor >= n {
         s.chat.row_cursor = n.saturating_sub(1);
     }
     let cursor_row = s.chat.row_cursor;
-    s.chat_panel.render_rows_focused_cursor(&rows, cursor_row, None);
+    render_paginated(s, &rows, Some(cursor_row), None);
 }
 
 /// Entry-granularity render: snap the accent bar to the selected entry's `Q:`

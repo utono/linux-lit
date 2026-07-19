@@ -1321,12 +1321,6 @@ pub fn generate_css(
             this zero — keep the two in sync (it also assumes .chat-transcript's \
             zero padding-top below). */ \
          .chat-panel {{ background-color: {bg}; padding: 0 12px 12px 12px; }} \
-         /* The chat panel's bottom-clip Box (built by BottomClipGuard::attach_box, \
-            tagged .gloss-bottom-clip like every guard clip) must paint the PANEL \
-            background, not the gloss overlay's. Ancestor-scoped so it overrides \
-            the bare .gloss-bottom-clip rule for the clip box nested under \
-            .chat-panel, without a shared-code change. */ \
-         .chat-panel .gloss-bottom-clip {{ background-color: {bg}; }} \
          /* Pinned placement: the panel abuts the card's right edge, separated \
             only by a 1px hairline seam (its border-left, painting over the 1px \
             gap size_panel leaves). Rounded on the RIGHT (outer) corners only — \

@@ -103,6 +103,30 @@ highlight paints immediately. The bottom-clip machinery it used to need
 (`attach_custom`/`Custom` guard, a per-row translation mask) was deleted. See
 `docs/superpowers/specs/2026-06-27-paginated-translation-overlay-design.md`.
 
+**The chat panel (`src/ui/chat_panel.rs`) now paginates the same way.** It used
+to free-scroll a `Box` of wrapping `Label`s behind a `BottomClipGuard::attach_box`
+mask plus a hand-rolled top row-snap in `render_rows_focused_cursor` — a long
+series of partial-row clips at BOTH edges. The swap: `row_widget_specs` expands
+the transcript into one `ChatWidget` per label; `chat_pagination::widget_heights`
++ `pagination::paginate_grouped` pack whole widgets into pages at
+`ChatPanel::transcript_budget()`; `render_page` rebuilds `transcript_box` from
+ONLY `specs[page.start..page.end]` and never touches the vadjustment (the page
+fits by construction). The `clip_guard` field, the `Overlay`/`attach_box` wrap,
+`on_open`, and the `.chat-panel .gloss-bottom-clip` CSS override were all deleted.
+`ChatState.pages`/`page_idx` hold the current pagination.
+
+- **The `chat-a-src-lead` height gap (undercount → the bottom clip returns).**
+  The first source row after a gloss carries a SECOND CSS class `chat-a-src-lead`
+  (a 30px top gap, theme.rs:1433). If pagination measures only the PRIMARY class
+  it undercounts that row and packs one row too many. Fix: `ChatWidget` carries
+  `extra_class`, and `widget_heights` adds `chat_pagination::src_lead_extra_pad`,
+  which accounts for GTK CSS's NON-additive padding-top under a source-order
+  collision: two single-class rules tie on specificity, so the LATER rule wins.
+  Only `.chat-a-speaker` (padding-top 14, theme.rs:1424) is ordered BEFORE
+  src-lead, so src-lead wins there (+16 effective). `.chat-a-verse`/`-stage`/
+  `-flush` are all ordered AFTER src-lead, so the base wins and the extra is 0 —
+  do NOT `class_pad("chat-a-src-lead")` (that double-counts the base pad).
+
 **Pin every rendered TextView's `height_request` to its MEASURED height — do
 not trust GTK's lazy natural height.** A paginated surface rebuilds its content
 widgets on every page turn (`render_page` swaps fresh `TextView`s into the
