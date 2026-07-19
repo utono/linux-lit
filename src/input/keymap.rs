@@ -246,6 +246,7 @@ pub fn handle_key(
             crate::app::InputMode::GlossKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Gloss),
             crate::app::InputMode::SynopsisKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Synopsis),
             crate::app::InputMode::JournalKeybindsOverlay => handle_overlay_keybinds_key(state, key_name, is_ctrl, OverlayLegend::Journal),
+            crate::app::InputMode::ChatKeybindsOverlay => handle_chat_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::ActionPopup => handle_action_popup_key(state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
@@ -258,15 +259,24 @@ pub fn handle_key(
 
     // --- Reader mode (no overlay) ---
 
-    // Tab toggles focus between the reader and an OPEN chat panel. The reader
-    // table binds no Tab caps (the panel opens/closes via `-`), so this is the
-    // only reader-mode Tab behavior — and only while the panel is on screen.
-    // Ctrl is NOT consumed here so nothing shadows a future Ctrl+Tab reader
-    // bind; plain Tab with the panel closed still falls through to (unbound).
+    // Tab cycles focus through the OPEN chat panel and back to the reader. The
+    // reader table binds no Tab caps (the panel opens/closes via `-`), so this
+    // is the only reader-mode Tab behavior — and only while the panel is up.
+    // The cycle is prompt → transcript → reader → …: from the reader, Tab lands
+    // on the PROMPT when the ask input is open (closing the three-way loop),
+    // else the transcript (two-way when there is no input). Ctrl is NOT consumed
+    // so nothing shadows a future Ctrl+Tab reader bind.
     if (key_name == "Tab" || key_name == "ISO_Left_Tab") && !is_ctrl && !is_shift && !is_alt {
-        let panel_open = state.borrow().chat_layout_open;
+        let (panel_open, input_open) = {
+            let s = state.borrow();
+            (s.chat_layout_open, s.chat_panel.input_is_open())
+        };
         if panel_open {
-            crate::input::actions::chat::focus_transcript(&mut state.borrow_mut());
+            if input_open {
+                crate::input::actions::chat::focus_prompt(&mut state.borrow_mut());
+            } else {
+                crate::input::actions::chat::focus_transcript(&mut state.borrow_mut());
+            }
             return true;
         }
     }
@@ -1364,6 +1374,12 @@ fn handle_chat_prompt_key(
         crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
         return true;
     }
+    // Ctrl+/ opens the chat-panel keybind legend BEFORE the vim editor can
+    // consume it; closing (Esc/Ctrl+/) restores this prompt context.
+    if key_name == "slash" && is_ctrl {
+        open_chat_legend(&mut state.borrow_mut(), crate::app::InputMode::ChatPrompt);
+        return true;
+    }
     match ask_vim_intercept(
         true,
         key_name,
@@ -1524,6 +1540,12 @@ fn handle_chat_transcript_key(
         }
         "u" if is_ctrl => {
             crate::input::actions::chat::transcript_half_page(&mut state.borrow_mut(), false);
+            true
+        }
+        // Ctrl+/ opens the chat-panel keybind legend; Esc/Ctrl+/ there returns
+        // to the transcript (chat_keybinds_return_mode).
+        "slash" if is_ctrl => {
+            open_chat_legend(&mut state.borrow_mut(), crate::app::InputMode::ChatTranscript);
             true
         }
         // Escape exits an active `V` selection FIRST and stays in the panel
@@ -3304,6 +3326,31 @@ fn handle_overlay_keybinds_key(
                 s.input_mode = crate::app::InputMode::JournalOverlay;
             }
         }
+    }
+    true // consume all keys while the legend is up (modal)
+}
+
+/// Open the chat-panel Ctrl+/ keybind legend, remembering the panel context
+/// (`return_to`, ChatTranscript or ChatPrompt) so the close path can restore
+/// it. Sibling of `open_overlay_legend` for the chat panel's own two contexts.
+fn open_chat_legend(s: &mut AppState, return_to: crate::app::InputMode) {
+    s.chat_keybinds_return_mode = return_to;
+    s.chat_keybinds_overlay.show();
+    s.input_mode = crate::app::InputMode::ChatKeybindsOverlay;
+}
+
+/// Modal handler for the chat-panel Ctrl+/ keybind legend: Esc or Ctrl+/ closes
+/// it and returns to whichever panel context opened it; all other keys are
+/// swallowed. Mirrors `handle_overlay_keybinds_key`.
+fn handle_chat_keybinds_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    if key_name == "Escape" || (is_ctrl && key_name == "slash") {
+        let mut s = state.borrow_mut();
+        s.chat_keybinds_overlay.hide();
+        s.input_mode = s.chat_keybinds_return_mode;
     }
     true // consume all keys while the legend is up (modal)
 }

@@ -175,6 +175,10 @@ pub enum InputMode {
     /// Chat layout: the transcript owns keys (j/k exchange cursor, s saves,
     /// Tab cycles to the reader, Ctrl+Tab closes).
     ChatTranscript,
+    /// Chat-panel Ctrl+/ keybind legend: modal card over the panel. Esc or
+    /// Ctrl+/ closes it, restoring `chat_keybinds_return_mode` (the transcript
+    /// or prompt context it was opened from).
+    ChatKeybindsOverlay,
 }
 
 /// Which of the two toggleable reader overlays (gloss / journal) was most
@@ -657,6 +661,10 @@ pub struct AppState {
     pub gloss_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub synopsis_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub journal_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
+    pub chat_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
+    /// InputMode to restore when the chat-panel Ctrl+/ legend closes — the
+    /// panel context it was opened from (ChatTranscript or ChatPrompt).
+    pub chat_keybinds_return_mode: InputMode,
     /// turn_id the add-echo picker will attach the chosen line to.
     pub echo_add_turn_id: Option<i64>,
     pub concordance_list_picker: crate::ui::concordance_list_picker::ConcordanceListPicker,
@@ -1677,6 +1685,11 @@ pub fn build_window(
         crate::ui::journal_keybinds_overlay::GROUPS,
     );
     journal_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
+    let chat_keybinds_overlay = KeybindsLegend::new(
+        crate::ui::chat_keybinds_overlay::TITLE,
+        crate::ui::chat_keybinds_overlay::GROUPS,
+    );
+    chat_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
 
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
@@ -2079,6 +2092,8 @@ pub fn build_window(
         gloss_keybinds_overlay,
         synopsis_keybinds_overlay,
         journal_keybinds_overlay,
+        chat_keybinds_overlay,
+        chat_keybinds_return_mode: InputMode::ChatTranscript,
         echo_add_turn_id: None,
         concordance_list_picker,
         concordance_works_picker,
