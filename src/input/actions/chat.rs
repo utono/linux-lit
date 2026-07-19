@@ -2420,11 +2420,10 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     } else {
         R::Answer(answer.to_string())
     };
-    s.chat_panel.render_rows_to_top(&[
-        R::SavedMark,
-        question_row(question),
-        answer_row,
-    ]);
+    // Show the saved entry scrolled to the very top (Q: line first), so a long
+    // answer doesn't land the viewport mid-answer. No row cursor: this static
+    // snapshot isn't the j/k-navigable transcript.
+    s.chat_panel.render_rows_to_top(&[R::SavedMark, question_row(question), answer_row]);
 }
 
 /// Size and position the panel for the current placement. Pinned: fill the
@@ -2457,18 +2456,15 @@ pub(crate) fn size_panel(s: &AppState) {
             let start = crate::app::layout::CARD_OUTER_MARGIN + card_w + PINNED_DIVIDER_W;
             let w = (ww - crate::app::layout::CARD_OUTER_MARGIN - start).max(0);
             s.chat_panel.container.set_margin_start(start);
-            // Land the transcript's FIRST line at the same height as the card's
-            // first reading line (its top speaker-label / dialogue row), instead
-            // of vertically centering the panel in the card
-            // (`chat_first_line_top_margin`, shared with the Float branch). The
-            // margin is measured from the window top; the panel bottom must land
-            // on the card's bottom (`CARD_VERTICAL_OUTER_MARGIN + card_h`), so
-            // the height is `card_h` minus only the part of the margin ABOVE the
-            // card's own top outer margin.
-            let top_margin = chat_first_line_top_margin(s.config.line_spacing as i32);
-            let panel_h = (card_h
-                - (top_margin - crate::app::layout::CARD_VERTICAL_OUTER_MARGIN))
-                .max(0);
+            // Pinned panel is a CARD beside the reading card, so match the reading
+            // card's box exactly: top edge at the card's top outer margin, full
+            // `card_h` height (bottoms already aligned). This makes the two cards
+            // the same height. (The FLOAT branch instead aligns the panel's first
+            // LINE with the reading column via `chat_first_line_top_margin`,
+            // because it overlays a column and must clear the running-head band;
+            // the pinned panel sits in its own column and has no band to clear.)
+            let top_margin = crate::app::layout::CARD_VERTICAL_OUTER_MARGIN;
+            let panel_h = card_h.max(0);
             s.chat_panel.container.set_valign(gtk4::Align::Start);
             s.chat_panel.container.set_margin_top(top_margin);
             s.chat_panel.container.remove_css_class("chat-panel-float");
