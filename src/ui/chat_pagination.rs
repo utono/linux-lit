@@ -1,6 +1,76 @@
 //! Pure page + row-cursor arithmetic for the paginated chat panel. No GTK.
 use crate::ui::pagination::Page;
 
+/// One rendered transcript widget: its text, CSS class, and whether it starts a
+/// new indivisible pagination unit (a `GlossAnswer`/journal answer's first
+/// widget is a group start; its continuation widgets are not).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ChatWidget {
+    pub text: String,
+    pub class: String,
+    pub group_start: bool,
+}
+
+/// Total vertical CSS padding (top + bottom) the class adds around its text, so
+/// the pagination height matches what GTK renders (`measure_text_height` sees
+/// only the text). MIRRORS the `.chat-*` rules in `theme.rs` — keep in sync.
+///
+/// Every row also inherits `.chat-transcript label { padding-bottom: 3px }`
+/// (theme.rs:1369) UNLESS a more specific `.chat-transcript label.chat-a-*`
+/// selector overrides it to 0px (chat-a-speaker, chat-a-verse, chat-a-stage,
+/// chat-a-verse-flush, chat-a-stage-flush all override; chat-q/chat-a/
+/// chat-chip/chat-error/chat-saved/chat-a-src-lead/chat-a-gloss do not, so
+/// they keep the blanket 3px). The 3px is folded into each total below so the
+/// computed height matches what GTK actually renders — omitting it would
+/// undercount every un-overridden row by 3px and drift pagination.
+pub(crate) fn class_pad(class: &str) -> i32 {
+    match class {
+        // padding-top 10 (theme.rs:1392/1394/1398/1400/1401) + blanket
+        // padding-bottom 3 (not overridden for these classes) = 13.
+        "chat-q" => 13,
+        "chat-a" => 13,
+        "chat-chip" => 13,
+        "chat-error" => 13,
+        "chat-saved" => 13,
+        // padding-top 14 (theme.rs:1424) + padding-bottom 0 override
+        // (theme.rs:1434) = 14.
+        "chat-a-speaker" => 14,
+        // padding-top 0 (theme.rs:1441) + padding-bottom 0 override
+        // (theme.rs:1442) = 0.
+        "chat-a-verse" => 0,
+        // padding-top 0 (theme.rs:1457) + padding-bottom 0 override
+        // (theme.rs:1458) = 0.
+        "chat-a-verse-flush" => 0,
+        // padding-top 8 (theme.rs:1446) + padding-bottom 0 override
+        // (theme.rs:1447) = 8.
+        "chat-a-stage" => 8,
+        // padding-top 8 (theme.rs:1460) + padding-bottom 0 override
+        // (theme.rs:1461) = 8.
+        "chat-a-stage-flush" => 8,
+        // padding-top 18 (theme.rs:1462) + blanket padding-bottom 3
+        // (no override for chat-a-gloss) = 21.
+        "chat-a-gloss" => 21,
+        // padding-top 30 (theme.rs:1433) + blanket padding-bottom 3
+        // (no override for chat-a-src-lead) = 33.
+        "chat-a-src-lead" => 33,
+        _ => 0,
+    }
+}
+
+/// Per-widget heights + group-start flags for pagination. `measure(text)` is the
+/// pango text-height measurement (injected so this is unit-testable without GTK).
+pub(crate) fn widget_heights(
+    widgets: &[ChatWidget],
+    measure: impl Fn(&str) -> i32,
+) -> (Vec<i32>, Vec<bool>) {
+    let heights = widgets
+        .iter()
+        .map(|w| measure(&w.text) + class_pad(&w.class))
+        .collect();
+    let group_start = widgets.iter().map(|w| w.group_start).collect();
+    (heights, group_start)
+}
+
 /// Index of the page whose `[start,end)` contains `widget`; clamps to the last
 /// page (and returns 0 when there are no pages).
 pub(crate) fn page_of_widget(pages: &[Page], widget: usize) -> usize {
@@ -128,5 +198,28 @@ mod tests {
         assert_eq!(step_cursor_paged(0, -1, 0, &p, &landable), (0, 0));
         // cursor 8 (last) on page 2, +1 → no next page, stay
         assert_eq!(step_cursor_paged(8, 1, 2, &p, &landable), (8, 2));
+    }
+
+    #[test]
+    fn class_pad_reads_known_classes() {
+        // Values MUST match theme.rs at implementation time; these assert the
+        // shape (a src-lead row carries a big top gap; a plain answer carries little).
+        assert!(class_pad("chat-a-src-lead") >= class_pad("chat-a"));
+        assert!(class_pad("chat-a-gloss") > 0);
+        // An unknown class contributes 0 (defensive).
+        assert_eq!(class_pad("nonexistent-class"), 0);
+    }
+
+    #[test]
+    fn widget_heights_add_padding_and_carry_group_start() {
+        let widgets = vec![
+            ChatWidget { text: "Q".into(), class: "chat-q".into(), group_start: true },
+            ChatWidget { text: "verse".into(), class: "chat-a-src-lead".into(), group_start: false },
+        ];
+        // measure returns a fixed 20px for any text
+        let (h, gs) = widget_heights(&widgets, |_t| 20);
+        assert_eq!(h[0], 20 + class_pad("chat-q"));
+        assert_eq!(h[1], 20 + class_pad("chat-a-src-lead"));
+        assert_eq!(gs, vec![true, false]);
     }
 }
