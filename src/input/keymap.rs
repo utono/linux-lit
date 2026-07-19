@@ -1499,7 +1499,21 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             true
         }
-        "r" | "R" => {
+        "r" => {
+            // Journal view: `r` asks a NEW question (the panel's own ask input,
+            // same as `a`), matching the main journal overlay's `r`. Other
+            // views keep regloss.
+            if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
+                crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
+            } else {
+                crate::input::actions::chat::regloss_pinned(state);
+            }
+            true
+        }
+        "R" => {
+            // Journal view: `R` opens the rewrite popup on the selected entry
+            // (Task 5). Other views keep regloss. Until Task 5 lands,
+            // regloss_pinned is the fallback for BOTH branches.
             crate::input::actions::chat::regloss_pinned(state);
             true
         }
