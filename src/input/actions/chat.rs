@@ -173,6 +173,23 @@ pub(crate) struct ChatState {
     /// never conflated (the load always runs before this is read for
     /// render). Cleared alongside `view` at the same reset point.
     pub journal_list: Vec<crate::db::journal::JournalPage>,
+    /// Row cursor for `PanelView::Journal`: index into `journal_list`. `j`/`k`
+    /// step it, the accent bar (`.chat-cursor-row`) paints on the cursor
+    /// entry's `Q:` widget row, and `R` rewrites this entry. Reset to 0 (top)
+    /// on every toggle into Journal view — matches the "land at the top of the
+    /// entry" behavior. A separate axis from `row_cursor` (Gloss view) and
+    /// `cursor` (exchanges); never shared. Clamped to `journal_list` on every
+    /// render.
+    pub journal_cursor: usize,
+    /// Set by `rewrite_journal_entry` while a panel-initiated `R` rewrite is in
+    /// flight through the shared journal rewrite pipeline (which otherwise
+    /// returns to the journal OVERLAY). The overlay-render / mode-restore sites
+    /// in `journal.rs` (`rewrite_with_claude`'s success + error closures,
+    /// `close_rewrite_target`, the panel instruction-card submit) guard on this
+    /// to re-render the CHAT PANEL and restore `ChatTranscript` instead. Always
+    /// cleared on the terminal outcome (success re-render, error, or cancel);
+    /// defaults `false` and resets with the rest of `ChatState` on panel close.
+    pub rewrite_return: bool,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
