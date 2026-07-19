@@ -226,10 +226,6 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.chat_panel.container.remove_css_class("chat-panel-pinned");
     s.page_turn_overlay.remove_css_class("card-chat-seam");
     s.chat_panel.container.set_margin_start(24);
-    // Reset the horizontal-edge pin applied by size_panel (halign: Fill +
-    // margin_end); the next open re-establishes it for its placement.
-    s.chat_panel.container.set_halign(gtk4::Align::Start);
-    s.chat_panel.container.set_margin_end(0);
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
     s.chat_panel.hide();
@@ -2480,19 +2476,6 @@ pub(crate) fn size_panel(s: &AppState) {
             // Square the card's right corners so it meets the panel's hairline
             // seam flush (no rounded sliver of root at top-right/bottom-right).
             s.page_turn_overlay.add_css_class("card-chat-seam");
-            // Pin BOTH horizontal edges: the panel container is an overlay child,
-            // so `halign: Start` + only a `width_request` (a MINIMUM) lets a wide
-            // transcript row (e.g. a pinned prose passage whose wrapping label
-            // reports a large natural width) inflate the allocation PAST `w`,
-            // pushing the panel flush to the window's right edge (the bug: healthy
-            // while the transcript is empty, flush-right once a wide passage
-            // renders). Setting `margin_end` with `halign: Fill` fixes the right
-            // edge at `ww - CARD_OUTER_MARGIN` regardless of content width; the
-            // panel then wraps within, never overflowing. `w`/`size_to` still set
-            // the height and a width floor for the pre-content frame.
-            let margin_end = crate::app::layout::CARD_OUTER_MARGIN;
-            s.chat_panel.container.set_halign(gtk4::Align::Fill);
-            s.chat_panel.container.set_margin_end(margin_end);
             s.chat_panel.size_to(w, panel_h);
         }
         ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
@@ -2556,15 +2539,6 @@ pub(crate) fn size_panel(s: &AppState) {
                 .max(0);
             s.chat_panel.container.set_valign(gtk4::Align::Start);
             s.chat_panel.container.set_margin_top(top_margin);
-            // Pin BOTH horizontal edges (same reasoning as the Pinned branch):
-            // `halign: Start` + only a `width_request` lets a wide transcript row
-            // inflate the float past its column's right edge. Fix the right edge
-            // at the column's right (`x + w`) via `margin_end` with `halign:
-            // Fill`, so the panel wraps within the column instead of overrunning.
-            let ww = s.window.width().max(0);
-            let margin_end = (ww - (x.max(0) + w)).max(0);
-            s.chat_panel.container.set_halign(gtk4::Align::Fill);
-            s.chat_panel.container.set_margin_end(margin_end);
             s.chat_panel.size_to(w, panel_h);
         }
     }
