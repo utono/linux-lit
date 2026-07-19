@@ -1131,8 +1131,6 @@ fn render_paginated(
     let specs = crate::ui::chat_panel::row_widget_specs(rows);
     let (fam, sz) = transcript_font(s);
     let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
-    // TEMPORARY: chat-panel bottom-clip investigation (fix/chat-panel-clip).
-    s.chat_panel.debug_log_pagination(&specs, &pages, &fam, sz);
     let page_idx = match cursor_widget {
         Some(c) => page_of_widget(&pages, c),
         None => 0,

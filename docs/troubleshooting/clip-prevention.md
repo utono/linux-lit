@@ -117,15 +117,31 @@ fits by construction). The `clip_guard` field, the `Overlay`/`attach_box` wrap,
 
 - **The `chat-a-src-lead` height gap (undercount → the bottom clip returns).**
   The first source row after a gloss carries a SECOND CSS class `chat-a-src-lead`
-  (a 30px top gap, theme.rs:1433). If pagination measures only the PRIMARY class
+  (a 44px top gap, theme.rs:1428). If pagination measures only the PRIMARY class
   it undercounts that row and packs one row too many. Fix: `ChatWidget` carries
   `extra_class`, and `widget_heights` adds `chat_pagination::src_lead_extra_pad`,
   which accounts for GTK CSS's NON-additive padding-top under a source-order
   collision: two single-class rules tie on specificity, so the LATER rule wins.
   Only `.chat-a-speaker` (padding-top 14, theme.rs:1424) is ordered BEFORE
-  src-lead, so src-lead wins there (+16 effective). `.chat-a-verse`/`-stage`/
-  `-flush` are all ordered AFTER src-lead, so the base wins and the extra is 0 —
-  do NOT `class_pad("chat-a-src-lead")` (that double-counts the base pad).
+  src-lead, so src-lead wins there (+30 effective = 44 − 14). `.chat-a-verse`/
+  `-stage`/`-flush` are all ordered AFTER src-lead, so the base wins and the
+  extra is 0 — do NOT `class_pad("chat-a-src-lead")` (that double-counts the base pad).
+  - **SYNC WARNING:** the gloss→source gap is TWO mirrored values —
+    `.chat-a-src-lead { padding-top }` (theme.rs) and `SRC_LEAD_PADDING_TOP`
+    (`chat_pagination.rs`). They MUST change together or the height model
+    undercounts the src-lead row and the bottom clip returns. The speaker
+    effective-extra is `SRC_LEAD_PADDING_TOP − 14` (the speaker's own padding-top).
+
+- **The content-box `padding-bottom` undercount (page packs one row too many →
+  bottom clip).** The pagination budget is `transcript_scroll.height()`, but the
+  `.chat-transcript` content box has its OWN `padding-bottom: 16px` (theme.rs) —
+  height the widgets inside `transcript_box` can never use. If the budget doesn't
+  subtract it, pagination packs one row's overflow past the bottom and the last
+  line clips. Fix: `transcript_budget()` subtracts `CHAT_TRANSCRIPT_PAD_V`
+  (mirrors `.chat-transcript { padding-bottom }`) plus a 2px `CHAT_BUDGET_SAFETY`
+  that absorbs pango logical-vs-ink rounding so a page never packs to a hairline
+  overflow. Both consts live at the top of `chat_panel.rs` beside
+  `transcript_budget`; `CHAT_TRANSCRIPT_PAD_V` must track the CSS padding-bottom.
 
 **Pin every rendered TextView's `height_request` to its MEASURED height — do
 not trust GTK's lazy natural height.** A paginated surface rebuilds its content

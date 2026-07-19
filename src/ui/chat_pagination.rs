@@ -59,9 +59,11 @@ pub(crate) fn class_pad(class: &str) -> i32 {
         // padding-top 18 (theme.rs:1462) + blanket padding-bottom 3
         // (no override for chat-a-gloss) = 21.
         "chat-a-gloss" => 21,
-        // padding-top 30 (theme.rs:1433) + blanket padding-bottom 3
-        // (no override for chat-a-src-lead) = 33.
-        "chat-a-src-lead" => 33,
+        // padding-top 44 (theme.rs:1428) + blanket padding-bottom 3
+        // (no override for chat-a-src-lead) = 47. NOTE: chat-a-src-lead is only
+        // ever an extra_class, never a base class, so this arm is unused by
+        // pagination — src_lead_extra_pad handles the effective extra instead.
+        "chat-a-src-lead" => 47,
         _ => 0,
     }
 }
@@ -73,25 +75,29 @@ pub(crate) fn class_pad(class: &str) -> i32 {
 ///
 /// Source order in `theme.rs` (see the `.chat-a-*` block, theme.rs ~1420-1461):
 ///   `.chat-a-speaker`      padding-top 14 (theme.rs:1424) — BEFORE src-lead
-///   `.chat-a-src-lead`     padding-top 30 (theme.rs:1433)
+///   `.chat-a-src-lead`     padding-top 44 (theme.rs:1428)
 ///   `.chat-a-verse`        padding-top 0  (theme.rs:1441) — AFTER src-lead
 ///   `.chat-a-stage`        padding-top 8  (theme.rs:1446) — AFTER src-lead
 ///   `.chat-a-verse-flush`  padding-top 0  (theme.rs:1457) — AFTER src-lead
 ///   `.chat-a-stage-flush`  padding-top 8  (theme.rs:1460) — AFTER src-lead
 ///
-/// So src-lead only WINS (raises rendered padding-top to 30) for a base class
+/// So src-lead only WINS (raises rendered padding-top to 44) for a base class
 /// whose rule comes BEFORE it — only `chat-a-speaker`. For every base whose rule
 /// comes AFTER src-lead, the base's own `padding-top` wins and src-lead adds
 /// nothing (net extra 0). The effective extra is therefore
-/// `max(0, 30 - base_padding_top)` for the ONE class ordered before src-lead
-/// (`chat-a-speaker`: 30-14 = 16), and 0 for all others. Do NOT use
+/// `max(0, 44 - base_padding_top)` for the ONE class ordered before src-lead
+/// (`chat-a-speaker`: 44-14 = 30), and 0 for all others. Do NOT use
 /// `class_pad("chat-a-src-lead")` — that would double-count the base pad already
 /// added by `class_pad(&w.class)`.
+///
+/// SYNC: `SRC_LEAD_PADDING_TOP` MUST equal `.chat-a-src-lead { padding-top }`
+/// in theme.rs (~1428). Change both together or the height model undercounts
+/// the src-lead row and the bottom clip returns.
 pub(crate) fn src_lead_extra_pad(base_class: &str) -> i32 {
-    const SRC_LEAD_PADDING_TOP: i32 = 30; // theme.rs:1433
+    const SRC_LEAD_PADDING_TOP: i32 = 44; // theme.rs:1428
     match base_class {
         // Only chat-a-speaker's rule (theme.rs:1424) precedes src-lead, so
-        // src-lead wins: rendered padding-top 30, base pad 14 → +16 more.
+        // src-lead wins: rendered padding-top 44, base pad 14 → +30 more.
         "chat-a-speaker" => SRC_LEAD_PADDING_TOP - 14,
         // Every other base class's padding-top rule comes AFTER src-lead in
         // source order, so the base wins and src-lead adds nothing.
@@ -280,9 +286,9 @@ mod tests {
     #[test]
     fn src_lead_extra_pad_only_raises_speaker() {
         // Only chat-a-speaker's rule precedes .chat-a-src-lead in theme.rs, so
-        // src-lead wins there (30 - 14 = 16). Every other base class's rule
+        // src-lead wins there (44 - 14 = 30). Every other base class's rule
         // comes AFTER src-lead, so the base wins and src-lead adds nothing.
-        assert_eq!(src_lead_extra_pad("chat-a-speaker"), 16);
+        assert_eq!(src_lead_extra_pad("chat-a-speaker"), 30);
         assert_eq!(src_lead_extra_pad("chat-a-verse"), 0);
         assert_eq!(src_lead_extra_pad("chat-a-stage"), 0);
         assert_eq!(src_lead_extra_pad("chat-a-verse-flush"), 0);
@@ -292,7 +298,7 @@ mod tests {
     #[test]
     fn src_lead_speaker_height_includes_effective_extra_but_verse_does_not() {
         // A source-after-gloss block whose leading source row is a SPEAKER
-        // carries chat-a-src-lead: its measured height must include the +16
+        // carries chat-a-src-lead: its measured height must include the +30
         // effective extra on top of the base chat-a-speaker pad.
         let speaker_lead = ChatWidget {
             text: "CYMBELINE".into(),
@@ -301,7 +307,7 @@ mod tests {
             group_start: true,
         };
         let (h, _) = widget_heights(std::slice::from_ref(&speaker_lead), |_t| 20);
-        assert_eq!(h[0], 20 + class_pad("chat-a-speaker") + 16);
+        assert_eq!(h[0], 20 + class_pad("chat-a-speaker") + 30);
 
         // A speakerless (verse-flush) source-after-gloss row also carries
         // chat-a-src-lead, but the verse-flush rule comes AFTER src-lead, so the

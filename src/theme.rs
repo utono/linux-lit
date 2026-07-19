@@ -1425,7 +1425,7 @@ pub fn generate_css(
             block, not per source line (multi-line prose source would otherwise \
             get 18px between every line). Matched to the gloss 18px top so the \
             rhythm reads evenly. */ \
-         .chat-a-src-lead {{ padding-top: 30px; }} \
+         .chat-a-src-lead {{ padding-top: 44px; }} \
          .chat-transcript label.chat-a-speaker {{ padding-bottom: 0px; }} \
          /* Fix 3: the main card never italicizes dialogue/verse — \
             formatting.rs's Style::Italic appears ONLY on stage directions \

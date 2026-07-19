@@ -16,6 +16,19 @@ use gtk4::prelude::*;
 const THINKING_TEXT: &str = "thinking\u{2026}";
 const SAVED_MARK_TEXT: &str = "\u{2713} saved";
 
+/// Vertical padding of the `.chat-transcript` content box (padding-top 0 +
+/// padding-bottom 16px). Widgets live in `transcript_box` inside
+/// `transcript_scroll`, so this padding consumes scroll height the widgets can
+/// never use — `transcript_budget` must subtract it or pagination packs one
+/// row's overflow past the bottom and the last line clips.
+/// MIRRORS `.chat-transcript { padding-bottom }` in theme.rs (~1362) — keep in sync.
+const CHAT_TRANSCRIPT_PAD_V: i32 = 16;
+
+/// Sub-pixel safety margin shaved off the transcript budget: pango's
+/// logical-vs-ink height rounds up a hair, so without this a page can pack to a
+/// hairline overflow. 2px absorbs that rounding.
+const CHAT_BUDGET_SAFETY: i32 = 2;
+
 pub enum TranscriptRow {
     Question(String),
     /// Plain-prose answer (journal Q&A, revision, consolidation): rendered as
@@ -160,12 +173,15 @@ impl ChatPanel {
     pub fn transcript_budget(&self) -> i32 {
         let alloc = self.transcript_scroll.height();
         if alloc > 1 {
-            alloc
+            (alloc - CHAT_TRANSCRIPT_PAD_V - CHAT_BUDGET_SAFETY).max(1)
         } else {
             let container_h = self.container.height();
             let container_req = self.container.height_request();
             let input_h = self.input.container().height();
-            (container_h.max(container_req) - input_h.max(0)).max(200)
+            (container_h.max(container_req) - input_h.max(0)
+                - CHAT_TRANSCRIPT_PAD_V
+                - CHAT_BUDGET_SAFETY)
+                .max(200)
         }
     }
 
@@ -227,82 +243,6 @@ impl ChatPanel {
         });
         let budget = self.transcript_budget();
         crate::ui::pagination::paginate_grouped(&heights, &group_start, budget)
-    }
-
-    /// TEMPORARY debug instrumentation for the chat-panel bottom-clip
-    /// investigation (fix/chat-panel-clip). For each resulting page logs the
-    /// widget index range, the SUM of that page's `widget_heights` (the measured
-    /// page fill) vs the `page_budget`; for the LAST page logs each widget's
-    /// `(class, extra, measured_text_h, class_pad, src_lead_extra, total)`. Also
-    /// logs the transcript_box vs transcript_scroll allocation so we can see the
-    /// content-box padding-top/bottom (16px bottom) the budget ignores. Remove
-    /// once the clip is understood.
-    pub fn debug_log_pagination(
-        &self,
-        specs: &[crate::ui::chat_pagination::ChatWidget],
-        pages: &[crate::ui::pagination::Page],
-        family: &str,
-        size_pt: i32,
-    ) {
-        use crate::ui::chat_pagination::{class_pad, src_lead_extra_pad};
-        let budget = self.transcript_budget();
-        // Box (content, .chat-transcript) vs scroll (viewport) allocations: the
-        // budget is the SCROLL height, but widgets live in the BOX, whose
-        // padding-bottom:16px / padding-top:0 eats usable height the budget
-        // never subtracts.
-        crate::log_fmt!(
-            "CHATPAG: budget={} scroll_alloc=({}x{}) box_alloc=({}x{}) box_minh={} wrap_w={}",
-            budget,
-            self.transcript_scroll.width(),
-            self.transcript_scroll.height(),
-            self.transcript_box.width(),
-            self.transcript_box.height(),
-            self.transcript_box.height_request(),
-            self.transcript_wrap_width(),
-        );
-        // Per-widget height components (independent of pagination).
-        let comp: Vec<(i32, i32, i32, i32)> = specs
-            .iter()
-            .map(|w| {
-                let m = self.measure_widget(&w.text, family, size_pt);
-                let cp = class_pad(&w.class);
-                let extra = if w.extra_class.as_deref() == Some("chat-a-src-lead") {
-                    src_lead_extra_pad(&w.class)
-                } else {
-                    0
-                };
-                (m, cp, extra, m + cp + extra)
-            })
-            .collect();
-        for (pi, p) in pages.iter().enumerate() {
-            let sum: i32 = (p.start..p.end).map(|i| comp[i].3).sum();
-            crate::log_fmt!(
-                "CHATPAG: page {}/{} widgets[{}..{}] fill={} budget={} slack={}",
-                pi + 1,
-                pages.len(),
-                p.start,
-                p.end,
-                sum,
-                budget,
-                budget - sum,
-            );
-        }
-        if let Some(last) = pages.last() {
-            for i in last.start..last.end {
-                let w = &specs[i];
-                let (m, cp, extra, total) = comp[i];
-                crate::log_fmt!(
-                    "CHATPAG:   w[{}] class={} extra={:?} measured_text_h={} class_pad={} src_lead_extra={} total={}",
-                    i,
-                    w.class,
-                    w.extra_class.as_deref().unwrap_or("-"),
-                    m,
-                    cp,
-                    extra,
-                    total,
-                );
-            }
-        }
     }
 
     /// Render ONLY the widgets in `page` (`specs[page.start..page.end]`) — a
