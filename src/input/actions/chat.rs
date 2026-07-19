@@ -173,6 +173,23 @@ pub(crate) struct ChatState {
     /// never conflated (the load always runs before this is read for
     /// render). Cleared alongside `view` at the same reset point.
     pub journal_list: Vec<crate::db::journal::JournalPage>,
+    /// Row cursor for `PanelView::Journal`: index into `journal_list`. `j`/`k`
+    /// step it, the accent bar (`.chat-cursor-row`) paints on the cursor
+    /// entry's `Q:` widget row, and `R` rewrites this entry. Reset to 0 (top)
+    /// on every toggle into Journal view — matches the "land at the top of the
+    /// entry" behavior. A separate axis from `row_cursor` (Gloss view) and
+    /// `cursor` (exchanges); never shared. Clamped to `journal_list` on every
+    /// render.
+    pub journal_cursor: usize,
+    /// Set by `rewrite_journal_entry` while a panel-initiated `R` rewrite is in
+    /// flight through the shared journal rewrite pipeline (which otherwise
+    /// returns to the journal OVERLAY). The overlay-render / mode-restore sites
+    /// in `journal.rs` (`rewrite_with_claude`'s success + error closures,
+    /// `close_rewrite_target`, the panel instruction-card submit) guard on this
+    /// to re-render the CHAT PANEL and restore `ChatTranscript` instead. Always
+    /// cleared on the terminal outcome (success re-render, error, or cancel);
+    /// defaults `false` and resets with the rest of `ChatState` on panel close.
+    pub rewrite_return: bool,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -199,6 +216,9 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     // leaves the tag applied outside visual mode).
     crate::input::visual::clear_selection_highlight(s);
     s.chat = Default::default();
+    // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
+    // for a rewrite (mirrors journal::close_prompt).
+    s.journal.vim_rewrite = None;
     s.chat_panel.render_rows(&[]);
     s.chat_layout_open = false;
     s.chat_placement = ChatPlacement::Pinned;
@@ -235,6 +255,9 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
         return;
     }
     s.chat = Default::default();
+    // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
+    // for a rewrite (mirrors journal::close_prompt).
+    s.journal.vim_rewrite = None;
     s.chat_panel.render_rows(&[]);
     s.chat_panel.size_to_natural();
     s.chat_regate_pending = true;
@@ -1244,23 +1267,169 @@ fn reload_journal_list(
         .unwrap_or_default()
 }
 
-/// Render the `Journal` view at the current `s.chat.journal_list` via
-/// `render_rows_to_top` (no row-cursor accent bar, no visual-selection
-/// painting): the journal view is a deliberately flat, uncycled list (see
+/// The `Q:` widget-row index for `journal_list` entry `entry`. Each entry
+/// renders as exactly two widget rows (a `Q:` row then an `Answer` row — see
+/// `journal_view_rows`), so entry `i` owns rows `2*i` (question) and `2*i + 1`
+/// (answer). The row cursor (and `R`'s target) anchors on the `Q:` row.
+fn journal_entry_qrow(entry: usize) -> usize {
+    entry * 2
+}
+
+/// Clamp a Journal-view row cursor to a list of `len` entries: `[0, len-1]`, or
+/// `0` for an empty list (which renders a single non-landable placeholder row).
+fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        cursor.min(len - 1)
+    }
+}
+
+/// Step a Journal-view row cursor by `delta` (±1) within a `len`-entry list,
+/// clamped with NO wrap: already at the first/last entry stays put. Empty list
+/// stays at 0.
+fn step_journal_cursor(cursor: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let next = (cursor as i64 + delta as i64).clamp(0, len as i64 - 1);
+    next as usize
+}
+
+/// Render the `Journal` view at the current `s.chat.journal_list` — plain
+/// `render_rows` (no row-cursor accent bar, no visual-selection painting):
+/// the journal view is a deliberately flat, uncycled list (see
 /// `toggle_panel_view`'s doc comment), so it does not participate in the
 /// `row_cursor`/`row_owner` machinery `render_transcript` drives for the
 /// Gloss view's `j`/`k`/`V`/`y`. `j`/`k` while this view is showing instead
 /// fall back to plain viewport scrolling (see `handle_chat_transcript_key`'s
-/// `t`/`j`/`k` arms in keymap.rs). Scrolls to the TOP of the entry rather than
-/// pinning to the end the way `render_rows` does — every toggle to this view
-/// lands on the first `Q:` row, not scrolled past it.
-fn render_journal_view(s: &AppState) {
+/// `t`/`j`/`k` arms in keymap.rs).
+fn render_journal_view(s: &mut AppState) {
     let rows = journal_view_rows(&s.chat.journal_list);
-    // Land on the TOP of the entry (the first `Q:` row), not the bottom:
-    // `render_rows` pins the viewport to its end (newest-last transcript
-    // behavior), which left a long journal answer scrolled past its own top on
-    // every toggle to this view. `render_rows_to_top` scrolls to 0 instead.
-    s.chat_panel.render_rows_to_top(&rows);
+    let len = s.chat.journal_list.len();
+    s.chat.journal_cursor = clamp_journal_cursor(s.chat.journal_cursor, len);
+    if len == 0 {
+        // Placeholder-only list: no landable row, scroll to top, no accent bar.
+        s.chat_panel.render_rows_to_top(&rows);
+        return;
+    }
+    // Land the accent bar on the cursor entry's `Q:` widget row;
+    // `render_rows_focused_cursor` scrolls that row to the top. No visual
+    // selection in Journal view.
+    let qrow = journal_entry_qrow(s.chat.journal_cursor);
+    s.chat_panel.render_rows_focused_cursor(&rows, qrow, None);
+}
+
+/// `R` in the chat panel's Journal view: rewrite the SELECTED saved Q&A by
+/// reusing the journal overlay's rewrite popup + pipeline (Approach A). Seeds
+/// `s.journal.pages`/`page_index`/band from the cursor'd `journal_list` entry so
+/// `displayed_journal_page` resolves it, sets `rewrite_return` so the pipeline's
+/// overlay-render sites re-render THIS panel instead, then opens the popup.
+///
+/// No-op (toast) with no `gloss_ctx` (panel opened via Tab, never glossed) or an
+/// empty `journal_list` — mirrors `toggle_panel_view`/`regloss_pinned`.
+pub(crate) fn rewrite_journal_entry(state_rc: &Rc<RefCell<AppState>>) {
+    {
+        let mut s = state_rc.borrow_mut();
+        if s.chat.view != PanelView::Journal {
+            return;
+        }
+        let Some(ctx) = s.chat.gloss_ctx.clone() else {
+            crate::input::navigation::show_chapter_toast_secs(&s, "No passage to rewrite", 2);
+            return;
+        };
+        if s.chat.journal_list.is_empty() {
+            crate::input::navigation::show_chapter_toast_secs(&s, "No journal entry to rewrite", 2);
+            return;
+        }
+        let cursor = clamp_journal_cursor(s.chat.journal_cursor, s.chat.journal_list.len());
+        s.chat.journal_cursor = cursor;
+        // Seed the overlay page state so displayed_journal_page() resolves the
+        // selected entry. Clear any stale filter (the panel has none, but the
+        // pipeline reads journal.filter first).
+        s.journal.filter = None;
+        s.journal.pages = s.chat.journal_list.clone();
+        s.journal.page_index = cursor;
+        s.journal_band = crate::app::JournalBand::Passage {
+            div1: ctx.act,
+            div2: ctx.scene,
+            start: ctx.start_citation.clone(),
+            end: ctx.end_citation.clone(),
+        };
+        s.chat.rewrite_return = true;
+    }
+    // Opens the q/a/b popup (InputMode::RewriteTargetChoice); the pipeline runs
+    // unchanged, and the rewrite_return guards in journal.rs route completion
+    // back to this panel.
+    crate::input::actions::journal::open_rewrite_target(state_rc);
+}
+
+/// Return a panel-initiated `R` rewrite to the chat panel: reload the pinned
+/// passage's journal list from lit.db, re-render Journal view with the cursor
+/// still on the rewritten entry (re-found by `id` so a timestamp bump can't
+/// strand it), restore `ChatTranscript`, and clear `rewrite_return`. Called by
+/// journal.rs's rewrite-completion / cancel sites when `rewrite_return` is set.
+/// `rewritten_id` is the entry that changed (`None` on cancel — keep the cursor
+/// where it is).
+pub(crate) fn finish_panel_rewrite(s: &mut AppState, rewritten_id: Option<i64>) {
+    if let Some(ctx) = s.chat.gloss_ctx.clone() {
+        s.chat.journal_list =
+            reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
+    }
+    if let Some(id) = rewritten_id {
+        if let Some(pos) = s.chat.journal_list.iter().position(|p| p.id == id) {
+            s.chat.journal_cursor = pos;
+        }
+    }
+    s.chat.journal_cursor = clamp_journal_cursor(s.chat.journal_cursor, s.chat.journal_list.len());
+    s.chat.view = PanelView::Journal;
+    render_journal_view(s);
+    s.input_mode = crate::app::InputMode::ChatTranscript;
+    s.chat.rewrite_return = false;
+}
+
+/// Open the chat panel's own input as a rewrite-INSTRUCTION card for a
+/// panel-initiated `R` on the `a` (answer) or `b` (both) path. The overlay's
+/// instruction card lives on the hidden journal_overlay widget, so the panel
+/// must show its own. `submit_panel_rewrite` (Ctrl+Enter) reads the typed
+/// instruction and runs the stashed `journal.vim_rewrite` tuple. Opens in vim
+/// NORMAL (matching the overlay card) so the empty-Ctrl+Enter meaning is read
+/// first; press `i` to type.
+pub(crate) fn open_rewrite_instruction_input(s: &mut AppState) {
+    s.input_mode = crate::app::InputMode::ChatPrompt;
+    s.chat_panel.open_input(
+        "Rewrite instruction",
+        "Ctrl+Enter rewrite \u{00b7} empty = afresh \u{00b7} Esc cancel",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+        false,
+    );
+    s.chat_panel.flash_input();
+}
+
+/// Ctrl+Enter in the panel rewrite-instruction card: mirror journal
+/// `submit_prompt`'s rewrite branch, but read the PANEL's input text and keep
+/// `rewrite_return` set so the completion re-renders the panel. No-op when no
+/// `vim_rewrite` is stashed (defensive — this is only opened by the `a`/`b`
+/// panel path, which always stashes first).
+pub(crate) fn submit_panel_rewrite(state_rc: &Rc<RefCell<AppState>>) {
+    let text = state_rc.borrow().chat_panel.take_input_text();
+    let rewrite = state_rc.borrow_mut().journal.vim_rewrite.take();
+    state_rc.borrow().chat_panel.close_input();
+    let Some((id, question, answer, target)) = rewrite else {
+        // Nothing stashed: fall back to transcript focus.
+        focus_transcript(&mut state_rc.borrow_mut());
+        return;
+    };
+    let instruction = text.trim();
+    let instruction = if instruction.is_empty() {
+        "No further instruction was given; answer this question afresh under the standard guidance, grounded as before."
+    } else {
+        instruction
+    };
+    crate::input::actions::journal::rewrite_with_claude(
+        state_rc, id, &question, &answer, instruction, target,
+    );
 }
 
 /// `t` on the transcript: toggle the panel between showing the pinned
@@ -1302,7 +1471,8 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
         PanelView::Journal => {
             s.chat.journal_list =
                 reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
-            render_journal_view(&s);
+            s.chat.journal_cursor = 0;
+            render_journal_view(&mut s);
             crate::logging::log(&format!(
                 "CHAT-JOURNAL: view toggled to journal ({} entries)",
                 s.chat.journal_list.len()
@@ -1631,15 +1801,29 @@ pub(crate) fn transcript_half_page(s: &mut AppState, down: bool) {
 }
 
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
-    // Journal and Question are both flat, uncycled views with no
-    // row_cursor/row_owner of their own — neither goes through
-    // `render_transcript` (Journal: `render_journal_view`; Question:
-    // `render_current_question`, plain `render_rows`, no accent bar), so
-    // reading `transcript_rows` (the Gloss-view's `exchanges`) here would
-    // move a cursor over content that isn't even on screen. A single Q&A is
-    // rarely taller than the panel, and even when it is, plain scrolling
-    // reads it fully — j/k just scrolls in both.
-    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+    // Journal has its own row cursor (`journal_cursor`, entry-granularity —
+    // see `step_journal_cursor`/`render_journal_view`), stepped and clamped
+    // independently of the Gloss view's `row_cursor`/`row_owner` below (which
+    // reads `transcript_rows`, the Gloss-view's `exchanges` — content that
+    // isn't even on screen in Journal). An empty `journal_list` has no entry
+    // to land on, so it falls back to plain scrolling like Question.
+    //
+    // Question is a flat, uncycled view with no row_cursor/row_owner of its
+    // own — it doesn't go through `render_transcript` (it uses
+    // `render_current_question`, plain `render_rows`, no accent bar). A
+    // single Q&A is rarely taller than the panel, and even when it is, plain
+    // scrolling reads it fully — j/k just scrolls.
+    if s.chat.view == PanelView::Journal {
+        let len = s.chat.journal_list.len();
+        if len == 0 {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        }
+        s.chat.journal_cursor = step_journal_cursor(s.chat.journal_cursor, delta, len);
+        render_journal_view(s);
+        return;
+    }
+    if s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_step(delta as f64);
         return;
     }
@@ -1733,11 +1917,23 @@ fn last_landable_index(landable: &[bool]) -> Option<usize> {
 /// `PanelView::Gloss`) and scroll it to the top of the viewport via
 /// `render_transcript`'s `render_rows_focused_cursor` call — the same
 /// cursor-follows-scroll behavior `transcript_cursor_move` already gets from
-/// that path. In `PanelView::Journal`/`Question` (no row cursor — see
-/// `transcript_cursor_move`'s guard) this is instead a plain scroll-to-top,
-/// mirroring how `j`/`k` degrade to scrolling in those views.
+/// that path. In `PanelView::Journal` this instead moves `journal_cursor` to
+/// entry 0 and re-renders (or, on an empty `journal_list`, falls back to a
+/// plain scroll-to-top — there is no entry to land on). In
+/// `PanelView::Question` (no row cursor — see `transcript_cursor_move`'s
+/// guard) this is a plain scroll-to-top, mirroring how `j`/`k` degrade to
+/// scrolling in that view.
 pub(crate) fn transcript_cursor_first(s: &mut AppState) {
-    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+    if s.chat.view == PanelView::Journal {
+        if !s.chat.journal_list.is_empty() {
+            s.chat.journal_cursor = 0;
+            render_journal_view(s);
+        } else {
+            s.chat_panel.scroll_transcript_to_edge(false);
+        }
+        return;
+    }
+    if s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_to_edge(false);
         return;
     }
@@ -1752,10 +1948,22 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
 }
 
 /// `G` on the transcript: symmetric counterpart to `transcript_cursor_first`
-/// — moves the row cursor to the LAST landable row (Gloss view) or scrolls to
-/// the bottom (Journal/Question view).
+/// — moves the row cursor to the LAST landable row (Gloss view), moves
+/// `journal_cursor` to the last entry (Journal view, or falls back to
+/// scroll-to-bottom when `journal_list` is empty), or scrolls to the bottom
+/// (Question view).
 pub(crate) fn transcript_cursor_last(s: &mut AppState) {
-    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+    if s.chat.view == PanelView::Journal {
+        let len = s.chat.journal_list.len();
+        if len != 0 {
+            s.chat.journal_cursor = len - 1;
+            render_journal_view(s);
+        } else {
+            s.chat_panel.scroll_transcript_to_edge(true);
+        }
+        return;
+    }
+    if s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_to_edge(true);
         return;
     }
@@ -3233,7 +3441,10 @@ mod visual_selection_tests {
 /// on-screen verification.
 #[cfg(test)]
 mod panel_view_toggle_tests {
-    use super::{flip_view, journal_view_rows, PanelView};
+    use super::{
+        clamp_journal_cursor, flip_view, journal_entry_qrow, journal_view_rows,
+        step_journal_cursor, PanelView,
+    };
     use crate::db::journal::JournalPage;
     use crate::ui::chat_panel::TranscriptRow as R;
 
@@ -3335,6 +3546,34 @@ mod panel_view_toggle_tests {
             texts,
             vec!["Q: Q1?", "A1.", "Q: Q2?", "A2.", "Q: Q3?", "A3."]
         );
+    }
+
+    #[test]
+    fn journal_entry_qrow_is_two_per_entry() {
+        assert_eq!(journal_entry_qrow(0), 0);
+        assert_eq!(journal_entry_qrow(1), 2);
+        assert_eq!(journal_entry_qrow(3), 6);
+    }
+
+    #[test]
+    fn clamp_journal_cursor_bounds() {
+        assert_eq!(clamp_journal_cursor(0, 0), 0); // empty list
+        assert_eq!(clamp_journal_cursor(5, 0), 0); // empty list, stale cursor
+        assert_eq!(clamp_journal_cursor(0, 3), 0);
+        assert_eq!(clamp_journal_cursor(2, 3), 2);
+        assert_eq!(clamp_journal_cursor(9, 3), 2); // clamps to len-1
+    }
+
+    #[test]
+    fn step_journal_cursor_clamps_no_wrap() {
+        // down from 0 in a 3-entry list
+        assert_eq!(step_journal_cursor(0, 1, 3), 1);
+        // up from 0 stays at 0 (no wrap)
+        assert_eq!(step_journal_cursor(0, -1, 3), 0);
+        // down from last stays at last (no wrap)
+        assert_eq!(step_journal_cursor(2, 1, 3), 2);
+        // empty list stays 0
+        assert_eq!(step_journal_cursor(0, 1, 0), 0);
     }
 }
 

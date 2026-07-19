@@ -25,7 +25,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Transcript actions", &[
         ("a", "ask: re-show the input, land in insert"),
         ("s", "save the selected exchange to the journal"),
-        ("r / R", "re-gloss the pinned passage"),
+        ("r / R", "Gloss view: re-gloss · Journal view: ask / rewrite"),
         ("\\", "toggle view: gloss ↔ journal Q&A"),
         ("c", "copy the shown gloss id"),
         ("V", "visual select rows (j/k/h/t extend)"),

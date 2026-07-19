@@ -1797,6 +1797,22 @@ pub(crate) fn close_rewrite_target(state: &Rc<RefCell<AppState>>) {
             o.remove_overlay(&c);
         }
     }
+    // Panel-initiated R (rewrite_return): a cancel (Esc) at the popup never
+    // reaches the rewrite success closure, so restore the chat panel here. The
+    // q/a/b dispatch paths ALSO call close_rewrite_target first, but they then
+    // run the rewrite, whose success closure calls finish_panel_rewrite and
+    // re-clears the flag — so setting ChatTranscript here is harmless for them
+    // (immediately overwritten) and correct for the Esc path.
+    if s.chat.rewrite_return {
+        s.input_mode = InputMode::ChatTranscript;
+        // Esc-cancel: no entry changed. If a rewrite is actually running, its
+        // success closure will call finish_panel_rewrite and re-render; if this
+        // was a cancel, we still owe a re-render + flag clear.
+        // We cannot know here whether a rewrite will follow, so DON'T clear the
+        // flag yet — the q/a/b handlers set it fresh, and the Esc arm clears it
+        // explicitly (see keymap Task step 6). Just set the mode.
+        return;
+    }
     s.input_mode = InputMode::JournalOverlay;
 }
 
@@ -1861,7 +1877,16 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
             // the instruction card, which does not, so dismiss it here) before
             // opening the answer-instruction card for the improved question.
             crate::input::navigation::show_chapter_toast_secs(&st.borrow(), "Question improved", 2);
-            begin_rewrite_with(st, id, &improved_q, &answer);
+            let to_panel = st.borrow().chat.rewrite_return;
+            if to_panel {
+                // Stash the (id, improved_q, answer, Both) tuple and open the
+                // PANEL's instruction card (the overlay's is on a hidden widget).
+                st.borrow_mut().journal.vim_rewrite =
+                    Some((id, improved_q.clone(), answer.clone(), RewriteTarget::Both));
+                crate::input::actions::chat::open_rewrite_instruction_input(&mut st.borrow_mut());
+            } else {
+                begin_rewrite_with(st, id, &improved_q, &answer);
+            }
         } else {
             rewrite_with_claude(
                 st,
@@ -1985,7 +2010,7 @@ fn answer_prefix_chars(question: &str) -> i32 {
 /// save the revised answer to row `id`, and re-render. Factored from
 /// `submit_edit_rewrite` so the vim editor's `R` path reuses the exact grounding
 /// context + save + undo-snapshot behavior.
-fn rewrite_with_claude(
+pub(crate) fn rewrite_with_claude(
     state: &Rc<RefCell<AppState>>,
     id: i64,
     question: &str,
@@ -2096,6 +2121,11 @@ fn rewrite_with_claude(
                     }
                 }
                 render_filtered_match(&mut s);
+            } else if s.chat.rewrite_return {
+                // Panel-initiated R: re-render the chat panel, not the hidden
+                // overlay. finish_panel_rewrite reloads journal_list, keeps the
+                // cursor on entry `id`, restores ChatTranscript, clears the flag.
+                crate::input::actions::chat::finish_panel_rewrite(&mut s, Some(id));
             } else {
                 render_current(&mut s);
                 land_on_current_band_id(&mut s, id);
@@ -2106,8 +2136,14 @@ fn rewrite_with_claude(
             crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
         },
         move |st, msg| {
-            let s = st.borrow();
+            let mut s = st.borrow_mut();
             crate::input::navigation::show_chapter_toast_secs(&s, msg, 4);
+            // Panel-initiated R that errored: don't strand the panel in a stale
+            // flag / wrong mode. Re-render the (unchanged) journal list and
+            // restore ChatTranscript.
+            if s.chat.rewrite_return {
+                crate::input::actions::chat::finish_panel_rewrite(&mut s, None);
+            }
         },
     );
 }
