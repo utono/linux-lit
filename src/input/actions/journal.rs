@@ -363,6 +363,75 @@ fn band_for_rewrite(p: &crate::db::journal::JournalPage) -> JournalBand {
     }
 }
 
+/// Compact source citation for a journal passage, e.g. `— Cymbeline, 1.1.1–3`.
+/// `title` is the work title; the div/line numbers come from parsing
+/// `start_citation`/`end_citation` (`ABBR.div1.div2.line`). Collapses to a
+/// single locator (`— Cymbeline, 1.1.5`) when start line == end line or no end
+/// citation is given. Returns `None` when the start citation is absent or does
+/// not parse (never fabricate a locator).
+fn format_source_citation(
+    title: &str,
+    start_citation: Option<&str>,
+    end_citation: Option<&str>,
+) -> Option<String> {
+    let (d1, d2, start_line) = crate::app::parse_citation(start_citation?)?;
+    let end_line = end_citation
+        .and_then(crate::app::parse_citation)
+        .map(|(_, _, l)| l)
+        .unwrap_or(start_line);
+    let locator = if end_line > start_line {
+        format!("{}.{}.{}\u{2013}{}", d1, d2, start_line, end_line)
+    } else {
+        format!("{}.{}.{}", d1, d2, start_line)
+    };
+    Some(format!("\u{2014} {}, {}", title, locator))
+}
+
+/// Inner text of the first `<TAG>…</TAG>` on `line`, or `None` if `line` is not
+/// a single `<tag>text</tag>` element for one of `tags`. Whitespace-trimmed.
+fn tag_inner<'a>(line: &'a str, tags: &[&str]) -> Option<&'a str> {
+    let l = line.trim();
+    for t in tags {
+        let open = format!("<{}>", t);
+        let close = format!("</{}>", t);
+        if let Some(rest) = l.strip_prefix(&open) {
+            if let Some(inner) = rest.strip_suffix(&close) {
+                return Some(inner.trim());
+            }
+        }
+    }
+    None
+}
+
+/// Build the ordered source paragraphs to prepend above a passage Q&A:
+/// `[speaker?, verse/stage line(s)…, citation?, "———"]`. The speaker paragraph
+/// is dropped when empty or `UNKNOWN` (prose works). Each `<verse>`/`<stage>`
+/// element — and each embedded `\n`-joined line within one — is its own
+/// paragraph, so the overlay treats every quoted line as a separate navigable
+/// block. The trailing `———` separates the quote from the question.
+fn source_paragraphs(source_text: &str, citation: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in source_text.lines() {
+        if let Some(sp) = tag_inner(raw, &["speaker"]) {
+            if !sp.is_empty() && sp != "UNKNOWN" {
+                out.push(sp.to_string());
+            }
+        } else if let Some(body) = tag_inner(raw, &["verse", "stage"]) {
+            for seg in body.split('\n') {
+                let seg = seg.trim();
+                if !seg.is_empty() {
+                    out.push(seg.to_string());
+                }
+            }
+        }
+    }
+    if let Some(c) = citation {
+        out.push(c.to_string());
+    }
+    out.push("\u{2014}\u{2014}\u{2014}".to_string());
+    out
+}
+
 /// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
 /// scene page, `<abbrev> · whole work` for a whole-work page.
 fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
@@ -500,11 +569,11 @@ pub(crate) fn render_current(s: &mut AppState) {
         return;
     }
 
-    // Every Q&A — including passage pages — renders as a plain Q&A. The passage
-    // source block is intentionally NOT shown: the highlighted source stays in
-    // lit.db (`source_text` + citations) for provenance, but a Q&A's rendering
-    // never reproduces the source. (Previously passage pages used a verse
-    // renderer that printed the source above the answer.)
+    // A passage Q&A (source_text present) shows its quoted source — speaker,
+    // verse, citation, ——— separator — as leading navigable paragraphs above
+    // the question. Built here and passed to show_page, which prepends them to
+    // all_paragraphs (page 0 only; apply_source_style styles them). Notes and
+    // source-less entries pass None (unchanged plain Q&A).
     let current_page = if count == 0 {
         None
     } else {
@@ -513,8 +582,33 @@ pub(crate) fn render_current(s: &mut AppState) {
     let (q, a, kind) = current_page
         .map(|p| (p.question.clone(), p.answer.clone(), p.kind.clone()))
         .unwrap_or_else(|| (String::new(), String::new(), "qa".to_string()));
-    s.journal_overlay
-        .show_page(&footer_left, s.journal.page_index, count, &q, &a, &kind, cw, h);
+
+    let source_para = current_page.and_then(|p| {
+        let src = p.source_text.as_deref().unwrap_or("").trim();
+        if src.is_empty() {
+            return None;
+        }
+        let title = s
+            .current_work
+            .as_ref()
+            .map(|w| w.title.clone())
+            .unwrap_or_default();
+        let citation =
+            format_source_citation(&title, p.start_citation.as_deref(), p.end_citation.as_deref());
+        Some(source_paragraphs(src, citation.as_deref()))
+    });
+
+    s.journal_overlay.show_page(
+        &footer_left,
+        s.journal.page_index,
+        count,
+        &q,
+        &a,
+        &kind,
+        source_para,
+        cw,
+        h,
+    );
 
     s.journal.pages = pages;
     // Color any paragraphs whose TTS MP3 is already cached, like the gloss
@@ -579,8 +673,10 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     );
     let (cw, h) = crate::app::layout::overlay_card_size(s);
     // Filtered view shows one entry at a time: page_index 0 of page_count 1.
+    // No source block here — the term-browse filtered view is a distinct render
+    // path from nav_page (kept scoped to the main viewer for now).
     s.journal_overlay
-        .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, cw, h);
+        .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, None, cw, h);
     // Re-apply the overlay search against the just-rendered entry. For an
     // `f`-filtered entry no search is seeded (opens clean); for a Ctrl+f
     // corpus-search hit `open_journal_hit` seeds the `/` pattern AFTER this, so
@@ -2718,6 +2814,87 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_citation_range() {
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("Cym.1.1.1"), Some("Cym.1.1.3")),
+            Some("\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string())
+        );
+    }
+
+    #[test]
+    fn source_citation_single_locator_collapses() {
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("Cym.1.1.5"), Some("Cym.1.1.5")),
+            Some("\u{2014} Cymbeline, 1.1.5".to_string())
+        );
+    }
+
+    #[test]
+    fn source_citation_missing_start_is_none() {
+        assert_eq!(format_source_citation("Cymbeline", None, Some("Cym.1.1.3")), None);
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("garbage"), Some("Cym.1.1.3")),
+            None
+        );
+    }
+
+    #[test]
+    fn source_citation_missing_end_uses_start_only() {
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("Cym.2.3.10"), None),
+            Some("\u{2014} Cymbeline, 2.3.10".to_string())
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_speaker_verse_citation_separator() {
+        let src = "<speaker>FIRST GENTLEMAN</speaker>\n\
+                   <verse>You do not meet a man but frowns. Our bloods</verse>\n\
+                   <verse>No more obey the heavens than our courtiers\u{2019}</verse>\n\
+                   <verse>Still seem as does the King\u{2019}s.</verse>";
+        let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"));
+        assert_eq!(
+            got,
+            vec![
+                "FIRST GENTLEMAN".to_string(),
+                "You do not meet a man but frowns. Our bloods".to_string(),
+                "No more obey the heavens than our courtiers\u{2019}".to_string(),
+                "Still seem as does the King\u{2019}s.".to_string(),
+                "\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string(),
+                "\u{2014}\u{2014}\u{2014}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_no_citation_omits_citation_para() {
+        let src = "<speaker>KING</speaker>\n<verse>Now is the winter</verse>";
+        let got = source_paragraphs(src, None);
+        assert_eq!(
+            got,
+            vec![
+                "KING".to_string(),
+                "Now is the winter".to_string(),
+                "\u{2014}\u{2014}\u{2014}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_speakerless_prose_drops_speaker() {
+        let src = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
+        let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"));
+        assert_eq!(
+            got,
+            vec![
+                "a prose line".to_string(),
+                "\u{2014} Bleak House, 1.1.1".to_string(),
+                "\u{2014}\u{2014}\u{2014}".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn term_input_from_reader_only_in_reader_mode() {

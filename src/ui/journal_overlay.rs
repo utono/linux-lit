@@ -38,6 +38,14 @@ pub struct JournalOverlay {
     /// shown at either edge (the main-card pagination strategy; see
     /// docs/troubleshooting/clip-prevention.md). Empty for the loading/empty card.
     all_paragraphs: RefCell<Vec<String>>,
+    /// Number of leading `all_paragraphs` entries that are the prepended passage
+    /// source (speaker/verse/citation/———), styled on page 0 by
+    /// `apply_source_style`. 0 when the entry has no source block.
+    source_para_count: Cell<usize>,
+    /// Whether the prepended source block has a speaker line / a citation line
+    /// (set with `source_para_count`), so `apply_source_style` maps roles.
+    source_has_speaker: Cell<bool>,
+    source_has_citation: Cell<bool>,
     /// Page ranges over `all_paragraphs` from `paginate`.
     pages: RefCell<Vec<crate::ui::pagination::Page>>,
     /// Current page index into `pages`.
@@ -144,6 +152,41 @@ pub struct JournalOverlay {
 fn paragraph_texts(full: &str) -> Vec<String> {
     let lines: Vec<&str> = full.split('\n').collect();
     journal_blocks(&lines).into_iter().map(|b| b.text).collect()
+}
+
+/// Which buffer lines the prepended source paragraphs occupy, by role.
+/// Paragraphs render joined by "\n\n", so paragraph `i` is buffer line `2*i`.
+/// Order of source paragraphs is: `[speaker?] verse+ [citation?] separator`.
+struct SourceLineRoles {
+    speaker_line: Option<i32>,
+    verse_lines: Vec<i32>,
+    citation_line: Option<i32>,
+    separator_line: i32,
+}
+
+/// Map the `count` leading source paragraphs to their buffer lines by role.
+/// `has_speaker`/`has_citation` say whether the first paragraph is a speaker
+/// label and whether the paragraph before the trailing `———` is a citation.
+fn source_line_roles(count: usize, has_speaker: bool, has_citation: bool) -> SourceLineRoles {
+    let line = |para_idx: usize| (para_idx * 2) as i32;
+    let last = count - 1; // separator is always the last source paragraph
+    let separator_line = line(last);
+    let citation_para = if has_citation { Some(last - 1) } else { None };
+    let speaker_para = if has_speaker { Some(0usize) } else { None };
+    let first_verse = if has_speaker { 1 } else { 0 };
+    // Verse runs up to (but not including) the citation, else the separator.
+    let last_verse = citation_para.unwrap_or(last).saturating_sub(1);
+    let verse_lines = if last_verse >= first_verse {
+        (first_verse..=last_verse).map(line).collect()
+    } else {
+        Vec::new()
+    };
+    SourceLineRoles {
+        speaker_line: speaker_para.map(line),
+        verse_lines,
+        citation_line: citation_para.map(line),
+        separator_line,
+    }
 }
 
 /// Prefix a journal Q&A question with `Q: ` for display (the answer follows
@@ -477,6 +520,9 @@ impl JournalOverlay {
             visual_anchor: Cell::new(None),
             cursor_block: Cell::new(0),
             all_paragraphs: RefCell::new(Vec::new()),
+            source_para_count: Cell::new(0),
+            source_has_speaker: Cell::new(false),
+            source_has_citation: Cell::new(false),
             pages: RefCell::new(Vec::new()),
             page_idx: Cell::new(0),
             cursor_full: Cell::new(0),
@@ -562,6 +608,7 @@ impl JournalOverlay {
         question: &str,
         answer: &str,
         kind: &str,
+        source_para: Option<Vec<String>>,
         card_width: i32,
         card_height: i32,
     ) {
@@ -590,6 +637,9 @@ impl JournalOverlay {
             self.pages.borrow_mut().clear();
             self.page_idx.set(0);
             self.cursor_full.set(0);
+            self.source_para_count.set(0);
+            self.source_has_speaker.set(false);
+            self.source_has_citation.set(false);
         } else {
             // Split the full entry into blocks (the shared pagination/render/
             // nav unit), paginate by measured height, and render the first
@@ -612,10 +662,34 @@ impl JournalOverlay {
                     .unwrap_or(0);
                 *self.note_blocks.borrow_mut() = planned;
                 self.cursor_full.set(first_stop);
+                self.source_para_count.set(0);
+                self.source_has_speaker.set(false);
+                self.source_has_citation.set(false);
             } else {
                 self.note_blocks.borrow_mut().clear();
                 let full = format!("{}\n\n{}", prefix_question(question), answer);
-                *self.all_paragraphs.borrow_mut() = paragraph_texts(&full);
+                let mut paras = paragraph_texts(&full);
+                let src = source_para.unwrap_or_default();
+                self.source_para_count.set(src.len());
+                // A citation paragraph is the one just before the trailing "———"
+                // and (unlike the separator) begins with an em-dash "— ".
+                self.source_has_citation.set(
+                    src.len() >= 2
+                        && src[src.len() - 1] == "\u{2014}\u{2014}\u{2014}"
+                        && src[src.len() - 2].starts_with('\u{2014}')
+                        && src[src.len() - 2] != "\u{2014}\u{2014}\u{2014}",
+                );
+                // Speaker line present iff the first source paragraph isn't an
+                // em-dash line (citation/separator). Speaker text never starts
+                // with an em-dash.
+                self.source_has_speaker
+                    .set(!src.is_empty() && !src[0].starts_with('\u{2014}'));
+                if !src.is_empty() {
+                    let mut combined = src;
+                    combined.extend(paras);
+                    paras = combined;
+                }
+                *self.all_paragraphs.borrow_mut() = paras;
                 self.cursor_full.set(0);
             }
             self.repaginate();
@@ -1200,6 +1274,86 @@ impl JournalOverlay {
         }
     }
 
+    /// Style the prepended passage source on page 0: small-caps-ish speaker
+    /// (smaller + bold), hang-indented verse, dim italic right-aligned citation,
+    /// centered separator. No-op off page 0 or when there is no source block.
+    /// Runs after `set_text` (like `apply_hi_color`), applying tags by buffer
+    /// line. The source paragraphs are the first `source_para_count` entries of
+    /// `all_paragraphs`, joined by "\n\n", so paragraph i is buffer line 2*i.
+    fn apply_source_style(&self) {
+        if self.page_idx.get() != 0 {
+            return;
+        }
+        let count = self.source_para_count.get();
+        if count == 0 {
+            return;
+        }
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        if table.lookup("journal-src-speaker").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-src-speaker")
+                    .scale(0.82)
+                    .weight(600)
+                    .build(),
+            );
+        }
+        if table.lookup("journal-src-verse").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-src-verse")
+                    .left_margin(self.view.left_margin() + 28)
+                    .indent(-28)
+                    .build(),
+            );
+        }
+        if table.lookup("journal-src-citation").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-src-citation")
+                    .justification(gtk4::Justification::Right)
+                    .style(gtk4::pango::Style::Italic)
+                    .build(),
+            );
+        }
+        if table.lookup("journal-src-sep").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-src-sep")
+                    .justification(gtk4::Justification::Center)
+                    .build(),
+            );
+        }
+        let roles = source_line_roles(
+            count,
+            self.source_has_speaker.get(),
+            self.source_has_citation.get(),
+        );
+        let apply_line = |name: &str, line: i32| {
+            if let Some(tag) = table.lookup(name) {
+                let Some(start) = buffer.iter_at_line(line) else {
+                    return;
+                };
+                let mut end = start.clone();
+                if !end.ends_line() {
+                    end.forward_to_line_end();
+                }
+                buffer.apply_tag(&tag, &start, &end);
+            }
+        };
+        if let Some(l) = roles.speaker_line {
+            apply_line("journal-src-speaker", l);
+        }
+        for l in &roles.verse_lines {
+            apply_line("journal-src-verse", *l);
+        }
+        if let Some(l) = roles.citation_line {
+            apply_line("journal-src-citation", l);
+        }
+        apply_line("journal-src-sep", roles.separator_line);
+    }
+
     /// Set the floating page marker for the current page: `⌄` when another page
     /// follows, `•` on the last page, hidden on single-page content. The marker
     /// is an overlay child floating just BELOW the page's last block (NOT in the
@@ -1659,6 +1813,9 @@ impl JournalOverlay {
         // editor sets raw text and must not re-apply these read-mode ranges).
         // Notes have no <hi> spans so apply_hi_color is a no-op for them.
         self.apply_hi_color();
+        // Style the prepended passage source (page 0 only): small-caps speaker,
+        // hang-indented verse, dim right-aligned citation, centered separator.
+        self.apply_source_style();
         // Re-paint the rewrite diff-highlight for THIS page (clipped to the
         // page's char span), so a change on page 2+ survives page turns.
         self.reapply_rewrite_diff();
@@ -2126,6 +2283,31 @@ mod prefix_question_tests {
         // not double-prefixed.
         assert_eq!(prefix_question("Q: already asked"), "Q: already asked");
         assert_eq!(prefix_question("  Q: leading space"), "  Q: leading space");
+    }
+}
+
+#[cfg(test)]
+mod source_line_roles_tests {
+    use super::source_line_roles;
+
+    #[test]
+    fn maps_paragraphs_to_buffer_lines() {
+        // 6 source paras: speaker, v1, v2, v3, citation, ———
+        let roles = source_line_roles(6, true, true);
+        assert_eq!(roles.speaker_line, Some(0));
+        assert_eq!(roles.verse_lines, vec![2, 4, 6]); // buffer lines 2,4,6
+        assert_eq!(roles.citation_line, Some(8)); // 5th para -> line 8
+        assert_eq!(roles.separator_line, 10); // 6th para -> line 10
+    }
+
+    #[test]
+    fn no_speaker_no_citation() {
+        // 2 source paras: v1, ———
+        let roles = source_line_roles(2, false, false);
+        assert_eq!(roles.speaker_line, None);
+        assert_eq!(roles.verse_lines, vec![0]);
+        assert_eq!(roles.citation_line, None);
+        assert_eq!(roles.separator_line, 2);
     }
 }
 
