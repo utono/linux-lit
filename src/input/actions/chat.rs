@@ -1314,6 +1314,118 @@ fn render_journal_view(s: &mut AppState) {
     s.chat_panel.render_rows_focused_cursor(&rows, qrow, None);
 }
 
+/// `R` in the chat panel's Journal view: rewrite the SELECTED saved Q&A by
+/// reusing the journal overlay's rewrite popup + pipeline (Approach A). Seeds
+/// `s.journal.pages`/`page_index`/band from the cursor'd `journal_list` entry so
+/// `displayed_journal_page` resolves it, sets `rewrite_return` so the pipeline's
+/// overlay-render sites re-render THIS panel instead, then opens the popup.
+///
+/// No-op (toast) with no `gloss_ctx` (panel opened via Tab, never glossed) or an
+/// empty `journal_list` — mirrors `toggle_panel_view`/`regloss_pinned`.
+pub(crate) fn rewrite_journal_entry(state_rc: &Rc<RefCell<AppState>>) {
+    {
+        let mut s = state_rc.borrow_mut();
+        if s.chat.view != PanelView::Journal {
+            return;
+        }
+        let Some(ctx) = s.chat.gloss_ctx.clone() else {
+            crate::input::navigation::show_chapter_toast_secs(&s, "No passage to rewrite", 2);
+            return;
+        };
+        if s.chat.journal_list.is_empty() {
+            crate::input::navigation::show_chapter_toast_secs(&s, "No journal entry to rewrite", 2);
+            return;
+        }
+        let cursor = clamp_journal_cursor(s.chat.journal_cursor, s.chat.journal_list.len());
+        s.chat.journal_cursor = cursor;
+        // Seed the overlay page state so displayed_journal_page() resolves the
+        // selected entry. Clear any stale filter (the panel has none, but the
+        // pipeline reads journal.filter first).
+        s.journal.filter = None;
+        s.journal.pages = s.chat.journal_list.clone();
+        s.journal.page_index = cursor;
+        s.journal_band = crate::app::JournalBand::Passage {
+            div1: ctx.act,
+            div2: ctx.scene,
+            start: ctx.start_citation.clone(),
+            end: ctx.end_citation.clone(),
+        };
+        s.chat.rewrite_return = true;
+    }
+    // Opens the q/a/b popup (InputMode::RewriteTargetChoice); the pipeline runs
+    // unchanged, and the rewrite_return guards in journal.rs route completion
+    // back to this panel.
+    crate::input::actions::journal::open_rewrite_target(state_rc);
+}
+
+/// Return a panel-initiated `R` rewrite to the chat panel: reload the pinned
+/// passage's journal list from lit.db, re-render Journal view with the cursor
+/// still on the rewritten entry (re-found by `id` so a timestamp bump can't
+/// strand it), restore `ChatTranscript`, and clear `rewrite_return`. Called by
+/// journal.rs's rewrite-completion / cancel sites when `rewrite_return` is set.
+/// `rewritten_id` is the entry that changed (`None` on cancel — keep the cursor
+/// where it is).
+pub(crate) fn finish_panel_rewrite(s: &mut AppState, rewritten_id: Option<i64>) {
+    if let Some(ctx) = s.chat.gloss_ctx.clone() {
+        s.chat.journal_list =
+            reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
+    }
+    if let Some(id) = rewritten_id {
+        if let Some(pos) = s.chat.journal_list.iter().position(|p| p.id == id) {
+            s.chat.journal_cursor = pos;
+        }
+    }
+    s.chat.journal_cursor = clamp_journal_cursor(s.chat.journal_cursor, s.chat.journal_list.len());
+    s.chat.view = PanelView::Journal;
+    render_journal_view(s);
+    s.input_mode = crate::app::InputMode::ChatTranscript;
+    s.chat.rewrite_return = false;
+}
+
+/// Open the chat panel's own input as a rewrite-INSTRUCTION card for a
+/// panel-initiated `R` on the `a` (answer) or `b` (both) path. The overlay's
+/// instruction card lives on the hidden journal_overlay widget, so the panel
+/// must show its own. `submit_panel_rewrite` (Ctrl+Enter) reads the typed
+/// instruction and runs the stashed `journal.vim_rewrite` tuple. Opens in vim
+/// NORMAL (matching the overlay card) so the empty-Ctrl+Enter meaning is read
+/// first; press `i` to type.
+pub(crate) fn open_rewrite_instruction_input(s: &mut AppState) {
+    s.input_mode = crate::app::InputMode::ChatPrompt;
+    s.chat_panel.open_input(
+        "Rewrite instruction",
+        "Ctrl+Enter rewrite \u{00b7} empty = afresh \u{00b7} Esc cancel",
+        &s.theme.cursor_bg,
+        &s.theme.cursor_fg,
+        false,
+    );
+    s.chat_panel.flash_input();
+}
+
+/// Ctrl+Enter in the panel rewrite-instruction card: mirror journal
+/// `submit_prompt`'s rewrite branch, but read the PANEL's input text and keep
+/// `rewrite_return` set so the completion re-renders the panel. No-op when no
+/// `vim_rewrite` is stashed (defensive — this is only opened by the `a`/`b`
+/// panel path, which always stashes first).
+pub(crate) fn submit_panel_rewrite(state_rc: &Rc<RefCell<AppState>>) {
+    let text = state_rc.borrow().chat_panel.take_input_text();
+    let rewrite = state_rc.borrow_mut().journal.vim_rewrite.take();
+    state_rc.borrow().chat_panel.close_input();
+    let Some((id, question, answer, target)) = rewrite else {
+        // Nothing stashed: fall back to transcript focus.
+        focus_transcript(&mut state_rc.borrow_mut());
+        return;
+    };
+    let instruction = text.trim();
+    let instruction = if instruction.is_empty() {
+        "No further instruction was given; answer this question afresh under the standard guidance, grounded as before."
+    } else {
+        instruction
+    };
+    crate::input::actions::journal::rewrite_with_claude(
+        state_rc, id, &question, &answer, instruction, target,
+    );
+}
+
 /// `t` on the transcript: toggle the panel between showing the pinned
 /// passage's stored GLOSS(es) (the existing `exchanges`-driven view) and its
 /// saved JOURNAL Q&As (`scope='passage'`, exact citation match — the entries

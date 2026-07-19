@@ -1387,10 +1387,28 @@ fn handle_chat_prompt_key(
         is_ctrl,
         state,
         |st, k| st.borrow().chat_panel.feed_input_vim_key(k),
-        crate::input::actions::chat::submit_chat_prompt,
-        // Esc in Normal mode (or :q) hides the input; `a` on the transcript
-        // reopens it via focus_prompt.
+        // Ctrl+Enter: a stashed vim_rewrite (panel `R` → a/b instruction card)
+        // means this text is a REWRITE INSTRUCTION, not a new question.
         |st| {
+            if st.borrow().journal.vim_rewrite.is_some() {
+                crate::input::actions::chat::submit_panel_rewrite(st);
+            } else {
+                crate::input::actions::chat::submit_chat_prompt(st);
+            }
+        },
+        // Double-Esc / :q: cancel a pending panel rewrite (clear the stash and
+        // return to Journal view) if one is armed; else the normal "hide input,
+        // focus transcript".
+        |st| {
+            let cancel_rewrite = st.borrow().journal.vim_rewrite.is_some()
+                && st.borrow().chat.rewrite_return;
+            if cancel_rewrite {
+                st.borrow_mut().journal.vim_rewrite = None;
+                st.borrow().chat_panel.close_input();
+                let mut s = st.borrow_mut();
+                crate::input::actions::chat::finish_panel_rewrite(&mut s, None);
+                return;
+            }
             let mut s = st.borrow_mut();
             s.chat_panel.close_input();
             crate::input::actions::chat::focus_transcript(&mut s);
@@ -1512,9 +1530,12 @@ fn handle_chat_transcript_key(
         }
         "R" => {
             // Journal view: `R` opens the rewrite popup on the selected entry
-            // (Task 5). Other views keep regloss. Until Task 5 lands,
-            // regloss_pinned is the fallback for BOTH branches.
-            crate::input::actions::chat::regloss_pinned(state);
+            // (Task 5). Other views keep regloss.
+            if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
+                crate::input::actions::chat::rewrite_journal_entry(state);
+            } else {
+                crate::input::actions::chat::regloss_pinned(state);
+            }
             true
         }
         // `\`: toggle the panel between the pinned passage's GLOSS(es) and its
@@ -3009,7 +3030,21 @@ fn handle_rewrite_target_key(
     match key_name {
         "a" => {
             crate::input::actions::journal::close_rewrite_target(state);
-            crate::input::actions::journal::begin_rewrite(state);
+            if state.borrow().chat.rewrite_return {
+                // Stash (id, q, a, Answer) from the seeded page + open the PANEL card.
+                let stashed = {
+                    let s = state.borrow();
+                    crate::input::actions::journal::displayed_journal_page(&s)
+                        .map(|p| (p.id, p.question.clone(), p.answer.clone()))
+                };
+                if let Some((id, q, a)) = stashed {
+                    state.borrow_mut().journal.vim_rewrite =
+                        Some((id, q, a, crate::input::actions::journal::RewriteTarget::Answer));
+                    crate::input::actions::chat::open_rewrite_instruction_input(&mut state.borrow_mut());
+                }
+            } else {
+                crate::input::actions::journal::begin_rewrite(state);
+            }
             true
         }
         "q" => {
@@ -3024,6 +3059,13 @@ fn handle_rewrite_target_key(
         }
         "Escape" => {
             crate::input::actions::journal::close_rewrite_target(state);
+            // Panel-initiated cancel: close_rewrite_target set ChatTranscript
+            // mode but left rewrite_return set (it can't tell cancel from
+            // dispatch). Finish the panel return now.
+            if state.borrow().chat.rewrite_return {
+                let mut s = state.borrow_mut();
+                crate::input::actions::chat::finish_panel_rewrite(&mut s, None);
+            }
             true
         }
         _ => true,
