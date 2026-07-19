@@ -258,6 +258,19 @@ pub fn handle_key(
 
     // --- Reader mode (no overlay) ---
 
+    // Tab toggles focus between the reader and an OPEN chat panel. The reader
+    // table binds no Tab caps (the panel opens/closes via `-`), so this is the
+    // only reader-mode Tab behavior — and only while the panel is on screen.
+    // Ctrl is NOT consumed here so nothing shadows a future Ctrl+Tab reader
+    // bind; plain Tab with the panel closed still falls through to (unbound).
+    if (key_name == "Tab" || key_name == "ISO_Left_Tab") && !is_ctrl && !is_shift && !is_alt {
+        let panel_open = state.borrow().chat_layout_open;
+        if panel_open {
+            crate::input::actions::chat::focus_transcript(&mut state.borrow_mut());
+            return true;
+        }
+    }
+
     // gg sequence check
     if key_state.borrow().chord == ChordState::PendingG {
         key_state.borrow_mut().chord = ChordState::None;
@@ -1410,15 +1423,21 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::close_chat_layout(&mut state.borrow_mut());
             true
         }
+        // Plain Tab focuses the reader — the return half of the two-way
+        // toggle (reader Tab focuses the panel; see handle_key's reader
+        // section). The panel stays open throughout.
         "Tab" | "ISO_Left_Tab" => {
             crate::input::actions::chat::focus_reader(&mut state.borrow_mut());
             true
         }
-        "j" => {
+        // j/h move the exchange cursor DOWN; k/t move it UP. h/t mirror j/k so
+        // the reader's own forward/back nav caps (h = dlg fwd, t = dlg back on
+        // RPD) drive the transcript the same direction.
+        "j" | "h" => {
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), 1);
             true
         }
-        "k" => {
+        "k" | "t" => {
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), -1);
             true
         }
@@ -1468,11 +1487,12 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::regloss_pinned(state);
             true
         }
-        // `t`: toggle the panel between the pinned passage's GLOSS(es) and its
-        // saved JOURNAL Q&As (scope='passage', exact citation match). Distinct
-        // from the reader-level `t` (ThemeNext) — this arm only fires while
-        // InputMode::ChatTranscript owns the key.
-        "t" => {
+        // `\`: toggle the panel between the pinned passage's GLOSS(es) and its
+        // saved JOURNAL Q&As (scope='passage', exact citation match). Was on
+        // `t` before `t` became cursor-up; `\` cycles overlays in the reader,
+        // so the mnemonic carries over. Only fires while ChatTranscript owns
+        // the key.
+        "backslash" => {
             crate::input::actions::chat::toggle_panel_view(state);
             true
         }
@@ -2353,8 +2373,13 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
 }
 
 /// Toggle MPV playback sync on/off, mirroring concordance state and showing the
-/// bottom-center "Sync: on/off" toast. Shared by the main-card `TogglePlaybackSync`
-/// dispatch and the translation overlay's `s` bind so both behave identically.
+/// "Sync: on/off" toast. Shared by the main-card `TogglePlaybackSync` dispatch
+/// and the translation overlay's `s` bind so both behave identically.
+///
+/// The toast rides the flat bottom-center `chapter_toast` strip (via
+/// `show_chapter_toast_secs`) — no pill background — rather than the pill-styled
+/// `speed_toast` used by speed/volume/copy messages, so the sync status reads as
+/// a bare line and restores the act/scene pill on expiry.
 fn toggle_playback_sync(s: &mut AppState) {
     s.sync_enabled = !s.sync_enabled;
     if s.sync_enabled {
@@ -2365,13 +2390,7 @@ fn toggle_playback_sync(s: &mut AppState) {
     }
     let label = if s.sync_enabled { "Sync: on" } else { "Sync: off" };
     crate::logging::log(&format!("SYNC: {}", if s.sync_enabled { "enabled" } else { "disabled" }));
-    // Top-center status placement (the shared status toast's construction sets
-    // valign=Start + margin_top; here we only reset halign + horizontal margins
-    // in case a prior corner toast moved the shared widget).
-    s.speed_toast.set_halign(gtk4::Align::Center);
-    s.speed_toast.set_margin_start(0);
-    s.speed_toast.set_margin_end(0);
-    navigation::show_transient_over_chapter_toast(s, &s.speed_toast, label);
+    navigation::show_chapter_toast_secs(s, label, 3);
 }
 
 /// Show a transient bottom-center toast (reuses `chapter_toast`, 3s auto-hide).

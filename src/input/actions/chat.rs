@@ -400,14 +400,15 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
         crate::input::segments::selection_context(&s, start, end)
             .map(|ctx| (ctx, start, end, placement))
     };
-    let Some((pinned, start, end, placement)) = picked else {
+    let Some((pinned, _start, _end, placement)) = picked else {
         let s = state_rc.borrow();
         crate::input::navigation::show_chapter_toast_secs(&s, "No passage in the selection", 2);
         return false;
     };
-    // exit_visual_mode clears the selection tag (its normal job); re-apply it
-    // over the pinned range afterwards so the passage stays marked while the
-    // chat discusses it.
+    // exit_visual_mode clears the selection tag (its normal job). The source
+    // passage is deliberately left UNMARKED while the chat discusses it — the
+    // panel appearing beside the passage is cue enough, and the tint over the
+    // source lines read as clutter.
     crate::input::visual::exit_visual_mode(&mut state_rc.borrow_mut());
     // Opens when closed, else focuses the panel — neither path touches
     // ChatState, so the pin below survives either way. BUT on a single-column
@@ -460,11 +461,9 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
             crate::logging::log(&format!("CHAT: placed from selection ({:?})", placement));
         }
     }
-    // No "pinned" toast: the panel appearing beside the still-highlighted
-    // passage already says it. Failure paths above DO toast — that is the case
-    // the reader can't see for themselves.
-    let s = state_rc.borrow();
-    crate::input::visual::apply_selection_highlight_range(&s, start, end);
+    // No "pinned" toast: the panel appearing beside the passage already says
+    // it. Failure paths above DO toast — that is the case the reader can't see
+    // for themselves. The source passage is intentionally NOT re-highlighted.
     true
 }
 

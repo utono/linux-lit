@@ -104,11 +104,10 @@ pub fn apply_selection_highlight(state: &AppState) {
 }
 
 /// Apply the selection_tag to buffer lines `[start, end]` WITHOUT requiring a
-/// live `visual_selection`. Used to keep a passage visibly marked after visual
-/// mode has exited — the chat panel's pinned passage (`Tab` from V-mode) marks
-/// its source this way for as long as the pin lives (`close_chat_layout` clears
-/// it). Same body as `apply_selection_highlight`, which is the
-/// `visual_selection`-driven wrapper over this.
+/// live `visual_selection`. Same body as `apply_selection_highlight`, which is
+/// the `visual_selection`-driven wrapper over this. (The chat panel no longer
+/// marks its pinned passage — the source stays unhighlighted while the panel is
+/// open.)
 pub fn apply_selection_highlight_range(state: &AppState, start: usize, end: usize) {
     let buffer = &state.buffer;
     for line_idx in start..=end {
@@ -740,10 +739,11 @@ pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell
     crate::input::actions::chat::request_reader_gloss(state_rc, ctx, model);
 }
 
-/// Reader-mode `-`: open the chat panel pinned to the reader-gloss covering
-/// the cursor line and show the stored gloss — the same end state as
-/// visual-mode `-`, WITHOUT the `V`-select step. No-op (toast) when no
-/// reader-gloss covers the cursor line.
+/// Reader-mode `-`: a toggle. When the chat panel is already open, close it
+/// (the reader-side close path, since the Tab caps are unbound). Otherwise open
+/// the panel pinned to the reader-gloss covering the cursor line and show the
+/// stored gloss — the same end state as visual-mode `-`, WITHOUT the `V`-select
+/// step. No-op (toast) when no reader-gloss covers the cursor line.
 ///
 /// Reuses `action_reader_gloss_chat` verbatim by staging a transient
 /// `SelectionState` over the gloss's authored passage span (the
@@ -754,6 +754,12 @@ pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell
 pub(crate) fn reader_gloss_chat_at_cursor(
     state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
 ) {
+    // Toggle: `-` closes an already-open panel (the reader-focus close path
+    // that Ctrl+Tab used to provide). Only then does it fall through to gloss.
+    if state_rc.borrow().chat_layout_open {
+        crate::input::actions::chat::close_chat_layout(&mut state_rc.borrow_mut());
+        return;
+    }
     let span = crate::input::actions::gloss::reader_gloss_passage_at_cursor(&state_rc.borrow());
     let Some((start, end)) = span else {
         let s = state_rc.borrow();
