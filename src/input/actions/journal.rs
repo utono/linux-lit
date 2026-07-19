@@ -363,6 +363,75 @@ fn band_for_rewrite(p: &crate::db::journal::JournalPage) -> JournalBand {
     }
 }
 
+/// Compact source citation for a journal passage, e.g. `— Cymbeline, 1.1.1–3`.
+/// `title` is the work title; the div/line numbers come from parsing
+/// `start_citation`/`end_citation` (`ABBR.div1.div2.line`). Collapses to a
+/// single locator (`— Cymbeline, 1.1.5`) when start line == end line or no end
+/// citation is given. Returns `None` when the start citation is absent or does
+/// not parse (never fabricate a locator).
+fn format_source_citation(
+    title: &str,
+    start_citation: Option<&str>,
+    end_citation: Option<&str>,
+) -> Option<String> {
+    let (d1, d2, start_line) = crate::app::parse_citation(start_citation?)?;
+    let end_line = end_citation
+        .and_then(crate::app::parse_citation)
+        .map(|(_, _, l)| l)
+        .unwrap_or(start_line);
+    let locator = if end_line > start_line {
+        format!("{}.{}.{}\u{2013}{}", d1, d2, start_line, end_line)
+    } else {
+        format!("{}.{}.{}", d1, d2, start_line)
+    };
+    Some(format!("\u{2014} {}, {}", title, locator))
+}
+
+/// Inner text of the first `<TAG>…</TAG>` on `line`, or `None` if `line` is not
+/// a single `<tag>text</tag>` element for one of `tags`. Whitespace-trimmed.
+fn tag_inner<'a>(line: &'a str, tags: &[&str]) -> Option<&'a str> {
+    let l = line.trim();
+    for t in tags {
+        let open = format!("<{}>", t);
+        let close = format!("</{}>", t);
+        if let Some(rest) = l.strip_prefix(&open) {
+            if let Some(inner) = rest.strip_suffix(&close) {
+                return Some(inner.trim());
+            }
+        }
+    }
+    None
+}
+
+/// Build the ordered source paragraphs to prepend above a passage Q&A:
+/// `[speaker?, verse/stage line(s)…, citation?, "———"]`. The speaker paragraph
+/// is dropped when empty or `UNKNOWN` (prose works). Each `<verse>`/`<stage>`
+/// element — and each embedded `\n`-joined line within one — is its own
+/// paragraph, so the overlay treats every quoted line as a separate navigable
+/// block. The trailing `———` separates the quote from the question.
+fn source_paragraphs(source_text: &str, citation: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in source_text.lines() {
+        if let Some(sp) = tag_inner(raw, &["speaker"]) {
+            if !sp.is_empty() && sp != "UNKNOWN" {
+                out.push(sp.to_string());
+            }
+        } else if let Some(body) = tag_inner(raw, &["verse", "stage"]) {
+            for seg in body.split('\n') {
+                let seg = seg.trim();
+                if !seg.is_empty() {
+                    out.push(seg.to_string());
+                }
+            }
+        }
+    }
+    if let Some(c) = citation {
+        out.push(c.to_string());
+    }
+    out.push("\u{2014}\u{2014}\u{2014}".to_string());
+    out
+}
+
 /// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
 /// scene page, `<abbrev> · whole work` for a whole-work page.
 fn footer_left_text(abbrev: &str, band: JournalBand) -> String {
@@ -2718,6 +2787,87 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_citation_range() {
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("Cym.1.1.1"), Some("Cym.1.1.3")),
+            Some("\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string())
+        );
+    }
+
+    #[test]
+    fn source_citation_single_locator_collapses() {
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("Cym.1.1.5"), Some("Cym.1.1.5")),
+            Some("\u{2014} Cymbeline, 1.1.5".to_string())
+        );
+    }
+
+    #[test]
+    fn source_citation_missing_start_is_none() {
+        assert_eq!(format_source_citation("Cymbeline", None, Some("Cym.1.1.3")), None);
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("garbage"), Some("Cym.1.1.3")),
+            None
+        );
+    }
+
+    #[test]
+    fn source_citation_missing_end_uses_start_only() {
+        assert_eq!(
+            format_source_citation("Cymbeline", Some("Cym.2.3.10"), None),
+            Some("\u{2014} Cymbeline, 2.3.10".to_string())
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_speaker_verse_citation_separator() {
+        let src = "<speaker>FIRST GENTLEMAN</speaker>\n\
+                   <verse>You do not meet a man but frowns. Our bloods</verse>\n\
+                   <verse>No more obey the heavens than our courtiers\u{2019}</verse>\n\
+                   <verse>Still seem as does the King\u{2019}s.</verse>";
+        let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"));
+        assert_eq!(
+            got,
+            vec![
+                "FIRST GENTLEMAN".to_string(),
+                "You do not meet a man but frowns. Our bloods".to_string(),
+                "No more obey the heavens than our courtiers\u{2019}".to_string(),
+                "Still seem as does the King\u{2019}s.".to_string(),
+                "\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string(),
+                "\u{2014}\u{2014}\u{2014}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_no_citation_omits_citation_para() {
+        let src = "<speaker>KING</speaker>\n<verse>Now is the winter</verse>";
+        let got = source_paragraphs(src, None);
+        assert_eq!(
+            got,
+            vec![
+                "KING".to_string(),
+                "Now is the winter".to_string(),
+                "\u{2014}\u{2014}\u{2014}".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_speakerless_prose_drops_speaker() {
+        let src = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
+        let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"));
+        assert_eq!(
+            got,
+            vec![
+                "a prose line".to_string(),
+                "\u{2014} Bleak House, 1.1.1".to_string(),
+                "\u{2014}\u{2014}\u{2014}".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn term_input_from_reader_only_in_reader_mode() {
