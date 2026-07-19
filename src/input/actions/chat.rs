@@ -43,6 +43,15 @@ const CHAT_PANEL_TOP_INSET: i32 = 19;
 /// `CHAT_PANEL_TOP_INSET` below the panel container's top, so back that out to
 /// align the LINES, not the container edges. Shared by both `size_panel`
 /// placements (Pinned and Float) so their first-line alignment can't drift.
+/// The real transcript font — `(config.font_family, config.font_size)` — the
+/// same source `theme::generate_css` builds the `.chat-transcript` rule from
+/// (app/mod.rs). Threaded into the panel's measure/paginate path so pagination
+/// measures at the size the labels actually render, not the pango context's
+/// stale font description.
+fn transcript_font(s: &AppState) -> (String, i32) {
+    (s.config.font_family.clone(), s.config.font_size as i32)
+}
+
 fn chat_first_line_top_margin(line_spacing: i32) -> i32 {
     (crate::app::layout::CARD_VERTICAL_OUTER_MARGIN
         + crate::app::TOP_SPACER_HEIGHT
@@ -240,7 +249,8 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
     // for a rewrite (mirrors journal::close_prompt).
     s.journal.vim_rewrite = None;
-    s.chat_panel.render_rows(&[]);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&[], &fam, sz);
     s.chat_layout_open = false;
     s.chat_placement = ChatPlacement::Pinned;
     s.chat_panel.container.remove_css_class("chat-panel-float");
@@ -279,7 +289,8 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
     // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
     // for a rewrite (mirrors journal::close_prompt).
     s.journal.vim_rewrite = None;
-    s.chat_panel.render_rows(&[]);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&[], &fam, sz);
     s.chat_panel.size_to_natural();
     s.chat_regate_pending = true;
     crate::logging::log("CHAT: work switch — regate deferred");
@@ -1118,7 +1129,8 @@ fn render_paginated(
 ) {
     use crate::ui::chat_pagination::page_of_widget;
     let specs = crate::ui::chat_panel::row_widget_specs(rows);
-    let pages = s.chat_panel.paginate_specs(&specs);
+    let (fam, sz) = transcript_font(s);
+    let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
     let page_idx = match cursor_widget {
         Some(c) => page_of_widget(&pages, c),
         None => 0,
@@ -1149,12 +1161,13 @@ fn render_paginated(
 /// No-ops (renders nothing) when `cursor` is out of range — defensive; every
 /// real call site sets `cursor` to a just-pushed exchange's own index first.
 pub(crate) fn render_current_question(s: &mut AppState) {
+    let (fam, sz) = transcript_font(s);
     let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
-        s.chat_panel.render_rows(&[]);
+        s.chat_panel.render_rows(&[], &fam, sz);
         return;
     };
     let rows = build_single_exchange_rows(e);
-    s.chat_panel.render_rows(&rows);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 /// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
@@ -1404,7 +1417,8 @@ fn render_journal_view_inner(s: &mut AppState, snap_to_entry: bool) {
     s.chat.journal_row_owner = row_owner;
     if len == 0 {
         // Placeholder-only list: no landable row, scroll to top, no accent bar.
-        s.chat_panel.render_rows_to_top(&rows);
+        let (fam, sz) = transcript_font(s);
+        s.chat_panel.render_rows_to_top(&rows, &fam, sz);
         return;
     }
     // Clamp the widget-space `row_cursor` into range, then land the accent bar
@@ -1854,7 +1868,8 @@ fn render_transcript_thinking_gloss(s: &AppState, ctx: &crate::gloss::GlossConte
     // -of-text problem the question path had). The passage doc is the context
     // being reglossed; the new gloss replaces it when it lands.
     let rows = vec![R::GlossAnswer(ctx.passage_doc()), R::Thinking];
-    s.chat_panel.render_rows(&rows);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 /// Stored reader-glosses for a passage, newest first. Empty on any DB error.
@@ -1890,14 +1905,16 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, _chip: &str) {
         question_row(question),
         R::Thinking,
     ];
-    s.chat_panel.render_rows(&rows);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 fn render_transcript_with_error(s: &AppState, msg: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let (mut rows, _, _) = transcript_rows(s);
     rows.push(R::Error(msg.to_string()));
-    s.chat_panel.render_rows(&rows);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 /// Move the j/k ROW cursor (`s.chat.row_cursor`, widget-space — see
@@ -2069,7 +2086,8 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
     // Task 6: gg jumps to the FIRST page's first landable widget. Paginate at
     // the live budget to find page 0, then land on its first landable widget.
     let specs = crate::ui::chat_panel::row_widget_specs(&rows);
-    let pages = s.chat_panel.paginate_specs(&specs);
+    let (fam, sz) = transcript_font(s);
+    let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
     let Some(&page0) = pages.first() else {
         return;
     };
@@ -2107,7 +2125,8 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
     // Task 6: G jumps to the LAST page's last landable widget. Paginate at the
     // live budget to find the last page, then land on its last landable widget.
     let specs = crate::ui::chat_panel::row_widget_specs(&rows);
-    let pages = s.chat_panel.paginate_specs(&specs);
+    let (fam, sz) = transcript_font(s);
+    let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
     let Some(&last_page) = pages.last() else {
         return;
     };
@@ -2470,7 +2489,8 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         s.chat.view = PanelView::Gloss;
         let (mut rows, _, _) = transcript_rows(&s);
         rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
-        s.chat_panel.render_rows(&rows);
+        let (fam, sz) = transcript_font(&s);
+        s.chat_panel.render_rows(&rows, &fam, sz);
         crate::input::navigation::show_persistent_chapter_toast(&s, "Consolidating\u{2026}");
     }
     let user_msg_for_exchange = user_msg.clone();
@@ -2566,7 +2586,9 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     // Show the saved entry scrolled to the very top (Q: line first), so a long
     // answer doesn't land the viewport mid-answer. No row cursor: this static
     // snapshot isn't the j/k-navigable transcript.
-    s.chat_panel.render_rows_to_top(&[R::SavedMark, question_row(question), answer_row]);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel
+        .render_rows_to_top(&[R::SavedMark, question_row(question), answer_row], &fam, sz);
 }
 
 /// Size and position the panel for the current placement. Pinned: fill the

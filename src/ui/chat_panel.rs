@@ -159,23 +159,14 @@ impl ChatPanel {
     /// per-widget explosion when queried before any geometry exists.
     pub fn transcript_budget(&self) -> i32 {
         let alloc = self.transcript_scroll.height();
-        // TEMP DEBUG (chat-clip underfill diagnosis): dump every geometry input
-        // that feeds the budget so we can see whether the scroll is stale/short
-        // at paginate time and whether the closed input card still claims height.
-        let container_h = self.container.height();
-        let container_req = self.container.height_request();
-        let input_h = self.input.container().height();
-        let input_visible = self.input.container().is_visible();
-        let budget = if alloc > 1 {
+        if alloc > 1 {
             alloc
         } else {
+            let container_h = self.container.height();
+            let container_req = self.container.height_request();
+            let input_h = self.input.container().height();
             (container_h.max(container_req) - input_h.max(0)).max(200)
-        };
-        crate::log_fmt!(
-            "CHAT-BUDGET: scroll.h={} container.h={} container.req={} input.h={} input.visible={} -> budget={}",
-            alloc, container_h, container_req, input_h, input_visible, budget
-        );
-        budget
+        }
     }
 
     /// The pixel wrap width a transcript label lays out at — the scroll's
@@ -193,66 +184,49 @@ impl ChatPanel {
     }
 
     /// Pixel height one widget renders at: the pango-measured wrapped text
-    /// height (at the transcript wrap width, in the transcript's own font) plus
-    /// the CSS class padding. Injected into `widget_heights` as the `measure`
-    /// closure; `widget_heights` adds `class_pad` + the src-lead extra itself,
-    /// so this returns ONLY the text height (no padding).
-    pub fn measure_widget(&self, text: &str) -> i32 {
+    /// height (at the transcript wrap width) plus the CSS class padding.
+    /// Injected into `widget_heights` as the `measure` closure; `widget_heights`
+    /// adds `class_pad` + the src-lead extra itself, so this returns ONLY the
+    /// text height (no padding).
+    ///
+    /// `family`/`size_pt` are the REAL transcript font — `config.font_family` /
+    /// `config.font_size`, the same source the `.chat-transcript` CSS is
+    /// generated from (theme.rs). Do NOT read them off the pango context's font
+    /// description: that returns a stale/inherited size (e.g. 21pt) that does
+    /// not match the CSS render size (16pt), which inflated every paragraph's
+    /// height ~1.6× and under-filled the page. The transcript labels render at
+    /// plain pango line height (no `set_pixels_inside_wrap`/leading, Box spacing
+    /// 0), so measure PLAIN — not the leaded variant.
+    pub fn measure_widget(&self, text: &str, family: &str, size_pt: i32) -> i32 {
         let pctx = self.transcript_box.pango_context();
-        let (family, size_pt) = self.transcript_font();
-        crate::ui::pagination::measure_text_height_leaded(
+        crate::ui::pagination::measure_text_height(
             &pctx,
             text,
             size_pt,
-            &family,
+            family,
             self.transcript_wrap_width(),
         )
-    }
-
-    /// The transcript's (font-family, size-pt) — the reader font applied to the
-    /// ask input, which the transcript labels also inherit. Read off the
-    /// pango context's font description so measurement uses the same font the
-    /// labels render with.
-    fn transcript_font(&self) -> (String, i32) {
-        let pctx = self.transcript_box.pango_context();
-        let desc = pctx.font_description();
-        let family = desc
-            .as_ref()
-            .and_then(|d| d.family())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "Sans".to_string());
-        let size = desc
-            .as_ref()
-            .map(|d| {
-                if d.size() > 0 {
-                    (d.size() / gtk4::pango::SCALE).max(1)
-                } else {
-                    12
-                }
-            })
-            .unwrap_or(12);
-        (family, size)
     }
 
     /// Paginate a full spec vec at the current transcript budget. The single
     /// entry point the whole-transcript callers share so measure + slice always
     /// agree. Returns the page ranges (block indices into `specs`).
+    ///
+    /// `family`/`size_pt` are the real transcript font (`config.font_family` /
+    /// `config.font_size`) — threaded through to `measure_widget` so
+    /// measurement matches the CSS render size, not the pango context's stale
+    /// font description.
     pub fn paginate_specs(
         &self,
         specs: &[crate::ui::chat_pagination::ChatWidget],
+        family: &str,
+        size_pt: i32,
     ) -> Vec<crate::ui::pagination::Page> {
-        let (heights, group_start) =
-            crate::ui::chat_pagination::widget_heights(specs, |t| self.measure_widget(t));
+        let (heights, group_start) = crate::ui::chat_pagination::widget_heights(specs, |t| {
+            self.measure_widget(t, family, size_pt)
+        });
         let budget = self.transcript_budget();
-        let pages = crate::ui::pagination::paginate_grouped(&heights, &group_start, budget);
-        // TEMP DEBUG (chat-clip underfill diagnosis): total widget height vs the
-        // budget one page must fit within, and how many pages resulted.
-        let total_h: i32 = heights.iter().sum();
-        crate::log_fmt!(
-            "CHAT-PAGINATE: specs={} total_widget_h={} page_budget={} pages={}",
-            specs.len(), total_h, budget, pages.len()
-        );
-        pages
+        crate::ui::pagination::paginate_grouped(&heights, &group_start, budget)
     }
 
     /// Render ONLY the widgets in `page` (`specs[page.start..page.end]`) — a
@@ -305,9 +279,9 @@ impl ChatPanel {
     /// current-question, pushed gloss) that have no persisted page state: build
     /// specs, paginate, and render the LAST page (newest content) with no accent
     /// bar. Replaces the old scroll-to-end `render_rows`.
-    pub fn render_rows(&self, rows: &[TranscriptRow]) {
+    pub fn render_rows(&self, rows: &[TranscriptRow], family: &str, size_pt: i32) {
         let specs = row_widget_specs(rows);
-        let pages = self.paginate_specs(&specs);
+        let pages = self.paginate_specs(&specs, family, size_pt);
         let Some(&page) = pages.last() else {
             self.rebuild_from_specs(&[]);
             return;
@@ -319,9 +293,9 @@ impl ChatPanel {
     /// specs, paginate, and render the FIRST page (the reader wants the `Q:`
     /// line at the top of the entry). No accent bar — the saved view is a
     /// static snapshot, not the j/k-navigable Gloss transcript.
-    pub fn render_rows_to_top(&self, rows: &[TranscriptRow]) {
+    pub fn render_rows_to_top(&self, rows: &[TranscriptRow], family: &str, size_pt: i32) {
         let specs = row_widget_specs(rows);
-        let pages = self.paginate_specs(&specs);
+        let pages = self.paginate_specs(&specs, family, size_pt);
         let Some(&page) = pages.first() else {
             self.rebuild_from_specs(&[]);
             return;
