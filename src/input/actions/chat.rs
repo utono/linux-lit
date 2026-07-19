@@ -1279,6 +1279,17 @@ fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
     }
 }
 
+/// Step a Journal-view row cursor by `delta` (±1) within a `len`-entry list,
+/// clamped with NO wrap: already at the first/last entry stays put. Empty list
+/// stays at 0.
+fn step_journal_cursor(cursor: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let next = (cursor as i64 + delta as i64).clamp(0, len as i64 - 1);
+    next as usize
+}
+
 /// Render the `Journal` view at the current `s.chat.journal_list` — plain
 /// `render_rows` (no row-cursor accent bar, no visual-selection painting):
 /// the journal view is a deliberately flat, uncycled list (see
@@ -1672,15 +1683,29 @@ pub(crate) fn transcript_half_page(s: &mut AppState, down: bool) {
 }
 
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
-    // Journal and Question are both flat, uncycled views with no
-    // row_cursor/row_owner of their own — neither goes through
-    // `render_transcript` (Journal: `render_journal_view`; Question:
-    // `render_current_question`, plain `render_rows`, no accent bar), so
-    // reading `transcript_rows` (the Gloss-view's `exchanges`) here would
-    // move a cursor over content that isn't even on screen. A single Q&A is
-    // rarely taller than the panel, and even when it is, plain scrolling
-    // reads it fully — j/k just scrolls in both.
-    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+    // Journal has its own row cursor (`journal_cursor`, entry-granularity —
+    // see `step_journal_cursor`/`render_journal_view`), stepped and clamped
+    // independently of the Gloss view's `row_cursor`/`row_owner` below (which
+    // reads `transcript_rows`, the Gloss-view's `exchanges` — content that
+    // isn't even on screen in Journal). An empty `journal_list` has no entry
+    // to land on, so it falls back to plain scrolling like Question.
+    //
+    // Question is a flat, uncycled view with no row_cursor/row_owner of its
+    // own — it doesn't go through `render_transcript` (it uses
+    // `render_current_question`, plain `render_rows`, no accent bar). A
+    // single Q&A is rarely taller than the panel, and even when it is, plain
+    // scrolling reads it fully — j/k just scrolls.
+    if s.chat.view == PanelView::Journal {
+        let len = s.chat.journal_list.len();
+        if len == 0 {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        }
+        s.chat.journal_cursor = step_journal_cursor(s.chat.journal_cursor, delta, len);
+        render_journal_view(s);
+        return;
+    }
+    if s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_step(delta as f64);
         return;
     }
@@ -1774,11 +1799,23 @@ fn last_landable_index(landable: &[bool]) -> Option<usize> {
 /// `PanelView::Gloss`) and scroll it to the top of the viewport via
 /// `render_transcript`'s `render_rows_focused_cursor` call — the same
 /// cursor-follows-scroll behavior `transcript_cursor_move` already gets from
-/// that path. In `PanelView::Journal`/`Question` (no row cursor — see
-/// `transcript_cursor_move`'s guard) this is instead a plain scroll-to-top,
-/// mirroring how `j`/`k` degrade to scrolling in those views.
+/// that path. In `PanelView::Journal` this instead moves `journal_cursor` to
+/// entry 0 and re-renders (or, on an empty `journal_list`, falls back to a
+/// plain scroll-to-top — there is no entry to land on). In
+/// `PanelView::Question` (no row cursor — see `transcript_cursor_move`'s
+/// guard) this is a plain scroll-to-top, mirroring how `j`/`k` degrade to
+/// scrolling in that view.
 pub(crate) fn transcript_cursor_first(s: &mut AppState) {
-    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+    if s.chat.view == PanelView::Journal {
+        if !s.chat.journal_list.is_empty() {
+            s.chat.journal_cursor = 0;
+            render_journal_view(s);
+        } else {
+            s.chat_panel.scroll_transcript_to_edge(false);
+        }
+        return;
+    }
+    if s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_to_edge(false);
         return;
     }
@@ -1793,10 +1830,22 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
 }
 
 /// `G` on the transcript: symmetric counterpart to `transcript_cursor_first`
-/// — moves the row cursor to the LAST landable row (Gloss view) or scrolls to
-/// the bottom (Journal/Question view).
+/// — moves the row cursor to the LAST landable row (Gloss view), moves
+/// `journal_cursor` to the last entry (Journal view, or falls back to
+/// scroll-to-bottom when `journal_list` is empty), or scrolls to the bottom
+/// (Question view).
 pub(crate) fn transcript_cursor_last(s: &mut AppState) {
-    if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
+    if s.chat.view == PanelView::Journal {
+        let len = s.chat.journal_list.len();
+        if len != 0 {
+            s.chat.journal_cursor = len - 1;
+            render_journal_view(s);
+        } else {
+            s.chat_panel.scroll_transcript_to_edge(true);
+        }
+        return;
+    }
+    if s.chat.view == PanelView::Question {
         s.chat_panel.scroll_transcript_to_edge(true);
         return;
     }
@@ -3274,7 +3323,10 @@ mod visual_selection_tests {
 /// on-screen verification.
 #[cfg(test)]
 mod panel_view_toggle_tests {
-    use super::{clamp_journal_cursor, flip_view, journal_entry_qrow, journal_view_rows, PanelView};
+    use super::{
+        clamp_journal_cursor, flip_view, journal_entry_qrow, journal_view_rows,
+        step_journal_cursor, PanelView,
+    };
     use crate::db::journal::JournalPage;
     use crate::ui::chat_panel::TranscriptRow as R;
 
@@ -3392,6 +3444,18 @@ mod panel_view_toggle_tests {
         assert_eq!(clamp_journal_cursor(0, 3), 0);
         assert_eq!(clamp_journal_cursor(2, 3), 2);
         assert_eq!(clamp_journal_cursor(9, 3), 2); // clamps to len-1
+    }
+
+    #[test]
+    fn step_journal_cursor_clamps_no_wrap() {
+        // down from 0 in a 3-entry list
+        assert_eq!(step_journal_cursor(0, 1, 3), 1);
+        // up from 0 stays at 0 (no wrap)
+        assert_eq!(step_journal_cursor(0, -1, 3), 0);
+        // down from last stays at last (no wrap)
+        assert_eq!(step_journal_cursor(2, 1, 3), 2);
+        // empty list stays 0
+        assert_eq!(step_journal_cursor(0, 1, 0), 0);
     }
 }
 
