@@ -1689,7 +1689,10 @@ pub fn build_window(
         crate::ui::chat_keybinds_overlay::TITLE,
         crate::ui::chat_keybinds_overlay::GROUPS,
     );
-    chat_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
+    // NOT attached to corpus_search_popup.overlay like the other legends: the
+    // chat panel floats on the OUTER overlay (added below), which renders above
+    // that nested overlay. Attach the chat legend to outer_overlay AFTER the
+    // chat panel so it floats on top of the panel (see below).
 
     // Concordance works picker (Alt+R: jump to a specific work)
     let concordance_works_picker = crate::ui::concordance_works_picker::ConcordanceWorksPicker::new();
@@ -1837,6 +1840,11 @@ pub fn build_window(
     outer_overlay.add_overlay(&chapter_toast);
     outer_overlay.add_overlay(&speed_toast);
     outer_overlay.add_overlay(&search_toast);
+    // The chat-panel Ctrl+/ legend floats above the chat panel, so it attaches
+    // to the OUTER overlay AFTER the panel (the other legends sit on the nested
+    // corpus_search overlay, which renders BEHIND this panel). Centered modal
+    // card; scrim + container start hidden until open_chat_legend shows them.
+    chat_keybinds_overlay.attach_to(&outer_overlay);
 
     // Suppress startup flicker: hide content until the deferred layout
     // refresh fires (after dwl has tiled the window AND display_work
