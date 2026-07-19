@@ -115,22 +115,26 @@ fits by construction). The `clip_guard` field, the `Overlay`/`attach_box` wrap,
 `on_open`, and the `.chat-panel .gloss-bottom-clip` CSS override were all deleted.
 `ChatState.pages`/`page_idx` hold the current pagination.
 
-- **The `chat-a-src-lead` height gap (undercount → the bottom clip returns).**
+- **The `chat-a-src-lead` height gap (mis-measure → bottom clip or underfill).**
   The first source row after a gloss carries a SECOND CSS class `chat-a-src-lead`
-  (a 44px top gap, theme.rs:1428). If pagination measures only the PRIMARY class
-  it undercounts that row and packs one row too many. Fix: `ChatWidget` carries
-  `extra_class`, and `widget_heights` adds `chat_pagination::src_lead_extra_pad`,
-  which accounts for GTK CSS's NON-additive padding-top under a source-order
-  collision: two single-class rules tie on specificity, so the LATER rule wins.
-  Only `.chat-a-speaker` (padding-top 14, theme.rs:1424) is ordered BEFORE
-  src-lead, so src-lead wins there (+30 effective = 44 − 14). `.chat-a-verse`/
-  `-stage`/`-flush` are all ordered AFTER src-lead, so the base wins and the
-  extra is 0 — do NOT `class_pad("chat-a-src-lead")` (that double-counts the base pad).
-  - **SYNC WARNING:** the gloss→source gap is TWO mirrored values —
-    `.chat-a-src-lead { padding-top }` (theme.rs) and `SRC_LEAD_PADDING_TOP`
-    (`chat_pagination.rs`). They MUST change together or the height model
-    undercounts the src-lead row and the bottom clip returns. The speaker
-    effective-extra is `SRC_LEAD_PADDING_TOP − 14` (the speaker's own padding-top).
+  (a 44px top gap). It is applied via a COMPOUND selector
+  `.chat-transcript label.chat-a-src-lead { padding-top: 44px }` (specificity
+  0,0,2,1, theme.rs:1428) so it out-specificities EVERY single-class base source
+  rule (`.chat-a-speaker`/`.chat-a-verse`/`.chat-a-stage`/`.chat-a-*-flush`, all
+  0,0,1,0) REGARDLESS of stylesheet order — the src-lead row's rendered
+  padding-top is 44 for every source class. (This replaced the old
+  source-order collision, where only `.chat-a-speaker` — ordered before src-lead
+  — won and the rest got a 0 gap.) padding-top is NON-additive (44 REPLACES the
+  base), and `class_pad(primary)` already added the base padding-top, so
+  `chat_pagination::src_lead_extra_pad` returns `44 − base padding-top` (≥0) per
+  class: speaker→30, verse/verse-flush→44, stage/stage-flush→36. Do NOT use
+  `class_pad("chat-a-src-lead")` (that double-counts the base pad).
+  - **SYNC WARNING:** THREE things must stay in lockstep or the src-lead row is
+    mis-measured (undercount → bottom clip; overcount → underfill): (1) the CSS
+    selector stays COMPOUND (`.chat-transcript label.chat-a-src-lead`) so it wins
+    for all source classes; (2) `SRC_LEAD_PADDING_TOP` (`chat_pagination.rs`)
+    equals `.chat-a-src-lead { padding-top }` (theme.rs); (3) the per-class base
+    padding-top values `src_lead_extra_pad` subtracts match theme.rs.
 
 - **The content-box `padding-bottom` undercount (page packs one row too many →
   bottom clip).** The pagination budget is `transcript_scroll.height()`, but the
