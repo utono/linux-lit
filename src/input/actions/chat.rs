@@ -942,13 +942,13 @@ fn question_row(question: &str) -> crate::ui::chat_panel::TranscriptRow {
 
 /// How many actual WIDGETS (label rows in `transcript_box`) a single
 /// `TranscriptRow` renders as. Every variant is one widget
-/// (`chat_panel::rebuild_rows`'s `append_row_label`) EXCEPT `GlossAnswer`,
-/// which `append_gloss_answer` explodes into one label per
-/// `gloss_render::chat_gloss_rows` row (speaker/verse/stage/gloss) — so the
-/// j/k row cursor, which must land on those individual widgets, has to count
-/// in this same "widget space", not `Vec<TranscriptRow>` space. Falls back to
-/// 1 for markup with no recognized tags, matching `append_gloss_answer`'s own
-/// plain-label fallback.
+/// (`chat_panel::rebuild_from_specs`'s `append_spec_label`) EXCEPT
+/// `GlossAnswer`, which `chat_panel::row_widget_specs`/`gloss_answer_specs`
+/// explodes into one label per `gloss_render::chat_gloss_rows` row
+/// (speaker/verse/stage/gloss) — so the j/k row cursor, which must land on
+/// those individual widgets, has to count in this same "widget space", not
+/// `Vec<TranscriptRow>` space. Falls back to 1 for markup with no recognized
+/// tags, matching `gloss_answer_specs`'s own plain-label fallback.
 fn widget_row_count(row: &crate::ui::chat_panel::TranscriptRow) -> usize {
     use crate::ui::chat_panel::TranscriptRow as R;
     match row {
@@ -1375,17 +1375,6 @@ fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
     } else {
         cursor.min(len - 1)
     }
-}
-
-/// Step a Journal-view row cursor by `delta` (±1) within a `len`-entry list,
-/// clamped with NO wrap: already at the first/last entry stays put. Empty list
-/// stays at 0.
-fn step_journal_cursor(cursor: usize, delta: i32, len: usize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    let next = (cursor as i64 + delta as i64).clamp(0, len as i64 - 1);
-    next as usize
 }
 
 /// Render the `Journal` view at the current `s.chat.journal_list`. Each entry
@@ -1921,9 +1910,9 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 ///
 /// A `ChatGlossRowKind::Speaker` widget (e.g. "BELARIUS") is never a valid
 /// landing spot — see `landable_mask`'s doc comment (Fix 2: speaker labels
-/// aren't lines you'd read, copy, or mark). `step_row_cursor_landable` skips
-/// over them; `j` from the last verse of one speaker's block lands on the
-/// first verse of the NEXT block, never on its label in between.
+/// aren't lines you'd read, copy, or mark). `chat_pagination::step_cursor_paged`
+/// skips over them; `j` from the last verse of one speaker's block lands on
+/// the first verse of the NEXT block, never on its label in between.
 ///
 /// `s.chat.cursor` (the EXCHANGE cursor — save/`▶`/Ctrl+n/p target) is
 /// derived from the new row position via `row_owner`, NOT moved
@@ -2013,8 +2002,8 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
 }
 
 /// Widget-space "is this row a valid j/k landing spot" mask, one entry per
-/// widget `rebuild_rows` would actually paint (same granularity as
-/// `row_owner`/`widget_row_count`) — flat-mapped from
+/// widget `chat_panel::rebuild_from_specs` would actually paint (same
+/// granularity as `row_owner`/`widget_row_count`) — flat-mapped from
 /// `chat_panel::row_widget_landable`, so it can never drift out of sync with
 /// what the panel renders or with `row_widget_texts` (`y`'s copy source).
 /// Only a `ChatGlossRowKind::Speaker` widget (e.g. "CYMBELINE") is `false`:
@@ -2036,27 +2025,6 @@ fn landable_mask(rows: &[crate::ui::chat_panel::TranscriptRow]) -> Vec<bool> {
 /// (already at the first/last landable row — degrade to scrolling, the same
 /// "no move -> None" contract `transcript_cursor_move` relies on).
 ///
-/// `cur` itself is not required to be landable (a stale/never-snapped
-/// cursor): the walk still proceeds from it and finds the next landable row
-/// in the given direction, so this also self-heals a cursor that somehow
-/// ended up on a Speaker widget.
-fn step_row_cursor_landable(cur: usize, delta: i32, landable: &[bool]) -> Option<usize> {
-    let n = landable.len() as i32;
-    if n == 0 || !landable.iter().any(|&l| l) {
-        return None;
-    }
-    let mut pos = cur as i32;
-    loop {
-        pos += delta.signum();
-        if pos < 0 || pos >= n {
-            return None; // fell off the end without finding a landable row
-        }
-        if landable[pos as usize] {
-            return Some(pos as usize);
-        }
-    }
-}
-
 /// The first LANDABLE widget row at or after `from` (widget-space), so a
 /// caller that just computed an exchange's leading widget row
 /// (`build_transcript_rows`' `cursor_row` — often a Speaker widget, since a
@@ -2069,20 +2037,6 @@ fn first_landable_at_or_after(from: usize, landable: &[bool]) -> usize {
     (from..landable.len())
         .find(|&i| landable[i])
         .unwrap_or(from)
-}
-
-/// The first LANDABLE row index in `landable`, or `None` if the transcript is
-/// empty or entirely unlandable (Fix 2's all-speaker edge case). Pure helper
-/// for `gg`'s jump-to-first-landable-row.
-fn first_landable_index(landable: &[bool]) -> Option<usize> {
-    landable.iter().position(|&l| l)
-}
-
-/// The last LANDABLE row index in `landable`, or `None` if the transcript is
-/// empty or entirely unlandable. Pure helper for `G`'s
-/// jump-to-last-landable-row.
-fn last_landable_index(landable: &[bool]) -> Option<usize> {
-    landable.iter().rposition(|&l| l)
 }
 
 /// `gg` on the transcript: move the row cursor to the FIRST page's first
@@ -3257,90 +3211,14 @@ mod gloss_cycle_tests {
 }
 
 /// Fix 2 (do not highlight speaker labels; only lines of dialogue):
-/// `step_row_cursor_landable` must skip over EVERY unlandable (Speaker)
-/// widget in the given direction, in both directions, from a block that
-/// starts with a speaker, and must not panic/loop forever on the
-/// no-landable-rows case (a gloss that is somehow all speakers). House style
+/// `first_landable_at_or_after` (`snap_row_cursor_to_exchange`'s helper) must
+/// skip past a leading unlandable (Speaker) widget, stay put when already on
+/// a landable one, and fall back to `from` itself rather than panicking or
+/// running off the end when nothing at or after it is landable. House style
 /// per `row_cursor_step_tests` above — pure index math, no `AppState`.
 #[cfg(test)]
-mod step_row_cursor_landable_tests {
-    use super::{
-        first_landable_at_or_after, first_landable_index, last_landable_index,
-        step_row_cursor_landable,
-    };
-
-    /// [Speaker, Verse, Verse, Speaker, Verse] — a block boundary mid-list.
-    /// Stepping forward from the first Verse must land on the second Verse
-    /// (adjacent, no speaker in between), then jump PAST the second Speaker
-    /// straight to the final Verse — never stopping on either label.
-    #[test]
-    fn steps_forward_over_a_single_speaker() {
-        let landable = [false, true, true, false, true];
-        assert_eq!(step_row_cursor_landable(1, 1, &landable), Some(2));
-        assert_eq!(step_row_cursor_landable(2, 1, &landable), Some(4));
-    }
-
-    #[test]
-    fn steps_backward_over_a_single_speaker() {
-        let landable = [false, true, true, false, true];
-        assert_eq!(step_row_cursor_landable(4, -1, &landable), Some(2));
-        assert_eq!(step_row_cursor_landable(2, -1, &landable), Some(1));
-        // From row 1 (the first Verse), stepping back hits only the leading
-        // Speaker (unlandable) and then the list boundary — no further
-        // landable row exists in that direction.
-        assert_eq!(step_row_cursor_landable(1, -1, &landable), None);
-    }
-
-    /// A block that STARTS with a speaker (index 0): stepping backward from
-    /// the first Verse (index 1) must not land on it, matching
-    /// `steps_backward_over_a_single_speaker`'s last assertion — restated
-    /// here as its own case since "starts with a speaker" is the brief's
-    /// explicit example.
-    #[test]
-    fn block_starting_with_speaker_cannot_be_stepped_onto() {
-        let landable = [false, true, true];
-        assert_eq!(step_row_cursor_landable(1, -1, &landable), None);
-        assert_eq!(step_row_cursor_landable(2, -1, &landable), Some(1));
-    }
-
-    /// Consecutive speakers (two speakers back-to-back with no dialogue
-    /// between, a defensive shape) are all skipped in one step.
-    #[test]
-    fn steps_over_multiple_consecutive_speakers() {
-        let landable = [true, false, false, true];
-        assert_eq!(step_row_cursor_landable(0, 1, &landable), Some(3));
-        assert_eq!(step_row_cursor_landable(3, -1, &landable), Some(0));
-    }
-
-    /// No-landable-rows case: every widget is a Speaker (Fix 2's brief
-    /// explicitly calls this out — "a gloss that is somehow all speakers").
-    /// Must return `None`, not panic or loop forever.
-    #[test]
-    fn no_landable_rows_returns_none() {
-        let landable = [false, false, false];
-        assert_eq!(step_row_cursor_landable(0, 1, &landable), None);
-        assert_eq!(step_row_cursor_landable(0, -1, &landable), None);
-        assert_eq!(step_row_cursor_landable(1, 1, &landable), None);
-    }
-
-    /// Empty transcript: guards against a clamp underflow/panic.
-    #[test]
-    fn empty_landable_list_returns_none() {
-        assert_eq!(step_row_cursor_landable(0, 1, &[]), None);
-        assert_eq!(step_row_cursor_landable(0, -1, &[]), None);
-    }
-
-    /// A self-healing case: `cur` itself sits on an unlandable row (a stale
-    /// cursor that somehow never got snapped) — the walk still proceeds from
-    /// it and finds the next landable row in the given direction.
-    #[test]
-    fn cur_on_unlandable_row_still_finds_next_landable() {
-        let landable = [true, false, true];
-        assert_eq!(step_row_cursor_landable(1, 1, &landable), Some(2));
-        assert_eq!(step_row_cursor_landable(1, -1, &landable), Some(0));
-    }
-
-    // --- first_landable_at_or_after (snap_row_cursor_to_exchange's helper) ---
+mod first_landable_at_or_after_tests {
+    use super::first_landable_at_or_after;
 
     #[test]
     fn first_landable_finds_the_leading_speaker_and_advances() {
@@ -3360,49 +3238,6 @@ mod step_row_cursor_landable_tests {
     fn first_landable_falls_back_to_from_when_nothing_found() {
         let landable = [true, false, false];
         assert_eq!(first_landable_at_or_after(1, &landable), 1);
-    }
-
-    // --- first_landable_index / last_landable_index (gg/G's helpers) ---
-
-    /// Leading speaker skipped: `gg` must land on the first Verse, not the
-    /// Speaker row at index 0.
-    #[test]
-    fn first_landable_index_skips_a_leading_speaker() {
-        let landable = [false, true, true, false, true];
-        assert_eq!(first_landable_index(&landable), Some(1));
-    }
-
-    /// Trailing speaker skipped: `G` must land on the last Verse, not a
-    /// Speaker row dangling at the end.
-    #[test]
-    fn last_landable_index_skips_a_trailing_speaker() {
-        let landable = [true, false, true, true, false];
-        assert_eq!(last_landable_index(&landable), Some(3));
-    }
-
-    /// Single-row transcript: one landable row is both first and last.
-    #[test]
-    fn single_row_transcript_is_first_and_last() {
-        let landable = [true];
-        assert_eq!(first_landable_index(&landable), Some(0));
-        assert_eq!(last_landable_index(&landable), Some(0));
-    }
-
-    /// All-speaker (no-landable) transcript: both return `None` rather than
-    /// panicking, matching `step_row_cursor_landable`'s no-landable contract
-    /// so `gg`/`G` no-op instead of crashing on a degenerate gloss.
-    #[test]
-    fn all_speaker_transcript_returns_none() {
-        let landable = [false, false, false];
-        assert_eq!(first_landable_index(&landable), None);
-        assert_eq!(last_landable_index(&landable), None);
-    }
-
-    /// Empty transcript: guards against an out-of-range index/panic.
-    #[test]
-    fn empty_transcript_returns_none() {
-        assert_eq!(first_landable_index(&[]), None);
-        assert_eq!(last_landable_index(&[]), None);
     }
 }
 
@@ -3459,7 +3294,7 @@ mod row_cursor_widget_tests {
     }
 
     // Markup with none of the recognized tags falls back to ONE widget
-    // (append_gloss_answer's own plain-label fallback) — must not panic on a
+    // (gloss_answer_specs's own plain-label fallback) — must not panic on a
     // zero-length row_owner slice or silently vanish from the count.
     #[test]
     fn untagged_gloss_answer_falls_back_to_one_widget() {
@@ -3588,13 +3423,13 @@ mod visual_selection_tests {
 
     /// Fix 2's spanned-speaker decision, end to end: a `V` selection anchored
     /// on the last verse of one speaker's block, extended (via j landing on
-    /// the NEXT block's first verse — never on the label in between, per
-    /// `step_row_cursor_landable_tests`) still yanks the spanned speaker
-    /// label — `yank_transcript_row_or_selection` does NOT filter unlandable
-    /// rows out of the slice, it only gates where the cursor/anchor can LAND
-    /// (see that function's doc comment for the "why" — a pasted excerpt
-    /// that silently dropped the speaker name would be worse than one that
-    /// keeps it).
+    /// the NEXT block's first verse — never on the label in between, the same
+    /// skip-unlandable-widgets contract `chat_pagination::step_cursor_paged`
+    /// enforces in production) still yanks the spanned speaker label —
+    /// `yank_transcript_row_or_selection` does NOT filter unlandable rows out
+    /// of the slice, it only gates where the cursor/anchor can LAND (see that
+    /// function's doc comment for the "why" — a pasted excerpt that silently
+    /// dropped the speaker name would be worse than one that keeps it).
     #[test]
     fn v_selection_spanning_a_speaker_boundary_yanks_the_speaker_label() {
         use super::{build_transcript_rows, landable_mask, Exchange};
@@ -3623,10 +3458,16 @@ mod visual_selection_tests {
 
         // V anchors on widget 1 (CYMBELINE's verse, the only place it COULD
         // land); j lands the live end on widget 3 (BELARIUS's verse),
-        // skipping widget 2 (the BELARIUS label) as a landing spot per
-        // step_row_cursor_landable — but the SELECTION still spans widget 2.
+        // skipping widget 2 (the BELARIUS label) as a landing spot — but the
+        // SELECTION still spans widget 2. `step_next_landable` here is a
+        // single-page stand-in for `chat_pagination::step_cursor_paged`'s
+        // within-page walk, kept local to this test since the production
+        // path additionally requires page bookkeeping this test doesn't need.
+        fn step_next_landable(cur: usize, landable: &[bool]) -> Option<usize> {
+            (cur + 1..landable.len()).find(|&i| landable[i])
+        }
         let anchor = 1;
-        let cursor = super::step_row_cursor_landable(anchor, 1, &landable).unwrap();
+        let cursor = step_next_landable(anchor, &landable).unwrap();
         assert_eq!(cursor, 3);
 
         let all_texts: Vec<String> = rows.iter().flat_map(row_widget_texts).collect();
@@ -3647,7 +3488,7 @@ mod visual_selection_tests {
 mod panel_view_toggle_tests {
     use super::{
         clamp_journal_cursor, flip_view, journal_entry_first_row, journal_view_rows,
-        split_answer_paragraphs, step_journal_cursor, PanelView,
+        split_answer_paragraphs, PanelView,
     };
     use crate::db::journal::JournalPage;
     use crate::ui::chat_panel::TranscriptRow as R;
@@ -3809,17 +3650,6 @@ mod panel_view_toggle_tests {
         assert_eq!(clamp_journal_cursor(9, 3), 2); // clamps to len-1
     }
 
-    #[test]
-    fn step_journal_cursor_clamps_no_wrap() {
-        // down from 0 in a 3-entry list
-        assert_eq!(step_journal_cursor(0, 1, 3), 1);
-        // up from 0 stays at 0 (no wrap)
-        assert_eq!(step_journal_cursor(0, -1, 3), 0);
-        // down from last stays at last (no wrap)
-        assert_eq!(step_journal_cursor(2, 1, 3), 2);
-        // empty list stays 0
-        assert_eq!(step_journal_cursor(0, 1, 0), 0);
-    }
 }
 
 /// `build_single_exchange_rows` — the `PanelView::Question` focused render's

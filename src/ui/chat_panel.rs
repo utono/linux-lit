@@ -7,8 +7,9 @@ use gtk4::prelude::*;
 
 /// The placeholder text of a `Thinking` row, and the label of a `SavedMark`.
 ///
-/// Shared by the two paths that must agree on what a row SAYS: `rebuild_rows`
-/// (which paints the label) and `row_widget_texts` (which `y` yanks). They are
+/// Shared by the two paths that must agree on what a row SAYS:
+/// `rebuild_from_specs` (which paints the label) and `row_widget_texts`
+/// (which `y` yanks). They are
 /// separate code paths by necessity — one builds widgets, the other extracts
 /// text — so a literal spelled out in both would let `y` silently copy stale
 /// text with nothing failing to compile.
@@ -316,9 +317,9 @@ impl ChatPanel {
     /// different cue, the Tab-cycle "now active" signal; do not conflate the
     /// two).
     ///
-    /// Deferred via `idle_add_local_once`, same as `render_rows_focused_cursor`'s
-    /// own class application: when `y` copies a VISUAL selection, the caller
-    /// clears `visual_anchor` and calls `render_transcript` (full rebuild,
+    /// Deferred via `idle_add_local_once`, same as `render_page`'s own
+    /// cursor/selection class application: when `y` copies a VISUAL selection,
+    /// the caller clears `visual_anchor` and calls `render_transcript` (full rebuild,
     /// itself idle-deferred) BEFORE flashing, so the transcript-box children at
     /// the moment `flash_rows` is CALLED may still be the OLD widgets about to
     /// be destroyed. Queuing this flash on the idle loop too means it runs
@@ -367,11 +368,9 @@ impl ChatPanel {
 
     /// Jump the transcript viewport straight to the top (`to_end = false`) or
     /// bottom (`to_end = true`) — the scroll-only `gg`/`G` behavior for
-    /// `PanelView::Journal`/`Question`, which have no row cursor for
-    /// `render_rows_focused_cursor` to center (see
-    /// `transcript_cursor_move`'s Journal/Question guard for why those views
-    /// degrade to plain scrolling). Mirrors `render_rows`'s own
-    /// scroll-to-end (`adj.set_value(adj.upper())`) for the `G` case.
+    /// `PanelView::Journal`/`Question`, which have no row cursor/page state for
+    /// `render_page` to land the accent bar on (see `transcript_cursor_move`'s
+    /// Journal/Question guard for why those views degrade to plain scrolling).
     pub fn scroll_transcript_to_edge(&self, to_end: bool) {
         let adj = self.transcript_scroll.vadjustment();
         if to_end {
@@ -474,14 +473,14 @@ impl ChatPanel {
 }
 
 /// The RENDERED text for a single `TranscriptRow`, in WIDGET space — one
-/// entry per label `rebuild_rows`/`append_gloss_answer` would actually paint,
-/// same granularity `widget_row_count` (chat.rs) counts and `y` (the
+/// entry per label `rebuild_from_specs`/`gloss_answer_specs` would actually
+/// paint, same granularity `widget_row_count` (chat.rs) counts and `y` (the
 /// transcript's yank bind) copies. This is a second, parallel implementation
-/// of `rebuild_rows`'s dispatch — kept in sync by `chat_gloss_rows_tests`-style
+/// of `row_widget_specs`'s dispatch — kept in sync by `chat_gloss_rows_tests`-style
 /// coverage below and by the fact that both read the exact same
 /// `gloss_render::chat_gloss_rows` split for `GlossAnswer`.
 ///
-/// Deliberately mirrors `rebuild_rows`'s text, NOT the raw markup: a
+/// Deliberately mirrors `row_widget_specs`'s text, NOT the raw markup: a
 /// `GlossAnswer` row's `<speaker>`/`<verse>`/`<gloss>` tags are stripped by
 /// `chat_gloss_rows` exactly as they are for display, so `y` copies
 /// "CYMBELINE" / "Stand by my side..." — never a literal `<speaker>` tag.
@@ -494,7 +493,7 @@ pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
             use crate::ui::gloss_render::chat_gloss_rows;
             let rows = chat_gloss_rows(markup);
             if rows.is_empty() {
-                // Mirrors append_gloss_answer's own plain-label fallback.
+                // Mirrors gloss_answer_specs's own plain-label fallback.
                 vec![markup.clone()]
             } else {
                 rows.into_iter().map(|(_, text)| text).collect()
@@ -511,9 +510,9 @@ pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
 
 /// Whether each WIDGET of a single `TranscriptRow` is a valid j/k landing
 /// spot — same widget-space granularity as `row_widget_texts` (one entry per
-/// label `rebuild_rows`/`append_gloss_answer` actually paints), derived from
-/// the SAME `chat_gloss_rows` split so this can never drift out of sync with
-/// what `append_gloss_answer` renders. Only a `ChatGlossRowKind::Speaker`
+/// label `rebuild_from_specs`/`gloss_answer_specs` actually paints), derived
+/// from the SAME `chat_gloss_rows` split so this can never drift out of sync
+/// with what `gloss_answer_specs` renders. Only a `ChatGlossRowKind::Speaker`
 /// widget is unlandable — a speaker name isn't a line you'd read, copy, or
 /// mark (see the chat panel's Fix 2). Every other row kind (verse, stage,
 /// gloss, question, answer, chip, thinking, saved-mark, error) is landable.
@@ -523,7 +522,7 @@ pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
             use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
             let rows = chat_gloss_rows(markup);
             if rows.is_empty() {
-                // Mirrors append_gloss_answer's plain-label fallback: one
+                // Mirrors gloss_answer_specs's plain-label fallback: one
                 // widget, landable (it's the raw text, not a speaker label).
                 vec![true]
             } else {
@@ -539,18 +538,19 @@ pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
 
 /// The SINGLE source of truth for how a transcript flattens into rendered
 /// widgets: one `ChatWidget { text, class, group_start }` per label
-/// `rebuild_rows`/`append_gloss_answer` paints, in order. `rebuild_rows` renders
-/// from this, and the pagination height model (`chat_pagination`) measures from
-/// it, so render and measure can never drift.
+/// `rebuild_from_specs`/`gloss_answer_specs` paints, in order.
+/// `rebuild_from_specs` renders from this, and the pagination height model
+/// (`chat_pagination`) measures from it, so render and measure can never
+/// drift.
 ///
 /// `group_start` is `true` for the FIRST widget of each `TranscriptRow` and
 /// `false` for a `GlossAnswer`'s continuation widgets (verse/stage/gloss labels
 /// after the first) — i.e. the flag marks an indivisible pagination unit's
-/// leading widget. Class + text assignment mirror `append_gloss_answer` EXACTLY.
+/// leading widget. Class + text assignment mirror `gloss_answer_specs` EXACTLY.
 /// `class` is the PRIMARY class; `extra_class` carries the stateful
 /// `chat-a-src-lead` second class (the top gap on the first source row that
 /// follows a gloss) so pagination can account for its rendered height — it is
-/// rendered via `append_row_label_extra` (see `rebuild_rows`). Carrying the
+/// rendered via `append_spec_label`'s `extra_class` handling. Carrying the
 /// extra as DATA (not dropping it) is required: dropping it undercounts that
 /// row's height and pagination packs one row too many (the returning bottom
 /// clip).
@@ -586,8 +586,9 @@ pub(crate) fn row_widget_specs(
 }
 
 /// The (text, class) a single non-`GlossAnswer` row renders as — the exact
-/// mapping `rebuild_rows` used inline. `GlossAnswer` is handled by
-/// `gloss_answer_specs`; calling this with one panics (it never should).
+/// mapping `row_widget_specs` uses for every non-gloss row. `GlossAnswer` is
+/// handled by `gloss_answer_specs`; calling this with one panics (it never
+/// should).
 fn plain_row_spec(row: &TranscriptRow) -> (&str, &'static str) {
     match row {
         TranscriptRow::Question(t) => (t.as_str(), "chat-q"),
@@ -601,10 +602,10 @@ fn plain_row_spec(row: &TranscriptRow) -> (&str, &'static str) {
 }
 
 /// Flatten a `GlossAnswer`'s raw `<speaker>`/`<verse>`/`<gloss>` markup into
-/// `(text, class, extra_class, group_start)` per widget — the SINGLE extraction
-/// of the old `append_gloss_answer`'s (text, class) + `chat-a-src-lead`
-/// decision, so `row_widget_specs`, `rebuild_rows`, and the pagination height
-/// model share ONE expansion. Renders the quoted source (speaker/verse/stage)
+/// `(text, class, extra_class, group_start)` per widget — the SINGLE source of
+/// the (text, class) + `chat-a-src-lead` decision, so `row_widget_specs`,
+/// `rebuild_from_specs`, and the pagination height model share ONE expansion.
+/// Renders the quoted source (speaker/verse/stage)
 /// visually distinct from the model's own commentary (gloss) — mirroring, at the
 /// label level, how the gloss OVERLAY styles the same tags with `TextTag`s.
 /// Falls back to one plain `chat-a` widget with the raw text when the markup
@@ -629,7 +630,7 @@ fn gloss_answer_specs(
     use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
     let rows = chat_gloss_rows(markup);
     if rows.is_empty() {
-        // Mirrors append_gloss_answer's plain-label fallback.
+        // The plain-label fallback: one widget with the raw text.
         return vec![(markup.to_string(), "chat-a", None, true)];
     }
     let has_speaker = rows.iter().any(|(k, _)| *k == ChatGlossRowKind::Speaker);

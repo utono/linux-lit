@@ -1348,7 +1348,7 @@ pub fn generate_css(
             must match the main card's body text (see generate_css's doc \
             comment). Was `font_size.saturating_sub(2).max(8)` (a local \
             `chat_size`, removed); the narrower panel still wraps fine at \
-            full size (labels wrap via WordChar, see append_row_label), so \
+            full size (labels wrap via WordChar, see chat_panel::append_spec_label), so \
             nothing else in this stylesheet depended on the smaller size. */ \
          /* padding-right keeps the wrapped text clear of the scrollbar — it \
             is on the SCROLLED content Box (.chat-transcript), inside the \
@@ -1368,11 +1368,12 @@ pub fn generate_css(
             NOT padding. The scroll node clips its content at its own top edge; \
             padding is INSIDE that clip box, so scrolled content renders under \
             it and the top line shows severed (the clipping bug). Margin sits \
-            OUTSIDE the clip box, so the viewport starts BELOW the gap: content \
-            scrolls cleanly under a clip edge that is now at the gap boundary, \
-            and the cursor-scroll (`render_rows_focused_cursor` sets vadjustment \
-            to the cursor row's box-y) lands the cursor row flush at that edge — \
-            a whole line just below the gap, never bisected. Float keeps 0 (it \
+            OUTSIDE the clip box, so the viewport starts BELOW the gap: the \
+            panel now PAGINATES rather than scrolling to the cursor \
+            (`chat_panel::render_page` renders a whole-widget page slice that \
+            fits the transcript budget by construction), so this margin is \
+            simply the top breathing gap above that page's first line — no \
+            scroll/vadjustment involved. Float keeps 0 (it \
             first-line-aligns via `chat_first_line_top_margin`). */ \
          .chat-panel-pinned .chat-transcript-scroll {{ margin-top: 40px; }} \
          .chat-transcript-scroll.chat-flash-wash {{ \
@@ -1417,7 +1418,7 @@ pub fn generate_css(
            font-variant: small-caps; font-size: 0.75em; \
            padding-top: 14px; padding-left: {q_speaker}px; }} \
          /* The FIRST source row of a gloss block (tagged chat-a-src-lead by \
-            append_gloss_answer) carries the gap separating this block source \
+            chat_panel::gloss_answer_specs) carries the gap separating this block source \
             from the PRECEDING block gloss commentary. GTK CSS has no sibling \
             selector for source-after-gloss, so the row builder tags the block \
             leading source line and this rule adds the gap — only ONCE per \
