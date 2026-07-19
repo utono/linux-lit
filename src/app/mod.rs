@@ -2403,6 +2403,10 @@ pub fn build_window(
                     // centering.
                     if s.chat_layout_open {
                         crate::input::actions::chat::size_panel(&s);
+                        // Task 6: the panel height just changed, so the
+                        // transcript pagination budget did too — re-paginate
+                        // the current view and clamp page_idx/row_cursor.
+                        crate::input::actions::chat::repaginate_current_view(&mut s);
                     }
                     do_reveal = vbox_for_tick.opacity() < 1.0;
                     // Pinned play pagination: once layout is settled, generate+store
@@ -2451,8 +2455,19 @@ pub fn build_window(
                         apply_card_sizing(&content_hbox_tick, ww, cw, cc, tr, s.chat_pinned());
                         if s.chat_layout_open {
                             crate::input::actions::chat::size_panel(&s);
+                            crate::input::actions::chat::repaginate_current_view(&mut s);
                         }
                         apply_tiled_mode(&mut s, &vbox_for_tick, ww);
+                    }
+                    // A HEIGHT-only resize (dwl stack-retiling, no width change)
+                    // did not re-run `size_panel` above (that is gated on
+                    // width_changed) but still changed the panel's allocated
+                    // height, so the transcript pagination budget moved. Re-size
+                    // the panel to the new card height and re-paginate the
+                    // current view so the page slice matches (Task 6).
+                    if height_changed && !width_changed && s.chat_layout_open {
+                        crate::input::actions::chat::size_panel(&s);
+                        crate::input::actions::chat::repaginate_current_view(&mut s);
                     }
                     if width_changed || height_changed {
                         // Pinned play pagination: a plain window resize (dwl

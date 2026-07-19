@@ -1588,6 +1588,13 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
             s.chat.journal_list =
                 reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
             s.chat.journal_cursor = 0;
+            // Task 6: a view switch resets to the FIRST page + first landable
+            // widget. `render_journal_view` snaps the row cursor to entry 0's
+            // leading widget and re-paginates to the page holding it (page 0);
+            // reset page_idx explicitly first so the snap starts from a clean
+            // page state rather than the previous view's stale page.
+            s.chat.page_idx = 0;
+            s.chat.row_cursor = 0;
             render_journal_view(&mut s);
             crate::logging::log(&format!(
                 "CHAT-JOURNAL: view toggled to journal ({} entries)",
@@ -1595,6 +1602,22 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
             ));
         }
         PanelView::Gloss => {
+            // Task 6: reset to the first page + first landable widget on the
+            // switch back to Gloss, then re-paginate/render for that cursor.
+            s.chat.page_idx = 0;
+            let (rows, _cursor_row, row_owner) = transcript_rows(&s);
+            let landable = landable_mask(&rows);
+            if let Some(first) =
+                crate::ui::chat_pagination::first_landable_in_page(
+                    crate::ui::pagination::Page { start: 0, end: landable.len() },
+                    &landable,
+                )
+            {
+                s.chat.row_cursor = first;
+                if let Some(&owner) = row_owner.get(first) {
+                    s.chat.cursor = owner;
+                }
+            }
             render_transcript(&mut s);
             crate::logging::log("CHAT-JOURNAL: view toggled to gloss");
         }
@@ -1938,18 +1961,25 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         }
         // Step the WIDGET row cursor over the journal landable mask (every
         // emitted journal widget — the `Q:` row and each answer paragraph — is
-        // landable), then derive `journal_cursor` (the ENTRY `R`/save act on)
-        // from `journal_row_owner`. Mirrors the Gloss branch below.
+        // landable), TURNING THE PAGE at the page edge via `step_cursor_paged`
+        // (Task 6: lands on the next page's first / prev page's last landable
+        // widget), then derive `journal_cursor` (the ENTRY `R`/save act on)
+        // from `journal_row_owner`. Mirrors the Gloss branch below. `s.chat.
+        // pages`/`page_idx` are authoritative here — the last journal render
+        // (`render_paginated`) computed them for exactly these rows.
         let (rows, row_owner) = journal_view_rows(&s.chat.journal_list);
         s.chat.journal_row_owner = row_owner;
         let landable = landable_mask(&rows);
-        let Some(clamped) = step_row_cursor_landable(s.chat.row_cursor, delta, &landable) else {
-            // Already at the first/last landable row — degrade to scrolling.
-            s.chat_panel.scroll_transcript_step(delta as f64);
-            return;
-        };
-        s.chat.row_cursor = clamped;
-        if let Some(&entry) = s.chat.journal_row_owner.get(clamped) {
+        let (new_cursor, new_page) = crate::ui::chat_pagination::step_cursor_paged(
+            s.chat.row_cursor,
+            delta,
+            s.chat.page_idx,
+            &s.chat.pages,
+            &landable,
+        );
+        s.chat.row_cursor = new_cursor;
+        s.chat.page_idx = new_page;
+        if let Some(&entry) = s.chat.journal_row_owner.get(new_cursor) {
             s.chat.journal_cursor = entry;
         }
         render_journal_view_inner(s, false);
@@ -1960,15 +1990,25 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
-    let landable = landable_mask(&rows);
-    let Some(clamped) = step_row_cursor_landable(s.chat.row_cursor, delta, &landable) else {
-        if !row_owner.is_empty() {
-            s.chat_panel.scroll_transcript_step(delta as f64);
-        }
+    if row_owner.is_empty() {
         return;
-    };
-    s.chat.row_cursor = clamped;
-    s.chat.cursor = row_owner[clamped];
+    }
+    let landable = landable_mask(&rows);
+    // Page-aware step: within the page move to the next/prev landable widget;
+    // at the page edge TURN THE WHOLE PAGE and land on the next page's first /
+    // prev page's last landable widget (Task 6). Clamps (no-op) at the
+    // document ends. `s.chat.pages`/`page_idx` were computed by the last
+    // `render_transcript` for exactly these rows, so they are authoritative.
+    let (new_cursor, new_page) = crate::ui::chat_pagination::step_cursor_paged(
+        s.chat.row_cursor,
+        delta,
+        s.chat.page_idx,
+        &s.chat.pages,
+        &landable,
+    );
+    s.chat.row_cursor = new_cursor;
+    s.chat.page_idx = new_page;
+    s.chat.cursor = row_owner[new_cursor];
     render_transcript(s);
 }
 
@@ -2045,11 +2085,12 @@ fn last_landable_index(landable: &[bool]) -> Option<usize> {
     landable.iter().rposition(|&l| l)
 }
 
-/// `gg` on the transcript: move the row cursor to the FIRST landable row (in
-/// `PanelView::Gloss`) and scroll it to the top of the viewport via
-/// `render_transcript`'s `render_rows_focused_cursor` call — the same
-/// cursor-follows-scroll behavior `transcript_cursor_move` already gets from
-/// that path. In `PanelView::Journal` this instead moves `journal_cursor` to
+/// `gg` on the transcript: move the row cursor to the FIRST page's first
+/// landable widget (in `PanelView::Gloss`), set `page_idx = 0`, and re-render
+/// via `render_transcript`'s `render_paginated` path — which shows the page
+/// holding the cursor (here page 0), the same page-slice render
+/// `transcript_cursor_move` uses. In `PanelView::Journal` this instead moves
+/// `journal_cursor` to
 /// entry 0 and re-renders (or, on an empty `journal_list`, falls back to a
 /// plain scroll-to-top — there is no entry to land on). In
 /// `PanelView::Question` (no row cursor — see `transcript_cursor_move`'s
@@ -2071,10 +2112,18 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let landable = landable_mask(&rows);
-    let Some(first) = first_landable_index(&landable) else {
+    // Task 6: gg jumps to the FIRST page's first landable widget. Paginate at
+    // the live budget to find page 0, then land on its first landable widget.
+    let specs = crate::ui::chat_panel::row_widget_specs(&rows);
+    let pages = s.chat_panel.paginate_specs(&specs);
+    let Some(&page0) = pages.first() else {
+        return;
+    };
+    let Some(first) = crate::ui::chat_pagination::first_landable_in_page(page0, &landable) else {
         return;
     };
     s.chat.row_cursor = first;
+    s.chat.page_idx = 0;
     s.chat.cursor = row_owner[first];
     render_transcript(s);
 }
@@ -2101,10 +2150,18 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let landable = landable_mask(&rows);
-    let Some(last) = last_landable_index(&landable) else {
+    // Task 6: G jumps to the LAST page's last landable widget. Paginate at the
+    // live budget to find the last page, then land on its last landable widget.
+    let specs = crate::ui::chat_panel::row_widget_specs(&rows);
+    let pages = s.chat_panel.paginate_specs(&specs);
+    let Some(&last_page) = pages.last() else {
+        return;
+    };
+    let Some(last) = crate::ui::chat_pagination::last_landable_in_page(last_page, &landable) else {
         return;
     };
     s.chat.row_cursor = last;
+    s.chat.page_idx = pages.len() - 1;
     s.chat.cursor = row_owner[last];
     render_transcript(s);
 }
@@ -2244,7 +2301,7 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
         if had_selection {
             // Copy-then-exit, mirroring the reader's yank_selection contract.
             // This rebuild destroys the current row widgets and (via
-            // render_rows_focused_cursor) queues their replacements on the
+            // render_transcript's render_page) queues their replacements on the
             // idle loop — see flash_rows' doc comment for why the flash below
             // still lands on the resulting LIVE widgets rather than the ones
             // being torn down here.
@@ -2669,6 +2726,25 @@ pub(crate) fn size_panel(s: &AppState) {
             s.chat_panel.container.set_margin_top(top_margin);
             s.chat_panel.size_to(w, panel_h);
         }
+    }
+}
+
+/// Task 6: re-paginate + re-render the panel's CURRENT view after a height
+/// change (a resize tick already re-ran `size_panel`, changing the transcript
+/// budget) so the page slice is recomputed for the new budget. Re-rendering
+/// through the normal per-view path (`render_transcript` /
+/// `render_journal_view` / `render_current_question`) recomputes
+/// `s.chat.pages` and CLAMPS `page_idx`/`row_cursor` into range via
+/// `render_paginated`, so the cursor's page stays valid even if the new,
+/// smaller budget dropped a page. No-op when the panel isn't open.
+pub(crate) fn repaginate_current_view(s: &mut AppState) {
+    if !s.chat_layout_open {
+        return;
+    }
+    match s.chat.view {
+        PanelView::Gloss => render_transcript(s),
+        PanelView::Journal => render_journal_view(s),
+        PanelView::Question => render_current_question(s),
     }
 }
 
