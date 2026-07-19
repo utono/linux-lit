@@ -1364,6 +1364,16 @@ pub fn generate_css(
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
            transition: background-color 320ms ease-out; }} \
+         /* Pinned panel: its top edge aligns with the reading card's top edge \
+            (size_panel's Pinned branch), so the transcript would otherwise jam \
+            against it. Breathing room goes on the SCROLL VIEWPORT (not the \
+            inner .chat-transcript content Box) so the gap is FIXED at the top \
+            of the viewport and persists as j/k scrolls the content — padding on \
+            the content box only spaces the very first line and scrolls away \
+            with it. Scoped to `.chat-panel-pinned` so FLOAT keeps its \
+            first-line alignment (`chat_first_line_top_margin` assumes no top \
+            gap here). */ \
+         .chat-panel-pinned .chat-transcript-scroll {{ padding-top: 40px; }} \
          .chat-transcript-scroll.chat-flash-wash {{ \
            background-color: alpha({chat_ink}, 0.10); transition: none; }} \
          .chat-panel-float .chat-transcript-scroll.chat-flash-wash {{ \

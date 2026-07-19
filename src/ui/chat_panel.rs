@@ -62,6 +62,15 @@ impl ChatPanel {
         transcript_scroll.set_child(Some(&transcript_box));
         transcript_scroll.set_vexpand(true);
         transcript_scroll.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
+        // Horizontal policy Never makes a ScrolledWindow report its child's FULL
+        // natural width as its own minimum — so a wide transcript row (a pinned
+        // prose passage whose wrapping label reports a large natural width)
+        // inflated the panel container past its requested width, pushing the
+        // pinned panel flush to the window's right edge (the 1-column prose bug).
+        // Stop propagating the child's natural width so the ScrolledWindow (and
+        // thus the container) honors its allocated/`width_request` width and the
+        // labels WRAP within it instead of forcing the panel wider.
+        transcript_scroll.set_propagate_natural_width(false);
 
         // AskCard::new(text_margins, return_focus) — the panel has no card
         // chrome, so text_margins is 0; return_focus is the transcript scroll
@@ -89,6 +98,7 @@ impl ChatPanel {
         self.container.set_width_request(w.max(0));
         self.container.set_height_request(h.max(0));
     }
+
 
     /// Release the panel's explicit width/height hold (-1 = unset the
     /// request in GTK). Used when a work switch invalidates the panel's
@@ -144,13 +154,37 @@ impl ChatPanel {
 
     /// Rebuild the transcript from rows and scroll to the TOP (not the end).
     /// `render_saved_entry` uses this for the standalone 3-row saved/revision
-    /// view: the reader wants to land on the `Q:` line at the top of the entry,
-    /// so a long answer must not pin the viewport to its own bottom the way
-    /// `render_rows` (newest-last, scroll-to-end) does.
+    /// view: the reader wants the `Q:` line at the top of the entry, so a long
+    /// answer must not pin the viewport to its own bottom the way `render_rows`
+    /// (newest-last, scroll-to-end) does. No accent bar: the saved view is a
+    /// static snapshot, not the j/k-navigable Gloss transcript, so painting a
+    /// row cursor here would leave a bar that j/k (which re-renders the FULL
+    /// transcript) can't move.
+    ///
+    /// Scroll robustness: a single `set_value(0.0)` on the first idle can race
+    /// the ScrolledWindow assigning its scroll range for a freshly-rebuilt LONG
+    /// answer — the range is still the old/short one on that idle, and once GTK
+    /// lays out the tall content the viewport ends up mid-answer. So also
+    /// re-assert 0.0 the first time the adjustment's range actually changes
+    /// (after layout), then disconnect (settle-on-`changed`, mirroring the
+    /// overlay's geometry-settle pattern).
     pub fn render_rows_to_top(&self, rows: &[TranscriptRow]) {
         self.rebuild_rows(rows);
-        let adj = self.transcript_scroll.vadjustment();
-        glib::idle_add_local_once(move || adj.set_value(0.0));
+        let scroll = self.transcript_scroll.clone();
+        glib::idle_add_local_once(move || {
+            let adj = scroll.vadjustment();
+            adj.set_value(0.0);
+            let id_cell: std::rc::Rc<std::cell::Cell<Option<glib::SignalHandlerId>>> =
+                std::rc::Rc::new(std::cell::Cell::new(None));
+            let id_cell2 = id_cell.clone();
+            let id = adj.connect_changed(move |a| {
+                a.set_value(0.0);
+                if let Some(id) = id_cell2.take() {
+                    a.disconnect(id);
+                }
+            });
+            id_cell.set(Some(id));
+        });
     }
 
     /// Rebuild the transcript, paint the `.chat-cursor-row` accent bar
