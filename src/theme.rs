@@ -1222,12 +1222,12 @@ pub fn generate_css(
             .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
               background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
               box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} */ \
-         .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
+         .chapter-toast {{ font-size: 13px; color: {fg}; \
            padding: 6px 14px; opacity: 0.97; }} \
-         .center-toast {{ font-size: 13px; color: {center_toast_fg}; \
+         .center-toast {{ font-size: 13px; color: {fg}; \
            background-color: {center_toast_bg}; padding: 6px 14px; border-radius: 10px; \
            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14); opacity: 0.97; }} \
-         .search-toast {{ font-size: 10px; color: {toast_fg}; \
+         .search-toast {{ font-size: 10px; color: {fg}; \
            background-color: {toast_bg}; padding: 3px 10px; border-radius: 8px; \
            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {scrim}; }} \
@@ -1373,7 +1373,8 @@ pub fn generate_css(
             0 so SOURCE lines could sit at the main card's pure line-height, \
             and these rows would otherwise jam together. */ \
          .chat-q {{ color: alpha({chat_ink}, 0.70); padding-top: 10px; }} \
-         .chat-a {{ color: {chat_ink}; padding-top: 10px; }} \
+         .chat-a {{ color: {chat_ink}; padding-top: 10px; \
+           padding-left: {q_body}px; }} \
          .chat-chip {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            border-left: 2px solid alpha({chat_ink}, 0.35); padding-left: 8px; \
            padding-top: 10px; }} \
@@ -1540,7 +1541,6 @@ pub fn generate_css(
         toast_bg = chapter_toast_bg(theme),
         toast_fg = contrast_on(&chapter_toast_bg(theme)),
         center_toast_bg = center_toast_bg(theme),
-        center_toast_fg = contrast_on(&center_toast_bg(theme)),
         cursor_bg = theme.cursor_bg,
         cursor_fg = theme.cursor_fg,
         selection_bg = crate::theme::selection_bg(theme),
