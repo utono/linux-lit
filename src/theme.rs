@@ -1151,6 +1151,7 @@ pub fn generate_css(
          .library-picker-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
          .corpus-search-detail {{ font-variant: small-caps; \
            font-feature-settings: \"smcp\" 1; letter-spacing: 0.4px; }} \
+         .journal-term-input row:selected {{ box-shadow: none; }} \
          .search-bar {{ background-color: {bg}; color: {fg}; padding: 4px 12px; }} \
          .search-entry {{ background: transparent; border: none; color: {fg}; }} \
          .search-slash {{ color: {fg}; opacity: 0.6; }} \

@@ -581,13 +581,18 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     // Filtered view shows one entry at a time: page_index 0 of page_count 1.
     s.journal_overlay
         .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, cw, h);
-    // Re-apply the overlay search against the just-rendered entry so the seeded
-    // term (or a `/`-typed pattern) lights up in every stepped match. Re-collect
-    // against the whole-entry text (every page) so a later-page match is found.
+    // Re-apply the overlay search against the just-rendered entry. For an
+    // `f`-filtered entry no search is seeded (opens clean); for a Ctrl+f
+    // corpus-search hit `open_journal_hit` seeds the `/` pattern AFTER this, so
+    // its match still lights up. Re-collect against the whole-entry text (every
+    // page) so a later-page match is found.
     reapply_overlay_search_whole_entry(s);
-    // Show the diff vs the filtered entry's last stored revision (displayed_journal_page
-    // reads the filter match), so cross-work matches also highlight their last change.
-    refresh_entry_diff_highlight(s);
+    // A filtered entry is always popup-opened (`f` term browse or the Ctrl+f
+    // corpus search — the only setters of `journal.filter`), and those open the
+    // entry CLEAN: no rewrite-diff highlight. Clear any stale diff rather than
+    // painting one. (Normal band navigation goes through `render_current`, which
+    // keeps the diff; the Ctrl+Shift+p revision browse paints its own.)
+    s.journal_overlay.clear_rewrite_diff();
 }
 
 /// Activate a term filter: fetch matches, store filter state, render the
@@ -608,22 +613,11 @@ pub(crate) fn activate_filter(state: &Rc<RefCell<AppState>>, term: &str) -> bool
         pos: 0,
     });
     render_filtered_match(&mut s);
-    // Seed the overlay search from the browsed term so it highlights in every
-    // stepped entry. Collect over the whole-entry text (every page) so a term on
-    // a later page of the first match still lights up. render_filtered_match
-    // already ran above (which called reapply_overlay_search_whole_entry when a
-    // search was set) — but the search is only set here, so paint it now.
-    {
-        let text = s.journal_overlay.whole_entry_text();
-        let search = crate::input::overlay_search::OverlaySearch {
-            pattern: term.to_string(),
-            matches: crate::input::overlay_search::collect(&text, term),
-            current: 0,
-        };
-        s.journal_overlay.set_search_matches(&search);
-        s.journal.last_pattern = Some(term.to_string());
-        s.journal.search = Some(search);
-    }
+    // The browsed term is deliberately NOT seeded as an overlay search: the
+    // `f`-filtered entry opens clean (no highlight). The filter itself stays
+    // active (`s.journal.filter`), so Ctrl+n/p still steps the subset and Escape
+    // still jumps to the entry's Arkangel source. `/` remains available to search
+    // within the open entry manually.
     true
 }
 
