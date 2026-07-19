@@ -1261,6 +1261,24 @@ fn reload_journal_list(
         .unwrap_or_default()
 }
 
+/// The `Q:` widget-row index for `journal_list` entry `entry`. Each entry
+/// renders as exactly two widget rows (a `Q:` row then an `Answer` row — see
+/// `journal_view_rows`), so entry `i` owns rows `2*i` (question) and `2*i + 1`
+/// (answer). The row cursor (and `R`'s target) anchors on the `Q:` row.
+fn journal_entry_qrow(entry: usize) -> usize {
+    entry * 2
+}
+
+/// Clamp a Journal-view row cursor to a list of `len` entries: `[0, len-1]`, or
+/// `0` for an empty list (which renders a single non-landable placeholder row).
+fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        cursor.min(len - 1)
+    }
+}
+
 /// Render the `Journal` view at the current `s.chat.journal_list` — plain
 /// `render_rows` (no row-cursor accent bar, no visual-selection painting):
 /// the journal view is a deliberately flat, uncycled list (see
@@ -1269,9 +1287,20 @@ fn reload_journal_list(
 /// Gloss view's `j`/`k`/`V`/`y`. `j`/`k` while this view is showing instead
 /// fall back to plain viewport scrolling (see `handle_chat_transcript_key`'s
 /// `t`/`j`/`k` arms in keymap.rs).
-fn render_journal_view(s: &AppState) {
+fn render_journal_view(s: &mut AppState) {
     let rows = journal_view_rows(&s.chat.journal_list);
-    s.chat_panel.render_rows(&rows);
+    let len = s.chat.journal_list.len();
+    s.chat.journal_cursor = clamp_journal_cursor(s.chat.journal_cursor, len);
+    if len == 0 {
+        // Placeholder-only list: no landable row, scroll to top, no accent bar.
+        s.chat_panel.render_rows_to_top(&rows);
+        return;
+    }
+    // Land the accent bar on the cursor entry's `Q:` widget row;
+    // `render_rows_focused_cursor` scrolls that row to the top. No visual
+    // selection in Journal view.
+    let qrow = journal_entry_qrow(s.chat.journal_cursor);
+    s.chat_panel.render_rows_focused_cursor(&rows, qrow, None);
 }
 
 /// `t` on the transcript: toggle the panel between showing the pinned
@@ -1313,7 +1342,8 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
         PanelView::Journal => {
             s.chat.journal_list =
                 reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
-            render_journal_view(&s);
+            s.chat.journal_cursor = 0;
+            render_journal_view(&mut s);
             crate::logging::log(&format!(
                 "CHAT-JOURNAL: view toggled to journal ({} entries)",
                 s.chat.journal_list.len()
@@ -3244,7 +3274,7 @@ mod visual_selection_tests {
 /// on-screen verification.
 #[cfg(test)]
 mod panel_view_toggle_tests {
-    use super::{flip_view, journal_view_rows, PanelView};
+    use super::{clamp_journal_cursor, flip_view, journal_entry_qrow, journal_view_rows, PanelView};
     use crate::db::journal::JournalPage;
     use crate::ui::chat_panel::TranscriptRow as R;
 
@@ -3346,6 +3376,22 @@ mod panel_view_toggle_tests {
             texts,
             vec!["Q: Q1?", "A1.", "Q: Q2?", "A2.", "Q: Q3?", "A3."]
         );
+    }
+
+    #[test]
+    fn journal_entry_qrow_is_two_per_entry() {
+        assert_eq!(journal_entry_qrow(0), 0);
+        assert_eq!(journal_entry_qrow(1), 2);
+        assert_eq!(journal_entry_qrow(3), 6);
+    }
+
+    #[test]
+    fn clamp_journal_cursor_bounds() {
+        assert_eq!(clamp_journal_cursor(0, 0), 0); // empty list
+        assert_eq!(clamp_journal_cursor(5, 0), 0); // empty list, stale cursor
+        assert_eq!(clamp_journal_cursor(0, 3), 0);
+        assert_eq!(clamp_journal_cursor(2, 3), 2);
+        assert_eq!(clamp_journal_cursor(9, 3), 2); // clamps to len-1
     }
 }
 
