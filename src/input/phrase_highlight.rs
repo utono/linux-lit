@@ -477,12 +477,16 @@ pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
                 (0..spoken_wi).rev().find(|&i| work.lines[i].timestamp.is_some())
             };
             match neighbor {
-                // Document edge: backward restarts the current phrase,
-                // forward is a no-op (but consumed — a raw +3.5s here would
-                // feel like a glitch past the last phrase).
-                None => match (!fwd, phrase_at_time(&spans, pos)) {
-                    (true, Some(i)) => (spans[i].start_time, spoken_wi),
-                    _ => return true,
+                // Document edge, forward: no next phrase to step to — return
+                // false so the caller falls through to the raw +3.5s seek —
+                // Action semantics win over the step no-op.
+                None if fwd => return false,
+                // Document edge, backward: restart the current phrase, or
+                // stay consumed (no-op) when even that isn't available
+                // (unchanged from before).
+                None => match phrase_at_time(&spans, pos) {
+                    Some(i) => (spans[i].start_time, spoken_wi),
+                    None => return true,
                 },
                 Some(nwi) => {
                     let line = &work.lines[nwi];
