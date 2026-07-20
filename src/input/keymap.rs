@@ -316,6 +316,22 @@ pub fn handle_key(
                 s.vocab_popup.auto = false;
                 crate::app::vocab_popup::close_vocab_popup(&mut s);
             } else {
+                // Opening the popup also turns vocab highlighting ON if it was
+                // off (and persists it), so the words the popup lists are goled
+                // in the body too. Rebuild matches from the current word set so
+                // a live-added word is included.
+                if !s.vocab_highlight_visible {
+                    s.vocab_highlight_visible = true;
+                    crate::app::refresh_vocab_matches(&mut s);
+                    crate::app::apply_vocab_highlighting(&s);
+                    if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
+                        if let Err(e) = crate::db::queries::open_db_rw().and_then(|conn| {
+                            crate::db::queries::set_vocab_highlight(&conn, &abbrev, true)
+                        }) {
+                            crate::logging::log(&format!("VOCAB: persist failed for {abbrev}: {e}"));
+                        }
+                    }
+                }
                 s.vocab_popup.auto = true;
                 crate::app::vocab_popup::open_vocab_popup(&mut s);
             }
@@ -3887,6 +3903,10 @@ fn dispatch_action(
             let mut s = state.borrow_mut();
             s.vocab_highlight_visible = !s.vocab_highlight_visible;
             if s.vocab_highlight_visible {
+                // Rebuild matches from the CURRENT word set first — a word added
+                // live (add-vocab) after the work was displayed is absent from
+                // the load-time match list, so a bare apply would never gold it.
+                crate::app::refresh_vocab_matches(&mut s);
                 crate::app::apply_vocab_highlighting(&s);
             } else {
                 crate::app::remove_vocab_highlighting(&s);

@@ -4486,6 +4486,23 @@ fn build_vocab_matches(state: &mut AppState) {
     }
 }
 
+/// Reload the global vocab word set and rebuild the per-line match spans for
+/// the current buffer. Call this before `apply_vocab_highlighting` whenever the
+/// word set may have changed since the work was displayed (a live add), so the
+/// toggle/refresh paths don't highlight against a stale match list built at
+/// load time. `build_vocab_matches` is module-private, so this is the public
+/// entry other modules (keymap's ToggleVocabHighlight, vocab_add) call.
+pub fn refresh_vocab_matches(state: &mut AppState) {
+    if let Some(abbrev) = state.current_work.as_ref().map(|w| w.abbrev.clone()) {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            if let Ok(words) = crate::db::queries::load_vocab_words(&conn, &abbrev) {
+                state.vocab_words = words;
+            }
+        }
+    }
+    build_vocab_matches(state);
+}
+
 /// Apply the vocab-word TextTag to all matches in the buffer.
 pub fn apply_vocab_highlighting(state: &AppState) {
     for m in &state.vocab_matches {
@@ -4515,25 +4532,34 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
             Ok(()) => {}
             Err(e) => crate::logging::log(&format!("VOCAB ADD: persist highlight failed: {e}")),
         }
-        // Reload the global word set so the just-added word is included.
-        if let Ok(conn) = crate::db::queries::open_db() {
-            if let Ok(words) = crate::db::queries::load_vocab_words(&conn, &abbrev) {
-                state.vocab_words = words;
-            }
-        }
     }
 
     remove_vocab_highlighting(state);
-    build_vocab_matches(state);
+    refresh_vocab_matches(state); // reload words (incl. the just-added) + rebuild spans
     apply_vocab_highlighting(state);
 
-    // Refresh the popup only if it is open AND the word is on the cursor line.
-    let on_line = state
+    let word_matches = state
         .vocab_matches
         .iter()
-        .any(|m| m.line_index == state.current_line && m.word == word);
-    if state.vocab_popup.popup.is_visible() && on_line {
+        .filter(|m| m.word == word)
+        .count();
+    crate::logging::log(&format!(
+        "VOCAB ADD: refresh — highlight_visible={}, {} total matches, {} for '{}'",
+        state.vocab_highlight_visible,
+        state.vocab_matches.len(),
+        word_matches,
+        word,
+    ));
+
+    // Activate the popup on add: refresh it in place if already open, else open
+    // it (it derives from the cursor line's vocab words). open_vocab_popup is a
+    // no-op-ish when the cursor line has no vocab word, so the word only shows
+    // when the cursor sits on a line containing it.
+    if state.vocab_popup.popup.is_visible() {
         crate::app::vocab_popup::refresh_vocab_popup(state);
+    } else {
+        state.vocab_popup.auto = true;
+        crate::app::vocab_popup::open_vocab_popup(state);
     }
 
     let verb = if outcome_added { "added" } else { "already have" };
