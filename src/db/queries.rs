@@ -3367,6 +3367,49 @@ mod tests {
             (crate::elevenlabs::JULIET_VOICE_ID.to_string(), model)
         );
     }
+
+    fn timestamps_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_timestamps (
+                 id INTEGER PRIMARY KEY,
+                 line_mapping_id INTEGER NOT NULL,
+                 media_id INTEGER,
+                 start_time REAL,
+                 end_time REAL
+             );
+             INSERT INTO line_timestamps
+                 (line_mapping_id, media_id, start_time, end_time) VALUES
+                 (10, 1, 100.0, 103.5),
+                 (11, 1, 104.0, NULL),
+                 (12, 1, 108.0, 111.0),
+                 (10, 2, 500.0, 502.0);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn line_end_time_reads_the_media_scoped_row() {
+        let conn = timestamps_test_conn();
+        assert_eq!(line_end_time(&conn, 10, 1), Some(103.5));
+        assert_eq!(line_end_time(&conn, 10, 2), Some(502.0));
+        // NULL end_time and missing rows are both None, mirroring
+        // line_start_time's contract.
+        assert_eq!(line_end_time(&conn, 11, 1), None);
+        assert_eq!(line_end_time(&conn, 99, 1), None);
+    }
+
+    #[test]
+    fn next_start_after_is_the_earliest_strictly_later_start() {
+        let conn = timestamps_test_conn();
+        // After line 11's start (104.0) the next start on media 1 is 108.0.
+        assert_eq!(next_start_after(&conn, 1, 104.0), Some(108.0));
+        // Strictly after: a row AT t does not count.
+        assert_eq!(next_start_after(&conn, 1, 108.0), None);
+        // Media-scoped: media 2 has nothing after 502.
+        assert_eq!(next_start_after(&conn, 2, 502.0), None);
+    }
 }
 
 #[cfg(test)]
@@ -3821,48 +3864,5 @@ mod vocab_insert_tests {
             .unwrap();
         assert_eq!(word, "Michaelmas"); // capitalization updated in place
         assert_eq!(def, "a Christian feast"); // definition untouched
-    }
-
-    fn timestamps_test_conn() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE line_timestamps (
-                 id INTEGER PRIMARY KEY,
-                 line_mapping_id INTEGER NOT NULL,
-                 media_id INTEGER,
-                 start_time REAL,
-                 end_time REAL
-             );
-             INSERT INTO line_timestamps
-                 (line_mapping_id, media_id, start_time, end_time) VALUES
-                 (10, 1, 100.0, 103.5),
-                 (11, 1, 104.0, NULL),
-                 (12, 1, 108.0, 111.0),
-                 (10, 2, 500.0, 502.0);",
-        )
-        .unwrap();
-        conn
-    }
-
-    #[test]
-    fn line_end_time_reads_the_media_scoped_row() {
-        let conn = timestamps_test_conn();
-        assert_eq!(line_end_time(&conn, 10, 1), Some(103.5));
-        assert_eq!(line_end_time(&conn, 10, 2), Some(502.0));
-        // NULL end_time and missing rows are both None, mirroring
-        // line_start_time's contract.
-        assert_eq!(line_end_time(&conn, 11, 1), None);
-        assert_eq!(line_end_time(&conn, 99, 1), None);
-    }
-
-    #[test]
-    fn next_start_after_is_the_earliest_strictly_later_start() {
-        let conn = timestamps_test_conn();
-        // After line 11's start (104.0) the next start on media 1 is 108.0.
-        assert_eq!(next_start_after(&conn, 1, 104.0), Some(108.0));
-        // Strictly after: a row AT t does not count.
-        assert_eq!(next_start_after(&conn, 1, 108.0), None);
-        // Media-scoped: media 2 has nothing after 502.
-        assert_eq!(next_start_after(&conn, 2, 502.0), None);
     }
 }
