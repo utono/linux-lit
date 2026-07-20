@@ -617,6 +617,9 @@ pub struct AppState {
     pub reader_gloss_lines: std::collections::HashSet<usize>,
     pub dim_enabled: bool,
     pub vocab_highlight_visible: bool,
+    /// Word currently awaiting a Claude definition fallback (add-vocab). Guards
+    /// against a duplicate paid request / double insert on repeat submit.
+    pub vocab_add_pending: Option<String>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
@@ -2076,6 +2079,7 @@ pub fn build_window(
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
         vocab_highlight_visible: false,
+        vocab_add_pending: None,
         vocab_popup: crate::app::vocab_popup::VocabPopupState {
             popup: vocab_popup,
             data: Vec::new(),
