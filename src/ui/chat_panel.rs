@@ -255,8 +255,9 @@ impl ChatPanel {
     /// painted at the PAGE-LOCAL cursor (`cursor_widget - page.start`) when
     /// `cursor_widget` falls inside this page; `.chat-visual-row` is painted over
     /// the page-local intersection of `selection` (widget-space, inclusive) with
-    /// the page. The vadjustment is NOT touched — the page fits, so there is
-    /// nothing to scroll.
+    /// the page. The vadjustment is reset to the top on every render — a page
+    /// normally fits, but an oversized single widget scrolls, and the adjustment
+    /// would otherwise carry over from the previous render.
     pub fn render_page(
         &self,
         specs: &[crate::ui::chat_pagination::ChatWidget],
@@ -268,6 +269,12 @@ impl ChatPanel {
         let end = page.end.min(specs.len());
         let slice = &specs[start..end];
         self.rebuild_from_specs(slice);
+        // A page normally fits the budget, but a single widget taller than
+        // the viewport (an unsplit long answer) DOES scroll — and GTK keeps
+        // the previous adjustment value across the child rebuild, so the view
+        // inherited whatever scroll position the panel was at. Every page
+        // render starts at the top.
+        self.transcript_scroll.vadjustment().set_value(0.0);
         // Page-local cursor index (None when the cursor isn't on this page).
         let local_cursor =
             cursor_widget.filter(|&c| c >= start && c < end).map(|c| c - start);
