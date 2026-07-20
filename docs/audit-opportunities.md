@@ -164,7 +164,49 @@ exclusions, and the larger-projects decisions.
 - **#71** markdown heading-tag closure (refactor/audit-67-72) — heading-only
   local closure; the other 7 tag builders are not congruent, kept separate.
 - **#72** current_work_abbrev getter (refactor/audit-67-72) — file-local, ×5.
-- **#73–#82** — still OPEN; see full analyses below (not shipped in the 2026-07-17 batch).
+- **#73** search-match-iters (849f9cfb) — `search::match_iters`, the byte→char
+  range walk shared by the 3 highlight fns (returns char offsets so the
+  SEARCH_HL log stayed byte-identical).
+- **#74** column-float-rect (be8587c5) — `layout::column_float_rect`; vocab +
+  chat floats share the divider-extension geometry (vocab `over_right` ≡ chat
+  `FloatRight`).
+- **#75** search-scan-loop (849f9cfb) — `search::scan_matches`; callers keep
+  assignment + apply_highlights tails.
+- **#76** contrast-ratio-route (07ed437b) — contrast_ratio routes to
+  `relative_luminance`; hue_distance destructures hex_to_rgb once.
+- **#77** tint-guard-consts (07ed437b) — HUE_DISTINCT_MIN_DEG /
+  TINT_DISTINCT_MIN_CONTRAST / TINT_MIN_SATURATION; 4.5-valued consts stay
+  distinct; rung arrays untouched.
+- **#78** titlecase-route (6c518521; chat half in f17ba45f) — last re-inline
+  (vocab_journal) routed; rider: CORPUS_NONE_FOUND const.
+- **#79** vocab-popup-twins (0368550e) — `set_counter` + `clear_content`
+  private methods (GtkBox, so clear_list was not the home).
+- **#80** vim-edit-group (189d54f1) — `keybinds_legend::VIM_EDIT_GROUP` shared
+  by gloss + synopsis; journal keeps its worded copy.
+- **#81** float-frame-css — **CLOSED 2026-07-19, do not re-open.** Chat float
+  diverged BY DESIGN (full-height edge panel); recorded in Standing
+  exclusions.
+- **#82** viewport-rect-log (d71e0ed2) — `logging::log_viewport_rect`; tags
+  stay literal at the 4 sites.
+- **#88** copy-to-clipboard (410fa6f0) — `ui::copy_to_clipboard`, the 9
+  byte-identical wl-copy arg-form spawns (settings:592 EXCLUDED during
+  implementation — it waits on `.status()`, a different contract; stdin-pipe
+  family also stays).
+- **#89** chat-base-padding-top (c0110266) — one `base_padding_top` table for
+  class_pad + src_lead_extra_pad; stale 44px-era doc arithmetic corrected to
+  the shipped 26/29 values.
+- **#90** chat-toast-consts (abd52ae6) — 5 chat.rs toast consts +
+  TOAST_REWRITTEN / TOAST_NOTHING_TO_REWRITE beside the #85 block.
+- **#91** chat-placement-classes (3c5e94dd) — CLASS_PANEL_FLOAT/PINNED +
+  CLASS_CARD_CHAT_SEAM, 10 sites.
+- **#92** flash-class-helper (c4fcbe64) — chat_panel `flash_class(w, class,
+  ms)` for the add/timeout/remove trio.
+- **#93** chat-rows-move (445d07f2) — pure row-model core + 11 pure test mods
+  → `chat_rows.rs` (chat.rs 3763→2563). ChatMsgCtx stayed (prompt-context,
+  not row-model — a deliberate narrowing vs the entry).
+- **#94** db-migrations-move (6a7b3f67) — 9 `ensure_*` fns + their column-DDL
+  consts → `db/migrations.rs`; column_exists and the canonical-abbrev family
+  stay in queries.rs.
 - **#83** echo-legend-shared (43d3206) — echo_keybinds_overlay reduced to TITLE+GROUPS data; renders via shared KeybindsLegend (fixes the dark-card/opaque-scrim drift).
 - **#84** echoes-module (5477d7a) — moved the ~410-line echo subsystem out of queries.rs to src/db/echoes.rs (+7 tests); pure motion.
 - **#85** overlay-toast-consts (00d585f) — TOAST_SAVED/SAVED_IN_OVERLAY/NO_MATCHES/COPIED in navigation.rs, 14 sites.
@@ -196,6 +238,9 @@ proven cosmetic on screen).
 - Timestamp upsert family + `find_*` journal query skeletons + dynamic-IN
   param scaffolds + `ensure_*_table` bodies: the varying SQL is load-bearing;
   folding needs parameterized SQL/generics — out of scope permanently.
+- Vocab-float vs chat-float CSS frames (ex-#81) — diverged BY DESIGN
+  2026-07: chat float is a full-height edge panel (side borders only,
+  radius 0); vocab float keeps the boxed frame. Never re-unify in CSS.
 
 **Below the floor (flag; number only if the family grows):**
 
@@ -263,236 +308,6 @@ guard rails, chat panel, vocab popup 2-col float, segment-overlay cycle,
 keybinds legends). Three parallel Explore finders; every entry below verified
 by direct side-by-side read, not agent word (the #11 lesson). Ranked by
 (duplication × drift_risk) ÷ scope_size.
-
-## #73 — search match-iters triple
-
-- **Status:** OPEN (rank #1 — 3 byte-identical 8-line bodies in the code the
-  regex-search branch just touched twice).
-- **Signal:** the match-char-range computation — `line_end` +
-  `forward_to_line_end` guard, `line_text` slice, `char_start`/`char_end` via
-  `.chars().count()`, `match_start`/`match_end` via `forward_chars` — is
-  byte-identical at **3 sites** in `src/input/search.rs`: `apply_highlights`
-  :541-551 (loop body), `apply_current_highlight` :564-573,
-  `remove_current_highlight` :584-592.
-- **Identical part (extract):** `fn match_iters(state: &AppState, m:
-  &SearchMatch) -> Option<(TextIter, TextIter)>` returning the
-  `(match_start, match_end)` pair; `None` on the `iter_at_line` failure. Each
-  site keeps its own None arm (`continue` in the loop, `return` in the
-  singles) and its own tail (apply `search_tag` / apply `search_current_tag`
-  + log / remove `search_current_tag`).
-- **EXCLUDED (named, why):** the `search_matches.is_empty()` +
-  `[search_match_idx]` preamble of the two singles (the loop site iterates
-  instead — different access shape, stays at call sites); the tag operations
-  and the `log_fmt!` (the load-bearing per-site difference).
-- **Safe-scope:** yes — pure iterator computation → Option helper; guards
-  stay at call sites, zero control-flow change.
-
-## #74 — column-float-rect twin (chat float ↔ vocab float)
-
-- **Status:** OPEN (rank #2 — 2 sites, cross-file, hand-copied THIS WEEK with
-  an explicit "same as the chat float" comment; the exact #31-class mirror
-  signal).
-- **Signal:** the two-column float geometry — `col.compute_bounds(&window)
-  .map(|b| (b.x() as i32, b.width() as i32)).unwrap_or((24,
-  MIN_TWO_COLUMN_COLUMN_WIDTH))` + the divider-extension block
-  (`d_left`/`d_right`, `new_x = d_left.min(x); w += x - new_x; x = new_x`
-  vs `w = w.max(d_right - x)`) — is byte-identical modulo the side predicate
-  at **2 sites**: `src/app/vocab_popup.rs:109-124` (`position_vocab_popup`)
-  and `src/input/actions/chat.rs:731-747` (`size_panel` float arm). The
-  vocab doc comment says "mirroring the chat panel's float geometry (see
-  `chat::size_panel`)".
-- **Identical part (extract):** `pub(crate) fn column_float_rect(s: &AppState,
-  over_right: bool) -> (i32, i32)` in `src/app/layout.rs` (the module owning
-  `main_card_rect`), returning `(x, w)`. Normalize the predicate: vocab's
-  `over_right` ≡ chat's `FloatRight` (the branch bodies line up exactly once
-  the polarity is normalized — verify the arm pairing during the cut).
-- **EXCLUDED (named, why):** each caller's tail — vocab
-  `place_float(x, w, card_h)`; chat `set_margin_start(x.max(0))` +
-  `add_css_class("chat-panel-float")` + `size_to(w, h)` — and chat's Pinned
-  arm. The column-pick two-liner could fold in via the normalized flag but
-  the `ChatPlacement` enum stays chat-side.
-- **Safe-scope:** yes — pure geometry extraction; the next divider/margin fix
-  currently has to be hand-copied between the two floats.
-
-## #75 — search scan-loop block (execute ↔ collect twins)
-
-- **Status:** OPEN (rank #3 — ~14 lines byte-identical modulo rustfmt line
-  breaks, one file, same fresh regex-search family as #73).
-- **Signal:** the matcher scan — `let mut new_matches = Vec::new(); if
-  state.line_map.is_some() { buffer text + lines().enumerate() +
-  collect_line } else { work.lines.iter().enumerate() + collect_line }
-  state.search_matches = new_matches; apply_highlights(&state);` — is
-  byte-identical (only the `.text(...)` call's line-wrapping differs) at
-  **2 sites** in `src/input/search.rs`: `execute_search_with_query` :44-62
-  and `collect_matches` :315-331.
-- **Identical part (extract):** `fn scan_matches(state: &AppState, work:
-  &Work, re: &Matcher) -> Vec<SearchMatch>` (the if/else + collect); each
-  caller keeps its own `state.search_matches = ...` assignment +
-  `apply_highlights` if preferred, or the helper covers through
-  `apply_highlights` (both sites run the same two statements next — either
-  boundary is behavior-preserving; pick one in the spec).
-- **EXCLUDED (named, why):** the two functions' wider shared prologue
-  (clear_highlights / `search_matches.clear()` / empty-query early-return /
-  `last_search_query` set / `current_work` match) — near-identical but the
-  receivers differ (`&mut AppState` flows vs the borrow shapes) and the
-  empty-query arms differ (`update_counter(0,0)` only in one) — folding the
-  whole body is a bigger, riskier cut; ONLY the scan block extracts.
-- **Safe-scope:** yes — byte-identical block → helper, no control-flow change.
-
-## #76 — theme.rs contrast_ratio routes to relative_luminance
-
-- **Status:** OPEN (rank #4 — route-to-shared drift on the WCAG formula, the
-  one place a constant tweak would silently fork the math).
-- **Signal:** `contrast_ratio` (theme.rs:666-674) re-inlines the exact
-  `relative_luminance` body (theme.rs:110-114) as local `lin`/`lum` closures
-  — the sRGB linearize (`0.03928 / 12.92 / 1.055 / 2.4`) and the
-  `0.2126/0.7152/0.0722` weighted sum are byte-identical.
-- **Identical part (route):** delete the closures;
-  `let (la, lb) = (relative_luminance(a_hex) + 0.05,
-  relative_luminance(b_hex) + 0.05);`. Identical f64 result (same
-  `hex_to_rgb`, same formula).
-- **Rider (same-PR, same file):** `hue_distance` (theme.rs:647-648) calls
-  `hex_to_rgb(cN)` three times per color to feed `rgb_to_hsl` —
-  `complement_hex` (:657-658) already shows the clean destructured form. A
-  tiny `fn hue_of(hex) -> f64` (or inline destructure) collapses both lines
-  and the same idiom in the `complement_rotates_hue_180` test.
-- **EXCLUDED (named, why):** theme.rs `hex_to_rgb` vs gloss_util
-  `parse_hex_color` — NOT duplicates (infallible `.unwrap_or(0)` + `len<6`
-  vs `Option` + strict `len!=6`; different contracts, keep both).
-  `darken_color` vs `blend_colors` — different arithmetic, not a pair.
-- **Safe-scope:** yes — route-to-shared (#32/#67-style) + a pure destructure.
-
-## #77 — distinct-tint guard-rail literal consts (40.0 / 1.4 / 0.50)
-
-- **Status:** OPEN (rank #5 — #12-style literal naming inside the guard-rail
-  fn the recent tint commits kept editing).
-- **Signal:** inside `ensure_gloss_color_min` (theme.rs): the hue-distance
-  "reads as a different color" threshold `40.0` at **4 sites** (:703, :715,
-  :717, :720); its paired fallback contrast `1.4` at **2 sites** (:717,
-  :720); the saturation floor `s.max(0.50)` at **2 sites** (:730, :753).
-  The doc comment (:677) already states the rule ("hue distance ≥ 40° OR
-  contrast ≥ 1.4") — the values just aren't named.
-- **Identical part (extract):** `const HUE_DISTINCT_MIN_DEG: f64 = 40.0;`,
-  `const TINT_DISTINCT_MIN_CONTRAST: f64 = 1.4;`, `const TINT_MIN_SATURATION:
-  f64 = 0.50;` beside the other `READER_GLOSS_*` consts. Optionally hoist the
-  second `let s2 = s.max(...)` (:753) — `s` is not mutated between the two
-  passes, so computing once is behavior-preserving.
-- **EXCLUDED (named, why):** the `4.5` values — ALREADY named
-  (`READER_GLOSS_MIN_CONTRAST` / `VOCAB_WORD_MIN_CONTRAST` /
-  `VOCAB_POPUP_DIM_MIN_CONTRAST`), deliberately distinct semantics despite
-  equal values — do NOT merge. The two lightness-rung arrays (:731-737 vs
-  :754-758) differ in values AND order (fine-grained forward sweep vs
-  reordered last-resort sweep) — load-bearing, do NOT unify. The
-  `ensure_gloss_color_min` CALL sites (4) differ in every argument — a call
-  cluster, not a duplication family; no cut there. Test-file copies of the
-  literals may reference the consts or stay — implementer's choice.
-- **Safe-scope:** yes — literal → named const, #8/#12-style.
-
-## #78 — titlecase_first route-to-shared
-
-- **Status:** OPEN (rank #6 — textbook #67-class drift: a tested helper
-  exists and two newer sites re-inline it).
-- **Signal:** `journal.rs:20 fn titlecase_first` (private, unit-tested) is
-  re-inlined at **2 sites**: `vocab_journal.rs:201-207` (character-identical
-  body as a block expression) and `chat.rs:361-364` (ASCII variant:
-  `unit_label.get_mut(0..1)` + `make_ascii_uppercase`).
-- **Identical part (route):** promote `titlecase_first` to `pub(crate)`;
-  both sites become `let unit_label = titlecase_first(unit);`.
-- **Equivalence note (verify in the spec):** chat's ASCII form is
-  output-identical only because `unit` is always `genre_unit`'s static
-  `"scene"`/`"chapter"`/`"book"` — ASCII lowercase. That domain fact makes
-  the routing behavior-preserving; state it in the spec (the #66 precedent:
-  trivially-equivalent shapes, helper picks one).
-- **EXCLUDED:** none found — no other first-letter-uppercase sites.
-- **Safe-scope:** yes — route to an existing tested fn; zero new code.
-
-## #79 — vocab_popup internal twins (set_counter + clear_content)
-
-- **Status:** OPEN (rank #7 — single-file, but the file was just rebuilt for
-  the 2-col float and will be touched again).
-- **Signal:** in `src/ui/vocab_popup.rs`: (a) the counter block `if total > 1
-  { counter_label.set_text(&format!("{} / {}", index + 1, total));
-  set_visible(true) } else { set_visible(false) }` byte-identical at **2
-  sites** (:169-174 `update`, :306-311 `update_journal`); (b) the
-  content-clear loop `while let Some(child) = self.content_box.first_child()
-  { self.content_box.remove(&child); }` byte-identical at **3 sites** (:162,
-  :248, :300).
-- **Identical part (extract):** two private methods — `fn set_counter(&self,
-  index: usize, total: usize)` and `fn clear_content(&self)`.
-- **EXCLUDED (named, why):** `picker_nav::clear_list` is NOT the home for the
-  clear loop — it takes a `ListBox`; this is a plain `GtkBox` content region
-  (different type, keep the method local). `update_journal`'s extra
-  `*self.journal_scroll.borrow_mut() = None;` (:303) stays at its site (not
-  part of the clear).
-- **Safe-scope:** yes — private-method extraction, byte-identical bodies.
-
-## #80 — shared VIM_EDIT_GROUP legend const (gloss + synopsis)
-
-- **Status:** OPEN (rank #8 — legend DATA that mirrors the ONE shared vim
-  engine; a new vim bind currently needs three hand-edits).
-- **Signal:** the 11-row `("Vim edit mode (after e)", &[...])` group is
-  byte-identical at **2 sites** — gloss_keybinds_overlay.rs:35-47 and
-  synopsis_keybinds_overlay.rs:27-39 — and identical-but-one-row at
-  journal_keybinds_overlay.rs:36-48 (its Ctrl+v row reads "(also in the r
-  ask prompt)" vs "(also in ask prompts)").
-- **Identical part (extract):** a `pub const VIM_EDIT_GROUP` (whatever
-  `Group`'s concrete type is) in `keybinds_legend.rs`; gloss + synopsis
-  reference it in their `GROUPS` arrays.
-- **EXCLUDED (named, why):** journal's copy — its one differing hint string
-  is deliberate per-overlay wording (the journal ask prompt is bound to
-  `r`); keep its full copy rather than parameterizing one row. This does NOT
-  contradict #50's "GROUPS are data that must drift per overlay": the
-  OVERLAY-specific groups stay per-file; only the vim-ENGINE group (same
-  engine, same binds everywhere) is genuinely shared. If a `const` can't
-  express the nested slice cleanly, a `pub fn vim_edit_group()` returning
-  `&'static` data is the fallback — no macro.
-- **Safe-scope:** yes — static-data dedup, rendered output identical.
-
-## #81 — float-frame CSS fragment (vocab float + chat float)
-
-- **Status:** OPEN (rank #9 — 2 sites, one format string, mirror documented
-  in the vocab-float design doc).
-- **Signal:** in `generate_css` (theme.rs) the float-frame recipe
-  `background-color: {bg}; border: 1px solid alpha({fg}, 0.25);
-  border-radius: 8px;` is identical at **2 selectors**:
-  `.vocab-popup.vocab-popup-float` (:1016-1018) and `.chat-panel-float`
-  (:1043-1045). Only the trailing `padding` differs (`12px 16px` vs `12px`).
-- **Identical part (extract):** compute once as `let float_frame =
-  format!("background-color: {bg}; border: 1px solid alpha({fg}, 0.25);
-  border-radius: 8px;")` and interpolate `{float_frame}` into both rules;
-  each keeps its own `padding`. (A shared `.float-frame` widget class would
-  also work but touches two constructors — the format-local binding is the
-  smaller, purely-textual cut with byte-identical CSS output.)
-- **EXCLUDED (named, why):** the paddings (per-surface); the
-  `.chat-panel-float .chat-panel-header/.chat-panel-rule` overrides
-  (chat-only); `.vocab-popup`'s base (non-float) rule.
-- **Safe-scope:** yes — identical generated CSS, verifiable by diffing
-  `generate_css` output before/after.
-
-## #82 — TEST_*_VIEWPORT_RECT log formatter
-
-- **Status:** OPEN (rank #10, lowest — test instrumentation, but the e2e
-  pixel harness GREPS these exact lines, so format drift breaks tests
-  silently).
-- **Signal:** the 7-line rect-format body `"{TAG} {} {} {}",
-  r.x().round() as i32, r.y().round() as i32, r.width().round() as i32,
-  r.height().round() as i32` recurs at **4 sites**:
-  journal_overlay.rs:600-606 (`TEST_JOURNAL_VIEWPORT_RECT`),
-  journal_overlay.rs:942-949 (`TEST_JOURNAL_ASK_VIEWPORT_RECT`),
-  gloss_overlay.rs:1465-1472 (`TEST_OVERLAY_VIEWPORT_RECT`),
-  scroll.rs:1115-1121 (`TEST_VIEWPORT_RECT`).
-- **Identical part (extract):** `pub(crate) fn log_viewport_rect(tag: &str,
-  r: &graphene::Rect)` in `src/logging.rs` (or ui/mod.rs) owning the rounded
-  4-int format; callers pass their tag + already-computed rect.
-- **EXCLUDED (named, why):** the bounds SOURCES differ (three use
-  `sc.root()` + `compute_bounds(&root)`; scroll.rs uses
-  `compute_bounds(&state.window)`) — stay at call sites. The guards differ
-  (journal :598 adds `width>0 && height>0` inside `connect_changed`; the
-  others are idle-once) — stay. The `unavailable (…)` else-log wording
-  varies slightly per site — either pass the tag to a second tiny helper or
-  leave the else arms inline (3 of 4 have one).
-- **Safe-scope:** yes — format-body extraction; the greppable tag strings
-  remain literal at call sites.
 
 ### Examined and EXCLUDED in Batch 6 (no clean cut — do NOT number)
 
@@ -644,3 +459,65 @@ decomposed). One numbered literal opportunity. Ranked trivially (only one).
   immediately after (different guards, returns, actions). Cross-overlay idiom, not
   new chat drift; too small/divergent to lift. (Its real fix is the long-parked
   picker/overlay key-dispatch project, already tracked.)
+
+## Batch 9 (audited 2026-07-19, post chat-pagination + add-vocab-word + journal-source work)
+
+Audited 2026-07-19 over the post-2026-07-16 surface; ALL seven entries (#88–#94)
+plus the whole #73–#82 backlog shipped the same day on refactor/audit-73-94
+(merge 50be66fb). One-liners above; full analyses in the archive. What remains
+below is the standing exclusion knowledge from this batch.
+
+### Examined and EXCLUDED in Batch 9 (no clean cut — do NOT number)
+
+- **vocab_journal_ask ↔ journal::ask_claude structural mirror**
+  (vocab_journal.rs:120-276 vs journal.rs:2391-2540) — the file's own doc
+  comment says "mirrors journal::ask_claude", but every shared sub-block
+  varies in a load-bearing token (entity key word-vs-band, save fn, display
+  enum, pending-guard storage). Folding needs a generic ask-flow abstraction
+  — speculative generality, the vocab-add/vocab-journal/journal trio stays
+  parallel by design. Larger-project material only if a FOURTH ask flow
+  appears.
+- **wrap_index concept triplicate** (chat.rs:1236 usize+delta `((x%n+n)%n)`;
+  chat_pagination.rs:225 and picker_nav.rs:225 i32 `rem_euclid`) — same
+  concept, three different signatures/idioms; unifying changes call-site
+  types (an API change, not extraction). The chat.rs one could locally adopt
+  `rem_euclid` as a drive-by, not a numbered cut.
+- **vocab_lookup run vs run_dict** (vocab_lookup.rs:73-80 vs :82-90) — the
+  status-check difference is load-bearing (dict exits 20/21 on miss and MUST
+  be ignored); 2 sites, keep split. parse_wn vs parse_gcide: same skeleton,
+  different markers/offsets — merely similar.
+- **corpus_search_popup.rs** — verified CLEAN: routes through all shared
+  picker helpers (new_picker_list, build_picker_scrim, clear_list,
+  two_label_row, select_first_row, move_selection_clamped,
+  attach_overlay_panel); no re-inlining. The picker plumbing investment is
+  paying off — no entry.
+- **Citation display assembly** (`{d1}.{d2}.{line}` at journal.rs:383/385,
+  vocab_journal.rs:66, corpus_search.rs:42) — separators and arity differ
+  per display context (em-dash range vs indented hit vs 2-level header);
+  `db::models::citation` is the 4-part JOIN format, a different contract.
+  Per-site formats are intentional.
+
+**Below the floor (Batch 9 additions — flag; number only if the family grows):**
+
+- `run_claude_request` success/error closure preamble (`s.chat.pending =
+  false;` first-line ×6 in chat.rs) — one statement; the closure bodies
+  diverge immediately.
+- Idle child-walk scaffold (`first_child()`/`next_sibling()` + index) —
+  chat_panel.rs render_page :271, flash_rows :341 (+ rebuild_from_specs'
+  index-free variant :400). 2.5 sites; extraction needs a closure param.
+- `transcript_rows + landable_mask` two-line preamble (~5 chat.rs sites) —
+  both fns are already the shared single-source; the pair is too thin.
+- `"(none found)"` sentinel — SHIPPED as #78's rider (`CORPUS_NONE_FOUND`).
+- `JournalDisplay` set + `show_vocab_popup` triad (vocab_journal.rs ×4) —
+  variant fields differ per arm.
+- Source-markup tag literals (`"<speaker>"`/`"<verse>"`/`"<stage>"` ± closing
+  forms re-spelled in corpus_search.rs:74, journal.rs:392-404, :988-1007) —
+  three different strippers with different algorithms (whole-element vs
+  prefix-trim vs single-element); naming the tags is possible but each
+  stripper is different-by-design; revisit only if a fourth stripper appears.
+- `genre_unit(work_type) → titlecase_first(unit)` two-line pairing
+  (journal.rs:2439, chat.rs:715, vocab_journal.rs:200 post-#78) — wait for a
+  fourth site.
+- Test-only `Exchange { … }` 10-field constructors (×7 chat.rs test modules)
+  — a shared `#[cfg(test)] fn test_exchange()` is a test-hygiene drive-by,
+  not a numbered prod cut; note for whoever next touches those tests.
