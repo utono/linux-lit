@@ -1088,6 +1088,9 @@ fn render_paginated(
     };
     s.chat.pages = pages;
     s.chat.page_idx = page_idx;
+    // Page-marker footer (⌄ more / • last page, empty when single-page) —
+    // covers both branches below (an empty transcript passes n_pages 0).
+    s.chat_panel.set_page_marker(page_idx, s.chat.pages.len());
     let Some(&page) = s.chat.pages.get(page_idx) else {
         // No pages (empty transcript): render an empty slice.
         s.chat_panel

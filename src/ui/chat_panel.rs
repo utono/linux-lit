@@ -29,6 +29,13 @@ const CHAT_TRANSCRIPT_PAD_V: i32 = 16;
 /// hairline overflow. 2px absorbs that rounding.
 const CHAT_BUDGET_SAFETY: i32 = 2;
 
+/// Fixed height of the page-marker footer row (the `⌄`/`•` glyph under the
+/// transcript — see `set_page_marker`). The row is ALWAYS present, empty on
+/// single-page content: toggling its visibility would change the transcript
+/// budget and re-paginate, which could flip content between single- and
+/// multi-page. Mirrored by `transcript_budget`'s pre-allocation fallback.
+const CHAT_PAGE_MARKER_H: i32 = 24;
+
 /// Add `class` to `w` and remove it again after `ms` — the widget-CSS flash
 /// primitive behind the input / transcript / row flashes. (The Label-TEXT
 /// sibling is `ui::toast::show_transient`; this is the CSS-class analogue.)
@@ -70,6 +77,10 @@ pub struct ChatPanel {
     /// (`AppState::card_focus_rule`); exactly one shows at a time — driven by
     /// `chat::update_focus_rules`.
     focus_rule: gtk4::Box,
+    /// Page-marker footer (`⌄` more / `•` last page) under the transcript —
+    /// the panel's analogue of the gloss/journal overlays' floating marker.
+    /// See `set_page_marker`.
+    page_marker: gtk4::Label,
     /// Vocab-highlight word set + span color for transcript labels; empty
     /// set disables. Set by chat render paths from AppState (the panel has
     /// no state access of its own).
@@ -130,11 +141,23 @@ impl ChatPanel {
         // is awkward to type multi-line questions into.
         input.set_input_height(420);
 
+        // Page-marker footer between the scroll and the input, OUTSIDE the
+        // scroll: appended inside the transcript a budget-full page would push
+        // it past the viewport (the scroll resets to top on every page render),
+        // exactly when a "more pages" cue matters most. A Label, not the
+        // overlays' Cairo draw — the transcript is a Label Box, not a TextView,
+        // so there is no `draw_page_marker_glyph` bar to piggyback on.
+        let page_marker = gtk4::Label::new(None);
+        page_marker.add_css_class("chat-page-marker");
+        page_marker.set_halign(gtk4::Align::Center);
+        page_marker.set_height_request(CHAT_PAGE_MARKER_H);
+
         // The panel now PAGINATES (renders only the whole widgets that fit —
         // `render_page`), so a partial row can never straddle either edge and
         // the old bottom-clip Overlay/guard is gone. The scroll is appended
         // directly to the container again.
         container.append(&transcript_scroll);
+        container.append(&page_marker);
         container.append(input.container());
 
         Self {
@@ -143,6 +166,7 @@ impl ChatPanel {
             transcript_scroll,
             input,
             focus_rule,
+            page_marker,
             vocab_words: std::cell::RefCell::new(std::collections::HashSet::new()),
             vocab_color: std::cell::RefCell::new(None),
         }
@@ -153,6 +177,18 @@ impl ChatPanel {
     /// the panel (not the reader) has focus.
     pub fn set_focus_rule_visible(&self, on: bool) {
         self.focus_rule.set_visible(on);
+    }
+
+    /// Set the page-marker footer for the page just rendered: `⌄` when more
+    /// pages follow, `•` on the last page of multi-page content, empty for
+    /// single-page (or empty) content — the same `pagination::page_marker`
+    /// glyphs the gloss/journal overlays float under their last line. Every
+    /// render path updates it (`render_rows`/`render_rows_to_top` internally,
+    /// `chat::render_paginated` for the paged views), so the marker cannot go
+    /// stale against the shown page.
+    pub fn set_page_marker(&self, page_idx: usize, n_pages: usize) {
+        self.page_marker
+            .set_text(crate::ui::pagination::page_marker(page_idx, n_pages).unwrap_or(""));
     }
 
     /// Set the vocab-highlight word set and span color applied to transcript
@@ -227,7 +263,10 @@ impl ChatPanel {
             let container_h = self.container.height();
             let container_req = self.container.height_request();
             let input_h = self.input.container().height();
+            // - 8: the container Box spacing the always-present marker row
+            // adds between the scroll and the input.
             (container_h.max(container_req) - input_h.max(0)
+                - CHAT_PAGE_MARKER_H - 8
                 - CHAT_TRANSCRIPT_PAD_V
                 - CHAT_BUDGET_SAFETY)
                 .max(200)
@@ -354,6 +393,8 @@ impl ChatPanel {
     pub fn render_rows(&self, rows: &[TranscriptRow], family: &str, size_pt: i32) {
         let specs = row_widget_specs(rows);
         let pages = self.paginate_specs(&specs, family, size_pt);
+        // Last page shown → `•` when earlier pages exist above, empty otherwise.
+        self.set_page_marker(pages.len().saturating_sub(1), pages.len());
         let Some(&page) = pages.last() else {
             self.rebuild_from_specs(&[]);
             return;
@@ -368,6 +409,8 @@ impl ChatPanel {
     pub fn render_rows_to_top(&self, rows: &[TranscriptRow], family: &str, size_pt: i32) {
         let specs = row_widget_specs(rows);
         let pages = self.paginate_specs(&specs, family, size_pt);
+        // First page shown → `⌄` when more pages follow below.
+        self.set_page_marker(0, pages.len());
         let Some(&page) = pages.first() else {
             self.rebuild_from_specs(&[]);
             return;
