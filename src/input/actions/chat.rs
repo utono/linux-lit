@@ -260,6 +260,24 @@ pub(crate) fn reapply_card_margins(s: &AppState) {
     );
 }
 
+/// One rule shows at a time, only while the chat panel is open: the panel's
+/// when the panel has focus (transcript or prompt), the card's when the
+/// reader does. Both hidden when the panel is closed.
+pub(crate) fn update_focus_rules(s: &AppState) {
+    let open = s.chat_layout_open;
+    let panel_focused = matches!(
+        s.input_mode,
+        crate::app::InputMode::ChatTranscript | crate::app::InputMode::ChatPrompt
+    );
+    s.chat_panel.set_focus_rule_visible(open && panel_focused);
+    s.card_focus_rule.set_visible(open && !panel_focused);
+    crate::logging::log(&format!(
+        "FOCUS RULE: panel={} card={}",
+        open && panel_focused,
+        open && !panel_focused
+    ));
+}
+
 pub(crate) fn close_chat_layout(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
@@ -286,6 +304,7 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::Reader;
     s.chat_panel.hide();
     crate::logging::log("CHAT: layout closed");
+    update_focus_rules(s);
 }
 
 /// Work switch with the panel open: history clears (context would be from
@@ -430,6 +449,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
             "CHAT: regate floated panel ({:?})",
             s.chat_placement
         ));
+        update_focus_rules(s);
         return;
     }
     s.chat_placement = ChatPlacement::Pinned;
@@ -445,6 +465,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
     }
     size_panel(s);
     crate::logging::log(&format!("CHAT: regate kept panel (free={}px)", free));
+    update_focus_rules(s);
 }
 
 /// `Tab` from visual (`V`) mode: open the chat panel PINNED to the selection.
@@ -635,6 +656,7 @@ fn focus_prompt_in_mode(s: &mut AppState, insert: bool) {
     }
     // Tab-cycle cue: flash the widget that just became active.
     s.chat_panel.flash_input();
+    update_focus_rules(s);
 }
 
 /// The honest title/hint pair for the current chat mode (revision vs ask).
@@ -652,6 +674,7 @@ pub(crate) fn focus_transcript(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::ChatTranscript;
     // Tab-cycle cue: flash the widget that just became active.
     s.chat_panel.flash_transcript();
+    update_focus_rules(s);
 }
 
 /// Chat layout: the reader pane gains input focus (full reader keys live;
@@ -662,6 +685,7 @@ pub(crate) fn focus_reader(s: &mut AppState) {
     // Tab-cycle cue: flash the widget that just became active.
     use gtk4::prelude::Cast;
     crate::ui::flash_widget(s.content_hbox.clone().upcast_ref::<gtk4::Widget>());
+    update_focus_rules(s);
 }
 
 /// Submit the chat prompt's current text as a new turn: builds the segment

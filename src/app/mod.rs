@@ -308,6 +308,10 @@ pub struct AppState {
     /// suppression: TimePos ticks inside this window must not clear the tint.
     pub phrase_paint_hold: Option<std::time::Instant>,
     pub page_turn_overlay: gtk4::Overlay,
+    /// Focus cue: the main card's twin of the chat panel's focus rule. See
+    /// `card_focus_rule` construction (build_window) and
+    /// `chat::update_focus_rules`.
+    pub card_focus_rule: gtk4::Box,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
     /// Running-head strip labels living inside `top_spacer` (the card's top
@@ -1511,6 +1515,19 @@ pub fn build_window(
     page_turn_overlay.set_hexpand(true);
     page_turn_overlay.add_css_class("page-turn-overlay");
 
+    // Focus cue: the card's twin of the chat panel's focus_rule (see
+    // ChatPanel::new) — shown centered near the top of the main card only
+    // while the chat layout is open AND the reader (not the panel) has
+    // focus. Driven by chat::update_focus_rules.
+    let card_focus_rule = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    card_focus_rule.add_css_class("focus-rule");
+    card_focus_rule.set_size_request(24, 2);
+    card_focus_rule.set_halign(gtk4::Align::Center);
+    card_focus_rule.set_valign(gtk4::Align::Start);
+    card_focus_rule.set_margin_top(36); // inside TOP_SPACER_HEIGHT=74
+    card_focus_rule.set_visible(false);
+    page_turn_overlay.add_overlay(&card_focus_rule);
+
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
@@ -1969,6 +1986,7 @@ pub fn build_window(
         active_phrase: None,
         phrase_paint_hold: None,
         page_turn_overlay: page_turn_overlay.clone(),
+        card_focus_rule: card_focus_rule.clone(),
         bottom_clip,
         top_spacer,
         running_head_work,
@@ -2641,6 +2659,7 @@ pub fn build_window(
                     glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
                         if let Ok(mut s) = st.try_borrow_mut() {
                             crate::input::actions::chat::regate_panel(&mut s);
+                            crate::input::actions::chat::update_focus_rules(&s);
                         }
                     });
                 }

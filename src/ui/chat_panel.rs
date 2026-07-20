@@ -65,6 +65,11 @@ pub struct ChatPanel {
     transcript_box: gtk4::Box,
     transcript_scroll: gtk4::ScrolledWindow,
     input: crate::ui::ask_card::AskCard,
+    /// Focus cue: a short rule shown at the panel top only while the panel
+    /// (transcript or prompt) has focus. The main card has a twin
+    /// (`AppState::card_focus_rule`); exactly one shows at a time — driven by
+    /// `chat::update_focus_rules`.
+    focus_rule: gtk4::Box,
     /// Vocab-highlight word set + span color for transcript labels; empty
     /// set disables. Set by chat render paths from AppState (the panel has
     /// no state access of its own).
@@ -78,6 +83,17 @@ impl ChatPanel {
         container.add_css_class("chat-panel");
         container.set_margin_start(24);
         container.set_visible(false);
+
+        // Focus cue: a short rule (~ three hyphens) centered at the panel
+        // top, visible only while the panel (transcript or prompt) has
+        // focus. The main card has a twin; exactly one shows at a time.
+        let focus_rule = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        focus_rule.add_css_class("focus-rule");
+        focus_rule.set_size_request(24, 2);
+        focus_rule.set_halign(gtk4::Align::Center);
+        focus_rule.set_margin_bottom(6);
+        focus_rule.set_visible(false);
+        container.append(&focus_rule);
 
         // Spacing 0: source lines must sit at pure line-height like the main
         // card (which sets pixels_above/below_lines(0)), so every gap is
@@ -125,9 +141,17 @@ impl ChatPanel {
             transcript_box,
             transcript_scroll,
             input,
+            focus_rule,
             vocab_words: std::cell::RefCell::new(std::collections::HashSet::new()),
             vocab_color: std::cell::RefCell::new(None),
         }
+    }
+
+    /// Show/hide the panel's focus-cue rule. Driven by
+    /// `chat::update_focus_rules` — visible only while the panel is open AND
+    /// the panel (not the reader) has focus.
+    pub fn set_focus_rule_visible(&self, on: bool) {
+        self.focus_rule.set_visible(on);
     }
 
     /// Set the vocab-highlight word set and span color applied to transcript

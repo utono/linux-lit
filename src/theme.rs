@@ -1395,6 +1395,13 @@ pub fn generate_css(
             this zero — keep the two in sync (it also assumes .chat-transcript's \
             zero padding-top below). */ \
          .chat-panel {{ background-color: {bg}; padding: 0 12px 12px 12px; }} \
+         /* Focus cue: a short rule (~ three hyphens) marking whichever surface \
+            (panel or card) has focus while the chat layout is open. Shared by \
+            the panel's own copy (ChatPanel::new) and the main card's twin \
+            (page_turn_overlay overlay child); exactly one shows at a time \
+            (see chat::update_focus_rules). */ \
+         .focus-rule {{ background-color: alpha({fg}, 0.55); \
+           border-radius: 1px; }} \
          /* Pinned placement: the panel abuts the card's right edge, separated \
             only by a 1px hairline seam (its border-left, painting over the 1px \
             gap size_panel leaves). Rounded on the RIGHT (outer) corners only — \
