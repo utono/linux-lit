@@ -89,11 +89,14 @@ fn run_dict(word: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Normalize a submitted vocab word: trim, lowercase, strip a trailing
-/// possessive `'s` / `’s`. Matches how highlighting/variants normalize so the
-/// stored word lines up with `load_vocab_words`' LOWER(word).
+/// Normalize a submitted vocab word: trim and strip a trailing possessive
+/// `'s` / `’s` — but PRESERVE the typed capitalization, so proper nouns
+/// (Michaelmas, Whitsun) are stored capitalized exactly as typed. Matching is
+/// case-insensitive everywhere downstream (`load_vocab_words` lowercases the
+/// set; the popup lookups compare via `LOWER(word)`; `insert_vocab_word`
+/// probes `COLLATE NOCASE`), so the stored case is display-only.
 pub fn normalize_vocab_word(raw: &str) -> String {
-    let mut w = raw.trim().to_lowercase();
+    let mut w = raw.trim().to_string();
     for suffix in ["'s", "\u{2019}s", "'", "\u{2019}"] {
         if let Some(stripped) = w.strip_suffix(suffix) {
             w = stripped.to_string();
@@ -136,10 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn normalize_trims_lowercases_strips_possessive() {
-        assert_eq!(normalize_vocab_word("  Brave  "), "brave");
-        assert_eq!(normalize_vocab_word("King's"), "king");
+    fn normalize_trims_strips_possessive_preserves_case() {
+        assert_eq!(normalize_vocab_word("  Brave  "), "Brave");
+        assert_eq!(normalize_vocab_word("King's"), "King");
         assert_eq!(normalize_vocab_word("kings’"), "kings"); // only trailing 's/’s stripped
-        assert_eq!(normalize_vocab_word("Hamlet’s"), "hamlet");
+        assert_eq!(normalize_vocab_word("Hamlet’s"), "Hamlet");
+        assert_eq!(normalize_vocab_word("Michaelmas"), "Michaelmas"); // proper noun kept
     }
 }
