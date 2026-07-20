@@ -1461,11 +1461,16 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
             (crate::gloss::INNER_MONOLOGUE_ADD_PROMPT.as_str(), msg, "inner-monologue")
         }
         "reader-gloss" => {
-            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+            let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+            crate::logging::log(&format!(
+                "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+                neighbors.len(), ctx.start_citation, ctx.end_citation
+            ));
+            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None, &neighbors);
             (crate::gloss::READER_GLOSS_QUESTION_PROMPT.as_str(), msg, "reader-gloss")
         }
         _ => {
-            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None, &[]);
             (crate::gloss::USER_QUESTION_PROMPT.as_str(), msg, "teacher-generic")
         }
     };

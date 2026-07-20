@@ -696,10 +696,60 @@ pub fn build_context_for_type(work: &Work, lines: &[Line], gloss_type: &str) -> 
     })
 }
 
+/// The "don't recycle your neighbors' devices" prompt block. None when there
+/// are no neighbors (the marker text must then be absent from the message).
+pub fn neighbor_block(neighbors: &[crate::db::queries::NeighborGloss]) -> Option<String> {
+    if neighbors.is_empty() {
+        return None;
+    }
+    let mut block = String::from(
+        "---\nNeighboring glosses (already written for ADJACENT passages in \
+         this scene) — do NOT recycle their characterizing verbs, metaphors, \
+         images, or other rhetorical devices — choose fresh, equally precise \
+         language:\n",
+    );
+    for n in neighbors {
+        block.push_str(&format!(
+            "\n[{}-{}]\n{}\n",
+            n.start_citation, n.end_citation, n.gloss_text
+        ));
+    }
+    Some(block)
+}
+
+/// Fetch the 2-nearest-per-side same-scene reader-gloss neighbors for a
+/// context. Failures degrade to no neighbors (generation must never block on
+/// this).
+pub fn neighbors_for_ctx(ctx: &GlossContext) -> Vec<crate::db::queries::NeighborGloss> {
+    let (Some(first), Some(last)) = (
+        ctx.source_line_numbers.first().copied(),
+        ctx.source_line_numbers.last().copied(),
+    ) else {
+        return Vec::new();
+    };
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(e) => {
+            crate::logging::log(&format!("GLOSS NEIGHBORS: lookup failed: {e}"));
+            return Vec::new();
+        }
+    };
+    match crate::db::queries::find_neighbor_glosses(
+        &conn, &ctx.work_abbrev, ctx.act, ctx.scene, first, last, "reader-gloss", 2,
+    ) {
+        Ok(n) => n,
+        Err(e) => {
+            crate::logging::log(&format!("GLOSS NEIGHBORS: lookup failed: {e}"));
+            Vec::new()
+        }
+    }
+}
+
 pub fn build_user_message(
     ctx: &GlossContext,
     user_prompt: Option<&str>,
     existing_gloss: Option<&str>,
+    neighbors: &[crate::db::queries::NeighborGloss],
 ) -> String {
     let mut msg = format!(
         "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n{}",
@@ -712,6 +762,11 @@ pub fn build_user_message(
 
     if let Some(existing) = existing_gloss {
         msg.push_str(&format!("\n\n---\nPrevious gloss for reference:\n{}", existing));
+    }
+
+    if let Some(block) = neighbor_block(neighbors) {
+        msg.push_str("\n\n");
+        msg.push_str(&block);
     }
 
     msg
@@ -1042,6 +1097,22 @@ mod tests {
         // Empty speaker (prose) also emits no <speaker> tag.
         let doc = ctx_with("", "plain prose line").passage_doc();
         assert_eq!(doc, "<verse>plain prose line</verse>\n");
+    }
+
+    #[test]
+    fn neighbor_block_formats_citation_spans_and_rule() {
+        use crate::db::queries::NeighborGloss;
+        let n = vec![NeighborGloss {
+            start_citation: "TGV.1.2.1".into(),
+            end_citation: "TGV.1.2.3".into(),
+            gloss_text: "<gloss>Julia fishes for advice.</gloss>".into(),
+        }];
+        let block = neighbor_block(&n).unwrap();
+        assert!(block.contains("Neighboring glosses"));
+        assert!(block.contains("do NOT recycle"));
+        assert!(block.contains("TGV.1.2.1-TGV.1.2.3"));
+        assert!(block.contains("Julia fishes for advice."));
+        assert!(neighbor_block(&[]).is_none());
     }
 
     #[test]

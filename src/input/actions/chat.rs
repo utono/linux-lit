@@ -1713,7 +1713,12 @@ pub(crate) fn request_reader_gloss(
     if state_rc.borrow().chat.pending {
         return; // in flight; a second '-' or 'r' must not double-fire
     }
-    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+    crate::logging::log(&format!(
+        "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+        neighbors.len(), ctx.start_citation, ctx.end_citation
+    ));
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None, &neighbors);
     {
         let mut s = state_rc.borrow_mut();
         s.chat.pending = true;
