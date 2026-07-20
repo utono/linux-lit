@@ -147,7 +147,7 @@ impl ChatPanel {
     pub fn flash_input(&self) {
         let card = self.input.container();
         crate::ui::flash_widget(card.upcast_ref());
-        flash_class(&card, "chat-flash-active", 240);
+        flash_class(card, "chat-flash-active", 240);
     }
 
     /// Flash the transcript area as the "now active" Tab-cycle cue. The
