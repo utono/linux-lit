@@ -478,13 +478,23 @@ pub(crate) fn show_delete_confirmation(
         }
     };
 
+    // The dialog must stack above EVERYTHING, including the chat panel. The
+    // action popup lives on the INNER (corpus_search_popup) overlay, but the
+    // chat panel is a child of the window-level OUTER overlay, which draws
+    // over the whole inner stack — a dialog added to the popup's immediate
+    // parent renders UNDER the panel. Climb to the outermost Overlay
+    // ancestor instead; every origin's dialog is centered the same way there.
     let overlay_parent = {
         let s = state_rc.borrow();
-        s.action_popup_widget.container.parent()
-    };
-    let overlay_parent = match overlay_parent {
-        Some(p) => p.downcast::<gtk4::Overlay>().ok(),
-        None => None,
+        let mut widget = s.action_popup_widget.container.parent();
+        let mut outermost: Option<gtk4::Overlay> = None;
+        while let Some(w) = widget {
+            if let Ok(o) = w.clone().downcast::<gtk4::Overlay>() {
+                outermost = Some(o);
+            }
+            widget = w.parent();
+        }
+        outermost
     };
     let overlay_parent = match overlay_parent {
         Some(o) => o,
