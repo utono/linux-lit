@@ -557,10 +557,14 @@ fn copy_pairing_and_screenshot(theme: &crate::theme::Theme) {
     // last line (the screenshot path, or vocab-fg before grim runs) runs into
     // whatever is pasted after it.
     let copied = format!(
-        "theme {}\nroot {}\nvocab-fg {}\ntoast-bg {}\n",
+        "theme {}\nroot {}\nvocab-fg {}\ngloss-fg {}\ntoast-bg {}\n",
         theme.name,
         theme.root_color,
         crate::theme::vocab_popup_fg(theme),
+        // The font color of reading-card segments that carry a gloss or
+        // journal entry (the reader_gloss_tag tint; the cursor variant is
+        // derived from it).
+        theme.reader_gloss,
         crate::theme::chapter_toast_bg(theme)
     );
     crate::ui::copy_to_clipboard(&copied);
@@ -629,7 +633,7 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
                &format!("Theme [{}]", position), &body])
         .spawn();
     // Standard clipboard payload (same as the root-color bind): the new theme's
-    // root/vocab colors plus a screenshot path.
+    // root/vocab/gloss colors plus a screenshot path.
     copy_pairing_and_screenshot(&s.theme);
 }
 
@@ -659,8 +663,8 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
                &format!("Root [{}/{}]", next + 1, count),
                &body])
         .spawn();
-    // Standard clipboard payload (same as the theme bind): the new root/vocab
-    // colors plus a screenshot path.
+    // Standard clipboard payload (same as the theme bind): the new
+    // root/vocab/gloss colors plus a screenshot path.
     copy_pairing_and_screenshot(&s.theme);
 }
 
@@ -668,7 +672,8 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
 /// (and capture a screenshot), then notify — WITHOUT cycling. It reuses
 /// `copy_pairing_and_screenshot` so the clipboard payload is byte-identical to
 /// the theme/root cycle binds (Ctrl+t / Ctrl+Shift+t / Ctrl+$): the same
-/// `theme / root / vocab-fg / toast-bg` block plus a screenshot path. The
+/// `theme / root / vocab-fg / gloss-fg / toast-bg` block plus a screenshot
+/// path. The
 /// notification body surfaces those same colors so what you see matches what
 /// you paste; the title reads `Theme` with no counter (nothing changed).
 pub(crate) fn show_theme_info(state: &Rc<RefCell<crate::app::AppState>>) {
