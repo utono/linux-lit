@@ -1132,17 +1132,45 @@ pub fn insert_vocab_word(
     definition: &str,
     source: &str,
 ) -> Result<VocabInsertOutcome, rusqlite::Error> {
-    let changed = conn.execute(
-        "INSERT INTO vocab_words(word, definition, source) VALUES(?1, ?2, ?3)
-         ON CONFLICT(word) DO UPDATE SET definition = excluded.definition, source = excluded.source
-           WHERE vocab_words.definition = '' OR vocab_words.definition IS NULL",
-        rusqlite::params![word, definition, source],
-    )?;
-    Ok(if changed > 0 {
-        VocabInsertOutcome::Added
-    } else {
-        VocabInsertOutcome::AlreadyPresent
-    })
+    // UNIQUE(word) is case-sensitive but words are matched case-insensitively
+    // everywhere else, so probe NOCASE first — a capitalization difference
+    // must update the existing row, never create a duplicate. The typed
+    // capitalization always wins (proper nouns are stored capitalized; see
+    // `normalize_vocab_word`).
+    let existing: Option<(i64, String, String)> = conn
+        .query_row(
+            "SELECT id, word, IFNULL(definition, '') FROM vocab_words \
+             WHERE word = ?1 COLLATE NOCASE",
+            [word],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    match existing {
+        None => {
+            conn.execute(
+                "INSERT INTO vocab_words(word, definition, source) VALUES(?1, ?2, ?3)",
+                rusqlite::params![word, definition, source],
+            )?;
+            Ok(VocabInsertOutcome::Added)
+        }
+        Some((id, stored_word, existing_def)) => {
+            if existing_def.is_empty() {
+                conn.execute(
+                    "UPDATE vocab_words SET word = ?2, definition = ?3, source = ?4 WHERE id = ?1",
+                    rusqlite::params![id, word, definition, source],
+                )?;
+                Ok(VocabInsertOutcome::Added)
+            } else {
+                if stored_word != word {
+                    conn.execute(
+                        "UPDATE vocab_words SET word = ?2 WHERE id = ?1",
+                        rusqlite::params![id, word],
+                    )?;
+                }
+                Ok(VocabInsertOutcome::AlreadyPresent)
+            }
+        }
+    }
 }
 
 /// The voices associated with a gloss, ordered by `position` (cycle order).
@@ -3745,5 +3773,26 @@ mod vocab_insert_tests {
             .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(def, "courageous");
+    }
+
+    #[test]
+    fn case_variant_updates_capitalization_not_a_duplicate() {
+        // Proper noun stored lowercase historically; re-adding it capitalized
+        // must retype the ONE row (typed case wins), never insert a second.
+        let conn = mem_db();
+        insert_vocab_word(&conn, "michaelmas", "a Christian feast", "claude").unwrap();
+        let out = insert_vocab_word(&conn, "Michaelmas", "ignored", "claude").unwrap();
+        assert!(matches!(out, VocabInsertOutcome::AlreadyPresent));
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vocab_words", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        let (word, def): (String, String) = conn
+            .query_row("SELECT word, definition FROM vocab_words", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(word, "Michaelmas"); // capitalization updated in place
+        assert_eq!(def, "a Christian feast"); // definition untouched
     }
 }
