@@ -4472,45 +4472,14 @@ fn build_vocab_matches(state: &mut AppState) {
             }
             None => line_text,
         };
-        let mut char_offset = 0usize;
-        let mut in_word = false;
-        let mut word_start = 0usize;
-        let mut word_buf = String::new();
-
-        for ch in scan_text.chars() {
-            let is_word_char = ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}';
-            if is_word_char {
-                if !in_word {
-                    word_start = char_offset;
-                    word_buf.clear();
-                    in_word = true;
-                }
-                word_buf.push(ch);
-            } else if in_word {
-                let lower = word_buf.to_lowercase();
-                if state.vocab_words.contains(&lower) {
-                    state.vocab_matches.push(VocabMatch {
-                        word: lower,
-                        line_index: line_idx,
-                        char_start: word_start,
-                        char_end: char_offset,
-                    });
-                }
-                in_word = false;
-            }
-            char_offset += 1;
-        }
-        if in_word {
-            let lower = word_buf.to_lowercase();
-            if state.vocab_words.contains(&lower) {
-                state.vocab_matches.push(VocabMatch {
-                    word: lower,
-                    line_index: line_idx,
-                    char_start: word_start,
-                    char_end: char_offset,
-                });
-            }
-        }
+        let mut spans = Vec::new();
+        crate::vocab_scan::scan_line(scan_text, line_idx, &state.vocab_words, &mut spans);
+        state.vocab_matches.extend(spans.into_iter().map(|s| VocabMatch {
+            word: s.word,
+            line_index: s.line_index,
+            char_start: s.char_start,
+            char_end: s.char_end,
+        }));
     }
 }
 

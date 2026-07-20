@@ -20,6 +20,7 @@ mod theme;
 mod tts;
 mod ui;
 mod vocab_lookup;
+mod vocab_scan;
 mod scansion;
 
 use gtk4::prelude::*;
