@@ -472,7 +472,8 @@ Rules:
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - No acting direction, no IPA, no phonetic symbols.
 - Each <gloss> is terse (1-3 sentences).
-- No markdown, no bullets, no numbered lists, no headers.";
+- No markdown, no bullets, no numbered lists, no headers.
+- If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
     template_or("gloss.reader-gloss-question", FALLBACK)
 });
 
@@ -493,7 +494,8 @@ Rules:
 - Quote verbatim. Never use / to join verse lines.
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines.
-- No markdown, no bullets, no numbered lists, no headers.";
+- No markdown, no bullets, no numbered lists, no headers.
+- If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
     template_or("gloss.reader-gloss-edit", FALLBACK)
 });
 
