@@ -1273,7 +1273,7 @@ pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
         return;
     };
     let copied = format!("Journal Q&A ID: {}", id);
-    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::ui::copy_to_clipboard(&copied);
     crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
     crate::logging::log(&format!("CHAT: copied \"{}\"", copied));
 }
@@ -1664,7 +1664,7 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
         let s = state.borrow();
         s.chat.gloss_list.get(s.chat.gloss_index).map(|gloss| {
             let copied = format!("Gloss ID: {}", gloss.gloss_id);
-            let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+            crate::ui::copy_to_clipboard(&copied);
             crate::logging::log(&format!("CHAT-GLOSS: copied \"{}\" to clipboard", copied));
             copied
         })
@@ -2306,7 +2306,7 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
         return;
     }
 
-    let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+    crate::ui::copy_to_clipboard(&text);
     // No success toast: the row flash below is the visual confirmation that
     // replaces it — `y` is a reflex, and the flash lands right on the copied
     // line(s), which a toast never did. The failure toast above stays — an

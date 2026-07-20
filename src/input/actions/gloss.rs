@@ -333,7 +333,7 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
         s.gloss_list.get(s.gloss_index).map(|gloss| {
             // Copy the id prefaced with a label so a paste self-identifies.
             let copied = format!("Gloss ID: {}", gloss.gloss_id);
-            let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+            crate::ui::copy_to_clipboard(&copied);
             crate::logging::log(&format!("GLOSS: copied \"{}\" to clipboard", copied));
             copied
         })

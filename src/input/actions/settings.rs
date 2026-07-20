@@ -563,7 +563,7 @@ fn copy_pairing_and_screenshot(theme: &crate::theme::Theme) {
         crate::theme::vocab_popup_fg(theme),
         crate::theme::chapter_toast_bg(theme)
     );
-    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::ui::copy_to_clipboard(&copied);
     crate::logging::log(&format!("THEME: copied \"{}\"", copied.trim_end().replace('\n', " / ")));
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(400));

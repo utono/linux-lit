@@ -2806,7 +2806,7 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
     };
     // Copy the id prefaced with a label so a paste self-identifies.
     let copied = format!("Journal Q&A ID: {}", id);
-    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::ui::copy_to_clipboard(&copied);
     crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
     crate::logging::log(&format!("JOURNAL: copied \"{}\"", copied));
 }

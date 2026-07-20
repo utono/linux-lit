@@ -60,6 +60,14 @@ pub(crate) const EDIT_FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 /// (which passes `theme::selection_bg`, the same blue as the visual selection).
 pub(crate) const DEFAULT_HIGHLIGHT_BG: &str = "rgba(38, 109, 211, 0.15)";
 
+/// Copy `text` to the Wayland clipboard (wl-copy arg form, fire-and-forget).
+/// The stdin-pipe form (visual-mode / word-copy — pipes via stdin AND logs
+/// failures) and the waited `.status()` form (settings screenshot) are
+/// different contracts; do NOT route them through here. See audit #88.
+pub(crate) fn copy_to_clipboard(text: &str) {
+    let _ = std::process::Command::new("wl-copy").arg(text).spawn();
+}
+
 /// The verse reading card's side margin: a quarter of the *live* card width.
 /// Since the 2026-07-02 overlay readability pass this is the MAIN card's
 /// margin only — the gloss/journal/synopsis overlays and the ask card use
