@@ -147,6 +147,25 @@ impl VocabPopup {
     }
 
 
+    /// Show "index+1 / total" when stepping through multiple entries; hidden
+    /// for a single entry.
+    fn set_counter(&self, index: usize, total: usize) {
+        if total > 1 {
+            self.counter_label.set_text(&format!("{} / {}", index + 1, total));
+            self.counter_label.set_visible(true);
+        } else {
+            self.counter_label.set_visible(false);
+        }
+    }
+
+    /// Remove every child from the content region (a plain GtkBox — not a
+    /// ListBox, so `picker_nav::clear_list` does not apply).
+    fn clear_content(&self) {
+        while let Some(child) = self.content_box.first_child() {
+            self.content_box.remove(&child);
+        }
+    }
+
     /// Render the popup content for a given word and view.
     pub fn update(
         &self,
@@ -158,20 +177,12 @@ impl VocabPopup {
     ) {
         *self.journal_scroll.borrow_mut() = None;
 
-        // Clear content
-        while let Some(child) = self.content_box.first_child() {
-            self.content_box.remove(&child);
-        }
+        self.clear_content();
 
         // Header: hide work abbreviation
         self.header_label.set_visible(false);
 
-        if total > 1 {
-            self.counter_label.set_text(&format!("{} / {}", index + 1, total));
-            self.counter_label.set_visible(true);
-        } else {
-            self.counter_label.set_visible(false);
-        }
+        self.set_counter(index, total);
 
         // Word
         let word_label = Label::builder()
@@ -245,9 +256,7 @@ impl VocabPopup {
 
     /// Render a scene synopsis in the popup.
     pub fn update_synopsis(&self, scene_label: &str, synopsis: &str) {
-        while let Some(child) = self.content_box.first_child() {
-            self.content_box.remove(&child);
-        }
+        self.clear_content();
 
         self.header_label.set_text("SYNOPSIS");
         self.header_label.set_visible(true);
@@ -297,18 +306,11 @@ impl VocabPopup {
         saved_model: Option<&str>,
         max_body_height: i32,
     ) {
-        while let Some(child) = self.content_box.first_child() {
-            self.content_box.remove(&child);
-        }
+        self.clear_content();
         *self.journal_scroll.borrow_mut() = None;
 
         self.header_label.set_visible(false);
-        if total > 1 {
-            self.counter_label.set_text(&format!("{} / {}", index + 1, total));
-            self.counter_label.set_visible(true);
-        } else {
-            self.counter_label.set_visible(false);
-        }
+        self.set_counter(index, total);
 
         let qa_header = Label::builder()
             .label("JOURNAL Q&A")
