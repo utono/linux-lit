@@ -10,7 +10,8 @@ use super::chat_rows::{
     build_history_turns, build_single_exchange_rows, build_transcript_rows,
     clamp_journal_cursor, consolidate_transcript, first_landable_at_or_after, flip_view,
     is_first_question_exchange, journal_entry_first_row, journal_view_rows, landable_mask,
-    parse_revised_qa, question_row, same_passage_question, visual_selection_range, wrap_index,
+    parse_revised_qa, question_row, same_passage_question, split_answer_paragraphs,
+    visual_selection_range, wrap_index,
 };
 
 /// Minimum freed left space (px) required to open the chat layout.
@@ -2305,17 +2306,19 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
 /// lives at slot #1.
 pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let answer_row = if question.is_empty() {
-        R::GlossAnswer(answer.to_string())
+    let mut rows = vec![R::SavedMark, question_row(question)];
+    if question.is_empty() {
+        rows.push(R::GlossAnswer(answer.to_string()));
     } else {
-        R::Answer(answer.to_string())
-    };
+        rows.extend(split_answer_paragraphs(answer).into_iter().map(R::Answer));
+    }
     // Show the saved entry scrolled to the very top (Q: line first), so a long
     // answer doesn't land the viewport mid-answer. No row cursor: this static
-    // snapshot isn't the j/k-navigable transcript.
+    // snapshot isn't the j/k-navigable transcript. Paragraph-split so page 0
+    // holds the answer's opening paragraphs (an unsplit answer was one
+    // oversized widget that fell off page 0 entirely).
     let (fam, sz) = transcript_font(s);
-    s.chat_panel
-        .render_rows_to_top(&[R::SavedMark, question_row(question), answer_row], &fam, sz);
+    s.chat_panel.render_rows_to_top(&rows, &fam, sz);
 }
 
 /// Size and position the panel for the current placement. Pinned: fill the
