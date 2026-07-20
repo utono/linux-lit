@@ -117,17 +117,20 @@ fits by construction). The `clip_guard` field, the `Overlay`/`attach_box` wrap,
 
 - **The `chat-a-src-lead` height gap (mis-measure → bottom clip or underfill).**
   The first source row after a gloss carries a SECOND CSS class `chat-a-src-lead`
-  (a 44px top gap). It is applied via a COMPOUND selector
-  `.chat-transcript label.chat-a-src-lead { padding-top: 44px }` (specificity
-  0,0,2,1, theme.rs:1428) so it out-specificities EVERY single-class base source
-  rule (`.chat-a-speaker`/`.chat-a-verse`/`.chat-a-stage`/`.chat-a-*-flush`, all
+  (a **26px** top gap — chosen to EQUAL `.chat-a-gloss`'s own 26px padding-top so
+  the gloss↔source rhythm is symmetric: gloss → gap → source → gap → gloss). It
+  is applied via a COMPOUND selector
+  `.chat-transcript label.chat-a-src-lead { padding-top: 26px }` (specificity
+  0,0,2,1) so it out-specificities EVERY single-class base source rule
+  (`.chat-a-speaker`/`.chat-a-verse`/`.chat-a-stage`/`.chat-a-*-flush`, all
   0,0,1,0) REGARDLESS of stylesheet order — the src-lead row's rendered
-  padding-top is 44 for every source class. (This replaced the old
+  padding-top is 26 for every source class. (This replaced the old
   source-order collision, where only `.chat-a-speaker` — ordered before src-lead
-  — won and the rest got a 0 gap.) padding-top is NON-additive (44 REPLACES the
+  — won and the rest got a 0 gap; the visible symptom was NO extra gap before a
+  prose/`verse-flush` source block.) padding-top is NON-additive (26 REPLACES the
   base), and `class_pad(primary)` already added the base padding-top, so
-  `chat_pagination::src_lead_extra_pad` returns `44 − base padding-top` (≥0) per
-  class: speaker→30, verse/verse-flush→44, stage/stage-flush→36. Do NOT use
+  `chat_pagination::src_lead_extra_pad` returns `26 − base padding-top` (≥0) per
+  class: speaker→12, verse/verse-flush→26, stage/stage-flush→18. Do NOT use
   `class_pad("chat-a-src-lead")` (that double-counts the base pad).
   - **SYNC WARNING:** THREE things must stay in lockstep or the src-lead row is
     mis-measured (undercount → bottom clip; overcount → underfill): (1) the CSS
