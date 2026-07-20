@@ -4537,6 +4537,11 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
     remove_vocab_highlighting(state);
     refresh_vocab_matches(state); // reload words (incl. the just-added) + rebuild spans
     apply_vocab_highlighting(state);
+    // Force a repaint: this runs inside the async Claude callback (an idle turn),
+    // where applying a buffer tag does NOT auto-invalidate the TextView the way a
+    // synchronous keystroke path does — without this nudge the new gold word only
+    // appears on the next natural redraw (scroll/resize/page-turn).
+    state.text_view.queue_draw();
 
     let word_matches = state
         .vocab_matches
@@ -4544,7 +4549,7 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
         .filter(|m| m.word == word)
         .count();
     crate::logging::log(&format!(
-        "VOCAB ADD: refresh — highlight_visible={}, {} total matches, {} for '{}'",
+        "VOCAB ADD: refresh — highlight_visible={}, {} matches ({} for '{}')",
         state.vocab_highlight_visible,
         state.vocab_matches.len(),
         word_matches,
