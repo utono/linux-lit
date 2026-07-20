@@ -286,17 +286,27 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     let cursor_line_bg = str_field(lit, "cursor_line_bg")
         .unwrap_or_else(|| "rgba(86, 148, 100, 0.25)".to_string());
 
-    // Spoken-phrase karaoke tint: optional per-theme key, else the cursor-line
-    // hue at a stronger alpha so it reads inside the full-strength paragraph.
-    let phrase_highlight_bg = str_field(lit, "phrase_highlight_bg").unwrap_or_else(|| {
-        let (r, g, b) = rgba_str_to_rgb(&cursor_line_bg);
+    // Spoken-phrase karaoke tint: the ACTIVE root (wallpaper) color, re-derived
+    // on every root-variant step so the sweep always reads as "the wallpaper
+    // color washing through the line" (apply_theme_to_state pushes it into
+    // phrase_tag live). An explicit per-theme phrase_highlight_bg contributes
+    // only its hand-tuned ALPHA now (the sepia/green ladder runs 0.18/0.14);
+    // its rgb is superseded by the live root. Themes without the key use the
+    // historical 0.28 default strength. Search highlights derive from this
+    // (search_highlight_colors), so they follow the root too.
+    let phrase_highlight_bg = {
+        let alpha = str_field(lit, "phrase_highlight_bg")
+            .map(|s| rgba_str_alpha(&s))
+            .unwrap_or(0.28);
+        let (r, g, b) = hex_to_rgb(&root_color);
         format!(
-            "rgba({}, {}, {}, 0.28)",
+            "rgba({}, {}, {}, {})",
             (r * 255.0) as u8,
             (g * 255.0) as u8,
-            (b * 255.0) as u8
+            (b * 255.0) as u8,
+            alpha
         )
-    });
+    };
 
     // Reader-gloss tints, contrast-guaranteed (raw focuscolor is dim/indistinct
     // on ~13 themes). Off-cursor = guarded focuscolor; on-cursor = guarded
@@ -2026,10 +2036,35 @@ mod tests {
             let v = resolve_theme_variant("s", &json, variant);
             assert_eq!(base.text_bg, v.text_bg);
             assert_eq!(base.cursor_line_bg, v.cursor_line_bg);
-            assert_eq!(base.phrase_highlight_bg, v.phrase_highlight_bg);
+            // phrase_highlight_bg deliberately EXCLUDED: the karaoke tint
+            // follows the root, so it varies per variant (see
+            // phrase_tint_tracks_the_root_variant).
             assert_eq!(base.dim_fg, v.dim_fg);
             assert_eq!(v.root_variant, variant);
         }
+    }
+
+    #[test]
+    fn phrase_tint_tracks_the_root_variant() {
+        // The karaoke tint IS the active root color (per-variant rgb) at the
+        // theme's tuned alpha: no explicit key → 0.28 default; an explicit
+        // phrase_highlight_bg contributes only its alpha.
+        let json: serde_json::Value = serde_json::from_str(CANDIDATES_JSON).unwrap();
+        let v0 = resolve_theme_variant("s", &json, 0); // #41819b
+        let v2 = resolve_theme_variant("s", &json, 2); // #08526b
+        assert_eq!(v0.phrase_highlight_bg, "rgba(65, 129, 155, 0.28)");
+        assert_eq!(v2.phrase_highlight_bg, "rgba(8, 82, 107, 0.28)");
+
+        let tuned: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"display": "S", "type": "light"},
+                "dwl": {"rootcolor": "#08526b", "focuscolor": "#8a6a45",
+                        "rootcolor_candidates": ["#41819b", "#286983"]},
+                "kitty": {"background": "#e7dec7", "active_tab_foreground": "#5d4232"},
+                "linux-lit": {"phrase_highlight_bg": "rgba(93, 66, 50, 0.14)"} }"##,
+        )
+        .unwrap();
+        let v = resolve_theme_variant("s", &tuned, 0);
+        assert_eq!(v.phrase_highlight_bg, "rgba(65, 129, 155, 0.14)");
     }
 
     #[test]
@@ -2181,8 +2216,8 @@ mod tests {
         assert_eq!(v0.text_fg, v2.text_fg);
         assert_eq!(v0.cursor_line_bg, v1.cursor_line_bg);
         assert_eq!(v0.cursor_line_bg, v2.cursor_line_bg);
-        assert_eq!(v0.phrase_highlight_bg, v1.phrase_highlight_bg);
-        assert_eq!(v0.phrase_highlight_bg, v2.phrase_highlight_bg);
+        // phrase_highlight_bg intentionally varies with the root — see
+        // phrase_tint_tracks_the_root_variant.
         assert_eq!(v0.dim_fg, v1.dim_fg);
         assert_eq!(v0.dim_fg, v2.dim_fg);
         assert_eq!(v0.sign_fg, v1.sign_fg);
