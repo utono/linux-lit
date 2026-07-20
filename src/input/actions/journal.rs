@@ -1778,7 +1778,7 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
             .map(|p| (p.id, p.question.trim().to_string(), p.answer.trim().to_string()))
     };
     let Some((id, q, a)) = page else {
-        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to rewrite", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), crate::input::navigation::TOAST_NOTHING_TO_REWRITE, 2);
         return;
     };
     {
@@ -1840,7 +1840,7 @@ pub(crate) fn open_rewrite_target(state: &Rc<RefCell<AppState>>) {
         displayed_journal_page(&s).is_some()
     };
     if !has_entry {
-        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to rewrite", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), crate::input::navigation::TOAST_NOTHING_TO_REWRITE, 2);
         return;
     }
 
@@ -1931,7 +1931,7 @@ pub(crate) fn rewrite_question_path(state: &Rc<RefCell<AppState>>, both: bool) {
         displayed_journal_page(&s)
     };
     let Some(page) = page else {
-        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), "Nothing to rewrite", 2);
+        crate::input::navigation::show_chapter_toast_secs(&state.borrow(), crate::input::navigation::TOAST_NOTHING_TO_REWRITE, 2);
         return;
     };
     let id = page.id;
@@ -2229,7 +2229,7 @@ pub(crate) fn rewrite_with_claude(
             // The diff-highlight is painted by refresh_entry_diff_highlight inside
             // the render above: the just-appended revision is now the entry's
             // latest, so it computes the same changed-words diff (prev vs revised).
-            crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_REWRITTEN, 2);
         },
         move |st, msg| {
             let mut s = st.borrow_mut();

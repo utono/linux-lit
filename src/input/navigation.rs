@@ -2590,6 +2590,10 @@ pub(crate) const TOAST_SAVED: &str = "Saved";
 pub(crate) const TOAST_SAVED_IN_OVERLAY: &str = "Saved (:q to exit)";
 pub(crate) const TOAST_NO_MATCHES: &str = "No matches";
 pub(crate) const TOAST_COPIED: &str = "Copied";
+/// Shared by the journal r/R rewrite pipeline and the chat panel's R (which
+/// routes through the same pipeline) — one completion message.
+pub(crate) const TOAST_REWRITTEN: &str = "Rewritten";
+pub(crate) const TOAST_NOTHING_TO_REWRITE: &str = "Nothing to rewrite";
 
 /// This is the single entry point for EVERY transient that borrows the
 /// bottom-center act/scene strip on the shared `chapter_toast` widget ("Sync:

@@ -33,6 +33,15 @@ const PINNED_DIVIDER_W: i32 = 1;
 /// add them back here.
 const CHAT_PANEL_TOP_INSET: i32 = 19;
 
+/// Toast strings reused at ≥2 chat.rs sites (audit #90). Durations stay
+/// inline at the call sites (the #70 precedent). "Rewritten" and "Nothing to
+/// rewrite" live in navigation.rs beside the other cross-file toast consts.
+const TOAST_NO_PANEL_ROOM: &str = "No room for chat panel at this layout";
+const TOAST_NO_PASSAGE: &str = "No passage at the cursor";
+const TOAST_WAIT_PREVIOUS_REPLY: &str = "Waiting for the previous reply\u{2026}";
+const TOAST_ENTRY_SAVED: &str = "Entry is saved";
+const TOAST_SAVE_FAILED: &str = "Save failed";
+
 /// The panel container's `margin_top` (from the window top) that lands the
 /// transcript's FIRST line level with the main card's first reading-line ink.
 ///
@@ -414,7 +423,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
     if free < CHAT_MIN_PANEL_W {
         close_chat_layout(s);
-        crate::input::navigation::show_chapter_toast_secs(&s, "No room for chat panel at this layout", 3);
+        crate::input::navigation::show_chapter_toast_secs(&s, TOAST_NO_PANEL_ROOM, 3);
         return;
     }
     size_panel(s);
@@ -556,7 +565,7 @@ pub(crate) fn toggle_chat_layout(state_rc: &Rc<RefCell<AppState>>) {
     let (card_w, _) = crate::app::layout::main_card_rect(&s);
     let free = ww - card_w - 2 * crate::app::layout::CARD_OUTER_MARGIN;
     if free < CHAT_MIN_PANEL_W {
-        crate::input::navigation::show_chapter_toast_secs(&s, "No room for chat panel at this layout", 3);
+        crate::input::navigation::show_chapter_toast_secs(&s, TOAST_NO_PANEL_ROOM, 3);
         return;
     }
     s.chat_layout_open = true;
@@ -675,7 +684,7 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
     let (question, system, model, chip, meta, msg_ctx) = {
         let s = state_rc.borrow();
         if s.chat.pending {
-            crate::input::navigation::show_chapter_toast_secs(&s, "Waiting for the previous reply\u{2026}", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, TOAST_WAIT_PREVIOUS_REPLY, 2);
             return;
         }
         // Resolve the passage context BEFORE consuming the input text: a
@@ -691,13 +700,13 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             None => match crate::input::segments::segment_context(&s, 2) {
                 Some(seg) => seg,
                 None => {
-                    crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);
+                    crate::input::navigation::show_chapter_toast_secs(&s, TOAST_NO_PASSAGE, 2);
                     return;
                 }
             },
         };
         let Some(gctx) = crate::gloss::build_context_for_type(work, &seg.cursor_lines, "reader-gloss") else {
-            crate::input::navigation::show_chapter_toast_secs(&s, "No passage at the cursor", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, TOAST_NO_PASSAGE, 2);
             return;
         };
         let question = s.chat_panel.take_input_text().trim().to_string();
@@ -2373,7 +2382,7 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     if s.chat.revision_of.is_some() {
         // Already saved: `s` re-confirms (row is persisted on every
         // successful revision); just toast.
-        crate::input::navigation::show_chapter_toast_secs(&s, "Entry is saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, TOAST_ENTRY_SAVED, 2);
         return;
     }
     let idx = s.chat.cursor;
@@ -2382,7 +2391,7 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
     // insert a SECOND journal row — short-circuit on the exchange's own
     // saved_id, not only on revision_of.
     if s.chat.exchanges.get(idx).and_then(|e| e.saved_id).is_some() {
-        crate::input::navigation::show_chapter_toast_secs(&s, "Entry is saved", 2);
+        crate::input::navigation::show_chapter_toast_secs(&s, TOAST_ENTRY_SAVED, 2);
         return;
     }
     let Some(e) = s.chat.exchanges.get(idx) else { return };
@@ -2419,7 +2428,7 @@ pub(crate) fn save_selected_exchange(state_rc: &Rc<RefCell<AppState>>) {
             crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_SAVED, 2);
         }
         None => {
-            crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);
+            crate::input::navigation::show_chapter_toast_secs(&s, TOAST_SAVE_FAILED, 3);
         }
     }
 }
@@ -2461,7 +2470,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
     let (system, user_msg, model, fallback_q, meta) = {
         let s = state_rc.borrow();
         if s.chat.pending {
-            crate::input::navigation::show_chapter_toast_secs(&s, "Waiting for the previous reply\u{2026}", 2);
+            crate::input::navigation::show_chapter_toast_secs(&s, TOAST_WAIT_PREVIOUS_REPLY, 2);
             return;
         }
         if s.chat.revision_of.is_some() {
@@ -2571,7 +2580,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
                 }
                 Err(err) => {
                     render_transcript(&mut s);
-                    crate::input::navigation::show_chapter_toast_secs(&s, "Save failed", 3);
+                    crate::input::navigation::show_chapter_toast_secs(&s, TOAST_SAVE_FAILED, 3);
                     crate::logging::log(&format!("CHAT: consolidation save failed: {}", err));
                 }
             }
@@ -3092,7 +3101,7 @@ pub(crate) mod chat_revision {
                     }
                     crate::input::actions::journal::purge_journal_audio(&conn, id);
                 }
-                crate::input::navigation::show_chapter_toast_secs(&s, "Rewritten", 2);
+                crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_REWRITTEN, 2);
             },
             move |st, msg| {
                 let s = st.borrow_mut();
