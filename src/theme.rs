@@ -1348,6 +1348,9 @@ pub fn generate_css(
          .vocab-popup.vocab-popup-float {{ background-color: {root}; \
            border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
            padding: 14px 18px; }} \
+         .vocab-add-card {{ background-color: {root}; \
+           border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
+           padding: 6px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
          .vocab-popup .definition-word {{ font-size: 16px; color: {vocab_popup_fg}; }} \

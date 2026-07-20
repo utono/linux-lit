@@ -632,6 +632,13 @@ pub struct AppState {
     /// Word currently awaiting a Claude definition fallback (add-vocab). Guards
     /// against a duplicate paid request / double insert on repeat submit.
     pub vocab_add_pending: Option<String>,
+    /// Compact floating add-vocab input (Ctrl+Alt+\). Its own AskCard so it
+    /// can open OVER the gloss/journal overlays (the old gloss-overlay reuse
+    /// couldn't — the gloss overlay was either busy or below the journal).
+    pub vocab_add_card: crate::ui::ask_card::AskCard,
+    /// Mode to restore when the add-vocab card closes (it can open from
+    /// Reader, either overlay, or the chat transcript).
+    pub vocab_add_return_mode: Option<InputMode>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
@@ -1851,6 +1858,21 @@ pub fn build_window(
     search_bar.container.set_margin_top(120);
     corpus_search_popup.overlay.add_overlay(&search_bar.container);
 
+    // Dedicated add-vocab input card (Ctrl+Alt+\). A compact floating AskCard
+    // attached to the SAME layer as the vocab popup — above the whole overlay
+    // chain — so it can open OVER the gloss/journal overlays and the chat
+    // transcript, unlike the old gloss-overlay reuse. Reader focus returns to
+    // the main text view; float centered, capped to an input strip.
+    let vocab_add_card = crate::ui::ask_card::AskCard::new(0, &text_view);
+    vocab_add_card.container().add_css_class("vocab-add-card");
+    vocab_add_card.container().set_halign(gtk4::Align::Center);
+    vocab_add_card.container().set_valign(gtk4::Align::Center);
+    vocab_add_card.container().set_size_request(560, -1);
+    vocab_add_card.set_input_height(56);
+    corpus_search_popup
+        .overlay
+        .add_overlay(vocab_add_card.container());
+
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&corpus_search_popup.overlay);
 
@@ -2110,6 +2132,8 @@ pub fn build_window(
         dim_enabled,
         vocab_highlight_visible: false,
         vocab_add_pending: None,
+        vocab_add_card,
+        vocab_add_return_mode: None,
         vocab_popup: crate::app::vocab_popup::VocabPopupState {
             popup: vocab_popup,
             data: Vec::new(),
@@ -4566,6 +4590,23 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
     } else {
         state.vocab_popup.auto = true;
         crate::app::vocab_popup::open_vocab_popup(state);
+    }
+
+    // Cross-surface refresh: the add-vocab card can fire while a gloss/journal
+    // overlay or the chat panel is showing (it floats above them). Re-tint any
+    // surface currently visible so the just-added word picks up its highlight
+    // without waiting for a re-open. The Reader-scoped popup block above is left
+    // intact (its own is_visible/mode guards keep it a no-op off-Reader).
+    if state.gloss_overlay.is_visible() {
+        state.gloss_overlay.apply_vocab_tags(&state.vocab_words);
+    }
+    if state.journal_overlay.is_visible() {
+        state.journal_overlay.apply_vocab_tags(&state.vocab_words);
+    }
+    if state.chat_layout_open {
+        // Re-render the active panel view so its labels re-run
+        // `sync_panel_vocab_highlight` with the new word set (Task 9).
+        crate::input::actions::chat::rerender_current_view(state);
     }
 
     let verb = if outcome_added { "added" } else { "already have" };

@@ -295,7 +295,7 @@ pub fn handle_key(
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
-            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift),
+            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift, is_alt),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
             crate::app::InputMode::Reader => unreachable!(),
         };
@@ -1458,55 +1458,34 @@ fn handle_segment_vim_key(
     }
 }
 
-/// Key handler for the add-vocab input card (InputMode::AddVocab). Same vim
-/// engine + gloss_overlay edit buffer as SegmentVim, but :w / :wq SUBMIT the
-/// typed word (lookup + insert) instead of being refused. :q/:q!/double-Esc
-/// cancel.
+/// Key handler for the add-vocab input card (InputMode::AddVocab). Feeds the
+/// dedicated `vocab_add_card` (its own AskCard, above the whole overlay chain)
+/// through the shared `ask_vim_intercept`, so :w / :wq / Ctrl+Enter SUBMIT the
+/// typed word (lookup + insert); :q / :q! / double-Esc cancel and restore the
+/// surface it opened from. The card is a vim editor, so it owns EVERY key while
+/// open (mirrors `handle_chat_prompt_key`'s feed shape).
 fn handle_add_vocab_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
     key_char: Option<char>,
     is_ctrl: bool,
 ) -> bool {
-    use crate::input::vim::{EditorAction, VimKey};
-
-    if key_name == "Escape" && !is_ctrl {
-        if is_double_esc() {
-            crate::input::actions::vocab_add::close(state);
-            return true;
-        }
-        let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
-        return true;
-    }
-
-    // Ctrl+Enter is an always-available submit (in addition to `:w`), so the
-    // reader never has to leave Insert to add the word — mirrors the ask-card
-    // vim editor's Ctrl+Enter submit.
-    if is_ctrl && (key_name == "Return" || key_name == "KP_Enter") {
-        crate::input::actions::vocab_add::submit(state);
-        return true;
-    }
-
-    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
-        return true;
-    };
-
-    let action = state.borrow().gloss_overlay.feed_edit_key(vk);
-    match action {
-        EditorAction::Save | EditorAction::SaveQuit => {
-            crate::input::actions::vocab_add::submit(state);
-            true
-        }
-        EditorAction::OpenRewrite => true, // R is inert here
-        EditorAction::Cancel | EditorAction::CancelForce => {
-            crate::input::actions::vocab_add::close(state);
-            true
-        }
-        EditorAction::CopyToClipboard(text) => {
-            copy_to_clipboard(&text);
-            true
-        }
-        EditorAction::ToggleHighlight | EditorAction::Nop => true,
+    let ask_open = state.borrow().vocab_add_card.is_open();
+    match ask_vim_intercept(
+        ask_open,
+        key_name,
+        key_char,
+        is_ctrl,
+        state,
+        |st, k| st.borrow().vocab_add_card.feed_vim_key(k),
+        crate::input::actions::vocab_add::submit,
+        crate::input::actions::vocab_add::close,
+        |st, t| st.borrow().vocab_add_card.paste_text(t),
+    ) {
+        AskIntercept::Consumed => true,
+        // Card closed underneath us — swallow the key (the close path already
+        // restored the prior mode; nothing else should run in AddVocab mode).
+        AskIntercept::NotHandled => true,
     }
 }
 
@@ -1588,7 +1567,15 @@ fn handle_chat_transcript_key(
     key_name: &str,
     is_ctrl: bool,
     is_shift: bool,
+    is_alt: bool,
 ) -> bool {
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the transcript. It
+    // floats above the whole overlay chain and restores ChatTranscript on close.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
+    }
+
     // gg chord -> first landable row (mirrors the journal/gloss/synopsis
     // overlays' block cursor; see keymap.rs:1457 for the sibling this
     // mirrors). Checked BEFORE the match below so a completed `gg` never
@@ -1860,6 +1847,14 @@ fn handle_journal_key(
             }
             return true;
         }
+    }
+
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the journal overlay.
+    // Checked BEFORE the plain Ctrl+\ picker below so the three-modifier chord
+    // wins. It floats above the whole overlay chain and restores this mode.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
     }
 
     // Ctrl+\: open the work-wide Q&A picker. Checked BEFORE the plain Alt/Ctrl
@@ -2255,6 +2250,13 @@ fn handle_gloss_key(
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}
+    }
+
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the gloss overlay. It
+    // floats above the whole overlay chain and restores this mode on close.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
     }
 
     // Shift+Space: batch-synthesize all prose blocks (cache-only).

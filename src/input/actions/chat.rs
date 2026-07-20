@@ -985,6 +985,19 @@ fn transcript_rows(
 /// same clamp-on-every-render discipline `row_cursor` itself already gets, so
 /// a selection anchored on content that later shrinks (e.g. a regloss) can
 /// never point past the end of the rendered rows.
+/// Re-render whichever chat-panel view is currently active, in place. Used by
+/// cross-surface refreshes (e.g. add-vocab) that mutate state the panel reads
+/// through its render path (`sync_panel_vocab_highlight`) but that do not
+/// themselves change the view or cursor. View-agnostic so the caller need not
+/// know whether the panel is showing Gloss, Journal, or a single Question.
+pub(crate) fn rerender_current_view(s: &mut AppState) {
+    match s.chat.view {
+        PanelView::Journal => render_journal_view(s),
+        PanelView::Question => render_current_question(s),
+        PanelView::Gloss => render_transcript(s),
+    }
+}
+
 pub(crate) fn render_transcript(s: &mut AppState) {
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let n = row_owner.len();
