@@ -32,7 +32,7 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 // ── Row definitions ──────────────────────────────────────────────────
 
 const NUMBER_ROW: &[KeyDef] = &[
-    key("$", "~", "", "", &[("C-$", "root variant"), ("S-C-$", "root variant prev")]),
+    key("$", "~", "", "", &[("C-$", "root variant"), ("S-C-$", "root variant prev"), ("C-A-$", "root variant prev")]),
     key("+", "1", "show chapter", "1: copy work info", &[]),
     key("[", "2", "prev scene", "", &[("C-[", "set track mark"), ("M-[", "col layout")]),
     key("{", "3", "next scene", "", &[]),

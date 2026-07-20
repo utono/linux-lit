@@ -375,6 +375,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // chords — same forward/back split the t cap had.
         (KeyCombo::ctrl("dollar"), Action::RootVariantNext),
         (KeyCombo::ctrl_shift("dollar"), Action::RootVariantPrev),
+        // Ctrl+Alt+$ mirrors Ctrl+Shift+$ (previous root variant) — a
+        // shift-free reverse chord on the same cap.
+        (KeyCombo::ctrl_alt("dollar"), Action::RootVariantPrev),
         // u/i plain binds are swapped (2026-07-11): i sets the start time,
         // u sets the start timestamp (swapped with i). Their modifier families
         // stay put (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
@@ -656,6 +659,7 @@ mod tests {
         let km = Keymap::default();
         assert_eq!(km.lookup("dollar", true, false, false), Some(Action::RootVariantNext));
         assert_eq!(km.lookup("dollar", true, true, false), Some(Action::RootVariantPrev));
+        assert_eq!(km.lookup("dollar", true, false, true), Some(Action::RootVariantPrev));
         assert_eq!(km.lookup("n", true, false, true), Some(Action::ToggleNavTest));
     }
 
