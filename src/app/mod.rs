@@ -3151,14 +3151,14 @@ pub fn display_work_at_with_prepared(
     static BOOKMARKS_INIT: std::sync::Once = std::sync::Once::new();
     BOOKMARKS_INIT.call_once(|| {
         if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::ensure_bookmarks_table(&conn);
+            let _ = crate::db::migrations::ensure_bookmarks_table(&conn);
             let _ = crate::db::echoes::ensure_echo_tables(&conn);
-            let _ = crate::db::queries::ensure_gloss_audio_table(&conn);
-            let _ = crate::db::queries::ensure_characters_table(&conn);
-            let _ = crate::db::queries::ensure_gloss_voices_table(&conn);
-            let _ = crate::db::queries::ensure_voice_catalog_table(&conn);
-            let _ = crate::db::queries::ensure_claude_model_columns(&conn);
-            let _ = crate::db::queries::ensure_vocab_highlight_column(&conn);
+            let _ = crate::db::migrations::ensure_gloss_audio_table(&conn);
+            let _ = crate::db::migrations::ensure_characters_table(&conn);
+            let _ = crate::db::migrations::ensure_gloss_voices_table(&conn);
+            let _ = crate::db::migrations::ensure_voice_catalog_table(&conn);
+            let _ = crate::db::migrations::ensure_claude_model_columns(&conn);
+            let _ = crate::db::migrations::ensure_vocab_highlight_column(&conn);
             let _ = crate::db::journal::ensure_journal_table(&conn);
             let _ = crate::db::journal::ensure_rewrite_revisions_table(&conn);
             let _ = crate::db::queries::ensure_canonical_artifact_abbrevs(&conn);
