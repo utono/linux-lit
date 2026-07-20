@@ -60,7 +60,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
-    key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi")]),
+    key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi"), ("C-M-\\", "add vocab")]),
 ];
 const TAB_KEY: KeyDef = bare("Tab", "", "focus chat");
 
@@ -323,6 +323,7 @@ the last-closed gloss/journal overlay; overlays close via Escape) \
         "drill back" => "Action::JumpToPrevVocab -> InputMode::VocabLoop \
 — src/input/actions/concordance.rs",
         "vocab hi" => "Action::ToggleVocabHighlight — src/app.rs",
+        "add vocab" => "Action::AddVocabWord — src/input/actions/vocab_add.rs",
         "vocab tap" => "Action::VocabPopupTap (visible: next word; rr: \
 show/hide via ChordState::PendingR) — src/input/keymap.rs",
         "vocab Q&A" => "Action::VocabJournalAsk (popup visible + vocab word \
@@ -476,6 +477,7 @@ fn expand_action(label: &str) -> String {
         "BCP echo turns" => "BCP echo turns picker",
         "Shx echo turns" => "Shakespeare echo turns picker",
         "vocab hi" => "toggle vocab highlight",
+        "add vocab" => "add vocab word",
         "toggle signs" => "toggle sign column",
         "chat side" => "flip chat panel column",
         "toggle sync" => "toggle playback sync",
