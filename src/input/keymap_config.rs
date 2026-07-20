@@ -314,6 +314,7 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("n"), Action::VocabJournalPageNext),
         (KeyCombo::ctrl("p"), Action::VocabJournalPagePrev),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
+        (KeyCombo::ctrl_alt("backslash"), Action::AddVocabWord),
         // Ctrl+Shift+g: on RPD this physical key emits key_name "g" (lowercase)
         // with shift=true under Ctrl+Shift — NOT "G" — so the "G" bind alone
         // never matched and the reader scrolled instead (confirmed from the

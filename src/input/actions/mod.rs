@@ -139,6 +139,8 @@ pub enum Action {
     ConcordanceNext,
     ConcordancePrev,
     ToggleVocabHighlight,
+    /// Ctrl+Alt+\ on the main card: open the add-vocab-word input card.
+    AddVocabWord,
     ToggleGlossOverlay,
     ToggleJournalOverlay,
     /// Reader-only: reopen whichever of the gloss/journal overlays was last
@@ -314,6 +316,7 @@ impl Action {
             | Action::JumpToNextVocab
             | Action::JumpToPrevVocab
             | Action::ToggleVocabHighlight
+            | Action::AddVocabWord
             | Action::ToggleGlossOverlay
             | Action::ToggleJournalOverlay
             | Action::ToggleLastOverlay
@@ -467,6 +470,7 @@ impl Action {
             Action::JumpToNextVocab => "JumpToNextVocab",
             Action::JumpToPrevVocab => "JumpToPrevVocab",
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
+            Action::AddVocabWord => "AddVocabWord",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::ToggleJournalOverlay => "ToggleJournalOverlay",
             Action::ToggleLastOverlay => "ToggleLastOverlay",
