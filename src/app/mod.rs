@@ -1266,12 +1266,6 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&selection_tag);
 
-    let vocab_tag = gtk4::TextTag::builder()
-        .name("vocab-word")
-        .foreground(&theme.vocab_fg)
-        .build();
-    buffer.tag_table().add(&vocab_tag);
-
     // Source lines covered by a reader-gloss passage are tinted with the
     // contrast-guarded off-cursor gloss color (theme.reader_gloss). Added after
     // the dim/cursor tags so this foreground wins over the dim foreground on a
@@ -1294,6 +1288,19 @@ pub fn build_window(
         .foreground(&theme.reader_gloss_cursor)
         .build();
     buffer.tag_table().add(&reader_gloss_cursor_tag);
+
+    // Vocab-word foreground must OUTRANK the reader-gloss tint tags above: on a
+    // prose work every glossed/tinted paragraph carries a reader_gloss
+    // foreground, and GTK gives later-added tags higher priority — so with
+    // vocab_tag added earlier its navy color was always overridden and vocab
+    // words never showed on tinted lines (the pre-existing "no navy words"
+    // bug, on Alt+\ too). Registering it here, after both reader-gloss tags,
+    // makes a vocab word keep its color even on a glossed line.
+    let vocab_tag = gtk4::TextTag::builder()
+        .name("vocab-word")
+        .foreground(&theme.vocab_fg)
+        .build();
+    buffer.tag_table().add(&vocab_tag);
 
     let word_bold_tag = gtk4::TextTag::builder()
         .name("word-bold")
