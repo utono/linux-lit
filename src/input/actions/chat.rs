@@ -1262,6 +1262,22 @@ fn wrap_index(cur: usize, delta: i32, len: usize) -> usize {
 /// shown Q&A reads as "switch to the gloss, then cycle it", which is more
 /// useful than a toast telling the reader to press `t` first for a bind that
 /// is about to take them there anyway.
+/// `c` in the chat panel's Journal view: copy the SELECTED saved entry's
+/// database row id to the Wayland clipboard (`wl-copy`) + a transient toast —
+/// the panel mirror of the journal overlay's `copy_current_id`. The selected
+/// entry is `journal_list[journal_cursor]` (the entry the accent bar sits on,
+/// what `R`/save also act on). No-op when the list is empty.
+pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let Some(id) = s.chat.journal_list.get(s.chat.journal_cursor).map(|p| p.id) else {
+        return;
+    };
+    let copied = format!("Journal Q&A ID: {}", id);
+    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
+    crate::logging::log(&format!("CHAT: copied \"{}\"", copied));
+}
+
 pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
     if s.chat.view == PanelView::Journal {
         crate::input::navigation::show_chapter_toast_secs(s, "Ctrl+n/p cycles glosses \u{2014} t for gloss view", 2);

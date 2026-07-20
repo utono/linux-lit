@@ -1547,11 +1547,16 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::toggle_panel_view(state);
             true
         }
-        // `c`: copy the currently-displayed gloss's id, mirroring the gloss
-        // overlay's `c` (handle_gloss_key below) — but reading the PANEL's own
-        // gloss_list/gloss_index, not the overlay's.
+        // `c`: copy the currently-displayed id, mirroring each overlay's `c`.
+        // Journal view → the selected saved Q&A's id (journal overlay's
+        // copy_current_id); Gloss/Question view → the displayed gloss's id
+        // (gloss overlay's copy_gloss_id) — both read the PANEL's own state.
         "c" => {
-            crate::input::actions::chat::copy_gloss_id(state);
+            if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
+                crate::input::actions::chat::copy_journal_id(state);
+            } else {
+                crate::input::actions::chat::copy_gloss_id(state);
+            }
             true
         }
         "l" if is_ctrl => {
