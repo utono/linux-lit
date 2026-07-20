@@ -300,11 +300,23 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // list — the avoid rule's hue escape let a near-ink-dark tint pass as
     // "distinct" when it read as plain body text.
     let reader_gloss = {
-        let base = str_field(lit, "reader_gloss").unwrap_or_else(|| focus_color.clone());
-        ensure_gloss_color_min(
-            &base, &text_bg, Some(&root_color), Some(&text_fg), &[],
-            READER_GLOSS_MIN_CONTRAST,
-        )
+        // An EXPLICIT reader_gloss is a deliberate hue choice and must stay that
+        // hue across ALL root variants. The root (wallpaper) is CYCLEABLE and
+        // independent of the text; guarding an explicit gloss against the active
+        // variant's root rotated a blue gloss to red on the darker root rungs
+        // (the wallpaper cycled, the text flipped color). So skip the root
+        // distinctness check for an explicit value (bg + ink legibility still
+        // apply); only the DERIVED focus_color default guards against root.
+        match str_field(lit, "reader_gloss") {
+            Some(base) => ensure_gloss_color_min(
+                &base, &text_bg, None, Some(&text_fg), &[],
+                READER_GLOSS_MIN_CONTRAST,
+            ),
+            None => ensure_gloss_color_min(
+                &focus_color, &text_bg, Some(&root_color), Some(&text_fg), &[],
+                READER_GLOSS_MIN_CONTRAST,
+            ),
+        }
     };
     let reader_gloss_cursor = {
         // When a theme EXPLICITLY sets reader_gloss_cursor, honor it as-is —
@@ -356,14 +368,21 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // plus the lenient avoid rule (1.4 with a hue escape), which on themes
     // whose ink shares the root's hue shipped vocab words that read as
     // plain body text.
-    let vocab_fg = ensure_gloss_color_min(
-        &root_color,
-        &text_bg,
-        Some(&root_color),
-        Some(&text_fg),
-        &[],
-        VOCAB_WORD_MIN_CONTRAST,
-    );
+    // vocab_fg is root-hued by default (derives from the active root, guarded
+    // against it). But an EXPLICIT vocab_fg in the theme's linux-lit block is a
+    // deliberate hue choice that must survive root-variant cycling — so, like
+    // reader_gloss, skip the root guard for an explicit value (bg + ink checks
+    // still keep it legible + distinct from body text). Without this, an
+    // explicit blue vocab color rotated to red on the darker root rungs.
+    let vocab_fg = match str_field(lit, "vocab_fg") {
+        Some(base) => ensure_gloss_color_min(
+            &base, &text_bg, None, Some(&text_fg), &[], VOCAB_WORD_MIN_CONTRAST,
+        ),
+        None => ensure_gloss_color_min(
+            &root_color, &text_bg, Some(&root_color), Some(&text_fg), &[],
+            VOCAB_WORD_MIN_CONTRAST,
+        ),
+    };
 
     let mut theme = Theme {
         name: name.to_string(),
