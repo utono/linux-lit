@@ -8,10 +8,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use super::chat_rows::{
     build_history_turns, build_single_exchange_rows, build_transcript_rows,
-    clamp_journal_cursor, consolidate_transcript, first_landable_at_or_after, flip_view,
-    is_first_question_exchange, journal_entry_first_row, journal_view_rows, landable_mask,
-    parse_revised_qa, question_row, same_passage_question, split_answer_paragraphs,
-    visual_selection_range, wrap_index,
+    clamp_journal_cursor, clear_deleted_journal_refs, consolidate_transcript,
+    first_landable_at_or_after, flip_view, is_first_question_exchange, journal_entry_first_row,
+    journal_view_rows, landable_mask, parse_revised_qa, question_row, same_passage_question,
+    split_answer_paragraphs, visual_selection_range, wrap_index,
 };
 
 /// Minimum freed left space (px) required to open the chat layout.
@@ -1156,6 +1156,116 @@ pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
     crate::ui::copy_to_clipboard(&copied);
     crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
     crate::logging::log(&format!("CHAT: copied \"{}\"", copied));
+}
+
+/// `y`-confirmed chat-panel delete (the panel's `D`, via the overlays' shared
+/// DeleteConfirm modal with origin ChatTranscript): deletes what the active
+/// view displays. Question view is unreachable — `show_delete_confirmation`
+/// refuses to open the dialog there — the arm exists for the match only.
+pub(crate) fn delete_current_panel_item(state: &Rc<RefCell<AppState>>) {
+    let view = state.borrow().chat.view;
+    match view {
+        PanelView::Gloss => delete_panel_gloss(state),
+        PanelView::Journal => delete_panel_journal_entry(state),
+        PanelView::Question => {}
+    }
+}
+
+/// Delete the panel's currently shown gloss: shared DB+audio purge, then
+/// panel bookkeeping (list/index), overlay-cache reconciliation, transcript
+/// re-render (next gloss in place, or the empty placeholder), and the
+/// reader-tint recompute the overlay's own delete performs.
+fn delete_panel_gloss(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let idx = s.chat.gloss_index;
+    let Some(g) = s.chat.gloss_list.get(idx) else { return };
+    let gloss_id = g.gloss_id;
+    let abbrev = s.chat.gloss_ctx.as_ref().map(|c| c.work_abbrev.clone());
+    let (_audio_rows, mp3_files) =
+        crate::input::actions::gloss::purge_gloss_data(abbrev.as_deref(), gloss_id);
+
+    s.chat.gloss_list.remove(idx);
+    // Reconcile the gloss OVERLAY's separate cache (AppState.gloss_list is a
+    // distinct Vec from the panel's) so the deleted row cannot resurface when
+    // the overlay renders its remembered list.
+    if let Some(pos) = s.gloss_list.iter().position(|og| og.gloss_id == gloss_id) {
+        s.gloss_list.remove(pos);
+        s.gloss_index = if s.gloss_list.is_empty() {
+            0
+        } else {
+            s.gloss_index.min(s.gloss_list.len() - 1)
+        };
+    }
+
+    if s.chat.gloss_list.is_empty() {
+        // Last gloss gone: placeholder in transcript slot #1, stay in Gloss
+        // view (spec decision). The empty chip renders no row; the plain text
+        // renders as one label via gloss_answer_specs's no-tags fallback.
+        s.chat.gloss_index = 0;
+        if let Some(ex) = s.chat.exchanges.get_mut(0) {
+            if ex.question.is_empty() {
+                ex.answer = "No glosses for this passage".to_string();
+                ex.chip = String::new();
+            }
+        }
+        s.chat.view = PanelView::Gloss;
+        render_transcript(&mut s);
+    } else {
+        // Show the next remaining gloss in place (same replace-in-slot path
+        // Ctrl+n/p uses; it renders the transcript itself).
+        s.chat.gloss_index = idx.min(s.chat.gloss_list.len() - 1);
+        let text = s.chat.gloss_list[s.chat.gloss_index].gloss_text.clone();
+        if let Some(ctx) = s.chat.gloss_ctx.clone() {
+            push_gloss_exchange(&mut s, &ctx, &text);
+        }
+    }
+
+    // The glossed-passage set changed — recompute the main-card tint, same as
+    // the overlay's delete (otherwise the deleted passage's lines stay tinted).
+    crate::app::apply_reader_gloss_highlighting(&mut s);
+    crate::logging::log(&format!(
+        "CHAT: deleted gloss {} ({} mp3 files)", gloss_id, mp3_files
+    ));
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &format!(
+            "Deleted gloss {} · {} mp3{}",
+            gloss_id, mp3_files, if mp3_files == 1 { "" } else { "s" }
+        ),
+        2,
+    );
+}
+
+/// Delete the journal entry under the panel cursor: DB row + cached TTS
+/// audio, panel list/cursor bookkeeping, dangling saved_id/revision_of
+/// cleanup, journal-overlay cache reconciliation, and a snapped re-render
+/// (the empty case renders the existing placeholder row).
+fn delete_panel_journal_entry(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    let idx = s.chat.journal_cursor;
+    let Some(id) = s.chat.journal_list.get(idx).map(|p| p.id) else { return };
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::journal::delete_journal_page(&conn, id);
+        crate::input::actions::journal::purge_journal_audio(&conn, id);
+    }
+    s.chat.journal_list.remove(idx);
+    s.chat.journal_cursor = clamp_journal_cursor(idx, s.chat.journal_list.len());
+    let revision_of = s.chat.revision_of;
+    let rev = clear_deleted_journal_refs(&mut s.chat.exchanges, revision_of, id);
+    s.chat.revision_of = rev;
+    // Reconcile the journal OVERLAY's cache (s.journal.pages is a third
+    // independent copy) so a stale entry cannot render there.
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == id) {
+        s.journal.pages.remove(pos);
+        if s.journal.page_index >= s.journal.pages.len() {
+            s.journal.page_index = s.journal.pages.len().saturating_sub(1);
+        }
+    }
+    render_journal_view_inner(&mut s, true);
+    crate::logging::log(&format!("CHAT: deleted journal {}", id));
+    crate::input::navigation::show_chapter_toast_secs(
+        &s, &format!("Deleted journal {}", id), 2,
+    );
 }
 
 pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
