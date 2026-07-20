@@ -228,6 +228,12 @@ fn journal_body_max_height(state: &AppState) -> i32 {
 /// If the new line has vocab words, update the popup content and position.
 /// If it has none, close the popup.
 pub fn refresh_vocab_popup(state: &mut AppState) {
+    // Reader cursor sync must NOT repaint overlay/chat-scoped popups: those show
+    // corner cards keyed to overlay-block words, and a sync tick here would
+    // clobber them with the reader's current-LINE words (or hide them).
+    if state.input_mode != crate::app::InputMode::Reader {
+        return;
+    }
     if !state.vocab_popup.popup.is_visible() {
         return;
     }

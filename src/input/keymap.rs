@@ -418,10 +418,18 @@ fn vocab_chord_toggle(
     crate::app::vocab_popup::open_vocab_popup_scoped(&mut s, scope, corner);
 }
 
-/// Vocab words visible in the gloss overlay (the `rr` scope there).
-/// Filled by Task 7.
-fn gloss_overlay_scope_words(_state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
-    Vec::new()
+/// Vocab words visible in the gloss overlay (the `rr` scope there): scan the
+/// overlay's CURRENT cursor block for the user's vocab words.
+fn gloss_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    let s = state.borrow();
+    let text = match s.gloss_overlay.current_block_text() {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    crate::vocab_scan::scan_lines(text.lines().enumerate(), &s.vocab_words, true)
+        .into_iter()
+        .map(|sp| sp.word)
+        .collect()
 }
 
 /// Vocab words visible in the journal overlay (the `rr` scope there).
@@ -2293,6 +2301,13 @@ fn handle_gloss_key(
                 );
                 return true;
             }
+            // Ctrl+r: ask-Claude rewrite of the displayed gloss (moved off plain
+            // `R`, which is now reserved for the vocab surface, mirroring the
+            // main card). Opens the rewrite prompt in INSERT.
+            "r" => {
+                crate::input::actions::gloss::begin_rewrite(state);
+                return true;
+            }
             // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the
             // only overlay-to-overlay navigation). Consumed no-op.
             "j" => return true,
@@ -2348,13 +2363,9 @@ fn handle_gloss_key(
             crate::input::actions::gloss::begin_edit(state);
             true
         }
-        // R: ask-Claude rewrite of the displayed gloss, straight from the read
-        // view (same prompt the vim editor's `R` opens — no need to enter `e`
-        // first). Opens in INSERT. Mirrors journal `R`.
-        "R" => {
-            crate::input::actions::gloss::begin_rewrite(state);
-            true
-        }
+        // R: vocab R reserved unbound, mirrors main card. The ask-Claude
+        // rewrite moved to Ctrl+r (handled in the is_ctrl block above).
+        "R" => true,
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
         "u" => {
             crate::input::actions::gloss::show_undo_confirmation(
@@ -2454,6 +2465,14 @@ fn handle_gloss_key(
         // without a reload; falls back to the pre-open page). Gloss has no
         // journal-style term filter, so the precedence is simpler.
         "Escape" => {
+            // Popup-close comes FIRST: if the vocab popup is up, Escape only
+            // closes it (clearing auto-show) and stays in the overlay.
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+                return true;
+            }
             // A revision browse always drops on Escape (view-only state must
             // not leak into the next open); Task 7 clears the diff-highlight.
             state.borrow_mut().rewrite_browse = None;
@@ -2489,9 +2508,18 @@ fn handle_gloss_key(
             }
             true
         }
-        // r: dropped (cross-create: journal ask card for the gloss passage;
-        // asking happens from the reader). Consumed no-op.
-        "r" => true,
+        // r: vocab surface. If the popup is already up, `r` cycles to the next
+        // word; either way it arms the `rr` chord so a quick second `r` toggles
+        // the popup (see the hoisted PendingR block at the top of handle_key,
+        // which scopes to this overlay's current-block words).
+        "r" if !is_ctrl => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_next(&mut s);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
+            true
+        }
         "v" => {
             crate::input::actions::settings::open_voice_picker(
                 state,

@@ -15,6 +15,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Alt+n / Alt+p", "prev / next gloss"),
         ("Ctrl+n / Ctrl+p", "next / prev passage"),
         ("Shift+V", "visual select (y yank → clipboard)"),
+        ("r", "vocab popup (rr toggles · r next word)"),
     ]),
     ("TTS / voice", &[
         ("a", "play / pause (MPV, same as main card)"),
@@ -27,7 +28,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+v", "cycle active voice"),
     ]),
     ("Editing", &[
-        ("R", "ask Claude to rewrite this gloss"),
+        ("C-r", "ask Claude to rewrite this gloss"),
         ("Ctrl+Shift+n / Ctrl+Shift+p", "browse rewrite history (view-only)"),
         ("Ctrl+Shift+r", "restore the viewed revision"),
         ("e", "edit gloss in place (vim)"),
@@ -45,7 +46,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+↑ / Ctrl+↓", "volume"),
         ("\\", "cycle: → synopsis (same segment)"),
         ("Ctrl+f", "search all Q&As / glosses"),
-        ("Esc", "close (jump to source)"),
+        ("Esc", "close vocab popup / close (jump to source)"),
         ("Ctrl+Shift+L", "save & quit app"),
         ("Ctrl+/", "close this legend"),
     ]),

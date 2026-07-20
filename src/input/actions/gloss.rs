@@ -1424,6 +1424,11 @@ pub(crate) fn persist_render_install_gloss(
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
     s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs);
+    // This install path re-populates the buffer but does NOT run
+    // `recolor_cached_blocks` (unlike the display sites), so tint vocab here.
+    if s.vocab_highlight_visible {
+        s.gloss_overlay.apply_vocab_tags(&s.vocab_words);
+    }
     s.gloss_overlay.set_position(new_idx, all.len());
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
     s.gloss_list = all;
@@ -1822,6 +1827,9 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
             crate::log_fmt!("RECOLOR: {}#{} not cached (voice {})", kind_str, index, vid);
             false
         });
+        if s.vocab_highlight_visible {
+            s.gloss_overlay.apply_vocab_tags(&s.vocab_words);
+        }
         return;
     }
 
@@ -1854,6 +1862,9 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         }
         false
     });
+    if s.vocab_highlight_visible {
+        s.gloss_overlay.apply_vocab_tags(&s.vocab_words);
+    }
 }
 
 /// Borrow `state` and recolor. For async synth-completion sites that hold an

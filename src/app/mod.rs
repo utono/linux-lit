@@ -1601,6 +1601,9 @@ pub fn build_window(
     // search color (Task 4 of the rewrite-revision-history feature).
     gloss_overlay.set_rewrite_diff_color(&search_all);
     journal_overlay.set_rewrite_diff_color(&search_all);
+    // Vocab-word tint in the gloss overlay uses the SAME theme color as the
+    // main card's vocab_tag (theme.vocab_fg).
+    gloss_overlay.set_vocab_color(&theme.vocab_fg);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();
