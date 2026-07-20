@@ -369,15 +369,14 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // whose ink shares the root's hue shipped vocab words that read as
     // plain body text.
     // vocab_fg is root-hued by default (derives from the active root, guarded
-    // against it). But an EXPLICIT vocab_fg in the theme's linux-lit block is a
-    // deliberate hue choice that must survive root-variant cycling — so, like
-    // reader_gloss, skip the root guard for an explicit value (bg + ink checks
-    // still keep it legible + distinct from body text). Without this, an
-    // explicit blue vocab color rotated to red on the darker root rungs.
+    // against it so it stays legible + root-distinct). But an EXPLICIT vocab_fg
+    // in the theme's linux-lit block is used VERBATIM — the author picked an
+    // exact color (and validated it), and it must render identically on every
+    // theme (so the SAME blue can be shared across themes) and survive root-
+    // variant cycling. Running it through the guard adapted it per-theme
+    // (darkened it to meet each ink floor), breaking cross-theme consistency.
     let vocab_fg = match str_field(lit, "vocab_fg") {
-        Some(base) => ensure_gloss_color_min(
-            &base, &text_bg, None, Some(&text_fg), &[], VOCAB_WORD_MIN_CONTRAST,
-        ),
+        Some(base) => base,
         None => ensure_gloss_color_min(
             &root_color, &text_bg, Some(&root_color), Some(&text_fg), &[],
             VOCAB_WORD_MIN_CONTRAST,
