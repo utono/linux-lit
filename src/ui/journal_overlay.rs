@@ -6,6 +6,12 @@ use gtk4::{Label, Overlay};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+/// The `———` rule separating a passage's quoted source from its Q&A (emitted by
+/// `journal::source_paragraphs`). It renders as a centered chrome line and is
+/// NOT a cursor stop — `step_full_cursor` skips it. Must match the literal
+/// pushed in `source_paragraphs`.
+const SOURCE_SEPARATOR: &str = "\u{2014}\u{2014}\u{2014}";
+
 pub struct JournalOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
@@ -1982,7 +1988,16 @@ impl JournalOverlay {
         let cur = self.cursor_full.get().min(total - 1);
         let next = {
             let note_blocks = self.note_blocks.borrow();
+            let paras = self.all_paragraphs.borrow();
             step_skipping_chrome(cur, delta, total, |i| {
+                // The `———` rule that separates a passage's quoted source from
+                // its Q&A is chrome, not content — j/k must skip over it (never
+                // land the accent bar on it), like a note heading. Q&A pages have
+                // no `note_blocks`, so the note-block `stoppable` flag defaults
+                // every paragraph to stoppable; exclude the separator explicitly.
+                if paras.get(i).map(|p| p.trim()) == Some(SOURCE_SEPARATOR) {
+                    return false;
+                }
                 note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true)
             })
         };
