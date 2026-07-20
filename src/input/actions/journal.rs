@@ -407,13 +407,16 @@ fn tag_inner<'a>(line: &'a str, tags: &[&str]) -> Option<&'a str> {
 }
 
 /// Build the ordered source paragraphs to prepend above a passage Q&A:
-/// `[speaker?, verse/stage line(s)…, citation?, "———"]`. The speaker paragraph
-/// is dropped when empty or `UNKNOWN` (prose works). Each `<verse>`/`<stage>`
-/// element — and each embedded `\n`-joined line within one — is its own
-/// paragraph, so the overlay treats every quoted line as a separate navigable
-/// block. The trailing `———` separates the quote from the question.
+/// `[speaker?, verse/stage block, citation?, "———"]`. The speaker paragraph is
+/// dropped when empty or `UNKNOWN` (prose works). All `<verse>`/`<stage>` lines
+/// collapse into ONE `\n`-joined paragraph so the overlay renders them at pure
+/// line-height (consecutive lines, no blank line between) — matching the main
+/// card — while the blank-line gaps between paragraphs still separate the
+/// speaker, quote, citation, and separator. The quoted block steps as a single
+/// navigable block. The trailing `———` separates the quote from the question.
 fn source_paragraphs(source_text: &str, citation: Option<&str>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    let mut verse: Vec<String> = Vec::new();
     for raw in source_text.lines() {
         if let Some(sp) = tag_inner(raw, &["speaker"]) {
             if !sp.is_empty() && sp != "UNKNOWN" {
@@ -423,10 +426,13 @@ fn source_paragraphs(source_text: &str, citation: Option<&str>) -> Vec<String> {
             for seg in body.split('\n') {
                 let seg = seg.trim();
                 if !seg.is_empty() {
-                    out.push(seg.to_string());
+                    verse.push(seg.to_string());
                 }
             }
         }
+    }
+    if !verse.is_empty() {
+        out.push(verse.join("\n"));
     }
     if let Some(c) = citation {
         out.push(c.to_string());
@@ -2889,9 +2895,10 @@ mod tests {
             got,
             vec![
                 "FIRST GENTLEMAN".to_string(),
-                "You do not meet a man but frowns. Our bloods".to_string(),
-                "No more obey the heavens than our courtiers\u{2019}".to_string(),
-                "Still seem as does the King\u{2019}s.".to_string(),
+                "You do not meet a man but frowns. Our bloods\n\
+                 No more obey the heavens than our courtiers\u{2019}\n\
+                 Still seem as does the King\u{2019}s."
+                    .to_string(),
                 "\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string(),
                 "\u{2014}\u{2014}\u{2014}".to_string(),
             ]
