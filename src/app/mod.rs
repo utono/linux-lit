@@ -119,6 +119,10 @@ pub enum InputMode {
     /// the system clipboard; `:q`/double-Esc exit. Save verbs are refused —
     /// nothing is written back to the reading buffer or lit.db.
     SegmentVim,
+    /// Typing a word into the empty vim-input card to add a vocab word
+    /// (Ctrl+Alt+\). All keys route to the gloss_overlay edit buffer; the
+    /// save verb (:w) submits (lookup + insert), :q/Esc cancels.
+    AddVocab,
     /// Fully modal vocab-sentence drill loop (Ctrl+-; requires phrase data
     /// for the playing media, else the entry toasts the reason): the sentence
     /// under review repeats via MPV ab-loop; n/p step between vocab

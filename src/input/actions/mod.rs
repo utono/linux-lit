@@ -19,6 +19,7 @@ pub mod rewrite_history;
 pub mod segment_vim;
 pub mod settings;
 pub mod synopsis;
+pub(crate) mod vocab_add;
 pub(crate) mod vocab_journal;
 pub mod word_copy;
 

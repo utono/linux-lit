@@ -128,6 +128,11 @@ pub fn handle_key(
         return handle_segment_vim_key(state, key_name, key_char, is_ctrl);
     }
 
+    // AddVocab (Ctrl+Alt+\ input card) owns ALL keys, like SegmentVim.
+    if state.borrow().input_mode == crate::app::InputMode::AddVocab {
+        return handle_add_vocab_key(state, key_name, key_char, is_ctrl);
+    }
+
     // Spacebar (no modifiers) toggles MPV play/pause from any mode, UNLESS a
     // text-input widget has focus (an Entry, or an editable TextView), in which
     // case space must type a literal space. The reader's main TextView is
@@ -230,6 +235,7 @@ pub fn handle_key(
             // global guards), so it never reaches this match.
             crate::app::InputMode::GlossEdit => unreachable!("GlossEdit handled before mode dispatch"),
             crate::app::InputMode::SegmentVim => unreachable!("SegmentVim handled before mode dispatch"),
+            crate::app::InputMode::AddVocab => unreachable!("AddVocab handled before mode dispatch"),
             crate::app::InputMode::JournalVisual => handle_journal_visual_key(state, key_state, key_name),
             crate::app::InputMode::SynopsisOverlay => handle_synopsis_overlay_key(state, key_state, key_name, key_char, is_ctrl, is_alt, is_shift),
             crate::app::InputMode::SynopsisVisual => handle_block_visual_key(state, key_state, key_name, &SYNOPSIS_VISUAL_CFG),
@@ -1345,6 +1351,50 @@ fn handle_segment_vim_key(
             copy_to_clipboard(&text);
             let s = state.borrow();
             crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_COPIED, 2);
+            true
+        }
+        EditorAction::ToggleHighlight | EditorAction::Nop => true,
+    }
+}
+
+/// Key handler for the add-vocab input card (InputMode::AddVocab). Same vim
+/// engine + gloss_overlay edit buffer as SegmentVim, but :w / :wq SUBMIT the
+/// typed word (lookup + insert) instead of being refused. :q/:q!/double-Esc
+/// cancel.
+fn handle_add_vocab_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+) -> bool {
+    use crate::input::vim::{EditorAction, VimKey};
+
+    if key_name == "Escape" && !is_ctrl {
+        if is_double_esc() {
+            crate::input::actions::vocab_add::close(state);
+            return true;
+        }
+        let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
+        return true;
+    }
+
+    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
+        return true;
+    };
+
+    let action = state.borrow().gloss_overlay.feed_edit_key(vk);
+    match action {
+        EditorAction::Save | EditorAction::SaveQuit => {
+            crate::input::actions::vocab_add::submit(state);
+            true
+        }
+        EditorAction::OpenRewrite => true, // R is inert here
+        EditorAction::Cancel | EditorAction::CancelForce => {
+            crate::input::actions::vocab_add::close(state);
+            true
+        }
+        EditorAction::CopyToClipboard(text) => {
+            copy_to_clipboard(&text);
             true
         }
         EditorAction::ToggleHighlight | EditorAction::Nop => true,
