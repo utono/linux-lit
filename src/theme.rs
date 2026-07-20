@@ -1475,6 +1475,11 @@ pub fn generate_css(
          .chat-error {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            padding-top: 10px; }} \
          .chat-saved {{ color: alpha({chat_ink}, 0.65); padding-top: 10px; }} \
+         /* Page-marker footer under the transcript (chat_panel::set_page_marker):
+            the overlays' ⌄/• glyphs at their ~20px size, in the panel's dim
+            ink tier. The row itself is always present (fixed height) so the
+            transcript budget never churns with marker visibility. */ \
+         .chat-page-marker {{ color: alpha({chat_ink}, 0.55); font-size: 20px; }} \
          /* Source lines mirror the MAIN CARD's spacing model (formatting.rs): \
             the card sets pixels_above/below_lines(0) globally, so consecutive \
             verse lines sit at pure line-height with NO gap, and space appears \
