@@ -118,8 +118,9 @@ impl VocabPopup {
     /// Two-column placement: a COMPACT card centered in the reading column
     /// the cursor is NOT in (x/w = that column's window-coord rect from
     /// layout::column_float_rect). Natural height, capped width — never the
-    /// full column panel it used to be. `h` caps the card so long content
-    /// can't overrun the card vertically.
+    /// full column panel it used to be. `h` is accepted for signature
+    /// compatibility but unused: the card takes its natural height (content is
+    /// short, and the Journal view caps its own body height).
     pub fn place_float(&self, x: i32, w: i32, h: i32) {
         self.container.add_css_class("vocab-popup-float");
         let width = (w - 48).clamp(200, 420);
