@@ -28,6 +28,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("r / R", "Gloss view: re-gloss · Journal view: ask / rewrite"),
         ("\\", "toggle view: gloss ↔ journal Q&A"),
         ("c", "copy id: Gloss view → gloss id · Journal view → Q&A id"),
+        ("D", "delete: Gloss view → current gloss · Journal view → Q&A (y/Esc confirm)"),
         ("V", "visual select rows (j/k/h/t extend)"),
         ("y", "yank selection or cursor row → clipboard"),
     ]),

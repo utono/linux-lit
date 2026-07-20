@@ -423,9 +423,10 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Open the "Delete …? y / Esc" confirmation over `origin`'s overlay. Records
-/// `origin` (gloss vs journal) so `y` runs the right delete and returns to the
-/// right mode; the dialog label names what will be deleted. No-op when there is
-/// nothing to delete for that overlay. Mirrors `show_undo_confirmation`.
+/// `origin` (gloss overlay, journal overlay, or chat transcript) so `y` runs
+/// the right delete and returns to the right mode; the dialog label names
+/// what will be deleted. No-op when there is nothing to delete for that
+/// overlay. Mirrors `show_undo_confirmation`.
 pub(crate) fn show_delete_confirmation(
     state_rc: &Rc<RefCell<AppState>>,
     origin: crate::app::InputMode,
@@ -443,6 +444,25 @@ pub(crate) fn show_delete_confirmation(
                     return;
                 }
                 "Delete this Q&A?".to_string()
+            }
+            crate::app::InputMode::ChatTranscript => {
+                use crate::input::actions::chat::PanelView;
+                match s.chat.view {
+                    PanelView::Gloss => match s.chat.gloss_list.get(s.chat.gloss_index) {
+                        Some(g) => format!("Delete gloss {}?", g.gloss_id),
+                        None => return,
+                    },
+                    PanelView::Journal => {
+                        match s.chat.journal_list.get(s.chat.journal_cursor) {
+                            Some(p) => format!("Delete journal {}?", p.id),
+                            None => return,
+                        }
+                    }
+                    // No deletable item is displayed in Question view — the
+                    // dialog never opens there (the panel's D is view-gated
+                    // here, not at the bind).
+                    PanelView::Question => return,
+                }
             }
             _ => return,
         }
