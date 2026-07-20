@@ -10,6 +10,10 @@ use std::rc::Rc;
 /// Max other-work occurrence lines fed to the prompt.
 pub(crate) const CORPUS_HITS_CAP: usize = 10;
 
+/// Corpus-evidence placeholder when no occurrences exist OR the query fails —
+/// the two paths must emit the same string so the prompt reads consistently.
+const CORPUS_NONE_FOUND: &str = "(none found)";
+
 /// True when `line` contains `word` as a whole token, case-insensitively.
 /// Tokenizes like db::concordance::load_concordance_words (apostrophes bind
 /// to the token), so "franklin's" matches "franklin" but "heart" never
@@ -67,7 +71,7 @@ pub(crate) fn vocab_corpus_block(
         ));
     }
     if lines.is_empty() {
-        return "(none found)".to_string();
+        return CORPUS_NONE_FOUND.to_string();
     }
     let mut out = String::new();
     let mut last: Option<&str> = None;
@@ -195,16 +199,10 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
         .as_ref()
         .and_then(|conn| crate::db::concordance::find_word_occurrences(conn, &word, &author).ok())
         .map(|hits| vocab_corpus_block(&hits, &canonical, &word, CORPUS_HITS_CAP))
-        .unwrap_or_else(|| "(none found)".to_string());
+        .unwrap_or_else(|| CORPUS_NONE_FOUND.to_string());
 
     let (genre, unit, _units) = crate::gloss::genre_unit(&work_type);
-    let unit_label = {
-        let mut c = unit.chars();
-        match c.next() {
-            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-            None => String::new(),
-        }
-    };
+    let unit_label = crate::input::actions::journal::titlecase_first(unit);
     let user_msg = vocab_user_message(
         genre,
         &title,
