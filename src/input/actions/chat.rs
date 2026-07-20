@@ -1725,12 +1725,12 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 }
 
 /// Move the j/k ROW cursor (`s.chat.row_cursor`, widget-space — see
-/// `transcript_rows`' doc comment) by `delta` and scroll it into view. When
-/// the cursor is already clamped at a boundary (single row, or first/last
-/// LANDABLE row), degrade to plain viewport scrolling so an answer taller
-/// than the panel stays fully readable — same fallback the old exchange-only
-/// cursor used, and for the same reason (see `scroll_transcript_step`'s doc
-/// comment).
+/// `transcript_rows`' doc comment) by `delta` and scroll it into view. The
+/// paged Gloss/Journal/Question arms no-op (no re-render) at the document
+/// edges — `step_cursor_paged` simply clamps there. The plain-viewport-scroll
+/// degrade fallback (`scroll_transcript_step`) remains only for the
+/// pending/empty/unlandable states where there is no row cursor to step at
+/// all (see each arm's own guard).
 ///
 /// A `ChatGlossRowKind::Speaker` widget (e.g. "BELARIUS") is never a valid
 /// landing spot — see `landable_mask`'s doc comment (Fix 2: speaker labels
@@ -1801,6 +1801,13 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         return;
     }
     if s.chat.view == PanelView::Question {
+        // A pending Question view is showing the thinking render — re-
+        // rendering here would paint the previous exchange over it, so
+        // degrade to plain scrolling until the answer lands.
+        if s.chat.pending {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        }
         let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
             s.chat_panel.scroll_transcript_step(delta as f64);
             return;
@@ -1822,6 +1829,12 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
             &s.chat.pages,
             &landable,
         );
+        // A clamped step at the document edge changes nothing — re-rendering
+        // would only reset the scroll position a Ctrl-d reader may hold on an
+        // oversized page.
+        if new_cursor == s.chat.row_cursor && new_page == s.chat.page_idx {
+            return;
+        }
         s.chat.row_cursor = new_cursor;
         s.chat.page_idx = new_page;
         render_current_question(s);
@@ -1874,6 +1887,13 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
         return;
     }
     if s.chat.view == PanelView::Question {
+        // A pending Question view is showing the thinking render — re-
+        // rendering here would paint the previous exchange over it, so
+        // degrade to plain scrolling until the answer lands.
+        if s.chat.pending {
+            s.chat_panel.scroll_transcript_to_edge(false);
+            return;
+        }
         let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
             s.chat_panel.scroll_transcript_to_edge(false);
             return;
@@ -1927,6 +1947,13 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
         return;
     }
     if s.chat.view == PanelView::Question {
+        // A pending Question view is showing the thinking render — re-
+        // rendering here would paint the previous exchange over it, so
+        // degrade to plain scrolling until the answer lands.
+        if s.chat.pending {
+            s.chat_panel.scroll_transcript_to_edge(true);
+            return;
+        }
         let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
             s.chat_panel.scroll_transcript_to_edge(true);
             return;

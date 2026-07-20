@@ -135,8 +135,8 @@ pub(crate) fn build_transcript_rows(
 /// view uses) so the row cursor can traverse the answer and no single widget
 /// outgrows a page. A reader-gloss exchange (empty question, raw markup)
 /// renders as one `GlossAnswer` row (splitting it would break the markup
-/// parse), with NO `Q:` row — with NO chip and NO other exchange. This is
-/// `build_transcript_rows`'s per-exchange body run for a single `i == 0`
+/// parse), with NO `Q:` row. No chip and no other exchange in either case.
+/// This is `build_transcript_rows`'s per-exchange body run for a single `i == 0`
 /// slice, factored out so the "one exchange -> its rows" shape is
 /// unit-testable without constructing a whole transcript or an `AppState`.
 /// The chip is deliberately omitted (matching `render_transcript_with_thinking`'s
@@ -1218,8 +1218,8 @@ mod question_view_rows_tests {
 /// pure seam (one exchange -> its rows, no gloss, no other exchange, no
 /// chip). House style per `panel_view_toggle_tests`/`consolidate_tests`
 /// above: pure functions, no `AppState`/GTK. The actual GTK paint
-/// (`render_current_question`'s `render_rows` call) is not unit-testable and
-/// is exercised only by manual/headless on-screen verification.
+/// (`render_current_question`'s `render_paginated` call) is not unit-testable
+/// and is exercised only by manual/headless on-screen verification.
 #[cfg(test)]
 mod question_view_tests {
     use super::{build_single_exchange_rows, Exchange};

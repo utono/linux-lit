@@ -382,10 +382,12 @@ impl ChatPanel {
     }
 
     /// Jump the transcript viewport straight to the top (`to_end = false`) or
-    /// bottom (`to_end = true`) — the scroll-only `gg`/`G` behavior for
-    /// `PanelView::Journal`/`Question`, which have no row cursor/page state for
-    /// `render_page` to land the accent bar on (see `transcript_cursor_move`'s
-    /// Journal/Question guard for why those views degrade to plain scrolling).
+    /// bottom (`to_end = true`) — the scroll-only `gg`/`G` fallback for
+    /// `PanelView::Journal`/`Question` when there is no row cursor/page state
+    /// to land the accent bar on (empty list, no exchange at the cursor, or a
+    /// pending Question view — see `transcript_cursor_move`'s Journal/Question
+    /// guards). Both views otherwise have a real row cursor and page state and
+    /// render through `render_paginated` like Gloss.
     pub fn scroll_transcript_to_edge(&self, to_end: bool) {
         let adj = self.transcript_scroll.vadjustment();
         if to_end {
