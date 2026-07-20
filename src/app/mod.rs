@@ -4585,11 +4585,13 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
     // it (it derives from the cursor line's vocab words). open_vocab_popup is a
     // no-op-ish when the cursor line has no vocab word, so the word only shows
     // when the cursor sits on a line containing it.
-    if state.vocab_popup.popup.is_visible() {
-        crate::app::vocab_popup::refresh_vocab_popup(state);
-    } else {
-        state.vocab_popup.auto = true;
-        crate::app::vocab_popup::open_vocab_popup(state);
+    if state.input_mode == InputMode::Reader {
+        if state.vocab_popup.popup.is_visible() {
+            crate::app::vocab_popup::refresh_vocab_popup(state);
+        } else {
+            state.vocab_popup.auto = true;
+            crate::app::vocab_popup::open_vocab_popup(state);
+        }
     }
 
     // Cross-surface refresh: the add-vocab card can fire while a gloss/journal
