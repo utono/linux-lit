@@ -2856,9 +2856,12 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
             2,
         );
     }
-    // Silence the main player for the duration; remember whether to restore.
-    s.chat_loop.main_was_playing = s.mpv_playing;
-    if s.mpv_playing {
+    // Silence the main player for the duration; remember whether to restore
+    // (sticky across re-arms — a re-arm after a nav-stop sees mpv_playing ==
+    // false because we paused main at the first arm).
+    let mpv_playing = s.mpv_playing;
+    let pause_main = s.chat_loop.on_arm(mpv_playing);
+    if pause_main {
         let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
     }
     // One chat mpv at a time: a different media path derives a different
@@ -2873,8 +2876,6 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         socket_path: socket.clone(),
         media_path: media.path.clone(),
     });
-    s.chat_loop.armed = true;
-    s.chat_loop.paused = false;
     crate::logging::log(&format!(
         "CHAT-LOOP: arm {} lines {}..{} a={:.2} b={:?} media={}",
         src.work_abbrev, first_id, last_id, a, b, media.path
@@ -2892,8 +2893,7 @@ pub(crate) fn chat_loop_stop(s: &mut AppState) {
     if let Some(p) = &s.chat_player {
         p.stop_loop();
     }
-    s.chat_loop.armed = false;
-    s.chat_loop.paused = false;
+    s.chat_loop.on_stop();
     crate::logging::log("CHAT-LOOP: stopped (nav)");
 }
 
@@ -2903,15 +2903,13 @@ pub(crate) fn chat_loop_stop(s: &mut AppState) {
 /// switch, save-and-quit). Idempotent — safe to call with nothing armed.
 pub(crate) fn chat_loop_teardown(s: &mut AppState) {
     let was_armed = s.chat_loop.armed;
+    let resume = s.chat_loop.on_teardown();
     if let Some(p) = s.chat_player.take() {
         p.quit();
     }
-    s.chat_loop.armed = false;
-    s.chat_loop.paused = false;
-    if was_armed && s.chat_loop.main_was_playing {
+    if resume {
         let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Resume);
     }
-    s.chat_loop.main_was_playing = false;
     if was_armed {
         crate::logging::log("CHAT-LOOP: teardown");
     }

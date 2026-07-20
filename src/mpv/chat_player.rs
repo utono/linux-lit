@@ -30,6 +30,38 @@ pub struct ChatLoopState {
     pub main_was_playing: bool,
 }
 
+impl ChatLoopState {
+    /// Arm-time capture: remember (sticky-OR) whether WE are the reason the
+    /// main player is paused. Returns whether the main player must be paused
+    /// now. Sticky because a re-arm after a nav-stop sees mpv_playing ==
+    /// false (we paused it at the first arm) and must not forget the restore.
+    pub fn on_arm(&mut self, mpv_playing: bool) -> bool {
+        self.main_was_playing = self.main_was_playing || mpv_playing;
+        self.armed = true;
+        self.paused = false;
+        mpv_playing
+    }
+
+    /// Nav-stop: disarm only. Main stays paused; the restore flag survives so
+    /// a later full teardown still resumes correctly.
+    pub fn on_stop(&mut self) {
+        self.armed = false;
+        self.paused = false;
+    }
+
+    /// Full teardown. Returns whether the main player must be resumed —
+    /// keyed on main_was_playing ALONE (it is set only at arm and cleared
+    /// only here, so it precisely encodes "we paused main and haven't
+    /// restored it"), never on armed, which a nav-stop already cleared.
+    pub fn on_teardown(&mut self) -> bool {
+        let resume = self.main_was_playing;
+        self.armed = false;
+        self.paused = false;
+        self.main_was_playing = false;
+        resume
+    }
+}
+
 /// The displayed entry's source passage, resolved from the ENTRY's own
 /// identity. The line fields are per-division line numbers (`line_in_div`) —
 /// NOT `line_mapping.id`s. They are resolved to global ids at space-time via
@@ -246,6 +278,45 @@ mod tests {
         assert!(loop_source_from(Some(&empty), None, Some("TGV-Amb")).is_none());
         // Nothing pinned at all → None.
         assert!(loop_source_from(None, None, Some("TGV-Amb")).is_none());
+    }
+
+    #[test]
+    fn teardown_resumes_after_nav_stop() {
+        // arm(playing) → nav-stop → full teardown must resume: the nav-stop
+        // cleared `armed`, but main_was_playing still says we paused main.
+        let mut st = ChatLoopState::default();
+        assert!(st.on_arm(true));
+        st.on_stop();
+        assert!(st.on_teardown());
+    }
+
+    #[test]
+    fn teardown_resumes_after_rearm_sticky_capture() {
+        // arm(true) → nav-stop → re-arm(false, main already paused by us) →
+        // teardown must still resume (sticky main_was_playing capture).
+        let mut st = ChatLoopState::default();
+        st.on_arm(true);
+        st.on_stop();
+        assert!(!st.on_arm(false)); // we don't re-pause; already paused
+        assert!(st.on_teardown());
+    }
+
+    #[test]
+    fn teardown_does_not_resume_when_main_was_not_playing() {
+        // We never paused main → never resume it.
+        let mut st = ChatLoopState::default();
+        assert!(!st.on_arm(false));
+        assert!(!st.on_teardown());
+    }
+
+    #[test]
+    fn teardown_clears_flag_for_next_cycle() {
+        let mut st = ChatLoopState::default();
+        st.on_arm(true);
+        assert!(st.on_teardown());
+        // Fresh cycle where main was NOT playing → flag actually cleared.
+        assert!(!st.on_arm(false));
+        assert!(!st.on_teardown());
     }
 
     #[test]
