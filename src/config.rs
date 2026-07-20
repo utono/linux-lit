@@ -732,8 +732,8 @@ mod last_gloss_tests {
             config.theme_cycle(),
             vec![
                 "zenbones-light",
-                "zenwritten-light",
                 "papercolor-light",
+                "zenwritten-light",
                 "sepia-lightest",
                 "green-lightest",
                 "sepia-light",
