@@ -1686,6 +1686,14 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::focus_reader(&mut s);
             true
         }
+        // `space`: loop playback of the displayed entry's source passage on
+        // the chat panel's DEDICATED mpv (armed → pause toggle). The global
+        // reader space guard only intercepts in InputMode::Reader, so the
+        // key reaches this arm untouched.
+        "space" => {
+            crate::input::actions::chat::toggle_source_loop(state);
+            true
+        }
         _ => true,
     }
 }

@@ -2741,6 +2741,143 @@ pub(crate) mod chat_revision {
     }
 }
 
+/// `space` in the transcript: loop playback of the displayed entry's source
+/// passage on the DEDICATED chat mpv (never the main player). Armed → plain
+/// pause toggle. See the design doc
+/// docs/superpowers/specs/2026-07-20-chat-panel-space-loop-design.md.
+pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
+    // Already armed: space is the pause toggle, nothing else.
+    {
+        let mut s = state.borrow_mut();
+        if s.chat_loop.armed {
+            if let Some(p) = &s.chat_player {
+                p.toggle_pause();
+            }
+            s.chat_loop.paused = !s.chat_loop.paused;
+            return;
+        }
+    }
+
+    // Resolve the entry's OWN source work + line range (never current_work
+    // for a glossed entry — the future cross-work `f` finder relies on it).
+    let src = {
+        let s = state.borrow();
+        crate::mpv::chat_player::loop_source_from(
+            s.chat.gloss_ctx.as_ref(),
+            s.chat.pinned_passage.as_ref(),
+            s.current_work.as_ref().map(|w| w.abbrev.as_str()),
+        )
+    };
+    let Some(src) = src else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No source passage to play", 2);
+        return;
+    };
+
+    // Default media + loop points, all standalone DB reads (the work need
+    // not be loaded in the main card).
+    let Ok(conn) = crate::db::queries::open_db() else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "Database unavailable", 2);
+        return;
+    };
+    let media = crate::db::queries::list_media_for_work(&conn, &src.work_abbrev)
+        .ok()
+        .and_then(|items| crate::mpv::chat_player::pick_default_media(&items));
+    let Some(media) = media else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(
+            &s,
+            &format!("No media for {}", src.work_abbrev),
+            2,
+        );
+        return;
+    };
+    let Some(start) =
+        crate::db::queries::line_start_time(&conn, src.first_line_id, media.media_id)
+    else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No timestamps for this passage", 2);
+        return;
+    };
+    // b-point: last line's end_time, else the next start AFTER the last
+    // line's own start, else play once (no loop).
+    let last_start = crate::db::queries::line_start_time(&conn, src.last_line_id, media.media_id)
+        .unwrap_or(start);
+    let b = crate::db::queries::line_end_time(&conn, src.last_line_id, media.media_id)
+        .or_else(|| crate::db::queries::next_start_after(&conn, media.media_id, last_start));
+    // Loop from a hair before the first line (preroll), every pass.
+    let a = crate::input::navigation::preroll_seek_time(start);
+
+    let mut s = state.borrow_mut();
+    if b.is_none() {
+        crate::input::navigation::show_chapter_toast_secs(
+            &s,
+            "No end timestamp \u{2014} playing once",
+            2,
+        );
+    }
+    // Silence the main player for the duration; remember whether to restore.
+    s.chat_loop.main_was_playing = s.mpv_playing;
+    if s.mpv_playing {
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+    }
+    // One chat mpv at a time: a different media path derives a different
+    // socket, so quit any old process before pointing the handle elsewhere.
+    let socket = crate::mpv::discovery::derive_socket_path_marked(&media.path, "chat-");
+    if let Some(old) = &s.chat_player {
+        if old.socket_path != socket {
+            old.quit();
+        }
+    }
+    s.chat_player = Some(crate::mpv::chat_player::ChatPlayer {
+        socket_path: socket.clone(),
+        media_path: media.path.clone(),
+    });
+    s.chat_loop.armed = true;
+    s.chat_loop.paused = false;
+    crate::logging::log(&format!(
+        "CHAT-LOOP: arm {} lines {}..{} a={:.2} b={:?} media={}",
+        src.work_abbrev, src.first_line_id, src.last_line_id, a, b, media.path
+    ));
+    crate::mpv::chat_player::spawn_and_arm(socket, media.path, a, b);
+}
+
+/// Nav-stop: disarm the loop but keep the chat mpv process AND keep the main
+/// player paused — the user is likely about to `space` the next entry.
+/// `main_was_playing` is preserved so a later full exit still restores.
+pub(crate) fn chat_loop_stop(s: &mut AppState) {
+    if !s.chat_loop.armed {
+        return;
+    }
+    if let Some(p) = &s.chat_player {
+        p.stop_loop();
+    }
+    s.chat_loop.armed = false;
+    s.chat_loop.paused = false;
+    crate::logging::log("CHAT-LOOP: stopped (nav)");
+}
+
+/// Full teardown: disarm, QUIT the chat mpv process, and resume the main
+/// player iff it was playing at arm time. Every path that leaves the
+/// transcript funnels here (Escape's focus_reader, panel close, work
+/// switch, save-and-quit). Idempotent — safe to call with nothing armed.
+pub(crate) fn chat_loop_teardown(s: &mut AppState) {
+    let was_armed = s.chat_loop.armed;
+    if let Some(p) = s.chat_player.take() {
+        p.quit();
+    }
+    s.chat_loop.armed = false;
+    s.chat_loop.paused = false;
+    if was_armed && s.chat_loop.main_was_playing {
+        let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Resume);
+    }
+    s.chat_loop.main_was_playing = false;
+    if was_armed {
+        crate::logging::log("CHAT-LOOP: teardown");
+    }
+}
+
 #[cfg(test)]
 mod placement_tests {
     use super::*;
