@@ -41,6 +41,11 @@ pub struct AskCard {
     /// Insert-mode caret blink timer (GTK won't blink a non-editable view's
     /// caret natively). `Some` only while the vim engine is in Insert mode.
     blink: std::cell::RefCell<Option<glib::SourceId>>,
+    /// True when the host overlay's text column uses the main prose reading
+    /// card's margin (card/8) rather than the uniform overlay margin (card/5),
+    /// so `open` insets the card to the same column. Set by the journal
+    /// overlay's `set_prose_reading`; gloss/synopsis leave the default false.
+    prose_reading: Cell<bool>,
 }
 
 impl AskCard {
@@ -132,6 +137,7 @@ impl AskCard {
             return_focus: return_focus.clone().upcast(),
             vim: std::cell::RefCell::new(None),
             blink: std::cell::RefCell::new(None),
+            prose_reading: Cell::new(false),
         }
     }
 
@@ -212,7 +218,14 @@ impl AskCard {
         self.legend.set_text(legend);
         self.legend.set_visible(!legend.is_empty());
         if card_width > 0 {
-            let margin = crate::ui::prose_column_margin(card_width);
+            // Match the host overlay's text column: card/8 when the journal is
+            // showing a prose work at the main reading card's margin, card/5
+            // otherwise (see `prose_reading`).
+            let margin = if self.prose_reading.get() {
+                crate::ui::prose_reading_card_margin(card_width)
+            } else {
+                crate::ui::prose_column_margin(card_width)
+            };
             self.container.set_margin_start(margin);
             self.container.set_margin_end(margin);
         }
@@ -228,6 +241,14 @@ impl AskCard {
         self.set_focus(AskFocus::Ask);
         let _ = self.input.grab_focus();
         self.mirror_vim();
+    }
+
+    /// Inset the card at the main prose reading card's margin (card/8) instead
+    /// of the uniform overlay margin (card/5) on subsequent `open`s. The
+    /// journal overlay forwards its own prose flag here so the ask card and
+    /// the Q&A column stay on the same edges.
+    pub fn set_prose_reading(&self, prose: bool) {
+        self.prose_reading.set(prose);
     }
 
     /// Feed one key to the input's vim engine, mirror, and return the

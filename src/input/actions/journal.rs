@@ -541,6 +541,13 @@ pub(crate) fn render_current(s: &mut AppState) {
     // card spanned edge-to-edge for novels while plays (already wide) looked
     // correct. `overlay_card_size` mirrors what the reader's card actually shows.
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
+    // Prose works get the main reading card's tighter column (card/8) so the
+    // overlay text margins equal the 1-col prose layout; see size_card.
+    let is_prose = s
+        .current_work
+        .as_ref()
+        .is_some_and(|w| crate::db::line_types::is_prose_work(&w.work_type));
+    s.journal_overlay.set_prose_reading(is_prose);
     let footer_left = footer_left_text(&work_abbrev, s.journal_band.clone());
 
     // A passage ask in flight (visual selection → Journal Q&A): render the
