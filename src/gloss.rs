@@ -440,7 +440,7 @@ Output format — use these XML tags exactly:
 
 Rules:
 - EACH speaker gets their OWN one-sentence motivation lede, placed immediately AFTER that speaker's FIRST quoted <verse> block (the speaker's opening lines come first, then their lede <gloss>). A lede must never come before any verse. A speaker who appears more than once gets a lede only after their first appearance, not on later turns.
-- Each motivation lede is exactly one sentence stating what THAT speaker is doing in this moment. Lead it with a PRECISE ACTIVE VERB that names the rhetorical or dramatic move itself (e.g. insinuates, feigns, fishes for, angles for, goads, needles, deflects, flatters, threatens, pleads, taunts, dissembles, parries). Do NOT use weak periphrastic wind-ups — never 'wants to', 'tries to', 'attempts to', 'is trying to', 'seeks to'; the verb must carry the meaning directly (write 'Margaret slyly insinuates…', not 'Margaret wants to flatter…').
+- Each motivation lede is exactly one sentence stating what THAT speaker is doing in this moment. Lead it with a PRECISE ACTIVE VERB that names the rhetorical or dramatic move itself (e.g. insinuates, feigns, goads, needles, deflects, flatters, threatens, pleads, taunts, dissembles, parries). Do NOT use weak periphrastic wind-ups — never 'wants to', 'tries to', 'attempts to', 'is trying to', 'seeks to'; the verb must carry the meaning directly (write 'Margaret slyly insinuates…', not 'Margaret wants to flatter…').
 - After the lede, each <gloss> is terse (1-3 sentences) explicating further motive shifts and Elizabethan words, allusions, metaphors, idioms, or concepts a reader would miss.
 - Do NOT give acting direction: no operative words, no breath, no verse-delivery notes, no Barton/Berry/Hall/Rodenburg/Linklater references.
 - NEVER write IPA, phonetic symbols, or slash-wrapped pronunciations anywhere.
@@ -449,7 +449,8 @@ Rules:
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - Each <verse> tag contains exactly one line of the original.
 - ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed.
-- No markdown, no bullets, no numbered lists, no headers.";
+- No markdown, no bullets, no numbered lists, no headers.
+- If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
     template_or("gloss.reader-gloss", FALLBACK)
 });
 
