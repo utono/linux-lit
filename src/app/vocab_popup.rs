@@ -103,6 +103,9 @@ pub(crate) fn position_vocab_popup(state: &AppState) {
         let (_, card_h) = crate::app::layout::main_card_rect(state);
         let (x, w) = crate::app::layout::column_float_rect(state, over_right);
         state.vocab_popup.popup.place_float(x, w, card_h);
+        crate::logging::log(&format!(
+            "VOCAB POPUP: float col_x={x} col_w={w} card_h={card_h}"
+        ));
         return;
     }
     let window = state.text_view.root()

@@ -1345,9 +1345,9 @@ pub fn generate_css(
            border-radius: 12px; padding: 20px 24px; }} \
          .vocab-popup {{ background-color: {root}; color: {vocab_popup_fg}; \
            padding: 16px 20px; border-radius: 12px; }} \
-         .vocab-popup.vocab-popup-float {{ background-color: {bg}; \
-           border: 1px solid alpha({fg}, 0.25); border-radius: 8px; \
-           padding: 12px 16px; }} \
+         .vocab-popup.vocab-popup-float {{ background-color: {root}; \
+           border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
+           padding: 14px 18px; }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
          .vocab-popup .definition-word {{ font-size: 16px; color: {vocab_popup_fg}; }} \
