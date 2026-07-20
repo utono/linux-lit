@@ -144,6 +144,11 @@ async fn handle_command(
                 let _ = send_command(w, r#"{"command":["set_property","pause",true]}"#).await;
             }
         }
+        MpvCommand::Resume => {
+            if let Some(w) = writer.as_mut() {
+                let _ = send_command(w, r#"{"command":["set_property","pause",false]}"#).await;
+            }
+        }
         MpvCommand::ResumeAndSeek(time) => {
             if let Some(w) = writer.as_mut() {
                 crate::logging::log(&format!("MPV: ResumeAndSeek time={:.1}", time));
