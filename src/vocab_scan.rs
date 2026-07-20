@@ -38,7 +38,7 @@ pub fn scan_line(text: &str, line_index: usize, words: &HashSet<String>, out: &m
     let mut in_word = false;
     let mut word_start = 0usize;
     let mut word_buf = String::new();
-    let mut flush = |buf: &str, start: usize, end: usize, out: &mut Vec<VocabSpan>| {
+    let flush = |buf: &str, start: usize, end: usize, out: &mut Vec<VocabSpan>| {
         let lower = buf.to_lowercase();
         if words.contains(&lower) {
             out.push(VocabSpan { word: lower, line_index, char_start: start, char_end: end });
