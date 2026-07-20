@@ -136,6 +136,19 @@ impl VocabPopup {
         let _ = h;
     }
 
+    /// Overlay/chat placement: compact card anchored to the window's lower
+    /// right, natural size (the popup floats above the overlay chain).
+    pub fn place_corner(&self) {
+        self.container.remove_css_class("vocab-popup-float");
+        self.container.set_halign(gtk4::Align::End);
+        self.container.set_valign(gtk4::Align::End);
+        self.container.set_margin_start(0);
+        self.container.set_margin_end(24);
+        self.container.set_margin_bottom(24);
+        self.container.set_width_request(-1);
+        self.container.set_height_request(-1);
+    }
+
     pub fn show(&self) {
         self.container.set_visible(true);
     }

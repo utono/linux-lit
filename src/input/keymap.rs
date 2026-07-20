@@ -204,6 +204,43 @@ pub fn handle_key(
         }
     }
 
+    // rr chord, all vocab surfaces: a second quick `r` toggles the popup.
+    // Runs BEFORE mode dispatch so the overlay/chat handlers share it; armed
+    // only by surfaces that bind `r` to the vocab tap. Any other key clears the
+    // pending tap and dispatches normally, in every mode. The chord state is
+    // cleared before the per-mode match so a non-`r` key still routes onward.
+    if key_state.borrow().chord == ChordState::PendingR {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "r" && !is_ctrl && !is_shift && !is_alt {
+            // InputMode is Copy — take the value out of the borrow before the
+            // per-mode match so no read borrow is held across vocab_chord_toggle
+            // (which takes a mutable borrow).
+            let mode = state.borrow().input_mode;
+            match mode {
+                crate::app::InputMode::Reader => {
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::CursorLine, false);
+                    return true;
+                }
+                crate::app::InputMode::GlossOverlay => {
+                    let words = gloss_overlay_scope_words(state);
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    return true;
+                }
+                crate::app::InputMode::JournalOverlay => {
+                    let words = journal_overlay_scope_words(state);
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    return true;
+                }
+                crate::app::InputMode::ChatTranscript => {
+                    let words = chat_scope_words(state);
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Mode dispatch — delegate to per-mode handler functions
     let mode = state.borrow().input_mode;
     if mode != crate::app::InputMode::Reader {
@@ -305,41 +342,6 @@ pub fn handle_key(
         }
     }
 
-    // rr sequence check: a second quick `r` toggles the vocab popup's
-    // visibility — show when hidden, hide when visible (the first tap
-    // already cycled a word when it was visible; see Action::VocabPopupTap).
-    // Any other key clears the pending tap and dispatches normally.
-    if key_state.borrow().chord == ChordState::PendingR {
-        key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "r" && !is_ctrl && !is_shift && !is_alt {
-            let mut s = state.borrow_mut();
-            if s.vocab_popup.popup.is_visible() {
-                s.vocab_popup.auto = false;
-                crate::app::vocab_popup::close_vocab_popup(&mut s);
-            } else {
-                // Opening the popup also turns vocab highlighting ON if it was
-                // off (and persists it), so the words the popup lists are goled
-                // in the body too. Rebuild matches from the current word set so
-                // a live-added word is included.
-                if !s.vocab_highlight_visible {
-                    s.vocab_highlight_visible = true;
-                    crate::app::refresh_vocab_matches(&mut s);
-                    crate::app::apply_vocab_highlighting(&s);
-                    if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
-                        if let Err(e) = crate::db::queries::open_db_rw().and_then(|conn| {
-                            crate::db::queries::set_vocab_highlight(&conn, &abbrev, true)
-                        }) {
-                            crate::logging::log(&format!("VOCAB: persist failed for {abbrev}: {e}"));
-                        }
-                    }
-                }
-                s.vocab_popup.auto = true;
-                crate::app::vocab_popup::open_vocab_popup(&mut s);
-            }
-            return true;
-        }
-    }
-
     // .. sequence check: the first `.` toggled the bookmark
     // (Action::BookmarkTap); the second quick `.` reverts that toggle (net
     // zero) and opens the bookmark picker instead.
@@ -374,6 +376,64 @@ pub fn handle_key(
     }
 
     false
+}
+
+/// Shared body for the `rr` chord across every vocab surface. Toggles the
+/// popup: if visible, close it (clearing `auto`); if hidden, ensure vocab
+/// highlighting is on (enabling + persisting it when it was off, exactly as the
+/// old Reader-only path did) and open the popup for `scope`. `corner=true`
+/// anchors the compact card to the window's lower right (overlay/chat).
+///
+/// Takes a single `borrow_mut` for the whole body — the caller must not hold
+/// any borrow of `state` across this call (the hoisted chord block copies the
+/// InputMode out of its borrow first, so this is the only borrow).
+fn vocab_chord_toggle(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    scope: crate::app::vocab_popup::VocabScope,
+    corner: bool,
+) {
+    let mut s = state.borrow_mut();
+    if s.vocab_popup.popup.is_visible() {
+        s.vocab_popup.auto = false;
+        crate::app::vocab_popup::close_vocab_popup(&mut s);
+        return;
+    }
+    // Opening the popup also turns vocab highlighting ON if it was off (and
+    // persists it), so the words the popup lists are golded in the body too.
+    // Rebuild matches from the current word set so a live-added word is
+    // included.
+    if !s.vocab_highlight_visible {
+        s.vocab_highlight_visible = true;
+        crate::app::refresh_vocab_matches(&mut s);
+        crate::app::apply_vocab_highlighting(&s);
+        if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
+            if let Err(e) = crate::db::queries::open_db_rw().and_then(|conn| {
+                crate::db::queries::set_vocab_highlight(&conn, &abbrev, true)
+            }) {
+                crate::logging::log(&format!("VOCAB: persist failed for {abbrev}: {e}"));
+            }
+        }
+    }
+    s.vocab_popup.auto = true;
+    crate::app::vocab_popup::open_vocab_popup_scoped(&mut s, scope, corner);
+}
+
+/// Vocab words visible in the gloss overlay (the `rr` scope there).
+/// Filled by Task 7.
+fn gloss_overlay_scope_words(_state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    Vec::new()
+}
+
+/// Vocab words visible in the journal overlay (the `rr` scope there).
+/// Filled by Task 8.
+fn journal_overlay_scope_words(_state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    Vec::new()
+}
+
+/// Vocab words visible in the chat transcript (the `rr` scope there).
+/// Filled by Task 9.
+fn chat_scope_words(_state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    Vec::new()
 }
 
 /// Handle a key RELEASE. Only used for the Shift-tap timestamp delete/undo:

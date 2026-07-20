@@ -29,8 +29,20 @@ pub enum JournalDisplay {
     Error { word: String, question: String, message: String },
 }
 
-/// Load vocab data for all words on the current line into state, show popup with first word.
-pub fn open_vocab_popup(state: &mut AppState) {
+/// Which words the popup loads on open.
+pub enum VocabScope {
+    /// Every unique vocab match on the reader's current line (the historical
+    /// `rr` behavior, main card only).
+    CursorLine,
+    /// An explicit word list — the overlay/chat surfaces collect these from
+    /// their own visible text and hand them in.
+    Words(Vec<String>),
+}
+
+/// Load vocab data for the words in `scope` into state and show the popup with
+/// the first word. `corner=true` anchors the compact card to the window's
+/// lower right (overlay/chat surfaces) instead of the reader placement.
+pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, corner: bool) {
     use crate::ui::vocab_popup::{VocabWordData, VocabView};
 
     let conn = match crate::db::queries::open_db() {
@@ -45,22 +57,30 @@ pub fn open_vocab_popup(state: &mut AppState) {
         Some(line.citation.clone())
     });
 
-    // Collect unique vocab words on the current line
-    let current_line = state.current_line;
-    crate::logging::log(&format!(
-        "VOCAB POPUP: current_line={}", current_line
-    ));
-    let mut seen = std::collections::HashSet::new();
-    let words: Vec<String> = state
-        .vocab_matches
-        .iter()
-        .filter(|m| m.line_index == current_line)
-        .filter(|m| seen.insert(m.word.clone()))
-        .map(|m| m.word.clone())
-        .collect();
+    // Collect the unique word set for this scope.
+    let words: Vec<String> = match scope {
+        VocabScope::CursorLine => {
+            let current_line = state.current_line;
+            crate::logging::log(&format!(
+                "VOCAB POPUP: current_line={}", current_line
+            ));
+            let mut seen = std::collections::HashSet::new();
+            state
+                .vocab_matches
+                .iter()
+                .filter(|m| m.line_index == current_line)
+                .filter(|m| seen.insert(m.word.clone()))
+                .map(|m| m.word.clone())
+                .collect()
+        }
+        VocabScope::Words(w) => {
+            let mut seen = std::collections::HashSet::new();
+            w.into_iter().filter(|w| seen.insert(w.clone())).collect()
+        }
+    };
 
     if words.is_empty() {
-        crate::logging::log("VOCAB POPUP: no vocab words on current line");
+        crate::logging::log("VOCAB POPUP: no vocab words in scope");
         return;
     }
     crate::logging::log(&format!("VOCAB POPUP: {} words: {:?}", words.len(), words));
@@ -85,10 +105,19 @@ pub fn open_vocab_popup(state: &mut AppState) {
     state.vocab_popup.index = 0;
     state.vocab_popup.view = VocabView::Definition;
     state.vocab_popup.journal = None;
-    state.vocab_popup.line = Some(current_line);
+    state.vocab_popup.line = Some(state.current_line);
 
-    position_vocab_popup(state);
+    if corner {
+        state.vocab_popup.popup.place_corner();
+    } else {
+        position_vocab_popup(state);
+    }
     show_vocab_popup(state);
+}
+
+/// Load vocab data for all words on the current line into state, show popup with first word.
+pub fn open_vocab_popup(state: &mut AppState) {
+    open_vocab_popup_scoped(state, VocabScope::CursorLine, false);
 }
 
 /// Place the vocab popup for the current layout. Single-column: the strip
