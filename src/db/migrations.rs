@@ -305,6 +305,27 @@ pub fn ensure_journal_audio_table(conn: &Connection) -> Result<(), rusqlite::Err
     ))
 }
 
+/// Generic marker table for one-shot migrations/cleanups that must run
+/// exactly once ever, across the DB's whole lifetime — as opposed to the
+/// `ensure_*` DDL probes above, which are safe to re-run every launch because
+/// `CREATE TABLE IF NOT EXISTS` / column-existence checks are naturally
+/// idempotent. A cleanup like `purge_stale_passage_journal_audio` is NOT: its
+/// WHERE clause matches a durable data shape (passage-scope entries with
+/// source_text), so re-running it on every launch would delete legitimate
+/// rows created after the first run, not just the originally-stale ones.
+pub fn ensure_one_time_migrations_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS one_time_migrations (
+             key         TEXT PRIMARY KEY,
+             applied_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+         )",
+    )
+}
+
+/// Marker key claimed by `purge_stale_passage_journal_audio` so the cleanup
+/// below runs exactly once across the DB's lifetime.
+const PURGE_PASSAGE_JOURNAL_AUDIO_KEY: &str = "purge-passage-journal-audio-2026-07-20";
+
 /// One-time cleanup for the verse-source paragraph-regrouping fix (commit
 /// 9ac15c5e): that change collapsed a passage Q&A's quoted `<verse>`/`<stage>`
 /// source lines from one-paragraph-per-line into a single multi-line
@@ -319,12 +340,25 @@ pub fn ensure_journal_audio_table(conn: &Connection) -> Result<(), rusqlite::Err
 /// the ones whose paragraph layout changed; delete their cached rows so
 /// `find_journal_audio` misses and `play_journal_block` re-synthesizes
 /// on demand (mirrors `purge_journal_audio`'s delete-and-resynthesize
-/// contract, just scoped to the affected entries instead of one). The DELETE
-/// is naturally idempotent — the first run empties the offending rows, every
-/// later run's WHERE-clause join finds nothing left to delete — so, unlike
-/// the column-existence probes elsewhere in this file, no extra "have I run
-/// already" marker is needed.
+/// contract, just scoped to the affected entries instead of one).
+///
+/// The WHERE clause is NOT naturally idempotent: it matches on the durable
+/// shape "passage entry with source_text", so a fresh passage Q&A answered
+/// (and its audio re-synthesized) after the first run would match the SAME
+/// clause on the next launch and get deleted again — silently re-billing
+/// ElevenLabs synthesis forever. This fn claims a persistent marker in
+/// `one_time_migrations` (caller must `ensure_one_time_migrations_table`
+/// first) before deleting anything; if the marker was already claimed by a
+/// prior run, it returns `Ok(0)` without touching `journal_audio` at all.
 pub fn purge_stale_passage_journal_audio(conn: &Connection) -> Result<usize, rusqlite::Error> {
+    let claimed = conn.execute(
+        "INSERT OR IGNORE INTO one_time_migrations (key) VALUES (?1)",
+        [PURGE_PASSAGE_JOURNAL_AUDIO_KEY],
+    )?;
+    if claimed == 0 {
+        // Marker already present from a prior run — already applied, skip.
+        return Ok(0);
+    }
     conn.execute(
         "DELETE FROM journal_audio
          WHERE entry_id IN (
@@ -353,6 +387,7 @@ mod tests {
         )
         .unwrap();
         ensure_journal_audio_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
         conn
     }
 
@@ -410,14 +445,32 @@ mod tests {
     }
 
     #[test]
-    fn purge_is_idempotent() {
+    fn purge_is_marker_guarded_and_spares_fresh_rows_after_first_run() {
         let conn = make_test_db();
         insert_entry(&conn, 1, "passage", Some("<verse>a</verse>"));
         insert_audio(&conn, 1, 0);
 
         assert_eq!(purge_stale_passage_journal_audio(&conn).unwrap(), 1);
-        // Second run finds nothing left to delete — safe to call on every launch.
+
+        // A fresh passage Q&A is answered (and its audio synthesized) AFTER
+        // the first run — entry 2 matches the exact same WHERE clause as
+        // entry 1 did (passage scope, non-null source_text).
+        insert_entry(&conn, 2, "passage", Some("<verse>c</verse>"));
+        insert_audio(&conn, 2, 0);
+
+        // Second run must short-circuit on the marker (0 deleted), NOT
+        // re-run the DELETE — otherwise it would match and wipe entry 2's
+        // brand-new audio, re-billing synthesis on every launch.
         assert_eq!(purge_stale_passage_journal_audio(&conn).unwrap(), 0);
+
+        let entry2_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM journal_audio WHERE entry_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(entry2_rows, 1, "fresh audio inserted after the first run must survive");
     }
 
     #[test]
@@ -428,6 +481,7 @@ mod tests {
         // this fn's Result as `let _ =`, matching every other ensure_* call.
         let conn = Connection::open_in_memory().unwrap();
         ensure_journal_audio_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
         assert!(purge_stale_passage_journal_audio(&conn).is_err());
     }
 }

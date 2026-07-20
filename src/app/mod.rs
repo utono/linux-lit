@@ -3248,6 +3248,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::journal::ensure_rewrite_revisions_table(&conn);
             let _ = crate::db::queries::ensure_canonical_artifact_abbrevs(&conn);
             let _ = crate::db::migrations::ensure_journal_audio_table(&conn);
+            let _ = crate::db::migrations::ensure_one_time_migrations_table(&conn);
             let _ = crate::db::migrations::purge_stale_passage_journal_audio(&conn);
         }
     });
