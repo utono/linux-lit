@@ -1142,11 +1142,10 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     open_journal_scene(state);
 }
 
-/// Open the journal overlay on the cursor's Scene band. When that scene band has
-/// no Q&A, open the work-wide Q&A picker instead (reader-initiated, so confirm
-/// reveals the overlay on the chosen page and Escape returns to the reader) —
-/// letting the reader jump to any existing Q&A rather than landing on a blank
-/// band. Assumes reader mode / no conflicting overlay is showing; saves
+/// Open the journal overlay on the cursor's Scene band. When that scene band
+/// has no Q&A, toast "no journal entry" and stay in the reader — never the
+/// work-wide picker, which has its own bind (`OpenJournalPicker`).
+/// Assumes reader mode / no conflicting overlay is showing; saves
 /// `return_pos` from the current cursor. Shared by the reader Ctrl+j
 /// (`toggle_overlay`'s open half) and the `\` overlay cycle
 /// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
@@ -1213,11 +1212,16 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
         (d1, d2, scene_pages.is_empty())
     };
 
-    // Scene band has no Q&A: open the work-wide picker from the reader instead of
-    // landing on a blank scene band. If the whole work has no Q&A either, the
-    // picker toasts "No journal pages yet" and stays in the reader.
+    // Scene band has no Q&A: toast and stay in the reader instead of landing
+    // on a blank scene band or popping the work-wide picker (the picker keeps
+    // its own dedicated bind).
     if scene_empty {
-        open_picker_from_reader(state);
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(
+            &s,
+            "No journal entry for this segment",
+            3,
+        );
         return;
     }
 

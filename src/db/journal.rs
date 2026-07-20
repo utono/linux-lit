@@ -579,25 +579,49 @@ pub fn find_journal_page_for_line(
     div2: i64,
     line_in_div: i64,
 ) -> Result<Option<(i64, i64, i64)>, rusqlite::Error> {
-    let line_of =
-        |col: &str| format!("CAST(replace({col}, rtrim({col}, '0123456789'), '') AS INTEGER)");
-    let start_line = line_of("start_citation");
-    let end_line = line_of("end_citation");
-    let sql = format!(
-        "SELECT div1, div2, id FROM journal_entries \
+    // Match on the CITATION's own parsed address, not the entry's stored band
+    // `(div1, div2)`: a litdb re-import can renumber an edition's chapters
+    // (front-matter offset), leaving old entries banded under one numbering
+    // while their citations — written from the reading cursor — address the
+    // other. The band columns still say where the entry is FILED, so return
+    // them for `land_on_page`; the citation says where the passage LIVES.
+    let mut stmt = conn.prepare(
+        "SELECT div1, div2, id, start_citation, end_citation FROM journal_entries \
          WHERE work_abbrev = ?1 AND scope = 'passage' \
-           AND div1 = ?2 AND div2 = ?3 \
-           AND start_citation IS NOT NULL AND end_citation IS NOT NULL \
-           AND {start_line} <= ?4 AND {end_line} >= ?4 \
-         ORDER BY {start_line} DESC, id DESC \
-         LIMIT 1"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query_map(
-        rusqlite::params![work_abbrev, div1, div2, line_in_div],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+           AND start_citation IS NOT NULL AND end_citation IS NOT NULL",
     )?;
-    rows.next().transpose()
+    let rows = stmt.query_map([work_abbrev], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+    // Priority when several passages contain the line: nearest start (largest
+    // start_line <= line wins, so a narrow passage nested in a wider one is
+    // preferred), tie-break newest id.
+    let mut best: Option<(i64, i64, i64, i64)> = None; // (start_line, id, band_d1, band_d2)
+    for row in rows {
+        let (bd1, bd2, id, start, end) = row?;
+        let (Some((sd1, sd2, sl)), Some((ed1, ed2, el))) = (
+            crate::db::models::parse_citation(&start),
+            crate::db::models::parse_citation(&end),
+        ) else {
+            continue;
+        };
+        if (sd1, sd2) != (div1, div2) || (ed1, ed2) != (div1, div2) {
+            continue;
+        }
+        if !(sl <= line_in_div && line_in_div <= el) {
+            continue;
+        }
+        if best.map_or(true, |(bs, bid, _, _)| (sl, id) > (bs, bid)) {
+            best = Some((sl, id, bd1, bd2));
+        }
+    }
+    Ok(best.map(|(_, id, bd1, bd2)| (bd1, bd2, id)))
 }
 
 pub fn find_journal_scenes(
@@ -940,6 +964,28 @@ mod tests {
         ).unwrap();
         let (_d1, _d2, id) = find_journal_page_for_line(&conn, "Ham", 1, 2, 11).unwrap().unwrap();
         assert_eq!(id, newer);
+    }
+
+    #[test]
+    fn journal_page_for_line_matches_citation_divs_not_band_divs() {
+        let conn = mem();
+        // An edition re-import shifted the chapter numbering: this entry is
+        // BANDED under div1=11 but its citation addresses chapter 10
+        // (BH.10.0.948). The cursor reads the current edition, where the
+        // paragraph is (10, 0, 948). The lookup must match on the CITATION's
+        // parsed divs — and still return the stored band (11, 0), which is
+        // where land_on_page has to look for the entry.
+        let id = save_passage_page(
+            &conn, "BH", 11, 0, "BH.10.0.948", "BH.10.0.948",
+            "<p>Here, beneath the painted ceiling…</p>", "Q?", "A.", "m",
+        ).unwrap();
+        let (bd1, bd2, found) =
+            find_journal_page_for_line(&conn, "BH", 10, 0, 948).unwrap().unwrap();
+        assert_eq!(found, id);
+        assert_eq!((bd1, bd2), (11, 0), "returns the stored band, not the citation divs");
+        // The band address alone (11, 0, 948) matches nothing: only the
+        // citation says where the passage lives in the text.
+        assert!(find_journal_page_for_line(&conn, "BH", 11, 0, 948).unwrap().is_none());
     }
 
     #[test]

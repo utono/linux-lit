@@ -4,6 +4,17 @@ pub fn citation(abbrev: &str, div1: i64, div2: i64, line_in_div: i64) -> String 
     format!("{}.{}.{}.{}", abbrev, div1, div2, line_in_div)
 }
 
+/// Parse a citation address back to `(div1, div2, line_in_div)`. The abbrev
+/// prefix (including `-Amb`-style suffixes) is irrelevant — only the trailing
+/// three numbers matter. Inverse of [`citation`].
+pub fn parse_citation(cite: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = cite.rsplitn(4, '.');
+    let line = parts.next()?.parse().ok()?;
+    let div2 = parts.next()?.parse().ok()?;
+    let div1 = parts.next()?.parse().ok()?;
+    Some((div1, div2, line))
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Work {
