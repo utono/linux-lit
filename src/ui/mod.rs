@@ -3,6 +3,7 @@ pub mod markdown;
 pub mod action_popup;
 pub mod ask_card;
 pub mod chat_panel;
+pub(crate) mod chat_pagination;
 pub(crate) mod bottom_clip_guard;
 pub mod footer;
 pub mod concordance_bar;

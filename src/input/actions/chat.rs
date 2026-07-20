@@ -43,6 +43,15 @@ const CHAT_PANEL_TOP_INSET: i32 = 19;
 /// `CHAT_PANEL_TOP_INSET` below the panel container's top, so back that out to
 /// align the LINES, not the container edges. Shared by both `size_panel`
 /// placements (Pinned and Float) so their first-line alignment can't drift.
+/// The real transcript font — `(config.font_family, config.font_size)` — the
+/// same source `theme::generate_css` builds the `.chat-transcript` rule from
+/// (app/mod.rs). Threaded into the panel's measure/paginate path so pagination
+/// measures at the size the labels actually render, not the pango context's
+/// stale font description.
+fn transcript_font(s: &AppState) -> (String, i32) {
+    (s.config.font_family.clone(), s.config.font_size as i32)
+}
+
 fn chat_first_line_top_margin(line_spacing: i32) -> i32 {
     (crate::app::layout::CARD_VERTICAL_OUTER_MARGIN
         + crate::app::TOP_SPACER_HEIGHT
@@ -181,6 +190,16 @@ pub(crate) struct ChatState {
     /// `cursor` (exchanges); never shared. Clamped to `journal_list` on every
     /// render.
     pub journal_cursor: usize,
+    /// Widget index -> journal entry index for `PanelView::Journal`, the exact
+    /// analogue of the Gloss view's `build_transcript_rows` `row_owner`. Each
+    /// entry now emits several widgets (a `Q:` row plus one `Answer` row per
+    /// answer paragraph — see `journal_view_rows`/`split_answer_paragraphs`), so
+    /// the accent bar steps `row_cursor` over the journal `landable_mask` and
+    /// `journal_cursor` (the ENTRY that `R`/save act on) is derived as
+    /// `journal_row_owner[row_cursor]`. Rebuilt on every `render_journal_view`;
+    /// empty when the list renders only the "no entries" placeholder (nothing
+    /// landable). Resets with the rest of `ChatState` on panel close.
+    pub journal_row_owner: Vec<usize>,
     /// Set by `rewrite_journal_entry` while a panel-initiated `R` rewrite is in
     /// flight through the shared journal rewrite pipeline (which otherwise
     /// returns to the journal OVERLAY). The overlay-render / mode-restore sites
@@ -190,6 +209,17 @@ pub(crate) struct ChatState {
     /// cleared on the terminal outcome (success re-render, error, or cancel);
     /// defaults `false` and resets with the rest of `ChatState` on panel close.
     pub rewrite_return: bool,
+    /// Page ranges for the CURRENT transcript render (widget-block indices into
+    /// `row_widget_specs`). Recomputed on every paginated render
+    /// (`render_transcript`/`render_journal_view_inner`) at the live transcript
+    /// budget. Empty until the first paginated render. Task 6 (page-turn nav)
+    /// reads these; the render here uses them to slice the visible page.
+    pub pages: Vec<crate::ui::pagination::Page>,
+    /// Which page of `pages` is currently shown. Kept in sync with `row_cursor`:
+    /// each paginated render derives the page holding `row_cursor` (via
+    /// `page_of_widget`) and stores it here. Clamped into `pages` on every
+    /// render. Resets with the rest of `ChatState` on panel close.
+    pub page_idx: usize,
 }
 
 /// Re-apply the card margins for the current chat placement. Only a PINNED
@@ -219,7 +249,8 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
     // for a rewrite (mirrors journal::close_prompt).
     s.journal.vim_rewrite = None;
-    s.chat_panel.render_rows(&[]);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&[], &fam, sz);
     s.chat_layout_open = false;
     s.chat_placement = ChatPlacement::Pinned;
     s.chat_panel.container.remove_css_class("chat-panel-float");
@@ -258,7 +289,8 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
     // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
     // for a rewrite (mirrors journal::close_prompt).
     s.journal.vim_rewrite = None;
-    s.chat_panel.render_rows(&[]);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&[], &fam, sz);
     s.chat_panel.size_to_natural();
     s.chat_regate_pending = true;
     crate::logging::log("CHAT: work switch — regate deferred");
@@ -921,13 +953,13 @@ fn question_row(question: &str) -> crate::ui::chat_panel::TranscriptRow {
 
 /// How many actual WIDGETS (label rows in `transcript_box`) a single
 /// `TranscriptRow` renders as. Every variant is one widget
-/// (`chat_panel::rebuild_rows`'s `append_row_label`) EXCEPT `GlossAnswer`,
-/// which `append_gloss_answer` explodes into one label per
-/// `gloss_render::chat_gloss_rows` row (speaker/verse/stage/gloss) — so the
-/// j/k row cursor, which must land on those individual widgets, has to count
-/// in this same "widget space", not `Vec<TranscriptRow>` space. Falls back to
-/// 1 for markup with no recognized tags, matching `append_gloss_answer`'s own
-/// plain-label fallback.
+/// (`chat_panel::rebuild_from_specs`'s `append_spec_label`) EXCEPT
+/// `GlossAnswer`, which `chat_panel::row_widget_specs`/`gloss_answer_specs`
+/// explodes into one label per `gloss_render::chat_gloss_rows` row
+/// (speaker/verse/stage/gloss) — so the j/k row cursor, which must land on
+/// those individual widgets, has to count in this same "widget space", not
+/// `Vec<TranscriptRow>` space. Falls back to 1 for markup with no recognized
+/// tags, matching `gloss_answer_specs`'s own plain-label fallback.
 fn widget_row_count(row: &crate::ui::chat_panel::TranscriptRow) -> usize {
     use crate::ui::chat_panel::TranscriptRow as R;
     match row {
@@ -1076,8 +1108,47 @@ pub(crate) fn render_transcript(s: &mut AppState) {
         let cur = s.chat.row_cursor;
         if a <= cur { (a, cur) } else { (cur, a) }
     });
-    s.chat_panel
-        .render_rows_focused_cursor(&rows, s.chat.row_cursor, selection);
+    render_paginated(s, &rows, Some(s.chat.row_cursor), selection);
+}
+
+/// Paginate `rows` at the live transcript budget, store the pages on
+/// `ChatState`, derive/clamp the page holding `cursor_widget` (the accent-bar
+/// row cursor), and render ONLY that page slice via `ChatPanel::render_page`.
+/// The single paginated-render path shared by `render_transcript` and
+/// `render_journal_view_inner`: it computes `s.chat.pages`/`page_idx` so Task 6
+/// page-turn nav has authoritative page state, and renders the whole-widget
+/// page slice that fits by construction (no partial row at either edge).
+///
+/// `cursor_widget` is `None` for views with no row cursor (a placeholder-only
+/// list); then the FIRST page is shown and no accent bar is painted.
+fn render_paginated(
+    s: &mut AppState,
+    rows: &[crate::ui::chat_panel::TranscriptRow],
+    cursor_widget: Option<usize>,
+    selection: Option<(usize, usize)>,
+) {
+    use crate::ui::chat_pagination::page_of_widget;
+    let specs = crate::ui::chat_panel::row_widget_specs(rows);
+    let (fam, sz) = transcript_font(s);
+    let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
+    let page_idx = match cursor_widget {
+        Some(c) => page_of_widget(&pages, c),
+        None => 0,
+    };
+    let page_idx = if pages.is_empty() {
+        0
+    } else {
+        page_idx.min(pages.len() - 1)
+    };
+    s.chat.pages = pages;
+    s.chat.page_idx = page_idx;
+    let Some(&page) = s.chat.pages.get(page_idx) else {
+        // No pages (empty transcript): render an empty slice.
+        s.chat_panel
+            .render_page(&specs, crate::ui::pagination::Page { start: 0, end: 0 }, None, None);
+        return;
+    };
+    s.chat_panel.render_page(&specs, page, cursor_widget, selection);
 }
 
 /// Render `PanelView::Question`: exactly the exchange at `s.chat.cursor` —
@@ -1090,12 +1161,13 @@ pub(crate) fn render_transcript(s: &mut AppState) {
 /// No-ops (renders nothing) when `cursor` is out of range — defensive; every
 /// real call site sets `cursor` to a just-pushed exchange's own index first.
 pub(crate) fn render_current_question(s: &mut AppState) {
+    let (fam, sz) = transcript_font(s);
     let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
-        s.chat_panel.render_rows(&[]);
+        s.chat_panel.render_rows(&[], &fam, sz);
         return;
     };
     let rows = build_single_exchange_rows(e);
-    s.chat_panel.render_rows(&rows);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 /// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
@@ -1190,6 +1262,22 @@ fn wrap_index(cur: usize, delta: i32, len: usize) -> usize {
 /// shown Q&A reads as "switch to the gloss, then cycle it", which is more
 /// useful than a toast telling the reader to press `t` first for a bind that
 /// is about to take them there anyway.
+/// `c` in the chat panel's Journal view: copy the SELECTED saved entry's
+/// database row id to the Wayland clipboard (`wl-copy`) + a transient toast —
+/// the panel mirror of the journal overlay's `copy_current_id`. The selected
+/// entry is `journal_list[journal_cursor]` (the entry the accent bar sits on,
+/// what `R`/save also act on). No-op when the list is empty.
+pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let Some(id) = s.chat.journal_list.get(s.chat.journal_cursor).map(|p| p.id) else {
+        return;
+    };
+    let copied = format!("Journal Q&A ID: {}", id);
+    let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+    crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
+    crate::logging::log(&format!("CHAT: copied \"{}\"", copied));
+}
+
 pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
     if s.chat.view == PanelView::Journal {
         crate::input::navigation::show_chapter_toast_secs(s, "Ctrl+n/p cycles glosses \u{2014} t for gloss view", 2);
@@ -1229,25 +1317,54 @@ fn flip_view(v: PanelView) -> PanelView {
     }
 }
 
+/// Split a saved answer into paragraph chunks (blank-line separated), each a
+/// separate row so the panel cursor can traverse them. Never returns empty (an
+/// empty answer yields one empty chunk so the entry still has an answer row).
+fn split_answer_paragraphs(answer: &str) -> Vec<String> {
+    let parts: Vec<String> = answer
+        .split("\n\n")
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() { vec![String::new()] } else { parts }
+}
+
 /// Build the `Journal` view's transcript rows from a passage's saved journal
-/// pages: each entry as a `Q:` row + a plain-prose `Answer` row (never
-/// `GlossAnswer` — journal answers are prose, not `<speaker>`/`<verse>`
-/// markup, even for entries saved from a gloss's follow-up question). An
-/// empty list renders one `Answer` placeholder row rather than nothing, so a
+/// pages: each entry as a `Q:` row + one plain-prose `Answer` row per
+/// paragraph of the answer (split on blank lines by `split_answer_paragraphs`,
+/// never `GlossAnswer` — journal answers are prose, not `<speaker>`/`<verse>`
+/// markup, even for entries saved from a gloss's follow-up question). Returns
+/// the rows AND a parallel `row_owner` (widget index -> journal entry index),
+/// mirroring the Gloss view's `build_transcript_rows`, so the accent bar can
+/// traverse every emitted widget (Q and each answer paragraph) while `R`/save
+/// still resolve the owning ENTRY. An empty list renders one `Answer`
+/// placeholder row (with an empty `row_owner`, i.e. nothing landable) rather
+/// than nothing, so a
 /// passage with no journal history reads as "checked, none found" instead of
 /// looking like a rendering bug. Pure (no `AppState`) so the row shape is
 /// unit-testable without a DB or GTK.
-fn journal_view_rows(pages: &[crate::db::journal::JournalPage]) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+fn journal_view_rows(
+    pages: &[crate::db::journal::JournalPage],
+) -> (Vec<crate::ui::chat_panel::TranscriptRow>, Vec<usize>) {
     use crate::ui::chat_panel::TranscriptRow as R;
     if pages.is_empty() {
-        return vec![R::Answer("No journal entries for this passage".to_string())];
+        // Placeholder-only render: one non-landable Answer row, no owner.
+        return (
+            vec![R::Answer("No journal entries for this passage".to_string())],
+            Vec::new(),
+        );
     }
     let mut rows = Vec::with_capacity(pages.len() * 2);
-    for p in pages {
+    let mut row_owner: Vec<usize> = Vec::new();
+    for (entry, p) in pages.iter().enumerate() {
         rows.push(question_row(&p.question));
-        rows.push(R::Answer(p.answer.clone()));
+        row_owner.push(entry);
+        for para in split_answer_paragraphs(&p.answer) {
+            rows.push(R::Answer(para));
+            row_owner.push(entry);
+        }
     }
-    rows
+    (rows, row_owner)
 }
 
 /// Load the pinned passage's saved journal entries (`scope='passage'`, exact
@@ -1267,12 +1384,16 @@ fn reload_journal_list(
         .unwrap_or_default()
 }
 
-/// The `Q:` widget-row index for `journal_list` entry `entry`. Each entry
-/// renders as exactly two widget rows (a `Q:` row then an `Answer` row — see
-/// `journal_view_rows`), so entry `i` owns rows `2*i` (question) and `2*i + 1`
-/// (answer). The row cursor (and `R`'s target) anchors on the `Q:` row.
-fn journal_entry_qrow(entry: usize) -> usize {
-    entry * 2
+/// The first widget-row index owned by `journal_list` entry `entry`, i.e. its
+/// `Q:` row, found in the parallel `row_owner` map `journal_view_rows` builds.
+/// Each entry now emits a `Q:` row plus one `Answer` row per answer paragraph
+/// (see `journal_view_rows`/`split_answer_paragraphs`), so entry width varies
+/// and the old `entry*2` no longer holds — the accent bar anchors on this
+/// row. Falls back to `0` when the entry isn't in `row_owner` (empty list /
+/// stale cursor); the caller clamps `journal_cursor` first, so this is
+/// defensive.
+fn journal_entry_first_row(row_owner: &[usize], entry: usize) -> usize {
+    row_owner.iter().position(|&e| e == entry).unwrap_or(0)
 }
 
 /// Clamp a Journal-view row cursor to a list of `len` entries: `[0, len-1]`, or
@@ -1285,39 +1406,53 @@ fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
     }
 }
 
-/// Step a Journal-view row cursor by `delta` (±1) within a `len`-entry list,
-/// clamped with NO wrap: already at the first/last entry stays put. Empty list
-/// stays at 0.
-fn step_journal_cursor(cursor: usize, delta: i32, len: usize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    let next = (cursor as i64 + delta as i64).clamp(0, len as i64 - 1);
-    next as usize
-}
-
-/// Render the `Journal` view at the current `s.chat.journal_list` — plain
-/// `render_rows` (no row-cursor accent bar, no visual-selection painting):
-/// the journal view is a deliberately flat, uncycled list (see
-/// `toggle_panel_view`'s doc comment), so it does not participate in the
-/// `row_cursor`/`row_owner` machinery `render_transcript` drives for the
-/// Gloss view's `j`/`k`/`V`/`y`. `j`/`k` while this view is showing instead
-/// fall back to plain viewport scrolling (see `handle_chat_transcript_key`'s
-/// `t`/`j`/`k` arms in keymap.rs).
-fn render_journal_view(s: &mut AppState) {
-    let rows = journal_view_rows(&s.chat.journal_list);
+/// Render the `Journal` view at the current `s.chat.journal_list`. Each entry
+/// now emits a `Q:` row plus one `Answer` row per answer paragraph (see
+/// `journal_view_rows`/`split_answer_paragraphs`), so the view participates in
+/// the SAME `row_cursor`/`landable_mask`/`row_owner` machinery the Gloss view
+/// uses: the accent bar paints on `row_cursor` (a widget index) and `j`/`k`
+/// traverse the answer paragraphs. `journal_cursor` (the ENTRY selected, what
+/// `R`/save act on) is derived from `row_owner[row_cursor]` after each move.
+/// The parallel `journal_row_owner` is rebuilt here and stashed on `ChatState`
+/// so the nav functions can map back to the entry without re-deriving rows.
+///
+/// `snap_to_entry`: when `true`, `row_cursor` is snapped to the FIRST widget
+/// row of the selected `journal_cursor` ENTRY — the entry-granularity entry
+/// points (toggle into Journal, `gg`/`G`, rewrite-return) set `journal_cursor`
+/// directly and need the accent bar to follow. `j`/`k` pass `false`: they
+/// already set `row_cursor` to the precise answer-paragraph row and derived
+/// `journal_cursor` from it, so re-snapping would strand the bar on the `Q:`
+/// row.
+fn render_journal_view_inner(s: &mut AppState, snap_to_entry: bool) {
+    let (rows, row_owner) = journal_view_rows(&s.chat.journal_list);
     let len = s.chat.journal_list.len();
     s.chat.journal_cursor = clamp_journal_cursor(s.chat.journal_cursor, len);
+    if snap_to_entry {
+        s.chat.row_cursor = journal_entry_first_row(&row_owner, s.chat.journal_cursor);
+    }
+    s.chat.journal_row_owner = row_owner;
     if len == 0 {
         // Placeholder-only list: no landable row, scroll to top, no accent bar.
-        s.chat_panel.render_rows_to_top(&rows);
+        let (fam, sz) = transcript_font(s);
+        s.chat_panel.render_rows_to_top(&rows, &fam, sz);
         return;
     }
-    // Land the accent bar on the cursor entry's `Q:` widget row;
-    // `render_rows_focused_cursor` scrolls that row to the top. No visual
+    // Clamp the widget-space `row_cursor` into range, then land the accent bar
+    // on it; `render_paginated` renders the page slice holding it. No visual
     // selection in Journal view.
-    let qrow = journal_entry_qrow(s.chat.journal_cursor);
-    s.chat_panel.render_rows_focused_cursor(&rows, qrow, None);
+    let n = rows.len();
+    if s.chat.row_cursor >= n {
+        s.chat.row_cursor = n.saturating_sub(1);
+    }
+    let cursor_row = s.chat.row_cursor;
+    render_paginated(s, &rows, Some(cursor_row), None);
+}
+
+/// Entry-granularity render: snap the accent bar to the selected entry's `Q:`
+/// row. The default for every caller EXCEPT `j`/`k` (which uses
+/// `render_journal_view_inner(s, false)`).
+fn render_journal_view(s: &mut AppState) {
+    render_journal_view_inner(s, true);
 }
 
 /// `R` in the chat panel's Journal view: rewrite the SELECTED saved Q&A by
@@ -1472,6 +1607,13 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
             s.chat.journal_list =
                 reload_journal_list(&ctx.work_abbrev, &ctx.start_citation, &ctx.end_citation);
             s.chat.journal_cursor = 0;
+            // Task 6: a view switch resets to the FIRST page + first landable
+            // widget. `render_journal_view` snaps the row cursor to entry 0's
+            // leading widget and re-paginates to the page holding it (page 0);
+            // reset page_idx explicitly first so the snap starts from a clean
+            // page state rather than the previous view's stale page.
+            s.chat.page_idx = 0;
+            s.chat.row_cursor = 0;
             render_journal_view(&mut s);
             crate::logging::log(&format!(
                 "CHAT-JOURNAL: view toggled to journal ({} entries)",
@@ -1479,6 +1621,22 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
             ));
         }
         PanelView::Gloss => {
+            // Task 6: reset to the first page + first landable widget on the
+            // switch back to Gloss, then re-paginate/render for that cursor.
+            s.chat.page_idx = 0;
+            let (rows, _cursor_row, row_owner) = transcript_rows(&s);
+            let landable = landable_mask(&rows);
+            if let Some(first) =
+                crate::ui::chat_pagination::first_landable_in_page(
+                    crate::ui::pagination::Page { start: 0, end: landable.len() },
+                    &landable,
+                )
+            {
+                s.chat.row_cursor = first;
+                if let Some(&owner) = row_owner.get(first) {
+                    s.chat.cursor = owner;
+                }
+            }
             render_transcript(&mut s);
             crate::logging::log("CHAT-JOURNAL: view toggled to gloss");
         }
@@ -1726,7 +1884,8 @@ fn render_transcript_thinking_gloss(s: &AppState, ctx: &crate::gloss::GlossConte
     // -of-text problem the question path had). The passage doc is the context
     // being reglossed; the new gloss replaces it when it lands.
     let rows = vec![R::GlossAnswer(ctx.passage_doc()), R::Thinking];
-    s.chat_panel.render_rows(&rows);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 /// Stored reader-glosses for a passage, newest first. Empty on any DB error.
@@ -1762,14 +1921,16 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, _chip: &str) {
         question_row(question),
         R::Thinking,
     ];
-    s.chat_panel.render_rows(&rows);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 fn render_transcript_with_error(s: &AppState, msg: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let (mut rows, _, _) = transcript_rows(s);
     rows.push(R::Error(msg.to_string()));
-    s.chat_panel.render_rows(&rows);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
 /// Move the j/k ROW cursor (`s.chat.row_cursor`, widget-space — see
@@ -1782,9 +1943,9 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 ///
 /// A `ChatGlossRowKind::Speaker` widget (e.g. "BELARIUS") is never a valid
 /// landing spot — see `landable_mask`'s doc comment (Fix 2: speaker labels
-/// aren't lines you'd read, copy, or mark). `step_row_cursor_landable` skips
-/// over them; `j` from the last verse of one speaker's block lands on the
-/// first verse of the NEXT block, never on its label in between.
+/// aren't lines you'd read, copy, or mark). `chat_pagination::step_cursor_paged`
+/// skips over them; `j` from the last verse of one speaker's block lands on
+/// the first verse of the NEXT block, never on its label in between.
 ///
 /// `s.chat.cursor` (the EXCHANGE cursor — save/`▶`/Ctrl+n/p target) is
 /// derived from the new row position via `row_owner`, NOT moved
@@ -1801,12 +1962,13 @@ pub(crate) fn transcript_half_page(s: &mut AppState, down: bool) {
 }
 
 pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
-    // Journal has its own row cursor (`journal_cursor`, entry-granularity —
-    // see `step_journal_cursor`/`render_journal_view`), stepped and clamped
-    // independently of the Gloss view's `row_cursor`/`row_owner` below (which
-    // reads `transcript_rows`, the Gloss-view's `exchanges` — content that
-    // isn't even on screen in Journal). An empty `journal_list` has no entry
-    // to land on, so it falls back to plain scrolling like Question.
+    // Journal now uses the SAME widget-space `row_cursor` + `landable_mask`
+    // machinery as the Gloss branch below, but over its own row source
+    // (`journal_view_rows`, not `transcript_rows`) and its own owner map
+    // (`journal_row_owner`, widget -> ENTRY). `j`/`k` step `row_cursor` across
+    // the answer paragraphs and derive `journal_cursor` (the ENTRY `R`/save
+    // act on) from the owner. An empty `journal_list` has no landable widget,
+    // so it falls back to plain scrolling like Question.
     //
     // Question is a flat, uncycled view with no row_cursor/row_owner of its
     // own — it doesn't go through `render_transcript` (it uses
@@ -1819,8 +1981,30 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
             s.chat_panel.scroll_transcript_step(delta as f64);
             return;
         }
-        s.chat.journal_cursor = step_journal_cursor(s.chat.journal_cursor, delta, len);
-        render_journal_view(s);
+        // Step the WIDGET row cursor over the journal landable mask (every
+        // emitted journal widget — the `Q:` row and each answer paragraph — is
+        // landable), TURNING THE PAGE at the page edge via `step_cursor_paged`
+        // (Task 6: lands on the next page's first / prev page's last landable
+        // widget), then derive `journal_cursor` (the ENTRY `R`/save act on)
+        // from `journal_row_owner`. Mirrors the Gloss branch below. `s.chat.
+        // pages`/`page_idx` are authoritative here — the last journal render
+        // (`render_paginated`) computed them for exactly these rows.
+        let (rows, row_owner) = journal_view_rows(&s.chat.journal_list);
+        s.chat.journal_row_owner = row_owner;
+        let landable = landable_mask(&rows);
+        let (new_cursor, new_page) = crate::ui::chat_pagination::step_cursor_paged(
+            s.chat.row_cursor,
+            delta,
+            s.chat.page_idx,
+            &s.chat.pages,
+            &landable,
+        );
+        s.chat.row_cursor = new_cursor;
+        s.chat.page_idx = new_page;
+        if let Some(&entry) = s.chat.journal_row_owner.get(new_cursor) {
+            s.chat.journal_cursor = entry;
+        }
+        render_journal_view_inner(s, false);
         return;
     }
     if s.chat.view == PanelView::Question {
@@ -1828,21 +2012,31 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
-    let landable = landable_mask(&rows);
-    let Some(clamped) = step_row_cursor_landable(s.chat.row_cursor, delta, &landable) else {
-        if !row_owner.is_empty() {
-            s.chat_panel.scroll_transcript_step(delta as f64);
-        }
+    if row_owner.is_empty() {
         return;
-    };
-    s.chat.row_cursor = clamped;
-    s.chat.cursor = row_owner[clamped];
+    }
+    let landable = landable_mask(&rows);
+    // Page-aware step: within the page move to the next/prev landable widget;
+    // at the page edge TURN THE WHOLE PAGE and land on the next page's first /
+    // prev page's last landable widget (Task 6). Clamps (no-op) at the
+    // document ends. `s.chat.pages`/`page_idx` were computed by the last
+    // `render_transcript` for exactly these rows, so they are authoritative.
+    let (new_cursor, new_page) = crate::ui::chat_pagination::step_cursor_paged(
+        s.chat.row_cursor,
+        delta,
+        s.chat.page_idx,
+        &s.chat.pages,
+        &landable,
+    );
+    s.chat.row_cursor = new_cursor;
+    s.chat.page_idx = new_page;
+    s.chat.cursor = row_owner[new_cursor];
     render_transcript(s);
 }
 
 /// Widget-space "is this row a valid j/k landing spot" mask, one entry per
-/// widget `rebuild_rows` would actually paint (same granularity as
-/// `row_owner`/`widget_row_count`) — flat-mapped from
+/// widget `chat_panel::rebuild_from_specs` would actually paint (same
+/// granularity as `row_owner`/`widget_row_count`) — flat-mapped from
 /// `chat_panel::row_widget_landable`, so it can never drift out of sync with
 /// what the panel renders or with `row_widget_texts` (`y`'s copy source).
 /// Only a `ChatGlossRowKind::Speaker` widget (e.g. "CYMBELINE") is `false`:
@@ -1864,27 +2058,6 @@ fn landable_mask(rows: &[crate::ui::chat_panel::TranscriptRow]) -> Vec<bool> {
 /// (already at the first/last landable row — degrade to scrolling, the same
 /// "no move -> None" contract `transcript_cursor_move` relies on).
 ///
-/// `cur` itself is not required to be landable (a stale/never-snapped
-/// cursor): the walk still proceeds from it and finds the next landable row
-/// in the given direction, so this also self-heals a cursor that somehow
-/// ended up on a Speaker widget.
-fn step_row_cursor_landable(cur: usize, delta: i32, landable: &[bool]) -> Option<usize> {
-    let n = landable.len() as i32;
-    if n == 0 || !landable.iter().any(|&l| l) {
-        return None;
-    }
-    let mut pos = cur as i32;
-    loop {
-        pos += delta.signum();
-        if pos < 0 || pos >= n {
-            return None; // fell off the end without finding a landable row
-        }
-        if landable[pos as usize] {
-            return Some(pos as usize);
-        }
-    }
-}
-
 /// The first LANDABLE widget row at or after `from` (widget-space), so a
 /// caller that just computed an exchange's leading widget row
 /// (`build_transcript_rows`' `cursor_row` — often a Speaker widget, since a
@@ -1899,25 +2072,12 @@ fn first_landable_at_or_after(from: usize, landable: &[bool]) -> usize {
         .unwrap_or(from)
 }
 
-/// The first LANDABLE row index in `landable`, or `None` if the transcript is
-/// empty or entirely unlandable (Fix 2's all-speaker edge case). Pure helper
-/// for `gg`'s jump-to-first-landable-row.
-fn first_landable_index(landable: &[bool]) -> Option<usize> {
-    landable.iter().position(|&l| l)
-}
-
-/// The last LANDABLE row index in `landable`, or `None` if the transcript is
-/// empty or entirely unlandable. Pure helper for `G`'s
-/// jump-to-last-landable-row.
-fn last_landable_index(landable: &[bool]) -> Option<usize> {
-    landable.iter().rposition(|&l| l)
-}
-
-/// `gg` on the transcript: move the row cursor to the FIRST landable row (in
-/// `PanelView::Gloss`) and scroll it to the top of the viewport via
-/// `render_transcript`'s `render_rows_focused_cursor` call — the same
-/// cursor-follows-scroll behavior `transcript_cursor_move` already gets from
-/// that path. In `PanelView::Journal` this instead moves `journal_cursor` to
+/// `gg` on the transcript: move the row cursor to the FIRST page's first
+/// landable widget (in `PanelView::Gloss`), set `page_idx = 0`, and re-render
+/// via `render_transcript`'s `render_paginated` path — which shows the page
+/// holding the cursor (here page 0), the same page-slice render
+/// `transcript_cursor_move` uses. In `PanelView::Journal` this instead moves
+/// `journal_cursor` to
 /// entry 0 and re-renders (or, on an empty `journal_list`, falls back to a
 /// plain scroll-to-top — there is no entry to land on). In
 /// `PanelView::Question` (no row cursor — see `transcript_cursor_move`'s
@@ -1939,10 +2099,19 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let landable = landable_mask(&rows);
-    let Some(first) = first_landable_index(&landable) else {
+    // Task 6: gg jumps to the FIRST page's first landable widget. Paginate at
+    // the live budget to find page 0, then land on its first landable widget.
+    let specs = crate::ui::chat_panel::row_widget_specs(&rows);
+    let (fam, sz) = transcript_font(s);
+    let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
+    let Some(&page0) = pages.first() else {
+        return;
+    };
+    let Some(first) = crate::ui::chat_pagination::first_landable_in_page(page0, &landable) else {
         return;
     };
     s.chat.row_cursor = first;
+    s.chat.page_idx = 0;
     s.chat.cursor = row_owner[first];
     render_transcript(s);
 }
@@ -1969,10 +2138,19 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let landable = landable_mask(&rows);
-    let Some(last) = last_landable_index(&landable) else {
+    // Task 6: G jumps to the LAST page's last landable widget. Paginate at the
+    // live budget to find the last page, then land on its last landable widget.
+    let specs = crate::ui::chat_panel::row_widget_specs(&rows);
+    let (fam, sz) = transcript_font(s);
+    let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
+    let Some(&last_page) = pages.last() else {
+        return;
+    };
+    let Some(last) = crate::ui::chat_pagination::last_landable_in_page(last_page, &landable) else {
         return;
     };
     s.chat.row_cursor = last;
+    s.chat.page_idx = pages.len() - 1;
     s.chat.cursor = row_owner[last];
     render_transcript(s);
 }
@@ -2112,7 +2290,7 @@ pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>)
         if had_selection {
             // Copy-then-exit, mirroring the reader's yank_selection contract.
             // This rebuild destroys the current row widgets and (via
-            // render_rows_focused_cursor) queues their replacements on the
+            // render_transcript's render_page) queues their replacements on the
             // idle loop — see flash_rows' doc comment for why the flash below
             // still lands on the resulting LIVE widgets rather than the ones
             // being torn down here.
@@ -2327,7 +2505,8 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         s.chat.view = PanelView::Gloss;
         let (mut rows, _, _) = transcript_rows(&s);
         rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
-        s.chat_panel.render_rows(&rows);
+        let (fam, sz) = transcript_font(&s);
+        s.chat_panel.render_rows(&rows, &fam, sz);
         crate::input::navigation::show_persistent_chapter_toast(&s, "Consolidating\u{2026}");
     }
     let user_msg_for_exchange = user_msg.clone();
@@ -2423,7 +2602,9 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     // Show the saved entry scrolled to the very top (Q: line first), so a long
     // answer doesn't land the viewport mid-answer. No row cursor: this static
     // snapshot isn't the j/k-navigable transcript.
-    s.chat_panel.render_rows_to_top(&[R::SavedMark, question_row(question), answer_row]);
+    let (fam, sz) = transcript_font(s);
+    s.chat_panel
+        .render_rows_to_top(&[R::SavedMark, question_row(question), answer_row], &fam, sz);
 }
 
 /// Size and position the panel for the current placement. Pinned: fill the
@@ -2537,6 +2718,25 @@ pub(crate) fn size_panel(s: &AppState) {
             s.chat_panel.container.set_margin_top(top_margin);
             s.chat_panel.size_to(w, panel_h);
         }
+    }
+}
+
+/// Task 6: re-paginate + re-render the panel's CURRENT view after a height
+/// change (a resize tick already re-ran `size_panel`, changing the transcript
+/// budget) so the page slice is recomputed for the new budget. Re-rendering
+/// through the normal per-view path (`render_transcript` /
+/// `render_journal_view` / `render_current_question`) recomputes
+/// `s.chat.pages` and CLAMPS `page_idx`/`row_cursor` into range via
+/// `render_paginated`, so the cursor's page stays valid even if the new,
+/// smaller budget dropped a page. No-op when the panel isn't open.
+pub(crate) fn repaginate_current_view(s: &mut AppState) {
+    if !s.chat_layout_open {
+        return;
+    }
+    match s.chat.view {
+        PanelView::Gloss => render_transcript(s),
+        PanelView::Journal => render_journal_view(s),
+        PanelView::Question => render_current_question(s),
     }
 }
 
@@ -3049,90 +3249,14 @@ mod gloss_cycle_tests {
 }
 
 /// Fix 2 (do not highlight speaker labels; only lines of dialogue):
-/// `step_row_cursor_landable` must skip over EVERY unlandable (Speaker)
-/// widget in the given direction, in both directions, from a block that
-/// starts with a speaker, and must not panic/loop forever on the
-/// no-landable-rows case (a gloss that is somehow all speakers). House style
+/// `first_landable_at_or_after` (`snap_row_cursor_to_exchange`'s helper) must
+/// skip past a leading unlandable (Speaker) widget, stay put when already on
+/// a landable one, and fall back to `from` itself rather than panicking or
+/// running off the end when nothing at or after it is landable. House style
 /// per `row_cursor_step_tests` above — pure index math, no `AppState`.
 #[cfg(test)]
-mod step_row_cursor_landable_tests {
-    use super::{
-        first_landable_at_or_after, first_landable_index, last_landable_index,
-        step_row_cursor_landable,
-    };
-
-    /// [Speaker, Verse, Verse, Speaker, Verse] — a block boundary mid-list.
-    /// Stepping forward from the first Verse must land on the second Verse
-    /// (adjacent, no speaker in between), then jump PAST the second Speaker
-    /// straight to the final Verse — never stopping on either label.
-    #[test]
-    fn steps_forward_over_a_single_speaker() {
-        let landable = [false, true, true, false, true];
-        assert_eq!(step_row_cursor_landable(1, 1, &landable), Some(2));
-        assert_eq!(step_row_cursor_landable(2, 1, &landable), Some(4));
-    }
-
-    #[test]
-    fn steps_backward_over_a_single_speaker() {
-        let landable = [false, true, true, false, true];
-        assert_eq!(step_row_cursor_landable(4, -1, &landable), Some(2));
-        assert_eq!(step_row_cursor_landable(2, -1, &landable), Some(1));
-        // From row 1 (the first Verse), stepping back hits only the leading
-        // Speaker (unlandable) and then the list boundary — no further
-        // landable row exists in that direction.
-        assert_eq!(step_row_cursor_landable(1, -1, &landable), None);
-    }
-
-    /// A block that STARTS with a speaker (index 0): stepping backward from
-    /// the first Verse (index 1) must not land on it, matching
-    /// `steps_backward_over_a_single_speaker`'s last assertion — restated
-    /// here as its own case since "starts with a speaker" is the brief's
-    /// explicit example.
-    #[test]
-    fn block_starting_with_speaker_cannot_be_stepped_onto() {
-        let landable = [false, true, true];
-        assert_eq!(step_row_cursor_landable(1, -1, &landable), None);
-        assert_eq!(step_row_cursor_landable(2, -1, &landable), Some(1));
-    }
-
-    /// Consecutive speakers (two speakers back-to-back with no dialogue
-    /// between, a defensive shape) are all skipped in one step.
-    #[test]
-    fn steps_over_multiple_consecutive_speakers() {
-        let landable = [true, false, false, true];
-        assert_eq!(step_row_cursor_landable(0, 1, &landable), Some(3));
-        assert_eq!(step_row_cursor_landable(3, -1, &landable), Some(0));
-    }
-
-    /// No-landable-rows case: every widget is a Speaker (Fix 2's brief
-    /// explicitly calls this out — "a gloss that is somehow all speakers").
-    /// Must return `None`, not panic or loop forever.
-    #[test]
-    fn no_landable_rows_returns_none() {
-        let landable = [false, false, false];
-        assert_eq!(step_row_cursor_landable(0, 1, &landable), None);
-        assert_eq!(step_row_cursor_landable(0, -1, &landable), None);
-        assert_eq!(step_row_cursor_landable(1, 1, &landable), None);
-    }
-
-    /// Empty transcript: guards against a clamp underflow/panic.
-    #[test]
-    fn empty_landable_list_returns_none() {
-        assert_eq!(step_row_cursor_landable(0, 1, &[]), None);
-        assert_eq!(step_row_cursor_landable(0, -1, &[]), None);
-    }
-
-    /// A self-healing case: `cur` itself sits on an unlandable row (a stale
-    /// cursor that somehow never got snapped) — the walk still proceeds from
-    /// it and finds the next landable row in the given direction.
-    #[test]
-    fn cur_on_unlandable_row_still_finds_next_landable() {
-        let landable = [true, false, true];
-        assert_eq!(step_row_cursor_landable(1, 1, &landable), Some(2));
-        assert_eq!(step_row_cursor_landable(1, -1, &landable), Some(0));
-    }
-
-    // --- first_landable_at_or_after (snap_row_cursor_to_exchange's helper) ---
+mod first_landable_at_or_after_tests {
+    use super::first_landable_at_or_after;
 
     #[test]
     fn first_landable_finds_the_leading_speaker_and_advances() {
@@ -3152,49 +3276,6 @@ mod step_row_cursor_landable_tests {
     fn first_landable_falls_back_to_from_when_nothing_found() {
         let landable = [true, false, false];
         assert_eq!(first_landable_at_or_after(1, &landable), 1);
-    }
-
-    // --- first_landable_index / last_landable_index (gg/G's helpers) ---
-
-    /// Leading speaker skipped: `gg` must land on the first Verse, not the
-    /// Speaker row at index 0.
-    #[test]
-    fn first_landable_index_skips_a_leading_speaker() {
-        let landable = [false, true, true, false, true];
-        assert_eq!(first_landable_index(&landable), Some(1));
-    }
-
-    /// Trailing speaker skipped: `G` must land on the last Verse, not a
-    /// Speaker row dangling at the end.
-    #[test]
-    fn last_landable_index_skips_a_trailing_speaker() {
-        let landable = [true, false, true, true, false];
-        assert_eq!(last_landable_index(&landable), Some(3));
-    }
-
-    /// Single-row transcript: one landable row is both first and last.
-    #[test]
-    fn single_row_transcript_is_first_and_last() {
-        let landable = [true];
-        assert_eq!(first_landable_index(&landable), Some(0));
-        assert_eq!(last_landable_index(&landable), Some(0));
-    }
-
-    /// All-speaker (no-landable) transcript: both return `None` rather than
-    /// panicking, matching `step_row_cursor_landable`'s no-landable contract
-    /// so `gg`/`G` no-op instead of crashing on a degenerate gloss.
-    #[test]
-    fn all_speaker_transcript_returns_none() {
-        let landable = [false, false, false];
-        assert_eq!(first_landable_index(&landable), None);
-        assert_eq!(last_landable_index(&landable), None);
-    }
-
-    /// Empty transcript: guards against an out-of-range index/panic.
-    #[test]
-    fn empty_transcript_returns_none() {
-        assert_eq!(first_landable_index(&[]), None);
-        assert_eq!(last_landable_index(&[]), None);
     }
 }
 
@@ -3251,7 +3332,7 @@ mod row_cursor_widget_tests {
     }
 
     // Markup with none of the recognized tags falls back to ONE widget
-    // (append_gloss_answer's own plain-label fallback) — must not panic on a
+    // (gloss_answer_specs's own plain-label fallback) — must not panic on a
     // zero-length row_owner slice or silently vanish from the count.
     #[test]
     fn untagged_gloss_answer_falls_back_to_one_widget() {
@@ -3380,13 +3461,13 @@ mod visual_selection_tests {
 
     /// Fix 2's spanned-speaker decision, end to end: a `V` selection anchored
     /// on the last verse of one speaker's block, extended (via j landing on
-    /// the NEXT block's first verse — never on the label in between, per
-    /// `step_row_cursor_landable_tests`) still yanks the spanned speaker
-    /// label — `yank_transcript_row_or_selection` does NOT filter unlandable
-    /// rows out of the slice, it only gates where the cursor/anchor can LAND
-    /// (see that function's doc comment for the "why" — a pasted excerpt
-    /// that silently dropped the speaker name would be worse than one that
-    /// keeps it).
+    /// the NEXT block's first verse — never on the label in between, the same
+    /// skip-unlandable-widgets contract `chat_pagination::step_cursor_paged`
+    /// enforces in production) still yanks the spanned speaker label —
+    /// `yank_transcript_row_or_selection` does NOT filter unlandable rows out
+    /// of the slice, it only gates where the cursor/anchor can LAND (see that
+    /// function's doc comment for the "why" — a pasted excerpt that silently
+    /// dropped the speaker name would be worse than one that keeps it).
     #[test]
     fn v_selection_spanning_a_speaker_boundary_yanks_the_speaker_label() {
         use super::{build_transcript_rows, landable_mask, Exchange};
@@ -3415,10 +3496,16 @@ mod visual_selection_tests {
 
         // V anchors on widget 1 (CYMBELINE's verse, the only place it COULD
         // land); j lands the live end on widget 3 (BELARIUS's verse),
-        // skipping widget 2 (the BELARIUS label) as a landing spot per
-        // step_row_cursor_landable — but the SELECTION still spans widget 2.
+        // skipping widget 2 (the BELARIUS label) as a landing spot — but the
+        // SELECTION still spans widget 2. `step_next_landable` here is a
+        // single-page stand-in for `chat_pagination::step_cursor_paged`'s
+        // within-page walk, kept local to this test since the production
+        // path additionally requires page bookkeeping this test doesn't need.
+        fn step_next_landable(cur: usize, landable: &[bool]) -> Option<usize> {
+            (cur + 1..landable.len()).find(|&i| landable[i])
+        }
         let anchor = 1;
-        let cursor = super::step_row_cursor_landable(anchor, 1, &landable).unwrap();
+        let cursor = step_next_landable(anchor, &landable).unwrap();
         assert_eq!(cursor, 3);
 
         let all_texts: Vec<String> = rows.iter().flat_map(row_widget_texts).collect();
@@ -3438,8 +3525,8 @@ mod visual_selection_tests {
 #[cfg(test)]
 mod panel_view_toggle_tests {
     use super::{
-        clamp_journal_cursor, flip_view, journal_entry_qrow, journal_view_rows,
-        step_journal_cursor, PanelView,
+        clamp_journal_cursor, flip_view, journal_entry_first_row, journal_view_rows,
+        split_answer_paragraphs, PanelView,
     };
     use crate::db::journal::JournalPage;
     use crate::ui::chat_panel::TranscriptRow as R;
@@ -3486,9 +3573,20 @@ mod panel_view_toggle_tests {
     }
 
     #[test]
+    fn split_answer_paragraphs_by_blank_lines() {
+        assert_eq!(split_answer_paragraphs("one\n\ntwo\n\nthree"),
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]);
+        // single paragraph → one chunk
+        assert_eq!(split_answer_paragraphs("just one"), vec!["just one".to_string()]);
+        // empty → one empty chunk (entry keeps an answer row)
+        assert_eq!(split_answer_paragraphs("   "), vec![String::new()]);
+    }
+
+    #[test]
     fn empty_list_renders_a_placeholder_row() {
-        let rows = journal_view_rows(&[]);
+        let (rows, row_owner) = journal_view_rows(&[]);
         assert_eq!(rows.len(), 1);
+        assert!(row_owner.is_empty()); // nothing landable in the placeholder
         match &rows[0] {
             R::Answer(text) => assert_eq!(text, "No journal entries for this passage"),
             other => panic!("expected a placeholder Answer row, got a different variant: {}",
@@ -3507,8 +3605,10 @@ mod panel_view_toggle_tests {
     #[test]
     fn one_entry_renders_question_then_plain_answer() {
         let pages = vec![page("What does York mean?", "He is plotting.")];
-        let rows = journal_view_rows(&pages);
+        let (rows, row_owner) = journal_view_rows(&pages);
+        // Single-paragraph answer → Q + one Answer row; both owned by entry 0.
         assert_eq!(rows.len(), 2);
+        assert_eq!(row_owner, vec![0, 0]);
         match &rows[0] {
             R::Question(t) => assert_eq!(t, "Q: What does York mean?"),
             _ => panic!("row 0 must be a Question row"),
@@ -3529,8 +3629,10 @@ mod panel_view_toggle_tests {
             page("Q2?", "A2."),
             page("Q3?", "A3."),
         ];
-        let rows = journal_view_rows(&pages);
-        assert_eq!(rows.len(), 6); // Q/A pair per entry, no placeholder mixed in
+        let (rows, row_owner) = journal_view_rows(&pages);
+        // Single-paragraph answers: Q/A pair per entry, no placeholder mixed in.
+        assert_eq!(rows.len(), 6);
+        assert_eq!(row_owner, vec![0, 0, 1, 1, 2, 2]);
         let texts: Vec<&str> = rows
             .iter()
             .map(|r| match r {
@@ -3544,11 +3646,37 @@ mod panel_view_toggle_tests {
         );
     }
 
+    /// The Task 3 shape change: a multi-paragraph answer is exploded into one
+    /// `Answer` row per paragraph, so an entry is now `1 + n_paragraphs`
+    /// widgets (not the old fixed 2), and every widget maps back to its entry
+    /// through `row_owner` (widget -> entry). This is what lets the accent bar
+    /// traverse the answer paragraphs instead of being stuck on the `Q:` row.
     #[test]
-    fn journal_entry_qrow_is_two_per_entry() {
-        assert_eq!(journal_entry_qrow(0), 0);
-        assert_eq!(journal_entry_qrow(1), 2);
-        assert_eq!(journal_entry_qrow(3), 6);
+    fn entry_is_one_plus_n_paragraph_rows_with_owner_map() {
+        // Entry 0: 2-paragraph answer → Q + 2 answer rows = 3 widgets.
+        // Entry 1: 1-paragraph answer → Q + 1 answer row  = 2 widgets.
+        let pages = vec![
+            page("Q0?", "First para.\n\nSecond para."),
+            page("Q1?", "Only para."),
+        ];
+        let (rows, row_owner) = journal_view_rows(&pages);
+        assert_eq!(rows.len(), 5); // 3 + 2
+        // Widget -> entry: entry 0 owns the first 3 widgets, entry 1 the next 2.
+        assert_eq!(row_owner, vec![0, 0, 0, 1, 1]);
+        let texts: Vec<&str> = rows
+            .iter()
+            .map(|r| match r {
+                R::Question(t) | R::Answer(t) => t.as_str(),
+                _ => panic!("unexpected row kind in journal view"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["Q: Q0?", "First para.", "Second para.", "Q: Q1?", "Only para."]
+        );
+        // journal_entry_first_row maps each entry to its leading (Q:) widget.
+        assert_eq!(journal_entry_first_row(&row_owner, 0), 0);
+        assert_eq!(journal_entry_first_row(&row_owner, 1), 3);
     }
 
     #[test]
@@ -3560,17 +3688,6 @@ mod panel_view_toggle_tests {
         assert_eq!(clamp_journal_cursor(9, 3), 2); // clamps to len-1
     }
 
-    #[test]
-    fn step_journal_cursor_clamps_no_wrap() {
-        // down from 0 in a 3-entry list
-        assert_eq!(step_journal_cursor(0, 1, 3), 1);
-        // up from 0 stays at 0 (no wrap)
-        assert_eq!(step_journal_cursor(0, -1, 3), 0);
-        // down from last stays at last (no wrap)
-        assert_eq!(step_journal_cursor(2, 1, 3), 2);
-        // empty list stays 0
-        assert_eq!(step_journal_cursor(0, 1, 0), 0);
-    }
 }
 
 /// `build_single_exchange_rows` — the `PanelView::Question` focused render's

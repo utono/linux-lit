@@ -7,13 +7,27 @@ use gtk4::prelude::*;
 
 /// The placeholder text of a `Thinking` row, and the label of a `SavedMark`.
 ///
-/// Shared by the two paths that must agree on what a row SAYS: `rebuild_rows`
-/// (which paints the label) and `row_widget_texts` (which `y` yanks). They are
+/// Shared by the two paths that must agree on what a row SAYS:
+/// `rebuild_from_specs` (which paints the label) and `row_widget_texts`
+/// (which `y` yanks). They are
 /// separate code paths by necessity — one builds widgets, the other extracts
 /// text — so a literal spelled out in both would let `y` silently copy stale
 /// text with nothing failing to compile.
 const THINKING_TEXT: &str = "thinking\u{2026}";
 const SAVED_MARK_TEXT: &str = "\u{2713} saved";
+
+/// Vertical padding of the `.chat-transcript` content box (padding-top 0 +
+/// padding-bottom 16px). Widgets live in `transcript_box` inside
+/// `transcript_scroll`, so this padding consumes scroll height the widgets can
+/// never use — `transcript_budget` must subtract it or pagination packs one
+/// row's overflow past the bottom and the last line clips.
+/// MIRRORS `.chat-transcript { padding-bottom }` in theme.rs (~1362) — keep in sync.
+const CHAT_TRANSCRIPT_PAD_V: i32 = 16;
+
+/// Sub-pixel safety margin shaved off the transcript budget: pango's
+/// logical-vs-ink height rounds up a hair, so without this a page can pack to a
+/// hairline overflow. 2px absorbs that rounding.
+const CHAT_BUDGET_SAFETY: i32 = 2;
 
 pub enum TranscriptRow {
     Question(String),
@@ -83,6 +97,10 @@ impl ChatPanel {
         // is awkward to type multi-line questions into.
         input.set_input_height(420);
 
+        // The panel now PAGINATES (renders only the whole widgets that fit —
+        // `render_page`), so a partial row can never straddle either edge and
+        // the old bottom-clip Overlay/guard is gone. The scroll is appended
+        // directly to the container again.
         container.append(&transcript_scroll);
         container.append(input.container());
 
@@ -145,87 +163,124 @@ impl ChatPanel {
         self.container.set_visible(false);
     }
 
-    /// Rebuild the transcript from rows, newest last, and scroll to the end.
-    pub fn render_rows(&self, rows: &[TranscriptRow]) {
-        self.rebuild_rows(rows);
-        let adj = self.transcript_scroll.vadjustment();
-        glib::idle_add_local_once(move || adj.set_value(adj.upper()));
+    /// The transcript scroll's usable pixel budget for one page — the height a
+    /// page slice must fit within. Uses the scroll's allocated height once GTK
+    /// has laid it out; before first allocation falls back to the container's
+    /// requested height minus the input card's height (the two children of the
+    /// vertical container) so pagination has a sane budget on the very first
+    /// render. A small guard floor keeps `paginate_grouped` from producing a
+    /// per-widget explosion when queried before any geometry exists.
+    pub fn transcript_budget(&self) -> i32 {
+        let alloc = self.transcript_scroll.height();
+        if alloc > 1 {
+            (alloc - CHAT_TRANSCRIPT_PAD_V - CHAT_BUDGET_SAFETY).max(1)
+        } else {
+            let container_h = self.container.height();
+            let container_req = self.container.height_request();
+            let input_h = self.input.container().height();
+            (container_h.max(container_req) - input_h.max(0)
+                - CHAT_TRANSCRIPT_PAD_V
+                - CHAT_BUDGET_SAFETY)
+                .max(200)
+        }
     }
 
-    /// Rebuild the transcript from rows and scroll to the TOP (not the end).
-    /// `render_saved_entry` uses this for the standalone 3-row saved/revision
-    /// view: the reader wants the `Q:` line at the top of the entry, so a long
-    /// answer must not pin the viewport to its own bottom the way `render_rows`
-    /// (newest-last, scroll-to-end) does. No accent bar: the saved view is a
-    /// static snapshot, not the j/k-navigable Gloss transcript, so painting a
-    /// row cursor here would leave a bar that j/k (which re-renders the FULL
-    /// transcript) can't move.
-    ///
-    /// Scroll robustness: a single `set_value(0.0)` on the first idle can race
-    /// the ScrolledWindow assigning its scroll range for a freshly-rebuilt LONG
-    /// answer — the range is still the old/short one on that idle, and once GTK
-    /// lays out the tall content the viewport ends up mid-answer. So also
-    /// re-assert 0.0 the first time the adjustment's range actually changes
-    /// (after layout), then disconnect (settle-on-`changed`, mirroring the
-    /// overlay's geometry-settle pattern).
-    pub fn render_rows_to_top(&self, rows: &[TranscriptRow]) {
-        self.rebuild_rows(rows);
-        let scroll = self.transcript_scroll.clone();
-        glib::idle_add_local_once(move || {
-            let adj = scroll.vadjustment();
-            adj.set_value(0.0);
-            let id_cell: std::rc::Rc<std::cell::Cell<Option<glib::SignalHandlerId>>> =
-                std::rc::Rc::new(std::cell::Cell::new(None));
-            let id_cell2 = id_cell.clone();
-            let id = adj.connect_changed(move |a| {
-                a.set_value(0.0);
-                if let Some(id) = id_cell2.take() {
-                    a.disconnect(id);
-                }
-            });
-            id_cell.set(Some(id));
-        });
+    /// The pixel wrap width a transcript label lays out at — the scroll's
+    /// allocated width minus the transcript's horizontal padding (padding-right
+    /// 14px, theme.rs:1368). Falls back to the container's requested width when
+    /// unallocated so measurement matches the eventual wrap.
+    fn transcript_wrap_width(&self) -> i32 {
+        let w = self.transcript_scroll.width();
+        let w = if w > 1 {
+            w
+        } else {
+            self.container.width().max(self.container.width_request()).max(1)
+        };
+        (w - 14).max(1)
     }
 
-    /// Rebuild the transcript, paint the `.chat-cursor-row` accent bar
-    /// (`theme::generate_css`) on the WIDGET at index `cursor` (j/k's row
-    /// cursor — see `input::actions::chat::transcript_rows`' doc comment for
-    /// why this must be a widget index, not a `TranscriptRow` index: a
-    /// `GlossAnswer` row explodes into several widgets), and scroll it to the
-    /// top of the viewport. Unlike `render_rows`, this does NOT pin the
-    /// scroll to the end — pinning is what made j/k cursor moves look like
-    /// dead keys.
+    /// Pixel height one widget renders at: the pango-measured wrapped text
+    /// height (at the transcript wrap width) plus the CSS class padding.
+    /// Injected into `widget_heights` as the `measure` closure; `widget_heights`
+    /// adds `class_pad` + the src-lead extra itself, so this returns ONLY the
+    /// text height (no padding).
     ///
-    /// `selection`, when `Some((start, end))` (widget-row space, inclusive,
-    /// `start <= end`), also paints `.chat-visual-row` on every widget in that
-    /// range — the `V` visual-mode highlight. `start`/`end` may equal
-    /// `cursor` (a one-row selection just anchored); both classes can land on
-    /// the same widget, and the CSS box-shadow/background compose fine
-    /// together (see `theme::generate_css`'s `.chat-visual-row` comment).
-    pub fn render_rows_focused_cursor(
+    /// `family`/`size_pt` are the REAL transcript font — `config.font_family` /
+    /// `config.font_size`, the same source the `.chat-transcript` CSS is
+    /// generated from (theme.rs). Do NOT read them off the pango context's font
+    /// description: that returns a stale/inherited size (e.g. 21pt) that does
+    /// not match the CSS render size (16pt), which inflated every paragraph's
+    /// height ~1.6× and under-filled the page. The transcript labels render at
+    /// plain pango line height (no `set_pixels_inside_wrap`/leading, Box spacing
+    /// 0), so measure PLAIN — not the leaded variant.
+    pub fn measure_widget(&self, text: &str, family: &str, size_pt: i32) -> i32 {
+        let pctx = self.transcript_box.pango_context();
+        crate::ui::pagination::measure_text_height(
+            &pctx,
+            text,
+            size_pt,
+            family,
+            self.transcript_wrap_width(),
+        )
+    }
+
+    /// Paginate a full spec vec at the current transcript budget. The single
+    /// entry point the whole-transcript callers share so measure + slice always
+    /// agree. Returns the page ranges (block indices into `specs`).
+    ///
+    /// `family`/`size_pt` are the real transcript font (`config.font_family` /
+    /// `config.font_size`) — threaded through to `measure_widget` so
+    /// measurement matches the CSS render size, not the pango context's stale
+    /// font description.
+    pub fn paginate_specs(
         &self,
-        rows: &[TranscriptRow],
-        cursor: usize,
+        specs: &[crate::ui::chat_pagination::ChatWidget],
+        family: &str,
+        size_pt: i32,
+    ) -> Vec<crate::ui::pagination::Page> {
+        let (heights, group_start) = crate::ui::chat_pagination::widget_heights(specs, |t| {
+            self.measure_widget(t, family, size_pt)
+        });
+        let budget = self.transcript_budget();
+        crate::ui::pagination::paginate_grouped(&heights, &group_start, budget)
+    }
+
+    /// Render ONLY the widgets in `page` (`specs[page.start..page.end]`) — a
+    /// whole-widget slice that fits the transcript budget by construction, so no
+    /// partial row can straddle either edge (the pagination replacement for the
+    /// old free-scroll clip machinery). The `.chat-cursor-row` accent bar is
+    /// painted at the PAGE-LOCAL cursor (`cursor_widget - page.start`) when
+    /// `cursor_widget` falls inside this page; `.chat-visual-row` is painted over
+    /// the page-local intersection of `selection` (widget-space, inclusive) with
+    /// the page. The vadjustment is NOT touched — the page fits, so there is
+    /// nothing to scroll.
+    pub fn render_page(
+        &self,
+        specs: &[crate::ui::chat_pagination::ChatWidget],
+        page: crate::ui::pagination::Page,
+        cursor_widget: Option<usize>,
         selection: Option<(usize, usize)>,
     ) {
-        self.rebuild_rows(rows);
+        let start = page.start.min(specs.len());
+        let end = page.end.min(specs.len());
+        let slice = &specs[start..end];
+        self.rebuild_from_specs(slice);
+        // Page-local cursor index (None when the cursor isn't on this page).
+        let local_cursor =
+            cursor_widget.filter(|&c| c >= start && c < end).map(|c| c - start);
         let boxx = self.transcript_box.clone();
-        let scroll = self.transcript_scroll.clone();
         glib::idle_add_local_once(move || {
             let mut child = boxx.first_child();
-            let mut i = 0usize;
+            let mut i = 0usize; // page-local widget index
             while let Some(c) = child {
-                if i == cursor {
+                if local_cursor == Some(i) {
                     c.add_css_class("chat-cursor-row");
-                    if let Some(b) = c.compute_bounds(&boxx) {
-                        let adj = scroll.vadjustment();
-                        let max = (adj.upper() - adj.page_size()).max(0.0);
-                        adj.set_value((b.y() as f64).clamp(0.0, max));
-                    }
                 } else {
                     c.remove_css_class("chat-cursor-row");
                 }
-                if selection.is_some_and(|(start, end)| i >= start && i <= end) {
+                // selection is in GLOBAL widget space; translate to page-local.
+                let global = start + i;
+                if selection.is_some_and(|(s, e)| global >= s && global <= e) {
                     c.add_css_class("chat-visual-row");
                 } else {
                     c.remove_css_class("chat-visual-row");
@@ -236,6 +291,34 @@ impl ChatPanel {
         });
     }
 
+    /// Whole-transcript render for STREAMING/transient views (thinking, error,
+    /// current-question, pushed gloss) that have no persisted page state: build
+    /// specs, paginate, and render the LAST page (newest content) with no accent
+    /// bar. Replaces the old scroll-to-end `render_rows`.
+    pub fn render_rows(&self, rows: &[TranscriptRow], family: &str, size_pt: i32) {
+        let specs = row_widget_specs(rows);
+        let pages = self.paginate_specs(&specs, family, size_pt);
+        let Some(&page) = pages.last() else {
+            self.rebuild_from_specs(&[]);
+            return;
+        };
+        self.render_page(&specs, page, None, None);
+    }
+
+    /// Whole-transcript render for the static saved/revision snapshot: build
+    /// specs, paginate, and render the FIRST page (the reader wants the `Q:`
+    /// line at the top of the entry). No accent bar — the saved view is a
+    /// static snapshot, not the j/k-navigable Gloss transcript.
+    pub fn render_rows_to_top(&self, rows: &[TranscriptRow], family: &str, size_pt: i32) {
+        let specs = row_widget_specs(rows);
+        let pages = self.paginate_specs(&specs, family, size_pt);
+        let Some(&page) = pages.first() else {
+            self.rebuild_from_specs(&[]);
+            return;
+        };
+        self.render_page(&specs, page, None, None);
+    }
+
     /// Flash the transcript row WIDGETS in `(start, end)` (widget-row space,
     /// inclusive) as the "copied to clipboard" confirmation that replaces
     /// `y`'s old toast — the wash lands on the lines actually copied, not the
@@ -243,9 +326,9 @@ impl ChatPanel {
     /// different cue, the Tab-cycle "now active" signal; do not conflate the
     /// two).
     ///
-    /// Deferred via `idle_add_local_once`, same as `render_rows_focused_cursor`'s
-    /// own class application: when `y` copies a VISUAL selection, the caller
-    /// clears `visual_anchor` and calls `render_transcript` (full rebuild,
+    /// Deferred via `idle_add_local_once`, same as `render_page`'s own
+    /// cursor/selection class application: when `y` copies a VISUAL selection,
+    /// the caller clears `visual_anchor` and calls `render_transcript` (full rebuild,
     /// itself idle-deferred) BEFORE flashing, so the transcript-box children at
     /// the moment `flash_rows` is CALLED may still be the OLD widgets about to
     /// be destroyed. Queuing this flash on the idle loop too means it runs
@@ -294,11 +377,9 @@ impl ChatPanel {
 
     /// Jump the transcript viewport straight to the top (`to_end = false`) or
     /// bottom (`to_end = true`) — the scroll-only `gg`/`G` behavior for
-    /// `PanelView::Journal`/`Question`, which have no row cursor for
-    /// `render_rows_focused_cursor` to center (see
-    /// `transcript_cursor_move`'s Journal/Question guard for why those views
-    /// degrade to plain scrolling). Mirrors `render_rows`'s own
-    /// scroll-to-end (`adj.set_value(adj.upper())`) for the `G` case.
+    /// `PanelView::Journal`/`Question`, which have no row cursor/page state for
+    /// `render_page` to land the accent bar on (see `transcript_cursor_move`'s
+    /// Journal/Question guard for why those views degrade to plain scrolling).
     pub fn scroll_transcript_to_edge(&self, to_end: bool) {
         let adj = self.transcript_scroll.vadjustment();
         if to_end {
@@ -308,38 +389,35 @@ impl ChatPanel {
         }
     }
 
-    fn rebuild_rows(&self, rows: &[TranscriptRow]) {
+    /// Rebuild the transcript's widget children from a slice of already-expanded
+    /// widget specs (`row_widget_specs` output) — one `gtk4::Label` per spec, in
+    /// order, with its primary class and (when present) its `extra_class`
+    /// second class. This is the SINGLE render primitive: `render_page` passes a
+    /// page slice, the whole-transcript callers pass the full spec vec. Both this
+    /// and the pagination height model consume the same expansion, so render and
+    /// measure cannot drift.
+    fn rebuild_from_specs(&self, specs: &[crate::ui::chat_pagination::ChatWidget]) {
         while let Some(child) = self.transcript_box.first_child() {
             self.transcript_box.remove(&child);
         }
-        for row in rows {
-            if let TranscriptRow::GlossAnswer(markup) = row {
-                self.append_gloss_answer(markup);
-                continue;
-            }
-            let (text, class) = match row {
-                TranscriptRow::Question(t) => (t.as_str(), "chat-q"),
-                TranscriptRow::Answer(t) => (t.as_str(), "chat-a"),
-                TranscriptRow::Chip(t) => (t.as_str(), "chat-chip"),
-                TranscriptRow::Error(t) => (t.as_str(), "chat-error"),
-                TranscriptRow::Thinking => (THINKING_TEXT, "chat-a"),
-                TranscriptRow::SavedMark => (SAVED_MARK_TEXT, "chat-saved"),
-                TranscriptRow::GlossAnswer(_) => unreachable!("handled above"),
-            };
-            self.append_row_label(text, class);
+        for w in specs {
+            self.append_spec_label(w);
         }
     }
 
-    /// `WordChar` (break inside a word when a line is too narrow) is right
-    /// for verse/gloss prose, which legitimately needs to wrap at any width.
-    /// A speaker name (`chat-a-speaker`) must never hyphenate mid-word — e.g.
+    /// Append one label for a widget spec.
+    ///
+    /// `WordChar` (break inside a word when a line is too narrow) is right for
+    /// verse/gloss prose, which legitimately needs to wrap at any width. A
+    /// speaker name (`chat-a-speaker`) must never hyphenate mid-word — e.g.
     /// "CYMBELINE" rendering as "CYMBELIN-" / "E" — so it gets plain `Word`
-    /// wrapping instead (wraps at whitespace only; a single long name just
-    /// runs to its natural width, never split).
-    fn append_row_label(&self, text: &str, class: &str) {
-        let label = gtk4::Label::new(Some(text));
+    /// wrapping instead. When present, `extra_class` (today only
+    /// `chat-a-src-lead`) is added as a second CSS class for the block-leading
+    /// source row's top gap.
+    fn append_spec_label(&self, w: &crate::ui::chat_pagination::ChatWidget) {
+        let label = gtk4::Label::new(Some(&w.text));
         label.set_wrap(true);
-        label.set_wrap_mode(if class == "chat-a-speaker" {
+        label.set_wrap_mode(if w.class == "chat-a-speaker" {
             gtk4::pango::WrapMode::Word
         } else {
             gtk4::pango::WrapMode::WordChar
@@ -347,47 +425,11 @@ impl ChatPanel {
         label.set_halign(gtk4::Align::Start);
         label.set_xalign(0.0);
         label.set_selectable(false);
-        label.add_css_class(class);
+        label.add_css_class(&w.class);
+        if let Some(extra) = &w.extra_class {
+            label.add_css_class(extra);
+        }
         self.transcript_box.append(&label);
-    }
-
-    /// Render a reader-gloss's raw `<speaker>`/`<verse>`/`<gloss>` markup as
-    /// several typed labels (`gloss_render::chat_gloss_rows`) instead of one
-    /// plain label, so the quoted source (speaker/verse/stage) reads visually
-    /// distinct from the model's own commentary (gloss) — mirroring, at the
-    /// label level, how the gloss OVERLAY styles the same tags with
-    /// `TextTag`s. Falls back to one plain `chat-a` label with the raw text
-    /// when the markup carries none of the recognized tags (defensive: should
-    /// not happen for a real gloss answer, but never show a blank row).
-    ///
-    /// Indentation mirrors the overlay's block-quote model
-    /// (`gloss_render::{QUOTE_SPEAKER_INDENT, QUOTE_VERSE_INDENT}`, applied at
-    /// `populate_verse_buffer` gloss_render.rs:343-351): the source verse hangs
-    /// one dialogue step past the speaker label ONLY when the block actually
-    /// HAS a speaker (`chat-a-verse`/`chat-a-stage`); a speakerless (prose)
-    /// source has no label to hang past, so it sits at the shallower speaker
-    /// indent instead (`chat-a-verse-flush`/`chat-a-stage-flush`) — the deep
-    /// indent would read as arbitrary over-indentation there, exactly the
-    /// subtlety the overlay's `has_speaker` branch documents.
-    fn append_gloss_answer(&self, markup: &str) {
-        use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
-        let rows = chat_gloss_rows(markup);
-        if rows.is_empty() {
-            self.append_row_label(markup, "chat-a");
-            return;
-        }
-        let has_speaker = rows.iter().any(|(k, _)| *k == ChatGlossRowKind::Speaker);
-        for (kind, text) in rows {
-            let class = match kind {
-                ChatGlossRowKind::Speaker => "chat-a-speaker",
-                ChatGlossRowKind::Verse if has_speaker => "chat-a-verse",
-                ChatGlossRowKind::Verse => "chat-a-verse-flush",
-                ChatGlossRowKind::Stage if has_speaker => "chat-a-stage",
-                ChatGlossRowKind::Stage => "chat-a-stage-flush",
-                ChatGlossRowKind::Gloss => "chat-a-gloss",
-            };
-            self.append_row_label(&text, class);
-        }
     }
 
     // ---- ask-input passthroughs (mirror journal_overlay's ask_host wrappers)
@@ -440,14 +482,14 @@ impl ChatPanel {
 }
 
 /// The RENDERED text for a single `TranscriptRow`, in WIDGET space — one
-/// entry per label `rebuild_rows`/`append_gloss_answer` would actually paint,
-/// same granularity `widget_row_count` (chat.rs) counts and `y` (the
+/// entry per label `rebuild_from_specs`/`gloss_answer_specs` would actually
+/// paint, same granularity `widget_row_count` (chat.rs) counts and `y` (the
 /// transcript's yank bind) copies. This is a second, parallel implementation
-/// of `rebuild_rows`'s dispatch — kept in sync by `chat_gloss_rows_tests`-style
+/// of `row_widget_specs`'s dispatch — kept in sync by `chat_gloss_rows_tests`-style
 /// coverage below and by the fact that both read the exact same
 /// `gloss_render::chat_gloss_rows` split for `GlossAnswer`.
 ///
-/// Deliberately mirrors `rebuild_rows`'s text, NOT the raw markup: a
+/// Deliberately mirrors `row_widget_specs`'s text, NOT the raw markup: a
 /// `GlossAnswer` row's `<speaker>`/`<verse>`/`<gloss>` tags are stripped by
 /// `chat_gloss_rows` exactly as they are for display, so `y` copies
 /// "CYMBELINE" / "Stand by my side..." — never a literal `<speaker>` tag.
@@ -460,7 +502,7 @@ pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
             use crate::ui::gloss_render::chat_gloss_rows;
             let rows = chat_gloss_rows(markup);
             if rows.is_empty() {
-                // Mirrors append_gloss_answer's own plain-label fallback.
+                // Mirrors gloss_answer_specs's own plain-label fallback.
                 vec![markup.clone()]
             } else {
                 rows.into_iter().map(|(_, text)| text).collect()
@@ -477,9 +519,9 @@ pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
 
 /// Whether each WIDGET of a single `TranscriptRow` is a valid j/k landing
 /// spot — same widget-space granularity as `row_widget_texts` (one entry per
-/// label `rebuild_rows`/`append_gloss_answer` actually paints), derived from
-/// the SAME `chat_gloss_rows` split so this can never drift out of sync with
-/// what `append_gloss_answer` renders. Only a `ChatGlossRowKind::Speaker`
+/// label `rebuild_from_specs`/`gloss_answer_specs` actually paints), derived
+/// from the SAME `chat_gloss_rows` split so this can never drift out of sync
+/// with what `gloss_answer_specs` renders. Only a `ChatGlossRowKind::Speaker`
 /// widget is unlandable — a speaker name isn't a line you'd read, copy, or
 /// mark (see the chat panel's Fix 2). Every other row kind (verse, stage,
 /// gloss, question, answer, chip, thinking, saved-mark, error) is landable.
@@ -489,7 +531,7 @@ pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
             use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
             let rows = chat_gloss_rows(markup);
             if rows.is_empty() {
-                // Mirrors append_gloss_answer's plain-label fallback: one
+                // Mirrors gloss_answer_specs's plain-label fallback: one
                 // widget, landable (it's the raw text, not a speaker label).
                 vec![true]
             } else {
@@ -500,6 +542,175 @@ pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
         }
         // Every other row kind is exactly one widget, always landable.
         _ => vec![true; row_widget_texts(row).len()],
+    }
+}
+
+/// The SINGLE source of truth for how a transcript flattens into rendered
+/// widgets: one `ChatWidget { text, class, group_start }` per label
+/// `rebuild_from_specs`/`gloss_answer_specs` paints, in order.
+/// `rebuild_from_specs` renders from this, and the pagination height model
+/// (`chat_pagination`) measures from it, so render and measure can never
+/// drift.
+///
+/// `group_start` is `true` for the FIRST widget of each `TranscriptRow` and
+/// `false` for a `GlossAnswer`'s continuation widgets (verse/stage/gloss labels
+/// after the first) — i.e. the flag marks an indivisible pagination unit's
+/// leading widget. Class + text assignment mirror `gloss_answer_specs` EXACTLY.
+/// `class` is the PRIMARY class; `extra_class` carries the stateful
+/// `chat-a-src-lead` second class (the top gap on the first source row that
+/// follows a gloss) so pagination can account for its rendered height — it is
+/// rendered via `append_spec_label`'s `extra_class` handling. Carrying the
+/// extra as DATA (not dropping it) is required: dropping it undercounts that
+/// row's height and pagination packs one row too many (the returning bottom
+/// clip).
+pub(crate) fn row_widget_specs(
+    rows: &[TranscriptRow],
+) -> Vec<crate::ui::chat_pagination::ChatWidget> {
+    use crate::ui::chat_pagination::ChatWidget;
+    let mut out: Vec<ChatWidget> = Vec::new();
+    for row in rows {
+        match row {
+            TranscriptRow::GlossAnswer(markup) => {
+                for (text, class, extra, group_start) in gloss_answer_specs(markup) {
+                    out.push(ChatWidget {
+                        text,
+                        class: class.to_string(),
+                        extra_class: extra.map(|e| e.to_string()),
+                        group_start,
+                    });
+                }
+            }
+            other => {
+                let (text, class) = plain_row_spec(other);
+                out.push(ChatWidget {
+                    text: text.to_string(),
+                    class: class.to_string(),
+                    extra_class: None,
+                    group_start: true,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The (text, class) a single non-`GlossAnswer` row renders as — the exact
+/// mapping `row_widget_specs` uses for every non-gloss row. `GlossAnswer` is
+/// handled by `gloss_answer_specs`; calling this with one panics (it never
+/// should).
+fn plain_row_spec(row: &TranscriptRow) -> (&str, &'static str) {
+    match row {
+        TranscriptRow::Question(t) => (t.as_str(), "chat-q"),
+        TranscriptRow::Answer(t) => (t.as_str(), "chat-a"),
+        TranscriptRow::Chip(t) => (t.as_str(), "chat-chip"),
+        TranscriptRow::Error(t) => (t.as_str(), "chat-error"),
+        TranscriptRow::Thinking => (THINKING_TEXT, "chat-a"),
+        TranscriptRow::SavedMark => (SAVED_MARK_TEXT, "chat-saved"),
+        TranscriptRow::GlossAnswer(_) => unreachable!("GlossAnswer handled by gloss_answer_specs"),
+    }
+}
+
+/// Flatten a `GlossAnswer`'s raw `<speaker>`/`<verse>`/`<gloss>` markup into
+/// `(text, class, extra_class, group_start)` per widget — the SINGLE source of
+/// the (text, class) + `chat-a-src-lead` decision, so `row_widget_specs`,
+/// `rebuild_from_specs`, and the pagination height model share ONE expansion.
+/// Renders the quoted source (speaker/verse/stage)
+/// visually distinct from the model's own commentary (gloss) — mirroring, at the
+/// label level, how the gloss OVERLAY styles the same tags with `TextTag`s.
+/// Falls back to one plain `chat-a` widget with the raw text when the markup
+/// carries none of the recognized tags (defensive: should not happen for a real
+/// gloss answer, but never show a blank row).
+///
+/// Indentation mirrors the overlay's block-quote model
+/// (`gloss_render::{QUOTE_SPEAKER_INDENT, QUOTE_VERSE_INDENT}`): the source
+/// verse hangs one dialogue step past the speaker label ONLY when the block
+/// actually HAS a speaker (`chat-a-verse`/`chat-a-stage`); a speakerless (prose)
+/// source has no label to hang past, so it sits at the shallower speaker indent
+/// instead (`chat-a-verse-flush`/`chat-a-stage-flush`).
+///
+/// `extra_class` is `Some("chat-a-src-lead")` for the FIRST source row that
+/// follows a gloss (the extra top gap separating this block's source from the
+/// preceding block's gloss commentary). `prev_was_gloss` starts false so the
+/// very first source row (no preceding gloss) gets no extra gap. `group_start`
+/// is true only for the first widget of the block.
+fn gloss_answer_specs(
+    markup: &str,
+) -> Vec<(String, &'static str, Option<&'static str>, bool)> {
+    use crate::ui::gloss_render::{chat_gloss_rows, ChatGlossRowKind};
+    let rows = chat_gloss_rows(markup);
+    if rows.is_empty() {
+        // The plain-label fallback: one widget with the raw text.
+        return vec![(markup.to_string(), "chat-a", None, true)];
+    }
+    let has_speaker = rows.iter().any(|(k, _)| *k == ChatGlossRowKind::Speaker);
+    let mut prev_was_gloss = false;
+    let mut out = Vec::with_capacity(rows.len());
+    for (i, (kind, text)) in rows.into_iter().enumerate() {
+        let is_source = kind != ChatGlossRowKind::Gloss;
+        let class = match kind {
+            ChatGlossRowKind::Speaker => "chat-a-speaker",
+            ChatGlossRowKind::Verse if has_speaker => "chat-a-verse",
+            ChatGlossRowKind::Verse => "chat-a-verse-flush",
+            ChatGlossRowKind::Stage if has_speaker => "chat-a-stage",
+            ChatGlossRowKind::Stage => "chat-a-stage-flush",
+            ChatGlossRowKind::Gloss => "chat-a-gloss",
+        };
+        let extra = if is_source && prev_was_gloss {
+            Some("chat-a-src-lead")
+        } else {
+            None
+        };
+        out.push((text, class, extra, i == 0));
+        prev_was_gloss = kind == ChatGlossRowKind::Gloss;
+    }
+    out
+}
+
+#[cfg(test)]
+mod row_widget_specs_tests {
+    use super::{row_widget_specs, TranscriptRow as R};
+
+    #[test]
+    fn row_widget_specs_explodes_gloss_and_marks_groups() {
+        let rows = vec![
+            R::Question("q".into()),
+            R::GlossAnswer("<speaker>X</speaker>\n<verse>v1</verse>\n<gloss>g</gloss>".into()),
+        ];
+        let specs = row_widget_specs(&rows);
+        // Question → 1 widget (group start). GlossAnswer → 3 widgets: first is a
+        // group start, the rest continue the same unit.
+        assert_eq!(specs.len(), 4);
+        assert_eq!(specs[0].group_start, true); // Question
+        assert_eq!(specs[1].group_start, true); // gloss unit begins
+        assert_eq!(specs[2].group_start, false); // verse continues
+        assert_eq!(specs[3].group_start, false); // gloss continues
+        assert_eq!(specs[1].class, "chat-a-speaker");
+    }
+
+    /// The three widget-space views (specs, texts, landable) must stay the same
+    /// length and order for any rows vec — pagination and render walk `specs`,
+    /// while `y`/j-k walk `texts`/`landable`.
+    #[test]
+    fn specs_texts_landable_same_length() {
+        let rows = vec![
+            R::Question("q".into()),
+            R::Answer("a".into()),
+            R::Chip("c".into()),
+            R::Error("e".into()),
+            R::Thinking,
+            R::SavedMark,
+            R::GlossAnswer(
+                "<speaker>CYMBELINE</speaker>\n<verse>v1</verse>\n<gloss>g1</gloss>\n\
+                 <speaker>BELARIUS</speaker>\n<stage>enters</stage>\n<gloss>g2</gloss>"
+                    .into(),
+            ),
+            R::GlossAnswer("no tags here".into()),
+        ];
+        let specs_len = row_widget_specs(&rows).len();
+        let texts_len: usize = rows.iter().map(|r| super::row_widget_texts(r).len()).sum();
+        let landable_len: usize = rows.iter().map(|r| super::row_widget_landable(r).len()).sum();
+        assert_eq!(specs_len, texts_len);
+        assert_eq!(specs_len, landable_len);
     }
 }
 

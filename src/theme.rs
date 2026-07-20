@@ -1348,7 +1348,7 @@ pub fn generate_css(
             must match the main card's body text (see generate_css's doc \
             comment). Was `font_size.saturating_sub(2).max(8)` (a local \
             `chat_size`, removed); the narrower panel still wraps fine at \
-            full size (labels wrap via WordChar, see append_row_label), so \
+            full size (labels wrap via WordChar, see chat_panel::append_spec_label), so \
             nothing else in this stylesheet depended on the smaller size. */ \
          /* padding-right keeps the wrapped text clear of the scrollbar — it \
             is on the SCROLLED content Box (.chat-transcript), inside the \
@@ -1364,16 +1364,18 @@ pub fn generate_css(
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
            transition: background-color 320ms ease-out; }} \
-         /* Pinned panel: its top edge aligns with the reading card's top edge \
-            (size_panel's Pinned branch), so the transcript would otherwise jam \
-            against it. Breathing room goes on the SCROLL VIEWPORT (not the \
-            inner .chat-transcript content Box) so the gap is FIXED at the top \
-            of the viewport and persists as j/k scrolls the content — padding on \
-            the content box only spaces the very first line and scrolls away \
-            with it. Scoped to `.chat-panel-pinned` so FLOAT keeps its \
-            first-line alignment (`chat_first_line_top_margin` assumes no top \
-            gap here). */ \
-         .chat-panel-pinned .chat-transcript-scroll {{ padding-top: 40px; }} \
+         /* Pinned panel breathing room: a top MARGIN on the scroll viewport, \
+            NOT padding. The scroll node clips its content at its own top edge; \
+            padding is INSIDE that clip box, so scrolled content renders under \
+            it and the top line shows severed (the clipping bug). Margin sits \
+            OUTSIDE the clip box, so the viewport starts BELOW the gap: the \
+            panel now PAGINATES rather than scrolling to the cursor \
+            (`chat_panel::render_page` renders a whole-widget page slice that \
+            fits the transcript budget by construction), so this margin is \
+            simply the top breathing gap above that page's first line — no \
+            scroll/vadjustment involved. Float keeps 0 (it \
+            first-line-aligns via `chat_first_line_top_margin`). */ \
+         .chat-panel-pinned .chat-transcript-scroll {{ margin-top: 40px; }} \
          .chat-transcript-scroll.chat-flash-wash {{ \
            background-color: alpha({chat_ink}, 0.10); transition: none; }} \
          .chat-panel-float .chat-transcript-scroll.chat-flash-wash {{ \
@@ -1415,6 +1417,22 @@ pub fn generate_css(
          .chat-a-speaker {{ color: {chat_ink}; font-weight: normal; \
            font-variant: small-caps; font-size: 0.75em; \
            padding-top: 14px; padding-left: {q_speaker}px; }} \
+         /* The FIRST source row of a gloss block (tagged chat-a-src-lead by \
+            chat_panel::gloss_answer_specs) carries the gap separating this block source \
+            from the PRECEDING block gloss commentary. GTK CSS has no sibling \
+            selector for source-after-gloss, so the row builder tags the block \
+            leading source line and this rule adds the gap — only ONCE per \
+            block, not per source line (multi-line prose source would otherwise \
+            get 18px between every line). Matched to the gloss 18px top so the \
+            rhythm reads evenly. \
+            COMPOUND selector (class + type + class → specificity 0,0,2,1) so \
+            it out-specificities the single-class base source rules \
+            (.chat-a-verse/.chat-a-stage/.chat-a-*-flush, all 0,0,1,0) REGARDLESS \
+            of their order in the stylesheet. padding-top is non-additive \
+            (replaces, not adds), so this pins the rendered top to 44px for the \
+            src-lead row whatever its base class is. Mirrors the padding-BOTTOM \
+            compound rules below (.chat-transcript label.chat-a-X). */ \
+         .chat-transcript label.chat-a-src-lead {{ padding-top: 26px; }} \
          .chat-transcript label.chat-a-speaker {{ padding-bottom: 0px; }} \
          /* Fix 3: the main card never italicizes dialogue/verse — \
             formatting.rs's Style::Italic appears ONLY on stage directions \
@@ -1443,7 +1461,7 @@ pub fn generate_css(
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            padding-left: {q_speaker}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
-         .chat-a-gloss {{ color: {chat_ink}; padding-top: 18px; padding-left: {q_body}px; }} \
+         .chat-a-gloss {{ color: {chat_ink}; padding-top: 26px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {fg}; }} \
          .chat-panel-float .chat-a {{ color: {fg}; }} \
          .chat-panel-float .chat-chip {{ color: {dim}; \

@@ -27,7 +27,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("s", "save the selected exchange to the journal"),
         ("r / R", "Gloss view: re-gloss · Journal view: ask / rewrite"),
         ("\\", "toggle view: gloss ↔ journal Q&A"),
-        ("c", "copy the shown gloss id"),
+        ("c", "copy id: Gloss view → gloss id · Journal view → Q&A id"),
         ("V", "visual select rows (j/k/h/t extend)"),
         ("y", "yank selection or cursor row → clipboard"),
     ]),
