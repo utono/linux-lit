@@ -31,11 +31,17 @@ pub struct ChatLoopState {
 }
 
 /// The displayed entry's source passage, resolved from the ENTRY's own
-/// identity.
+/// identity. The line fields are per-division line numbers (`line_in_div`) —
+/// NOT `line_mapping.id`s. They are resolved to global ids at space-time via
+/// `line_id_for_location` (the echoes precedent); `line_mapping.id` is a
+/// global autoincrement, so passing a `line_in_div` where an id is expected
+/// can never match.
 pub struct LoopSource {
     pub work_abbrev: String,
-    pub first_line_id: i64,
-    pub last_line_id: i64,
+    pub div1: i64,
+    pub div2: i64,
+    pub first_line_in_div: i64,
+    pub last_line_in_div: i64,
 }
 
 /// Resolve the source passage for the loop. `gloss_ctx` (the entry's own
@@ -44,6 +50,11 @@ pub struct LoopSource {
 /// by construction (every main-card work switch wipes the panel). NEVER
 /// resolve a glossed entry from current_work: the future cross-work `f`
 /// finder will pin other works' entries.
+///
+/// The returned line fields are `line_in_div` values (gloss_ctx.act/scene are
+/// the passage's div1/div2, source_line_numbers are line_in_div;
+/// SegmentContext carries div1/div2 and cursor_lines with `line_in_div`). The
+/// caller resolves them to `line_mapping.id`s with `line_id_for_location`.
 pub fn loop_source_from(
     gloss_ctx: Option<&GlossContext>,
     pinned: Option<&SegmentContext>,
@@ -54,17 +65,21 @@ pub fn loop_source_from(
         let last = *ctx.source_line_numbers.last()?;
         return Some(LoopSource {
             work_abbrev: ctx.work_abbrev.clone(),
-            first_line_id: first,
-            last_line_id: last,
+            div1: ctx.act,
+            div2: ctx.scene,
+            first_line_in_div: first,
+            last_line_in_div: last,
         });
     }
     let p = pinned?;
-    let first = p.cursor_lines.first()?.id;
-    let last = p.cursor_lines.last()?.id;
+    let first = p.cursor_lines.first()?.line_in_div;
+    let last = p.cursor_lines.last()?.line_in_div;
     Some(LoopSource {
         work_abbrev: current_abbrev?.to_string(),
-        first_line_id: first,
-        last_line_id: last,
+        div1: p.div1,
+        div2: p.div2,
+        first_line_in_div: first,
+        last_line_in_div: last,
     })
 }
 
@@ -185,6 +200,24 @@ mod tests {
         );
     }
 
+    fn line_at(line_in_div: i64) -> crate::db::models::Line {
+        crate::db::models::Line {
+            id: 9_000_000 + line_in_div, // deliberately NOT line_in_div: ids are millions
+            citation: String::new(),
+            text: String::new(),
+            normalized: String::new(),
+            speaker: None,
+            is_dialogue: true,
+            timestamp: None,
+            div1: 2,
+            div2: 4,
+            line_in_div,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
     #[test]
     fn loop_source_prefers_gloss_ctx_own_work() {
         let ctx = crate::gloss::GlossContext {
@@ -192,8 +225,8 @@ mod tests {
             work_title: String::new(),
             start_citation: String::new(),
             end_citation: String::new(),
-            act: 0,
-            scene: 0,
+            act: 3,
+            scene: 5,
             speaker: String::new(),
             source_text: String::new(),
             source_line_numbers: vec![41, 42, 43],
@@ -204,11 +237,31 @@ mod tests {
         // own identity, the cross-work `f` finder's contract.
         let src = loop_source_from(Some(&ctx), None, Some("TGV-Amb")).unwrap();
         assert_eq!(src.work_abbrev, "BH-Barrett");
-        assert_eq!((src.first_line_id, src.last_line_id), (41, 43));
+        // act/scene are the passage's div1/div2; source_line_numbers are
+        // line_in_div values — resolved to ids at space-time.
+        assert_eq!((src.div1, src.div2), (3, 5));
+        assert_eq!((src.first_line_in_div, src.last_line_in_div), (41, 43));
         // Empty line list → unresolvable, not a bogus 0..0 range.
         let empty = crate::gloss::GlossContext { source_line_numbers: vec![], ..ctx };
         assert!(loop_source_from(Some(&empty), None, Some("TGV-Amb")).is_none());
         // Nothing pinned at all → None.
         assert!(loop_source_from(None, None, Some("TGV-Amb")).is_none());
+    }
+
+    #[test]
+    fn loop_source_pinned_fallback_uses_line_in_div_and_current_work() {
+        let pinned = SegmentContext {
+            segments: vec![String::new()],
+            cursor_index: 0,
+            cursor_lines: vec![line_at(41), line_at(42), line_at(43)],
+            div1: 2,
+            div2: 4,
+        };
+        // No gloss_ctx: fall back to the raw pin + current_work. The line
+        // fields are line_in_div (41/43), NOT the Line.id millions.
+        let src = loop_source_from(None, Some(&pinned), Some("TGV-Amb")).unwrap();
+        assert_eq!(src.work_abbrev, "TGV-Amb");
+        assert_eq!((src.div1, src.div2), (2, 4));
+        assert_eq!((src.first_line_in_div, src.last_line_in_div), (41, 43));
     }
 }

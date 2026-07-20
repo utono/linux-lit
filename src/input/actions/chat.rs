@@ -2798,6 +2798,28 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         crate::input::navigation::show_chapter_toast_secs(&s, "Database unavailable", 2);
         return;
     };
+    // The LoopSource carries per-division line numbers (line_in_div); resolve
+    // them to global line_mapping ids here (the echoes precedent). A
+    // line_in_div can never match a line_mapping.id lookup directly.
+    let Some(first_id) = crate::db::queries::line_id_for_location(
+        &conn,
+        &src.work_abbrev,
+        src.div1,
+        src.div2,
+        src.first_line_in_div,
+    ) else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "Could not locate the passage lines", 2);
+        return;
+    };
+    let last_id = crate::db::queries::line_id_for_location(
+        &conn,
+        &src.work_abbrev,
+        src.div1,
+        src.div2,
+        src.last_line_in_div,
+    )
+    .unwrap_or(first_id);
     let media = crate::db::queries::list_media_for_work(&conn, &src.work_abbrev)
         .ok()
         .and_then(|items| crate::mpv::chat_player::pick_default_media(&items));
@@ -2811,7 +2833,7 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         return;
     };
     let Some(start) =
-        crate::db::queries::line_start_time(&conn, src.first_line_id, media.media_id)
+        crate::db::queries::line_start_time(&conn, first_id, media.media_id)
     else {
         let s = state.borrow();
         crate::input::navigation::show_chapter_toast_secs(&s, "No timestamps for this passage", 2);
@@ -2819,9 +2841,9 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
     };
     // b-point: last line's end_time, else the next start AFTER the last
     // line's own start, else play once (no loop).
-    let last_start = crate::db::queries::line_start_time(&conn, src.last_line_id, media.media_id)
+    let last_start = crate::db::queries::line_start_time(&conn, last_id, media.media_id)
         .unwrap_or(start);
-    let b = crate::db::queries::line_end_time(&conn, src.last_line_id, media.media_id)
+    let b = crate::db::queries::line_end_time(&conn, last_id, media.media_id)
         .or_else(|| crate::db::queries::next_start_after(&conn, media.media_id, last_start));
     // Loop from a hair before the first line (preroll), every pass.
     let a = crate::input::navigation::preroll_seek_time(start);
@@ -2855,7 +2877,7 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
     s.chat_loop.paused = false;
     crate::logging::log(&format!(
         "CHAT-LOOP: arm {} lines {}..{} a={:.2} b={:?} media={}",
-        src.work_abbrev, src.first_line_id, src.last_line_id, a, b, media.path
+        src.work_abbrev, first_id, last_id, a, b, media.path
     ));
     crate::mpv::chat_player::spawn_and_arm(socket, media.path, a, b);
 }
