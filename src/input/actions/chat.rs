@@ -2656,28 +2656,10 @@ pub(crate) fn size_panel(s: &AppState) {
             s.chat_panel.size_to(w, panel_h);
         }
         ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
-            let col = if s.chat_placement == ChatPlacement::FloatLeft {
-                &s.scrolled_overlay
-            } else {
-                &s.right_scrolled_overlay
-            };
-            let (mut x, mut w) = col
-                .compute_bounds(&s.window)
-                .map(|b| (b.x() as i32, b.width() as i32))
-                .unwrap_or((24, crate::app::MIN_TWO_COLUMN_COLUMN_WIDTH));
-            // The column stops 8px short of the divider line (the divider's
-            // CSS margin); extend the panel to the divider so its border
-            // sits exactly on top of it instead of leaving a sliver of card.
-            if let Some(d) = s.column_divider.compute_bounds(&s.window) {
-                let (d_left, d_right) = (d.x() as i32, (d.x() + d.width()) as i32);
-                if s.chat_placement == ChatPlacement::FloatLeft {
-                    w = w.max(d_right - x);
-                } else {
-                    let new_x = d_left.min(x);
-                    w += x - new_x;
-                    x = new_x;
-                }
-            }
+            let (x, w) = crate::app::layout::column_float_rect(
+                s,
+                s.chat_placement == ChatPlacement::FloatRight,
+            );
             s.chat_panel.container.set_margin_start(x.max(0));
             s.chat_panel.container.remove_css_class("chat-panel-pinned");
             s.chat_panel.container.add_css_class("chat-panel-float");
