@@ -65,6 +65,11 @@ pub struct ChatPanel {
     transcript_box: gtk4::Box,
     transcript_scroll: gtk4::ScrolledWindow,
     input: crate::ui::ask_card::AskCard,
+    /// Vocab-highlight word set + span color for transcript labels; empty
+    /// set disables. Set by chat render paths from AppState (the panel has
+    /// no state access of its own).
+    vocab_words: std::cell::RefCell<std::collections::HashSet<String>>,
+    vocab_color: std::cell::RefCell<Option<String>>,
 }
 
 impl ChatPanel {
@@ -120,7 +125,23 @@ impl ChatPanel {
             transcript_box,
             transcript_scroll,
             input,
+            vocab_words: std::cell::RefCell::new(std::collections::HashSet::new()),
+            vocab_color: std::cell::RefCell::new(None),
         }
+    }
+
+    /// Set the vocab-highlight word set and span color applied to transcript
+    /// labels on the next (and every subsequent) render. An empty word set or
+    /// a `None` color disables highlighting (labels render as plain text).
+    /// The panel has no AppState access; the chat render paths feed this from
+    /// `AppState.vocab_words`/`vocab_highlight_visible` before rebuilding.
+    pub fn set_vocab_highlight(
+        &self,
+        words: std::collections::HashSet<String>,
+        color: Option<String>,
+    ) {
+        *self.vocab_words.borrow_mut() = words;
+        *self.vocab_color.borrow_mut() = color;
     }
 
     pub fn size_to(&self, w: i32, h: i32) {
@@ -437,6 +458,19 @@ impl ChatPanel {
         if let Some(extra) = &w.extra_class {
             label.add_css_class(extra);
         }
+        // Vocab highlight: when enabled and this label's text contains a vocab
+        // word, replace the plain text with Pango markup wrapping each match in
+        // a colored span. Specs are plain text (GlossAnswer markup is already
+        // exploded into text rows by chat_gloss_rows before reaching here), so
+        // escaping in vocab_markup is safe on every row.
+        if let Some(color) = self.vocab_color.borrow().as_deref() {
+            let words = self.vocab_words.borrow();
+            if !words.is_empty() {
+                if let Some(markup) = vocab_markup(&w.text, &words, color) {
+                    label.set_markup(&markup);
+                }
+            }
+        }
         self.transcript_box.append(&label);
     }
 
@@ -504,6 +538,38 @@ impl ChatPanel {
 /// `Thinking` yields the same placeholder text the label shows ("thinking…")
 /// rather than an empty string, so a yank mid-request doesn't silently copy
 /// nothing.
+/// Pango markup for a chat label: vocab matches wrapped in a colored span,
+/// everything escaped. None when the text has no match (caller keeps plain
+/// set_text — cheaper and avoids markup parsing for the common case).
+pub(crate) fn vocab_markup(
+    text: &str,
+    words: &std::collections::HashSet<String>,
+    color: &str,
+) -> Option<String> {
+    let mut spans = Vec::new();
+    crate::vocab_scan::scan_line(text, 0, words, &mut spans);
+    if spans.is_empty() {
+        return None;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut pos = 0usize;
+    for s in &spans {
+        let before: String = chars[pos..s.char_start].iter().collect();
+        let hit: String = chars[s.char_start..s.char_end].iter().collect();
+        out.push_str(&glib::markup_escape_text(&before));
+        out.push_str(&format!(
+            "<span foreground=\"{}\">{}</span>",
+            color,
+            glib::markup_escape_text(&hit)
+        ));
+        pos = s.char_end;
+    }
+    let rest: String = chars[pos..].iter().collect();
+    out.push_str(&glib::markup_escape_text(&rest));
+    Some(out)
+}
+
 pub(crate) fn row_widget_texts(row: &TranscriptRow) -> Vec<String> {
     match row {
         TranscriptRow::GlossAnswer(markup) => {
@@ -672,6 +738,21 @@ fn gloss_answer_specs(
         prev_was_gloss = kind == ChatGlossRowKind::Gloss;
     }
     out
+}
+
+#[cfg(test)]
+mod vocab_markup_tests {
+    use super::vocab_markup;
+
+    #[test]
+    fn vocab_markup_escapes_and_wraps_matches() {
+        let words: std::collections::HashSet<String> =
+            ["censure".to_string()].into_iter().collect();
+        let m = vocab_markup("Should censure <thus> on gentlemen.", &words, "#ffcc66").unwrap();
+        assert!(m.contains("&lt;thus&gt;"), "text must be escaped: {m}");
+        assert!(m.contains("<span foreground=\"#ffcc66\">censure</span>"), "{m}");
+        assert!(vocab_markup("no matches here", &words, "#ffcc66").is_none());
+    }
 }
 
 #[cfg(test)]

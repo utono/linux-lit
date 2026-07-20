@@ -295,7 +295,7 @@ pub fn handle_key(
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
-            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl),
+            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
             crate::app::InputMode::Reader => unreachable!(),
         };
@@ -446,10 +446,18 @@ fn journal_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec
         .collect()
 }
 
-/// Vocab words visible in the chat transcript (the `rr` scope there).
-/// Filled by Task 9.
-fn chat_scope_words(_state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
-    Vec::new()
+/// Vocab words visible in the chat transcript (the `rr` scope there): scan the
+/// SELECTED exchange's visible text rows for the user's vocab words. The
+/// selection lives in AppState (not the panel), so the accessor is on the chat
+/// action layer (`selected_exchange_texts`); we scan each row here.
+fn chat_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    let s = state.borrow();
+    let texts = crate::input::actions::chat::selected_exchange_texts(&s);
+    let mut out = Vec::new();
+    for t in &texts {
+        crate::vocab_scan::scan_line(t, 0, &s.vocab_words, &mut out);
+    }
+    out.into_iter().map(|sp| sp.word).collect()
 }
 
 /// Handle a key RELEASE. Only used for the Shift-tap timestamp delete/undo:
@@ -1579,6 +1587,7 @@ fn handle_chat_transcript_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_shift: bool,
 ) -> bool {
     // gg chord -> first landable row (mirrors the journal/gloss/synopsis
     // overlays' block cursor; see keymap.rs:1457 for the sibling this
@@ -1668,10 +1677,11 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             true
         }
-        "r" => {
-            // Journal view: `r` asks a NEW question (the panel's own ask input,
-            // same as `a`), matching the main journal overlay's `r`. Other
-            // views keep regloss.
+        // Ctrl+r: re-gloss / ask (the OLD plain-`r` body, moved off `r` — which
+        // is now the vocab surface, mirroring the gloss/journal overlays + main
+        // card). Journal view asks a NEW question (the panel's own ask input,
+        // same as `a`); other views regloss. Ctrl+r is free in this handler.
+        "r" if is_ctrl && !is_shift => {
             if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
                 crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             } else {
@@ -1679,9 +1689,10 @@ fn handle_chat_transcript_key(
             }
             true
         }
-        "R" => {
-            // Journal view: `R` opens the rewrite popup on the selected entry
-            // (Task 5). Other views keep regloss.
+        // Ctrl+w: rewrite / re-gloss (the OLD plain-`R` body, moved off `R`).
+        // Journal view opens the rewrite popup on the selected entry (Task 5);
+        // other views regloss. Ctrl+w is free in this handler.
+        "w" if is_ctrl => {
             if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
                 crate::input::actions::chat::rewrite_journal_entry(state);
             } else {
@@ -1689,6 +1700,24 @@ fn handle_chat_transcript_key(
             }
             true
         }
+        // `r`: vocab surface (re-gloss/ask moved to Ctrl+r, mirroring the
+        // gloss/journal overlays + main card). If the popup is already up, `r`
+        // cycles to the next word; either way it arms the `rr` chord so a quick
+        // second `r` toggles the popup (see the hoisted PendingR block at the
+        // top of handle_key, which scopes to this transcript's visible words via
+        // chat_scope_words).
+        "r" if !is_ctrl => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_next(&mut s);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
+            true
+        }
+        // `R`: vocab R reserved unbound, mirrors the main card + overlays. The
+        // rewrite/re-gloss body moved to Ctrl+w (handled in the is_ctrl arm
+        // above). Consumed so it can't fall through.
+        "R" => true,
         // `\`: toggle the panel between the pinned passage's GLOSS(es) and its
         // saved JOURNAL Q&As (scope='passage', exact citation match). Was on
         // `t` before `t` became cursor-up; `\` cycles overlays in the reader,
@@ -1756,6 +1785,16 @@ fn handle_chat_transcript_key(
         // (mirrors the reader's own visual-mode Escape); only a SECOND
         // Escape, with no selection active, focuses the reader.
         "Escape" => {
+            // Popup-close comes FIRST: if the vocab popup is up, Escape only
+            // closes it (clearing auto-show) and stays in the panel — before the
+            // loop-teardown / V-select-exit / focus-reader precedence below
+            // (mirrors the gloss/journal overlays' Escape arm).
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+                return true;
+            }
             let mut s = state.borrow_mut();
             crate::input::actions::chat::chat_loop_teardown(&mut s);
             if crate::input::actions::chat::exit_transcript_visual(&mut s) {
