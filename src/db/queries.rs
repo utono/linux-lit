@@ -1157,6 +1157,36 @@ pub fn set_vocab_highlight(
     Ok(())
 }
 
+/// Result of `insert_vocab_word`: whether the row was newly written / filled,
+/// or already had a good definition and was left untouched.
+pub enum VocabInsertOutcome {
+    Added,
+    AlreadyPresent,
+}
+
+/// Insert a vocab word, idempotent on the UNIQUE `word` column. A new word is
+/// inserted; an existing word with an EMPTY definition is filled; an existing
+/// word with a good definition is left intact. `word` is expected already
+/// normalized (trimmed, lowercased) by the caller.
+pub fn insert_vocab_word(
+    conn: &Connection,
+    word: &str,
+    definition: &str,
+    source: &str,
+) -> Result<VocabInsertOutcome, rusqlite::Error> {
+    let changed = conn.execute(
+        "INSERT INTO vocab_words(word, definition, source) VALUES(?1, ?2, ?3)
+         ON CONFLICT(word) DO UPDATE SET definition = excluded.definition, source = excluded.source
+           WHERE vocab_words.definition = '' OR vocab_words.definition IS NULL",
+        rusqlite::params![word, definition, source],
+    )?;
+    Ok(if changed > 0 {
+        VocabInsertOutcome::Added
+    } else {
+        VocabInsertOutcome::AlreadyPresent
+    })
+}
+
 /// Ensure the bookmarks table exists in the database.
 pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -3946,5 +3976,62 @@ mod gloss_ordering_tests {
         assert_eq!(gs[0].gloss_text, "new-reader");
         assert_eq!(gs[1].gloss_text, "old-reader");
         assert_eq!(gs[2].gloss_text, "teacher");
+    }
+}
+
+#[cfg(test)]
+mod vocab_insert_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn mem_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT NOT NULL UNIQUE,
+                definition TEXT NOT NULL,
+                difficulty_level INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                source TEXT
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn insert_new_word_reports_added() {
+        let conn = mem_db();
+        let out = insert_vocab_word(&conn, "brave", "courageous", "wordnet").unwrap();
+        assert!(matches!(out, VocabInsertOutcome::Added));
+        let def: String = conn
+            .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(def, "courageous");
+    }
+
+    #[test]
+    fn reinsert_keeps_good_definition_reports_already_present() {
+        let conn = mem_db();
+        insert_vocab_word(&conn, "brave", "courageous", "wordnet").unwrap();
+        let out = insert_vocab_word(&conn, "brave", "SOMETHING ELSE", "claude").unwrap();
+        assert!(matches!(out, VocabInsertOutcome::AlreadyPresent));
+        let def: String = conn
+            .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(def, "courageous"); // unchanged
+    }
+
+    #[test]
+    fn reinsert_fills_empty_definition() {
+        let conn = mem_db();
+        insert_vocab_word(&conn, "brave", "", "wordnet").unwrap();
+        let out = insert_vocab_word(&conn, "brave", "courageous", "gcide").unwrap();
+        assert!(matches!(out, VocabInsertOutcome::Added));
+        let def: String = conn
+            .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(def, "courageous");
     }
 }

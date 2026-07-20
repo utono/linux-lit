@@ -19,6 +19,7 @@ mod text_file_map;
 mod theme;
 mod tts;
 mod ui;
+mod vocab_lookup;
 mod scansion;
 
 use gtk4::prelude::*;

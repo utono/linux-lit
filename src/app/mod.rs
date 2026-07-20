@@ -119,6 +119,10 @@ pub enum InputMode {
     /// the system clipboard; `:q`/double-Esc exit. Save verbs are refused —
     /// nothing is written back to the reading buffer or lit.db.
     SegmentVim,
+    /// Typing a word into the empty vim-input card to add a vocab word
+    /// (Ctrl+Alt+\). All keys route to the gloss_overlay edit buffer; the
+    /// save verb (:w) submits (lookup + insert), :q/Esc cancels.
+    AddVocab,
     /// Fully modal vocab-sentence drill loop (Ctrl+-; requires phrase data
     /// for the playing media, else the entry toasts the reason): the sentence
     /// under review repeats via MPV ab-loop; n/p step between vocab
@@ -613,6 +617,9 @@ pub struct AppState {
     pub reader_gloss_lines: std::collections::HashSet<usize>,
     pub dim_enabled: bool,
     pub vocab_highlight_visible: bool,
+    /// Word currently awaiting a Claude definition fallback (add-vocab). Guards
+    /// against a duplicate paid request / double insert on repeat submit.
+    pub vocab_add_pending: Option<String>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
@@ -1259,12 +1266,6 @@ pub fn build_window(
         .build();
     buffer.tag_table().add(&selection_tag);
 
-    let vocab_tag = gtk4::TextTag::builder()
-        .name("vocab-word")
-        .foreground(&theme.vocab_fg)
-        .build();
-    buffer.tag_table().add(&vocab_tag);
-
     // Source lines covered by a reader-gloss passage are tinted with the
     // contrast-guarded off-cursor gloss color (theme.reader_gloss). Added after
     // the dim/cursor tags so this foreground wins over the dim foreground on a
@@ -1287,6 +1288,19 @@ pub fn build_window(
         .foreground(&theme.reader_gloss_cursor)
         .build();
     buffer.tag_table().add(&reader_gloss_cursor_tag);
+
+    // Vocab-word foreground must OUTRANK the reader-gloss tint tags above: on a
+    // prose work every glossed/tinted paragraph carries a reader_gloss
+    // foreground, and GTK gives later-added tags higher priority — so with
+    // vocab_tag added earlier its navy color was always overridden and vocab
+    // words never showed on tinted lines (the pre-existing "no navy words"
+    // bug, on Alt+\ too). Registering it here, after both reader-gloss tags,
+    // makes a vocab word keep its color even on a glossed line.
+    let vocab_tag = gtk4::TextTag::builder()
+        .name("vocab-word")
+        .foreground(&theme.vocab_fg)
+        .build();
+    buffer.tag_table().add(&vocab_tag);
 
     let word_bold_tag = gtk4::TextTag::builder()
         .name("word-bold")
@@ -2072,6 +2086,7 @@ pub fn build_window(
         reader_gloss_lines: std::collections::HashSet::new(),
         dim_enabled,
         vocab_highlight_visible: false,
+        vocab_add_pending: None,
         vocab_popup: crate::app::vocab_popup::VocabPopupState {
             popup: vocab_popup,
             data: Vec::new(),
@@ -4478,6 +4493,23 @@ fn build_vocab_matches(state: &mut AppState) {
     }
 }
 
+/// Reload the global vocab word set and rebuild the per-line match spans for
+/// the current buffer. Call this before `apply_vocab_highlighting` whenever the
+/// word set may have changed since the work was displayed (a live add), so the
+/// toggle/refresh paths don't highlight against a stale match list built at
+/// load time. `build_vocab_matches` is module-private, so this is the public
+/// entry other modules (keymap's ToggleVocabHighlight, vocab_add) call.
+pub fn refresh_vocab_matches(state: &mut AppState) {
+    if let Some(abbrev) = state.current_work.as_ref().map(|w| w.abbrev.clone()) {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            if let Ok(words) = crate::db::queries::load_vocab_words(&conn, &abbrev) {
+                state.vocab_words = words;
+            }
+        }
+    }
+    build_vocab_matches(state);
+}
+
 /// Apply the vocab-word TextTag to all matches in the buffer.
 pub fn apply_vocab_highlighting(state: &AppState) {
     for m in &state.vocab_matches {
@@ -4490,6 +4522,65 @@ pub fn apply_vocab_highlighting(state: &AppState) {
             state.buffer.apply_tag(&state.vocab_tag, &start, &end);
         }
     }
+}
+
+/// Shared post-add refresh: enable + persist vocab highlighting, reload the
+/// word set, rebuild matches, re-apply the tag, and (if the popup is open with
+/// the word on the cursor line) refresh the popup. Called from both the sync
+/// local-lookup path and the async Claude success callback.
+pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, source: &str) {
+    // Enable highlighting for this work and persist it (source of truth is the
+    // per-work lit.db column, like ToggleVocabHighlight).
+    state.vocab_highlight_visible = true;
+    if let Some(abbrev) = state.current_work.as_ref().map(|w| w.abbrev.clone()) {
+        match crate::db::queries::open_db_rw()
+            .and_then(|conn| crate::db::queries::set_vocab_highlight(&conn, &abbrev, true))
+        {
+            Ok(()) => {}
+            Err(e) => crate::logging::log(&format!("VOCAB ADD: persist highlight failed: {e}")),
+        }
+    }
+
+    remove_vocab_highlighting(state);
+    refresh_vocab_matches(state); // reload words (incl. the just-added) + rebuild spans
+    apply_vocab_highlighting(state);
+    // Force a repaint: this runs inside the async Claude callback (an idle turn),
+    // where applying a buffer tag does NOT auto-invalidate the TextView the way a
+    // synchronous keystroke path does — without this nudge the new gold word only
+    // appears on the next natural redraw (scroll/resize/page-turn).
+    state.text_view.queue_draw();
+
+    let word_matches = state
+        .vocab_matches
+        .iter()
+        .filter(|m| m.word == word)
+        .count();
+    crate::logging::log(&format!(
+        "VOCAB ADD: refresh — highlight_visible={}, {} matches ({} for '{}')",
+        state.vocab_highlight_visible,
+        state.vocab_matches.len(),
+        word_matches,
+        word,
+    ));
+
+    // Activate the popup on add: refresh it in place if already open, else open
+    // it (it derives from the cursor line's vocab words). open_vocab_popup is a
+    // no-op-ish when the cursor line has no vocab word, so the word only shows
+    // when the cursor sits on a line containing it.
+    if state.vocab_popup.popup.is_visible() {
+        crate::app::vocab_popup::refresh_vocab_popup(state);
+    } else {
+        state.vocab_popup.auto = true;
+        crate::app::vocab_popup::open_vocab_popup(state);
+    }
+
+    let verb = if outcome_added { "added" } else { "already have" };
+    crate::input::navigation::show_chapter_toast_secs(
+        state,
+        &format!("{verb} \u{201c}{word}\u{201d} ({source})"),
+        3,
+    );
+    crate::logging::log(&format!("VOCAB ADD: {verb} '{word}' ({source})"));
 }
 
 /// Parse a citation `"ABBR.div1.div2.line_in_div"` into `(div1, div2, line)`.

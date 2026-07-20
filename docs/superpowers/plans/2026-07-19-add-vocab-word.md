@@ -471,7 +471,10 @@ Add to `src/vocab_lookup.rs` (above the test module):
 /// stored word lines up with `load_vocab_words`' LOWER(word).
 pub fn normalize_vocab_word(raw: &str) -> String {
     let mut w = raw.trim().to_lowercase();
-    for suffix in ["'s", "\u{2019}s"] {
+    // Try the 2-char possessive `'s`/`’s` BEFORE the bare apostrophes so
+    // "king's" -> "king" (not "king'"); `break` on first match. The bare
+    // `'`/`’` handle the plural-possessive case ("kings'" -> "kings").
+    for suffix in ["'s", "\u{2019}s", "'", "\u{2019}"] {
         if let Some(stripped) = w.strip_suffix(suffix) {
             w = stripped.to_string();
             break;
