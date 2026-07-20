@@ -307,13 +307,25 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         )
     };
     let reader_gloss_cursor = {
-        let base = str_field(lit, "reader_gloss_cursor")
-            .unwrap_or_else(|| complement_hex(&reader_gloss));
-        ensure_gloss_color_min(
-            &base, &text_bg, Some(&root_color), Some(&text_fg),
-            &[&reader_gloss],
-            READER_GLOSS_MIN_CONTRAST,
-        )
+        // When a theme EXPLICITLY sets reader_gloss_cursor, honor it as-is —
+        // including deliberately setting it EQUAL to reader_gloss (one gloss
+        // color for both states). The `avoid: [reader_gloss]` list below forces
+        // distinctness, which is only wanted for the DERIVED default; applying
+        // it to an explicit same-as-gloss value rotated the cursor color to a
+        // jarring complement (teal→pink, navy→red). So: explicit → no avoid;
+        // derived (complement) → keep the avoid so the fallback pair stays
+        // distinct.
+        match str_field(lit, "reader_gloss_cursor") {
+            Some(base) => ensure_gloss_color_min(
+                &base, &text_bg, Some(&root_color), Some(&text_fg), &[],
+                READER_GLOSS_MIN_CONTRAST,
+            ),
+            None => ensure_gloss_color_min(
+                &complement_hex(&reader_gloss), &text_bg, Some(&root_color), Some(&text_fg),
+                &[&reader_gloss],
+                READER_GLOSS_MIN_CONTRAST,
+            ),
+        }
     };
 
     // Dim foreground: 40% fg blended toward bg (matching lit's playback sync)
@@ -1872,9 +1884,14 @@ mod tests {
             // variant of the hue), not the old 3.0 UI floor.
             assert!(cvb_off >= READER_GLOSS_MIN_CONTRAST, "{}: off-cursor tint {} dim on bg {} ({cvb_off:.2})", t.name, t.reader_gloss, t.text_bg);
             assert!(cvb_cur >= READER_GLOSS_MIN_CONTRAST, "{}: on-cursor color {} dim on bg {} ({cvb_cur:.2})", t.name, t.reader_gloss_cursor, t.text_bg);
+            // A theme may deliberately set the two gloss states to the SAME
+            // color (one gloss color for both — the cursor line still stands
+            // out via its own background tint). Only the DERIVED-complement pair
+            // must be distinct; identical is an allowed explicit choice.
+            let same = t.reader_gloss.eq_ignore_ascii_case(&t.reader_gloss_cursor);
             let distinct = hue_distance(&t.reader_gloss, &t.reader_gloss_cursor) >= 40.0
                 || contrast_ratio(&t.reader_gloss, &t.reader_gloss_cursor) >= 1.4;
-            assert!(distinct, "{}: off {} and on {} not distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
+            assert!(same || distinct, "{}: off {} and on {} neither identical nor distinct", t.name, t.reader_gloss, t.reader_gloss_cursor);
             // Root distinctness (hue OR contrast) + ink rule (light themes:
             // luminance gap, near-black ink is hue-blind; dark themes:
             // hue-OR-contrast, their ink is mid-light).
@@ -2201,4 +2218,3 @@ mod tests {
         }
     }
 }
-
