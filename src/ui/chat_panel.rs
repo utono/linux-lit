@@ -29,6 +29,17 @@ const CHAT_TRANSCRIPT_PAD_V: i32 = 16;
 /// hairline overflow. 2px absorbs that rounding.
 const CHAT_BUDGET_SAFETY: i32 = 2;
 
+/// Add `class` to `w` and remove it again after `ms` — the widget-CSS flash
+/// primitive behind the input / transcript / row flashes. (The Label-TEXT
+/// sibling is `ui::toast::show_transient`; this is the CSS-class analogue.)
+fn flash_class<W: IsA<gtk4::Widget>>(w: &W, class: &'static str, ms: u64) {
+    w.add_css_class(class);
+    let w = w.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_millis(ms), move || {
+        w.remove_css_class(class);
+    });
+}
+
 pub enum TranscriptRow {
     Question(String),
     /// Plain-prose answer (journal Q&A, revision, consolidation): rendered as
@@ -136,11 +147,7 @@ impl ChatPanel {
     pub fn flash_input(&self) {
         let card = self.input.container();
         crate::ui::flash_widget(card.upcast_ref());
-        card.add_css_class("chat-flash-active");
-        let card = card.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(240), move || {
-            card.remove_css_class("chat-flash-active");
-        });
+        flash_class(&card, "chat-flash-active", 240);
     }
 
     /// Flash the transcript area as the "now active" Tab-cycle cue. The
@@ -148,11 +155,7 @@ impl ChatPanel {
     /// transcript, so paint a brief background wash that CSS fades out.
     pub fn flash_transcript(&self) {
         crate::ui::flash_widget(self.transcript_scroll.upcast_ref());
-        let sc = self.transcript_scroll.clone();
-        sc.add_css_class("chat-flash-wash");
-        glib::timeout_add_local_once(std::time::Duration::from_millis(160), move || {
-            sc.remove_css_class("chat-flash-wash");
-        });
+        flash_class(&self.transcript_scroll, "chat-flash-wash", 160);
     }
 
     pub fn show(&self) {
@@ -344,11 +347,7 @@ impl ChatPanel {
             let mut i = 0usize;
             while let Some(c) = child {
                 if i >= start && i <= end {
-                    c.add_css_class("chat-flash-row");
-                    let w = c.clone();
-                    glib::timeout_add_local_once(std::time::Duration::from_millis(160), move || {
-                        w.remove_css_class("chat-flash-row");
-                    });
+                    flash_class(&c, "chat-flash-row", 160);
                 }
                 child = c.next_sibling();
                 i += 1;
