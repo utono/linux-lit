@@ -1152,6 +1152,48 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
 /// is on the line whose scene the journal should open on) and then call this.
 pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
+    // First: if the cursor line itself falls inside a passage Q&A's span, open
+    // the overlay LANDED on that specific entry — regardless of which band the
+    // picker groups it under. Resolved from the cursor's exact
+    // `(div1, div2, line_in_div)` (not just the scene band), keyed by
+    // `Work.canonical_abbrev` like every journal path. Falls through to the
+    // scene-band / picker behavior below when the cursor isn't inside any
+    // passage entry.
+    let cursor_hit = {
+        let s = state.borrow();
+        if s.current_work.is_none() {
+            return;
+        }
+        let abbrev = current_work_abbrev(&s);
+        s.current_work
+            .as_ref()
+            .and_then(|w| {
+                s.work_line_for_buffer(s.current_line)
+                    .and_then(|wi| w.lines.get(wi))
+            })
+            .map(|l| (l.div1, l.div2, l.line_in_div))
+            .and_then(|(d1, d2, lid)| {
+                crate::db::queries::open_db().ok().and_then(|conn| {
+                    crate::db::journal::find_journal_page_for_line(&conn, &abbrev, d1, d2, lid).ok()
+                })?
+            })
+    };
+    if let Some((pd1, pd2, entry_id)) = cursor_hit {
+        let mut s = state.borrow_mut();
+        // Same prior-session cleanup the scene-band open path performs, so a
+        // stale filter/search never leaks into this entry-landed session.
+        s.journal.filter = None;
+        s.journal_overlay.clear_search_tags();
+        s.journal.search = None;
+        s.journal.last_pattern = None;
+        s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+        s.input_mode = InputMode::JournalOverlay;
+        // The passage entry is stored under its own scene band; land ON it by id.
+        land_on_page(&mut s, JournalBand::Scene(pd1, pd2), entry_id);
+        s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
+        return;
+    }
+
     let (d1, d2, scene_empty) = {
         let s = state.borrow();
         if s.current_work.is_none() {

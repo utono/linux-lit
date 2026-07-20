@@ -553,6 +553,53 @@ pub fn find_passage_citation_ranges(
     rows.collect()
 }
 
+/// The passage-scope Q&A entry whose `[start_citation, end_citation]` line
+/// range contains the cursor line `(div1, div2, line_in_div)`, or `None`. Used
+/// by reader Ctrl+j so a cursor sitting inside a passage Q&A's span opens the
+/// overlay LANDED on that entry (via `land_on_page`), instead of falling to the
+/// scene-band top / the picker. Callers pass `Work.canonical_abbrev`, like every
+/// other journal path.
+///
+/// A passage never crosses a scene (start and end share `(div1, div2)`), so we
+/// filter on the stored `div1`/`div2` columns and compare only the trailing line
+/// number of each citation — extracted with the shared trailing-line-number CAST
+/// idiom (`rtrim` strips the digits, `replace` deletes that prefix, leaving the
+/// number). The range test is inclusive on both ends.
+///
+/// Priority when several passages contain the line (e.g. a narrow passage nested
+/// in a wider one): NEAREST START — the largest `start_line <= line_in_div` wins
+/// (`ORDER BY start_line DESC`), so the most specific containing entry is chosen.
+/// Ties (same start line) break to the NEWEST entry (`id DESC`). Returns the
+/// entry's own `(div1, div2, id)`; the caller builds `JournalBand::Scene(div1,
+/// div2)` and lands on `id`.
+pub fn find_journal_page_for_line(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+) -> Result<Option<(i64, i64, i64)>, rusqlite::Error> {
+    let line_of =
+        |col: &str| format!("CAST(replace({col}, rtrim({col}, '0123456789'), '') AS INTEGER)");
+    let start_line = line_of("start_citation");
+    let end_line = line_of("end_citation");
+    let sql = format!(
+        "SELECT div1, div2, id FROM journal_entries \
+         WHERE work_abbrev = ?1 AND scope = 'passage' \
+           AND div1 = ?2 AND div2 = ?3 \
+           AND start_citation IS NOT NULL AND end_citation IS NOT NULL \
+           AND {start_line} <= ?4 AND {end_line} >= ?4 \
+         ORDER BY {start_line} DESC, id DESC \
+         LIMIT 1"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query_map(
+        rusqlite::params![work_abbrev, div1, div2, line_in_div],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    rows.next().transpose()
+}
+
 pub fn find_journal_scenes(
     conn: &Connection,
     work_abbrev: &str,
@@ -829,6 +876,70 @@ mod tests {
 
         // A different citation pair returns nothing.
         assert!(find_passage_pages(&conn, "2H6", "2H6.1.4.99", "2H6.1.4.99").unwrap().is_empty());
+    }
+
+    #[test]
+    fn journal_page_for_line_finds_containing_passage_and_prefers_nearest_start() {
+        let conn = mem();
+        // A passage spanning lines 43..=50 in (1,4). A cursor line inside it must
+        // resolve to this entry, regardless of which scene band the picker groups
+        // it under.
+        let id_wide = save_passage_page(
+            &conn, "2H6", 1, 4, "2H6.1.4.43", "2H6.1.4.50",
+            "<verse>wide…</verse>", "Wide Q?", "Wide A.", "m",
+        ).unwrap();
+        // A NARROWER, later passage 46..=48 nested inside the wide one. For a line
+        // in [46,48], both contain it; the nearest-start rule (largest start_line
+        // <= line) prefers the narrow entry.
+        let id_narrow = save_passage_page(
+            &conn, "2H6", 1, 4, "2H6.1.4.46", "2H6.1.4.48",
+            "<verse>narrow…</verse>", "Narrow Q?", "Narrow A.", "m",
+        ).unwrap();
+        // A single-line passage in a DIFFERENT scene band (2,1) — never a match
+        // for scene (1,4).
+        save_passage_page(
+            &conn, "2H6", 2, 1, "2H6.2.1.5", "2H6.2.1.5",
+            "<verse>other…</verse>", "Other Q?", "Other A.", "m",
+        ).unwrap();
+        // A scene-scope (no-citation) entry in the same band must be ignored.
+        save_journal_page(&conn, "2H6", 1, 4, "SceneQ?", "SceneA.", "m", "scene", "qa").unwrap();
+
+        // Line 44: only the wide passage contains it. The query returns the
+        // entry's own band coordinates (div1, div2) plus its id.
+        let (d1, d2, id) = find_journal_page_for_line(&conn, "2H6", 1, 4, 44).unwrap().unwrap();
+        assert_eq!(id, id_wide);
+        assert_eq!((d1, d2), (1, 4));
+
+        // Line 47: both contain it; nearest start (46 > 43) wins → narrow.
+        let (_d1, _d2, id) = find_journal_page_for_line(&conn, "2H6", 1, 4, 47).unwrap().unwrap();
+        assert_eq!(id, id_narrow);
+
+        // Boundary lines are inclusive: 43 (wide start) and 50 (wide end).
+        assert_eq!(find_journal_page_for_line(&conn, "2H6", 1, 4, 43).unwrap().unwrap().2, id_wide);
+        assert_eq!(find_journal_page_for_line(&conn, "2H6", 1, 4, 50).unwrap().unwrap().2, id_wide);
+
+        // A line outside every passage in the band → None.
+        assert!(find_journal_page_for_line(&conn, "2H6", 1, 4, 60).unwrap().is_none());
+        // Right scene, but the line belongs to a different band's passage → None
+        // (the (2,1) passage must not leak into a (1,4) lookup).
+        assert!(find_journal_page_for_line(&conn, "2H6", 1, 4, 5).unwrap().is_none());
+    }
+
+    #[test]
+    fn journal_page_for_line_ties_break_newest_id() {
+        let conn = mem();
+        // Two passages with the SAME start line 10, same span. The nearest-start
+        // rule can't decide; the tie-break prefers the newest id.
+        let _older = save_passage_page(
+            &conn, "Ham", 1, 2, "Ham.1.2.10", "Ham.1.2.12",
+            "<verse>a</verse>", "Older Q?", "Older A.", "m",
+        ).unwrap();
+        let newer = save_passage_page(
+            &conn, "Ham", 1, 2, "Ham.1.2.10", "Ham.1.2.12",
+            "<verse>b</verse>", "Newer Q?", "Newer A.", "m",
+        ).unwrap();
+        let (_d1, _d2, id) = find_journal_page_for_line(&conn, "Ham", 1, 2, 11).unwrap().unwrap();
+        assert_eq!(id, newer);
     }
 
     #[test]
