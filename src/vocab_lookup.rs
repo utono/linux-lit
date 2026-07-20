@@ -89,6 +89,20 @@ fn run_dict(word: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Normalize a submitted vocab word: trim, lowercase, strip a trailing
+/// possessive `'s` / `’s`. Matches how highlighting/variants normalize so the
+/// stored word lines up with `load_vocab_words`' LOWER(word).
+pub fn normalize_vocab_word(raw: &str) -> String {
+    let mut w = raw.trim().to_lowercase();
+    for suffix in ["'s", "\u{2019}s", "'", "\u{2019}"] {
+        if let Some(stripped) = w.strip_suffix(suffix) {
+            w = stripped.to_string();
+            break;
+        }
+    }
+    w
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +133,13 @@ mod tests {
     #[test]
     fn parse_gcide_none_when_empty() {
         assert_eq!(parse_gcide(""), None);
+    }
+
+    #[test]
+    fn normalize_trims_lowercases_strips_possessive() {
+        assert_eq!(normalize_vocab_word("  Brave  "), "brave");
+        assert_eq!(normalize_vocab_word("King's"), "king");
+        assert_eq!(normalize_vocab_word("kings’"), "kings"); // only trailing 's/’s stripped
+        assert_eq!(normalize_vocab_word("Hamlet’s"), "hamlet");
     }
 }

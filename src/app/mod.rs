@@ -4492,6 +4492,51 @@ pub fn apply_vocab_highlighting(state: &AppState) {
     }
 }
 
+/// Shared post-add refresh: enable + persist vocab highlighting, reload the
+/// word set, rebuild matches, re-apply the tag, and (if the popup is open with
+/// the word on the cursor line) refresh the popup. Called from both the sync
+/// local-lookup path and the async Claude success callback.
+pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, source: &str) {
+    // Enable highlighting for this work and persist it (source of truth is the
+    // per-work lit.db column, like ToggleVocabHighlight).
+    state.vocab_highlight_visible = true;
+    if let Some(abbrev) = state.current_work.as_ref().map(|w| w.abbrev.clone()) {
+        match crate::db::queries::open_db_rw()
+            .and_then(|conn| crate::db::queries::set_vocab_highlight(&conn, &abbrev, true))
+        {
+            Ok(()) => {}
+            Err(e) => crate::logging::log(&format!("VOCAB ADD: persist highlight failed: {e}")),
+        }
+        // Reload the global word set so the just-added word is included.
+        if let Ok(conn) = crate::db::queries::open_db() {
+            if let Ok(words) = crate::db::queries::load_vocab_words(&conn, &abbrev) {
+                state.vocab_words = words;
+            }
+        }
+    }
+
+    remove_vocab_highlighting(state);
+    build_vocab_matches(state);
+    apply_vocab_highlighting(state);
+
+    // Refresh the popup only if it is open AND the word is on the cursor line.
+    let on_line = state
+        .vocab_matches
+        .iter()
+        .any(|m| m.line_index == state.current_line && m.word == word);
+    if state.vocab_popup.popup.is_visible() && on_line {
+        crate::app::vocab_popup::refresh_vocab_popup(state);
+    }
+
+    let verb = if outcome_added { "added" } else { "already have" };
+    crate::input::navigation::show_chapter_toast_secs(
+        state,
+        &format!("{verb} \u{201c}{word}\u{201d} ({source})"),
+        3,
+    );
+    crate::logging::log(&format!("VOCAB ADD: {verb} '{word}' ({source})"));
+}
+
 /// Parse a citation `"ABBR.div1.div2.line_in_div"` into `(div1, div2, line)`.
 /// Only the trailing three dot-separated numbers matter, so an `-Amb`-suffixed
 /// abbrev (or any abbrev with dots) parses the same. Returns `None` if the tail
