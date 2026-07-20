@@ -1159,27 +1159,44 @@ pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
 }
 
 /// `y`-confirmed chat-panel delete (the panel's `D`, via the overlays' shared
-/// DeleteConfirm modal with origin ChatTranscript): deletes what the active
-/// view displays. Question view is unreachable — `show_delete_confirmation`
-/// refuses to open the dialog there — the arm exists for the match only.
-pub(crate) fn delete_current_panel_item(state: &Rc<RefCell<AppState>>) {
-    let view = state.borrow().chat.view;
+/// DeleteConfirm modal with origin ChatTranscript): deletes the item named by
+/// `target`, captured at `D`-confirm-open time (`show_delete_confirmation`),
+/// NOT whatever `s.chat.view`/`gloss_index`/`journal_cursor` are NOW. This
+/// matters because the confirm dialog blocks keys but not the GTK main loop:
+/// an async completion (question-error resetting `chat.view`, or a regloss
+/// completion repointing `gloss_index` at a freshly created gloss) can mutate
+/// that state between `D` and `y`, and re-reading it at confirm time would
+/// delete the wrong row. `target == None` is defensive only — the dialog
+/// always sets a target for this origin (`PanelView::Question` never opens
+/// it).
+pub(crate) fn delete_current_panel_item(
+    state: &Rc<RefCell<AppState>>,
+    target: Option<(PanelView, i64)>,
+) {
+    let Some((view, id)) = target else { return };
     match view {
-        PanelView::Gloss => delete_panel_gloss(state),
-        PanelView::Journal => delete_panel_journal_entry(state),
+        PanelView::Gloss => delete_panel_gloss(state, id),
+        PanelView::Journal => delete_panel_journal_entry(state, id),
         PanelView::Question => {}
     }
 }
 
-/// Delete the panel's currently shown gloss: shared DB+audio purge, then
-/// panel bookkeeping (list/index), overlay-cache reconciliation, transcript
-/// re-render (next gloss in place, or the empty placeholder), and the
-/// reader-tint recompute the overlay's own delete performs.
-fn delete_panel_gloss(state: &Rc<RefCell<AppState>>) {
+/// Delete the panel gloss identified by `gloss_id` (captured at `D`-confirm-
+/// open time, not re-resolved from the current `gloss_index`): shared
+/// DB+audio purge, then panel bookkeeping (list/index), overlay-cache
+/// reconciliation, transcript re-render (next gloss in place, or the empty
+/// placeholder), and the reader-tint recompute the overlay's own delete
+/// performs. If `gloss_id` is no longer in the panel's list (e.g. a regloss
+/// completion already replaced it), toasts and returns without deleting
+/// anything else.
+fn delete_panel_gloss(state: &Rc<RefCell<AppState>>, gloss_id: i64) {
     let mut s = state.borrow_mut();
-    let idx = s.chat.gloss_index;
-    let Some(g) = s.chat.gloss_list.get(idx) else { return };
-    let gloss_id = g.gloss_id;
+    let Some(idx) = s.chat.gloss_list.iter().position(|g| g.gloss_id == gloss_id) else {
+        crate::input::navigation::show_chapter_toast_secs(
+            &s, &format!("Gloss {} already gone", gloss_id), 2,
+        );
+        return;
+    };
     let abbrev = s.chat.gloss_ctx.as_ref().map(|c| c.work_abbrev.clone());
     let (_audio_rows, mp3_files) =
         crate::input::actions::gloss::purge_gloss_data(abbrev.as_deref(), gloss_id);
@@ -1236,14 +1253,21 @@ fn delete_panel_gloss(state: &Rc<RefCell<AppState>>) {
     );
 }
 
-/// Delete the journal entry under the panel cursor: DB row + cached TTS
-/// audio, panel list/cursor bookkeeping, dangling saved_id/revision_of
+/// Delete the journal entry identified by `id` (captured at `D`-confirm-open
+/// time, not re-resolved from the current `journal_cursor`): DB row + cached
+/// TTS audio, panel list/cursor bookkeeping, dangling saved_id/revision_of
 /// cleanup, journal-overlay cache reconciliation, and a snapped re-render
-/// (the empty case renders the existing placeholder row).
-fn delete_panel_journal_entry(state: &Rc<RefCell<AppState>>) {
+/// (the empty case renders the existing placeholder row). If `id` is no
+/// longer in the panel's list, toasts and returns without deleting anything
+/// else.
+fn delete_panel_journal_entry(state: &Rc<RefCell<AppState>>, id: i64) {
     let mut s = state.borrow_mut();
-    let idx = s.chat.journal_cursor;
-    let Some(id) = s.chat.journal_list.get(idx).map(|p| p.id) else { return };
+    let Some(idx) = s.chat.journal_list.iter().position(|p| p.id == id) else {
+        crate::input::navigation::show_chapter_toast_secs(
+            &s, &format!("Journal {} already gone", id), 2,
+        );
+        return;
+    };
     if let Ok(conn) = crate::db::queries::open_db_rw() {
         let _ = crate::db::journal::delete_journal_page(&conn, id);
         crate::input::actions::journal::purge_journal_audio(&conn, id);

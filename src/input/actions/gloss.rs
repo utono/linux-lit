@@ -432,6 +432,10 @@ pub(crate) fn show_delete_confirmation(
     origin: crate::app::InputMode,
 ) {
     // Resolve the label + bail with no dialog if there is nothing to delete.
+    // For the ChatTranscript origin, also capture the (view kind, row id)
+    // target NOW — at dialog-open time — so it survives async state mutation
+    // between `D` and `y` (see `AppState::delete_confirm_target`).
+    let mut target: Option<(crate::input::actions::chat::PanelView, i64)> = None;
     let title = {
         let s = state_rc.borrow();
         match origin {
@@ -449,12 +453,18 @@ pub(crate) fn show_delete_confirmation(
                 use crate::input::actions::chat::PanelView;
                 match s.chat.view {
                     PanelView::Gloss => match s.chat.gloss_list.get(s.chat.gloss_index) {
-                        Some(g) => format!("Delete gloss {}?", g.gloss_id),
+                        Some(g) => {
+                            target = Some((PanelView::Gloss, g.gloss_id));
+                            format!("Delete gloss {}?", g.gloss_id)
+                        }
                         None => return,
                     },
                     PanelView::Journal => {
                         match s.chat.journal_list.get(s.chat.journal_cursor) {
-                            Some(p) => format!("Delete journal {}?", p.id),
+                            Some(p) => {
+                                target = Some((PanelView::Journal, p.id));
+                                format!("Delete journal {}?", p.id)
+                            }
                             None => return,
                         }
                     }
@@ -503,6 +513,7 @@ pub(crate) fn show_delete_confirmation(
     s.delete_confirm_container = Some(container.downgrade());
     s.delete_confirm_overlay = Some(overlay_parent.downgrade());
     s.delete_confirm_origin = Some(origin);
+    s.delete_confirm_target = target;
     s.input_mode = crate::app::InputMode::DeleteConfirm;
 }
 
@@ -516,6 +527,10 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
     // Return to the overlay the `D` was pressed in (gloss or journal), defaulting
     // to the gloss overlay for safety if the origin was somehow not recorded.
     s.input_mode = s.delete_confirm_origin.take().unwrap_or(crate::app::InputMode::GlossOverlay);
+    // Cancel/close clears the captured target too — `y`'s handler reads it
+    // BEFORE calling this function, so this only matters for the Escape/`n`
+    // path (defensive: no target should be read after this point either way).
+    s.delete_confirm_target = None;
 }
 
 /// Open the "Undo last edit? y / Esc" confirmation over `origin`'s overlay (the
