@@ -1943,8 +1943,21 @@ fn handle_journal_key(
             // Ctrl+r: ask a new Q&A in the current band (moved off plain `r`,
             // which is now the vocab surface, mirroring the gloss overlay + main
             // card). Sits AFTER the Ctrl+Shift+r revision-restore arm above so
-            // Shift still wins.
+            // Shift still wins. GATED by the term filter exactly like the plain-r
+            // ask below: while a filter shows a cross-work entry there is no clear
+            // home band for a new Q&A, so swallow it with the same clear-filter
+            // toast instead of asking against the wrong band. (This is the is_ctrl
+            // block, which returns before the shared intercept further down, so
+            // the gate must be duplicated here.)
             "r" => {
+                if state.borrow().journal.filter.is_some() {
+                    crate::input::navigation::show_chapter_toast_secs(
+                        &state.borrow(),
+                        "Clear the term filter (Esc) for this key",
+                        3,
+                    );
+                    return true;
+                }
                 crate::input::actions::journal::begin_ask(state);
                 return true;
             }
