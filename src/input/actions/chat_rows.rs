@@ -267,6 +267,24 @@ pub(crate) fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
     }
 }
 
+/// Clean up in-memory references to a just-deleted journal row: clear any
+/// exchange's `saved_id` that pointed at it (the exchange becomes re-savable
+/// and its SavedMark disappears on the next render) and return the new
+/// `revision_of` (cleared iff it pointed at the deleted row). Pure so the
+/// dangling-reference contract is unit-testable without an `AppState`.
+pub(crate) fn clear_deleted_journal_refs(
+    exchanges: &mut [Exchange],
+    revision_of: Option<i64>,
+    deleted: i64,
+) -> Option<i64> {
+    for ex in exchanges.iter_mut() {
+        if ex.saved_id == Some(deleted) {
+            ex.saved_id = None;
+        }
+    }
+    if revision_of == Some(deleted) { None } else { revision_of }
+}
+
 /// Widget-space "is this row a valid j/k landing spot" mask, one entry per
 /// widget `chat_panel::rebuild_from_specs` would actually paint (same
 /// granularity as `row_owner`/`widget_row_count`) — flat-mapped from
@@ -1283,5 +1301,52 @@ mod question_view_tests {
         assert!(matches!(rows[0], R::Question(_)));
         assert!(matches!(rows[1], R::Answer(_)));
         assert!(matches!(rows[2], R::SavedMark));
+    }
+}
+
+/// Deleting a journal row from the chat panel must not leave dangling
+/// references: an exchange saved to that row regains `saved_id: None` (so
+/// `s` can re-save it and the SavedMark disappears on the next render), and
+/// a pending `revision_of` aimed at the deleted row is cleared so Ctrl+Enter
+/// cannot retarget a nonexistent entry.
+#[cfg(test)]
+mod delete_refs_tests {
+    use super::{clear_deleted_journal_refs, Exchange};
+
+    fn ex(saved_id: Option<i64>) -> Exchange {
+        Exchange {
+            question: "q".to_string(),
+            answer: "a".to_string(),
+            chip: String::new(),
+            user_msg: String::new(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id,
+        }
+    }
+
+    #[test]
+    fn clears_matching_saved_id_only() {
+        let mut exchanges = vec![ex(Some(45)), ex(Some(46)), ex(None)];
+        let rev = clear_deleted_journal_refs(&mut exchanges, None, 45);
+        assert_eq!(exchanges[0].saved_id, None);
+        assert_eq!(exchanges[1].saved_id, Some(46));
+        assert_eq!(exchanges[2].saved_id, None);
+        assert_eq!(rev, None);
+    }
+
+    #[test]
+    fn clears_revision_of_pointing_at_deleted() {
+        let mut exchanges = vec![ex(Some(45))];
+        assert_eq!(clear_deleted_journal_refs(&mut exchanges, Some(45), 45), None);
+    }
+
+    #[test]
+    fn keeps_revision_of_pointing_elsewhere() {
+        let mut exchanges = vec![ex(None)];
+        assert_eq!(clear_deleted_journal_refs(&mut exchanges, Some(46), 45), Some(46));
     }
 }
