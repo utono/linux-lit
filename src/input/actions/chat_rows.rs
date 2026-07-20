@@ -130,23 +130,38 @@ pub(crate) fn build_transcript_rows(
 }
 
 /// Pure row-builder for `PanelView::Question`: exactly ONE exchange's rows —
-/// its `Q:` row (via `has_question_row`/`answer_row`, same rules
-/// `build_transcript_rows` uses per-exchange) plus a trailing `SavedMark` if
-/// it's been saved — with NO chip and NO other exchange. This is
-/// `build_transcript_rows`'s per-exchange body run for a single `i == 0`
+/// its `Q:` row (via `has_question_row`) plus one `Answer` row PER PARAGRAPH
+/// of the answer (split via `split_answer_paragraphs`, same split the Journal
+/// view uses) so the row cursor can traverse the answer and no single widget
+/// outgrows a page. A reader-gloss exchange (empty question, raw markup)
+/// renders as one `GlossAnswer` row (splitting it would break the markup
+/// parse), with NO `Q:` row. No chip and no other exchange in either case.
+/// This is `build_transcript_rows`'s per-exchange body run for a single `i == 0`
 /// slice, factored out so the "one exchange -> its rows" shape is
 /// unit-testable without constructing a whole transcript or an `AppState`.
 /// The chip is deliberately omitted (matching `render_transcript_with_thinking`'s
 /// existing "question names its own subject" reasoning) — a Question-view
 /// render never shows the source-preview label the full Gloss transcript
-/// does.
+/// does. A trailing `SavedMark` is appended if the exchange has been saved.
 pub(crate) fn build_single_exchange_rows(e: &Exchange) -> Vec<crate::ui::chat_panel::TranscriptRow> {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
     if has_question_row(e) {
         rows.push(question_row(&e.question));
     }
-    rows.push(answer_row(e));
+    if e.question.is_empty() {
+        // Reader-gloss exchange: raw <speaker>/<verse> markup renders as ONE
+        // GlossAnswer row (see answer_row's doc comment) — splitting it would
+        // break the markup parse.
+        rows.push(R::GlossAnswer(e.answer.clone()));
+    } else {
+        // One Answer row per paragraph (same split journal_view_rows uses) so
+        // the row cursor traverses the answer and no single widget outgrows a
+        // page.
+        for para in split_answer_paragraphs(&e.answer) {
+            rows.push(R::Answer(para));
+        }
+    }
     if e.saved_id.is_some() {
         rows.push(R::SavedMark);
     }
@@ -250,6 +265,24 @@ pub(crate) fn clamp_journal_cursor(cursor: usize, len: usize) -> usize {
     } else {
         cursor.min(len - 1)
     }
+}
+
+/// Clean up in-memory references to a just-deleted journal row: clear any
+/// exchange's `saved_id` that pointed at it (the exchange becomes re-savable
+/// and its SavedMark disappears on the next render) and return the new
+/// `revision_of` (cleared iff it pointed at the deleted row). Pure so the
+/// dangling-reference contract is unit-testable without an `AppState`.
+pub(crate) fn clear_deleted_journal_refs(
+    exchanges: &mut [Exchange],
+    revision_of: Option<i64>,
+    deleted: i64,
+) -> Option<i64> {
+    for ex in exchanges.iter_mut() {
+        if ex.saved_id == Some(deleted) {
+            ex.saved_id = None;
+        }
+    }
+    if revision_of == Some(deleted) { None } else { revision_of }
 }
 
 /// Widget-space "is this row a valid j/k landing spot" mask, one entry per
@@ -1145,12 +1178,66 @@ mod panel_view_toggle_tests {
 
 }
 
+/// Question-view row shape (top-landing feature): a Q&A exchange renders as
+/// `Q:` + one `Answer` row PER PARAGRAPH (same split the Journal view uses),
+/// so the accent-bar cursor can traverse the answer and pagination never
+/// produces a single oversized answer widget. A reader-gloss exchange (empty
+/// question, raw markup) must stay one `GlossAnswer` row.
+#[cfg(test)]
+mod question_view_rows_tests {
+    use super::{build_single_exchange_rows, Exchange};
+    use crate::ui::chat_panel::TranscriptRow as R;
+
+    fn ex(question: &str, answer: &str, saved: bool) -> Exchange {
+        Exchange {
+            question: question.to_string(),
+            answer: answer.to_string(),
+            chip: String::new(),
+            user_msg: String::new(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id: if saved { Some(1) } else { None },
+        }
+    }
+
+    #[test]
+    fn qa_answer_splits_into_paragraph_rows() {
+        let rows = build_single_exchange_rows(&ex("Why?", "one\n\ntwo\n\nthree", false));
+        assert_eq!(rows.len(), 4);
+        assert!(matches!(&rows[0], R::Question(q) if q == "Q: Why?"));
+        assert!(matches!(&rows[1], R::Answer(a) if a == "one"));
+        assert!(matches!(&rows[2], R::Answer(a) if a == "two"));
+        assert!(matches!(&rows[3], R::Answer(a) if a == "three"));
+    }
+
+    #[test]
+    fn saved_mark_trails_the_paragraphs() {
+        let rows = build_single_exchange_rows(&ex("Why?", "one\n\ntwo", true));
+        assert_eq!(rows.len(), 4); // Q + 2 paragraphs + SavedMark
+        assert!(matches!(rows.last(), Some(R::SavedMark)));
+    }
+
+    #[test]
+    fn gloss_exchange_keeps_single_gloss_answer_row() {
+        let rows = build_single_exchange_rows(&ex(
+            "",
+            "<speaker>A</speaker>\n\n<verse>b</verse>",
+            false,
+        ));
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(&rows[0], R::GlossAnswer(_)));
+    }
+}
+
 /// `build_single_exchange_rows` — the `PanelView::Question` focused render's
 /// pure seam (one exchange -> its rows, no gloss, no other exchange, no
 /// chip). House style per `panel_view_toggle_tests`/`consolidate_tests`
 /// above: pure functions, no `AppState`/GTK. The actual GTK paint
-/// (`render_current_question`'s `render_rows` call) is not unit-testable and
-/// is exercised only by manual/headless on-screen verification.
+/// (`render_current_question`'s `render_paginated` call) is not unit-testable
+/// and is exercised only by manual/headless on-screen verification.
 #[cfg(test)]
 mod question_view_tests {
     use super::{build_single_exchange_rows, Exchange};
@@ -1214,5 +1301,52 @@ mod question_view_tests {
         assert!(matches!(rows[0], R::Question(_)));
         assert!(matches!(rows[1], R::Answer(_)));
         assert!(matches!(rows[2], R::SavedMark));
+    }
+}
+
+/// Deleting a journal row from the chat panel must not leave dangling
+/// references: an exchange saved to that row regains `saved_id: None` (so
+/// `s` can re-save it and the SavedMark disappears on the next render), and
+/// a pending `revision_of` aimed at the deleted row is cleared so Ctrl+Enter
+/// cannot retarget a nonexistent entry.
+#[cfg(test)]
+mod delete_refs_tests {
+    use super::{clear_deleted_journal_refs, Exchange};
+
+    fn ex(saved_id: Option<i64>) -> Exchange {
+        Exchange {
+            question: "q".to_string(),
+            answer: "a".to_string(),
+            chip: String::new(),
+            user_msg: String::new(),
+            div1: 0,
+            div2: 0,
+            start_citation: String::new(),
+            end_citation: String::new(),
+            source_markup: String::new(),
+            saved_id,
+        }
+    }
+
+    #[test]
+    fn clears_matching_saved_id_only() {
+        let mut exchanges = vec![ex(Some(45)), ex(Some(46)), ex(None)];
+        let rev = clear_deleted_journal_refs(&mut exchanges, None, 45);
+        assert_eq!(exchanges[0].saved_id, None);
+        assert_eq!(exchanges[1].saved_id, Some(46));
+        assert_eq!(exchanges[2].saved_id, None);
+        assert_eq!(rev, None);
+    }
+
+    #[test]
+    fn clears_revision_of_pointing_at_deleted() {
+        let mut exchanges = vec![ex(Some(45))];
+        assert_eq!(clear_deleted_journal_refs(&mut exchanges, Some(45), 45), None);
+    }
+
+    #[test]
+    fn keeps_revision_of_pointing_elsewhere() {
+        let mut exchanges = vec![ex(None)];
+        assert_eq!(clear_deleted_journal_refs(&mut exchanges, Some(46), 45), Some(46));
     }
 }

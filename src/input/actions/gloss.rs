@@ -345,6 +345,32 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Delete a gloss row plus its cached TTS audio: the DB row (`delete_gloss`),
+/// its audio rows (`delete_gloss_audio`), and the on-disk mp3 dir. Returns
+/// `(audio_rows, mp3_files)` for the caller's verification toast. Shared by
+/// the gloss overlay's `D` and the chat panel's `D` so the two purge paths
+/// cannot drift. `work_abbrev: None` skips the on-disk dir (no context to
+/// locate it) — the DB purge still runs.
+pub(crate) fn purge_gloss_data(work_abbrev: Option<&str>, gloss_id: i64) -> (usize, usize) {
+    let mut audio_rows = 0usize;
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
+        audio_rows = crate::db::queries::delete_gloss_audio(&conn, gloss_id).unwrap_or(0);
+    }
+    let mut mp3_files = 0usize;
+    if let Some(abbrev) = work_abbrev {
+        let dir = gloss_audio_dir(abbrev, gloss_id);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            mp3_files = entries
+                .flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mp3"))
+                .count();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    (audio_rows, mp3_files)
+}
+
 pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
     // Phase 1: delete under a mutable borrow and gather counts for the
     // verification pill (audio rows purged + .mp3 files removed). The borrow is
@@ -356,24 +382,9 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         let Some(gloss) = s.gloss_list.get(idx) else { return };
         let gloss_id = gloss.gloss_id;
 
-        let mut audio_rows = 0usize;
-        if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
-            audio_rows = crate::db::queries::delete_gloss_audio(&conn, gloss_id).unwrap_or(0);
-        }
-        // Count .mp3 files in the gloss's audio dir before removing it, so the
-        // pill verifies the on-disk files actually went too.
-        let mut mp3_files = 0usize;
-        if let Some(ctx) = s.gloss_context.as_ref() {
-            let dir = gloss_audio_dir(&ctx.work_abbrev, gloss_id);
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                mp3_files = entries
-                    .flatten()
-                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mp3"))
-                    .count();
-            }
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+        let abbrev = s.gloss_context.as_ref().map(|c| c.work_abbrev.clone());
+        let (audio_rows, mp3_files) = purge_gloss_data(abbrev.as_deref(), gloss_id);
+
         crate::logging::log(&format!(
             "GLOSS: deleted gloss {} ({} audio rows, {} mp3 files)",
             gloss_id, audio_rows, mp3_files
@@ -412,14 +423,19 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
 }
 
 /// Open the "Delete …? y / Esc" confirmation over `origin`'s overlay. Records
-/// `origin` (gloss vs journal) so `y` runs the right delete and returns to the
-/// right mode; the dialog label names what will be deleted. No-op when there is
-/// nothing to delete for that overlay. Mirrors `show_undo_confirmation`.
+/// `origin` (gloss overlay, journal overlay, or chat transcript) so `y` runs
+/// the right delete and returns to the right mode; the dialog label names
+/// what will be deleted. No-op when there is nothing to delete for that
+/// overlay. Mirrors `show_undo_confirmation`.
 pub(crate) fn show_delete_confirmation(
     state_rc: &Rc<RefCell<AppState>>,
     origin: crate::app::InputMode,
 ) {
     // Resolve the label + bail with no dialog if there is nothing to delete.
+    // For the ChatTranscript origin, also capture the (view kind, row id)
+    // target NOW — at dialog-open time — so it survives async state mutation
+    // between `D` and `y` (see `AppState::delete_confirm_target`).
+    let mut target: Option<(crate::input::actions::chat::PanelView, i64)> = None;
     let title = {
         let s = state_rc.borrow();
         match origin {
@@ -433,17 +449,52 @@ pub(crate) fn show_delete_confirmation(
                 }
                 "Delete this Q&A?".to_string()
             }
+            crate::app::InputMode::ChatTranscript => {
+                use crate::input::actions::chat::PanelView;
+                match s.chat.view {
+                    PanelView::Gloss => match s.chat.gloss_list.get(s.chat.gloss_index) {
+                        Some(g) => {
+                            target = Some((PanelView::Gloss, g.gloss_id));
+                            format!("Delete gloss {}?", g.gloss_id)
+                        }
+                        None => return,
+                    },
+                    PanelView::Journal => {
+                        match s.chat.journal_list.get(s.chat.journal_cursor) {
+                            Some(p) => {
+                                target = Some((PanelView::Journal, p.id));
+                                format!("Delete journal {}?", p.id)
+                            }
+                            None => return,
+                        }
+                    }
+                    // No deletable item is displayed in Question view — the
+                    // dialog never opens there (the panel's D is view-gated
+                    // here, not at the bind).
+                    PanelView::Question => return,
+                }
+            }
             _ => return,
         }
     };
 
+    // The dialog must stack above EVERYTHING, including the chat panel. The
+    // action popup lives on the INNER (corpus_search_popup) overlay, but the
+    // chat panel is a child of the window-level OUTER overlay, which draws
+    // over the whole inner stack — a dialog added to the popup's immediate
+    // parent renders UNDER the panel. Climb to the outermost Overlay
+    // ancestor instead; every origin's dialog is centered the same way there.
     let overlay_parent = {
         let s = state_rc.borrow();
-        s.action_popup_widget.container.parent()
-    };
-    let overlay_parent = match overlay_parent {
-        Some(p) => p.downcast::<gtk4::Overlay>().ok(),
-        None => None,
+        let mut widget = s.action_popup_widget.container.parent();
+        let mut outermost: Option<gtk4::Overlay> = None;
+        while let Some(w) = widget {
+            if let Ok(o) = w.clone().downcast::<gtk4::Overlay>() {
+                outermost = Some(o);
+            }
+            widget = w.parent();
+        }
+        outermost
     };
     let overlay_parent = match overlay_parent {
         Some(o) => o,
@@ -472,6 +523,7 @@ pub(crate) fn show_delete_confirmation(
     s.delete_confirm_container = Some(container.downgrade());
     s.delete_confirm_overlay = Some(overlay_parent.downgrade());
     s.delete_confirm_origin = Some(origin);
+    s.delete_confirm_target = target;
     s.input_mode = crate::app::InputMode::DeleteConfirm;
 }
 
@@ -485,6 +537,10 @@ pub(crate) fn close_delete_confirmation(state: &Rc<RefCell<AppState>>) {
     // Return to the overlay the `D` was pressed in (gloss or journal), defaulting
     // to the gloss overlay for safety if the origin was somehow not recorded.
     s.input_mode = s.delete_confirm_origin.take().unwrap_or(crate::app::InputMode::GlossOverlay);
+    // Cancel/close clears the captured target too — `y`'s handler reads it
+    // BEFORE calling this function, so this only matters for the Escape/`n`
+    // path (defensive: no target should be read after this point either way).
+    s.delete_confirm_target = None;
 }
 
 /// Open the "Undo last edit? y / Esc" confirmation over `origin`'s overlay (the

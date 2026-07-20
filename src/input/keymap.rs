@@ -1633,6 +1633,19 @@ fn handle_chat_transcript_key(
             }
             true
         }
+        // `D`: delete the displayed item — Gloss view: the current gloss;
+        // Journal view: the selected saved Q&A — via the overlays' shared
+        // y/Esc confirmation modal. Origin ChatTranscript routes `y` to
+        // chat::delete_current_panel_item and Esc back to this mode. In
+        // Question view show_delete_confirmation refuses to open (no
+        // deletable item is displayed), so this is a no-op there.
+        "D" => {
+            crate::input::actions::gloss::show_delete_confirmation(
+                state,
+                crate::app::InputMode::ChatTranscript,
+            );
+            true
+        }
         "l" if is_ctrl => {
             crate::input::actions::chat::flip_panel_side(&mut state.borrow_mut());
             true
@@ -3043,13 +3056,21 @@ fn handle_delete_confirm_key(
 ) -> bool {
     match key_name {
         "y" => {
-            // Read the origin before closing (close clears it), then run that
-            // overlay's delete. close_delete_confirmation restores the origin mode.
+            // Read the origin AND the captured target before closing (close
+            // clears both), then run that overlay's delete.
+            // close_delete_confirmation restores the origin mode. The
+            // ChatTranscript delete runs by the id captured when `D` opened
+            // the dialog, not by whatever index/view is current now — see
+            // `AppState::delete_confirm_target`.
             let origin = state.borrow().delete_confirm_origin;
+            let target = state.borrow_mut().delete_confirm_target.take();
             crate::input::actions::gloss::close_delete_confirmation(state);
             match origin {
                 Some(crate::app::InputMode::JournalOverlay) => {
                     crate::input::actions::journal::delete_current(state);
+                }
+                Some(crate::app::InputMode::ChatTranscript) => {
+                    crate::input::actions::chat::delete_current_panel_item(state, target);
                 }
                 _ => {
                     crate::input::actions::gloss::delete_current_gloss(state);

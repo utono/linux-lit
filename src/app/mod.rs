@@ -579,6 +579,18 @@ pub struct AppState {
     /// Set when `D` opens the confirm; cleared when it closes. Mirrors
     /// `undo_confirm_origin`.
     pub delete_confirm_origin: Option<InputMode>,
+    /// The chat-panel delete target captured when the DeleteConfirm dialog
+    /// opens — the (view kind, row id) the dialog TITLED — so async
+    /// completions that mutate the panel's `view`/`gloss_index`/
+    /// `journal_cursor` between `D` and `y` (e.g. the question-error callback
+    /// resetting `chat.view`, or a regloss completion repointing
+    /// `gloss_index` at a newly created gloss) cannot retarget the delete
+    /// onto a different row. Only set for the `ChatTranscript` origin — the
+    /// gloss/journal OVERLAY origins still resolve their target at `y` time
+    /// from the (single-writer) overlay state. Set alongside
+    /// `delete_confirm_origin` when `D` opens the confirm; cleared when it
+    /// closes.
+    pub delete_confirm_target: Option<(crate::input::actions::chat::PanelView, i64)>,
     /// The journal `R` target chooser box (q/a/b/Esc) and its parent overlay,
     /// so the chooser handler can tear it down on any exit key. Mirrors
     /// `delete_confirm_container`/`delete_confirm_overlay`; the chooser always
@@ -2061,6 +2073,7 @@ pub fn build_window(
         delete_confirm_container: None,
         delete_confirm_overlay: None,
         delete_confirm_origin: None,
+        delete_confirm_target: None,
         rewrite_target_container: None,
         rewrite_target_overlay: None,
         gloss_undo: None,

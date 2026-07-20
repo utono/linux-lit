@@ -8,9 +8,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use super::chat_rows::{
     build_history_turns, build_single_exchange_rows, build_transcript_rows,
-    clamp_journal_cursor, consolidate_transcript, first_landable_at_or_after, flip_view,
-    is_first_question_exchange, journal_entry_first_row, journal_view_rows, landable_mask,
-    parse_revised_qa, question_row, same_passage_question, visual_selection_range, wrap_index,
+    clamp_journal_cursor, clear_deleted_journal_refs, consolidate_transcript,
+    first_landable_at_or_after, flip_view, is_first_question_exchange, journal_entry_first_row,
+    journal_view_rows, landable_mask, parse_revised_qa, question_row, same_passage_question,
+    split_answer_paragraphs, visual_selection_range, wrap_index,
 };
 
 /// Minimum freed left space (px) required to open the chat layout.
@@ -872,16 +873,11 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
                 saved_id: None,
             });
             s.chat.cursor = s.chat.exchanges.len() - 1;
-            snap_row_cursor_to_exchange(&mut s);
-            // Stay in Question view (set at submit) and render ONLY this
-            // Q&A — not the whole transcript (render_transcript), which
-            // would bring the gloss and any earlier exchanges back above it.
-            // `t` still reaches the full gloss transcript from here.
+            // Question view renders over its OWN row space (Q: row = widget
+            // 0); land the accent bar there, at the top of the new entry.
+            s.chat.row_cursor = 0;
+            s.chat.page_idx = 0;
             debug_assert_eq!(s.chat.view, PanelView::Question);
-            render_current_question(&mut s);
-            // Answer visible: hand focus to the transcript so j/k/s work
-            // immediately. The input was already hidden on submit.
-            focus_transcript(&mut s);
             // Auto-save the FIRST follow-up Q&A on this passage so the
             // reader doesn't have to press `s`. Any further follow-up in the
             // same panel session (count > 1) still requires `s` — this fires
@@ -891,6 +887,9 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             // "Revise this entry" — surprising when nothing was manually
             // saved yet. `s` still works afterward and arms revision then,
             // same as it always has for a not-yet-revision-armed save.
+            //
+            // Auto-save BEFORE the render so the SavedMark row is part of the
+            // first render and s.chat.pages match the rows j/k rebuilds.
             if is_first_question_exchange(&s.chat.exchanges) {
                 let idx = s.chat.exchanges.len() - 1;
                 match persist_exchange_to_journal(&mut s, idx) {
@@ -906,6 +905,14 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
             }
+            // Stay in Question view (set at submit) and render ONLY this
+            // Q&A — not the whole transcript (render_transcript), which
+            // would bring the gloss and any earlier exchanges back above it.
+            // `t` still reaches the full gloss transcript from here.
+            render_current_question(&mut s);
+            // Answer visible: hand focus to the transcript so j/k/s work
+            // immediately. The input was already hidden on submit.
+            focus_transcript(&mut s);
         },
         move |st, msg| {
             let mut s = st.borrow_mut();
@@ -1036,20 +1043,21 @@ fn render_paginated(
 /// Render `PanelView::Question`: exactly the exchange at `s.chat.cursor` —
 /// its `Q:` row + answer row (+ `SavedMark` once saved), via
 /// `build_single_exchange_rows` — NOT the gloss, NOT any other exchange.
-/// Plain `render_rows` (no row-cursor accent bar, no visual-selection
-/// painting), same choice `render_journal_view` makes: a one-exchange view
-/// has nothing for `j`/`k`'s row axis to usefully cycle over, so it degrades
-/// to viewport scrolling (see `transcript_cursor_move`'s `Question` guard).
-/// No-ops (renders nothing) when `cursor` is out of range — defensive; every
-/// real call site sets `cursor` to a just-pushed exchange's own index first.
+/// Renders through `render_paginated`, at `s.chat.row_cursor` (Question-view
+/// widget space: the `Q:` row is widget 0), painting the accent bar and
+/// making `s.chat.pages`/`page_idx` authoritative for the Question-view
+/// j/k/gg/G arms. No-ops (renders nothing) when `cursor` is out of range —
+/// defensive; every real call site sets `cursor` to a just-pushed exchange's
+/// own index first.
 pub(crate) fn render_current_question(s: &mut AppState) {
-    let (fam, sz) = transcript_font(s);
     let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+        let (fam, sz) = transcript_font(s);
         s.chat_panel.render_rows(&[], &fam, sz);
         return;
     };
     let rows = build_single_exchange_rows(e);
-    s.chat_panel.render_rows(&rows, &fam, sz);
+    let cursor = Some(s.chat.row_cursor);
+    render_paginated(s, &rows, cursor, None);
 }
 
 /// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
@@ -1148,6 +1156,140 @@ pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
     crate::ui::copy_to_clipboard(&copied);
     crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
     crate::logging::log(&format!("CHAT: copied \"{}\"", copied));
+}
+
+/// `y`-confirmed chat-panel delete (the panel's `D`, via the overlays' shared
+/// DeleteConfirm modal with origin ChatTranscript): deletes the item named by
+/// `target`, captured at `D`-confirm-open time (`show_delete_confirmation`),
+/// NOT whatever `s.chat.view`/`gloss_index`/`journal_cursor` are NOW. This
+/// matters because the confirm dialog blocks keys but not the GTK main loop:
+/// an async completion (question-error resetting `chat.view`, or a regloss
+/// completion repointing `gloss_index` at a freshly created gloss) can mutate
+/// that state between `D` and `y`, and re-reading it at confirm time would
+/// delete the wrong row. `target == None` is defensive only — the dialog
+/// always sets a target for this origin (`PanelView::Question` never opens
+/// it).
+pub(crate) fn delete_current_panel_item(
+    state: &Rc<RefCell<AppState>>,
+    target: Option<(PanelView, i64)>,
+) {
+    let Some((view, id)) = target else { return };
+    match view {
+        PanelView::Gloss => delete_panel_gloss(state, id),
+        PanelView::Journal => delete_panel_journal_entry(state, id),
+        PanelView::Question => {}
+    }
+}
+
+/// Delete the panel gloss identified by `gloss_id` (captured at `D`-confirm-
+/// open time, not re-resolved from the current `gloss_index`): shared
+/// DB+audio purge, then panel bookkeeping (list/index), overlay-cache
+/// reconciliation, transcript re-render (next gloss in place, or the empty
+/// placeholder), and the reader-tint recompute the overlay's own delete
+/// performs. If `gloss_id` is no longer in the panel's list (e.g. a regloss
+/// completion already replaced it), toasts and returns without deleting
+/// anything else.
+fn delete_panel_gloss(state: &Rc<RefCell<AppState>>, gloss_id: i64) {
+    let mut s = state.borrow_mut();
+    let Some(idx) = s.chat.gloss_list.iter().position(|g| g.gloss_id == gloss_id) else {
+        crate::input::navigation::show_chapter_toast_secs(
+            &s, &format!("Gloss {} already gone", gloss_id), 2,
+        );
+        return;
+    };
+    let abbrev = s.chat.gloss_ctx.as_ref().map(|c| c.work_abbrev.clone());
+    let (_audio_rows, mp3_files) =
+        crate::input::actions::gloss::purge_gloss_data(abbrev.as_deref(), gloss_id);
+
+    s.chat.gloss_list.remove(idx);
+    // Reconcile the gloss OVERLAY's separate cache (AppState.gloss_list is a
+    // distinct Vec from the panel's) so the deleted row cannot resurface when
+    // the overlay renders its remembered list.
+    if let Some(pos) = s.gloss_list.iter().position(|og| og.gloss_id == gloss_id) {
+        s.gloss_list.remove(pos);
+        s.gloss_index = if s.gloss_list.is_empty() {
+            0
+        } else {
+            s.gloss_index.min(s.gloss_list.len() - 1)
+        };
+    }
+
+    if s.chat.gloss_list.is_empty() {
+        // Last gloss gone: placeholder in transcript slot #1, stay in Gloss
+        // view (spec decision). The empty chip renders no row; the plain text
+        // renders as one label via gloss_answer_specs's no-tags fallback.
+        s.chat.gloss_index = 0;
+        if let Some(ex) = s.chat.exchanges.get_mut(0) {
+            if ex.question.is_empty() {
+                ex.answer = "No glosses for this passage".to_string();
+                ex.chip = String::new();
+            }
+        }
+        s.chat.view = PanelView::Gloss;
+        render_transcript(&mut s);
+    } else {
+        // Show the next remaining gloss in place (same replace-in-slot path
+        // Ctrl+n/p uses; it renders the transcript itself).
+        s.chat.gloss_index = idx.min(s.chat.gloss_list.len() - 1);
+        let text = s.chat.gloss_list[s.chat.gloss_index].gloss_text.clone();
+        if let Some(ctx) = s.chat.gloss_ctx.clone() {
+            push_gloss_exchange(&mut s, &ctx, &text);
+        }
+    }
+
+    // The glossed-passage set changed — recompute the main-card tint, same as
+    // the overlay's delete (otherwise the deleted passage's lines stay tinted).
+    crate::app::apply_reader_gloss_highlighting(&mut s);
+    crate::logging::log(&format!(
+        "CHAT: deleted gloss {} ({} mp3 files)", gloss_id, mp3_files
+    ));
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &format!(
+            "Deleted gloss {} · {} mp3{}",
+            gloss_id, mp3_files, if mp3_files == 1 { "" } else { "s" }
+        ),
+        2,
+    );
+}
+
+/// Delete the journal entry identified by `id` (captured at `D`-confirm-open
+/// time, not re-resolved from the current `journal_cursor`): DB row + cached
+/// TTS audio, panel list/cursor bookkeeping, dangling saved_id/revision_of
+/// cleanup, journal-overlay cache reconciliation, and a snapped re-render
+/// (the empty case renders the existing placeholder row). If `id` is no
+/// longer in the panel's list, toasts and returns without deleting anything
+/// else.
+fn delete_panel_journal_entry(state: &Rc<RefCell<AppState>>, id: i64) {
+    let mut s = state.borrow_mut();
+    let Some(idx) = s.chat.journal_list.iter().position(|p| p.id == id) else {
+        crate::input::navigation::show_chapter_toast_secs(
+            &s, &format!("Journal {} already gone", id), 2,
+        );
+        return;
+    };
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::journal::delete_journal_page(&conn, id);
+        crate::input::actions::journal::purge_journal_audio(&conn, id);
+    }
+    s.chat.journal_list.remove(idx);
+    s.chat.journal_cursor = clamp_journal_cursor(idx, s.chat.journal_list.len());
+    let revision_of = s.chat.revision_of;
+    let rev = clear_deleted_journal_refs(&mut s.chat.exchanges, revision_of, id);
+    s.chat.revision_of = rev;
+    // Reconcile the journal OVERLAY's cache (s.journal.pages is a third
+    // independent copy) so a stale entry cannot render there.
+    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == id) {
+        s.journal.pages.remove(pos);
+        if s.journal.page_index >= s.journal.pages.len() {
+            s.journal.page_index = s.journal.pages.len().saturating_sub(1);
+        }
+    }
+    render_journal_view_inner(&mut s, true);
+    crate::logging::log(&format!("CHAT: deleted journal {}", id));
+    crate::input::navigation::show_chapter_toast_secs(
+        &s, &format!("Deleted journal {}", id), 2,
+    );
 }
 
 pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
@@ -1717,12 +1859,12 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
 }
 
 /// Move the j/k ROW cursor (`s.chat.row_cursor`, widget-space — see
-/// `transcript_rows`' doc comment) by `delta` and scroll it into view. When
-/// the cursor is already clamped at a boundary (single row, or first/last
-/// LANDABLE row), degrade to plain viewport scrolling so an answer taller
-/// than the panel stays fully readable — same fallback the old exchange-only
-/// cursor used, and for the same reason (see `scroll_transcript_step`'s doc
-/// comment).
+/// `transcript_rows`' doc comment) by `delta` and scroll it into view. The
+/// paged Gloss/Journal/Question arms no-op (no re-render) at the document
+/// edges — `step_cursor_paged` simply clamps there. The plain-viewport-scroll
+/// degrade fallback (`scroll_transcript_step`) remains only for the
+/// pending/empty/unlandable states where there is no row cursor to step at
+/// all (see each arm's own guard).
 ///
 /// A `ChatGlossRowKind::Speaker` widget (e.g. "BELARIUS") is never a valid
 /// landing spot — see `landable_mask`'s doc comment (Fix 2: speaker labels
@@ -1753,11 +1895,13 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
     // act on) from the owner. An empty `journal_list` has no landable widget,
     // so it falls back to plain scrolling like Question.
     //
-    // Question is a flat, uncycled view with no row_cursor/row_owner of its
-    // own — it doesn't go through `render_transcript` (it uses
-    // `render_current_question`, plain `render_rows`, no accent bar). A
-    // single Q&A is rarely taller than the panel, and even when it is, plain
-    // scrolling reads it fully — j/k just scrolls.
+    // Question now steps the SAME widget-space `row_cursor` machinery as the
+    // Journal arm above, but over `build_single_exchange_rows` for just the
+    // one exchange at `s.chat.cursor` (Q: row + one widget per answer
+    // paragraph) — it renders via `render_current_question`'s
+    // `render_paginated` path (accent bar, `s.chat.pages`/`page_idx`
+    // authoritative), not `render_transcript`. Falls back to plain scrolling
+    // only when there is no exchange at the cursor or nothing landable.
     if s.chat.view == PanelView::Journal {
         let len = s.chat.journal_list.len();
         if len == 0 {
@@ -1791,7 +1935,43 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         return;
     }
     if s.chat.view == PanelView::Question {
-        s.chat_panel.scroll_transcript_step(delta as f64);
+        // A pending Question view is showing the thinking render — re-
+        // rendering here would paint the previous exchange over it, so
+        // degrade to plain scrolling until the answer lands.
+        if s.chat.pending {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        }
+        let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        };
+        // Same widget-space stepping as the Journal arm, over this ONE
+        // exchange's rows (Q: row + one widget per answer paragraph).
+        // s.chat.pages/page_idx are authoritative — the last Question render
+        // (render_paginated) computed them for exactly these rows.
+        let rows = build_single_exchange_rows(e);
+        let landable = landable_mask(&rows);
+        if !landable.iter().any(|&l| l) {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        }
+        let (new_cursor, new_page) = crate::ui::chat_pagination::step_cursor_paged(
+            s.chat.row_cursor,
+            delta,
+            s.chat.page_idx,
+            &s.chat.pages,
+            &landable,
+        );
+        // A clamped step at the document edge changes nothing — re-rendering
+        // would only reset the scroll position a Ctrl-d reader may hold on an
+        // oversized page.
+        if new_cursor == s.chat.row_cursor && new_page == s.chat.page_idx {
+            return;
+        }
+        s.chat.row_cursor = new_cursor;
+        s.chat.page_idx = new_page;
+        render_current_question(s);
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
@@ -1825,9 +2005,11 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
 /// `journal_cursor` to
 /// entry 0 and re-renders (or, on an empty `journal_list`, falls back to a
 /// plain scroll-to-top — there is no entry to land on). In
-/// `PanelView::Question` (no row cursor — see `transcript_cursor_move`'s
-/// guard) this is a plain scroll-to-top, mirroring how `j`/`k` degrade to
-/// scrolling in that view.
+/// `PanelView::Question` this instead lands the row cursor on the first
+/// landable widget of the current exchange's rows — the `Q:` row — via
+/// `render_current_question` (same `build_single_exchange_rows` source as
+/// `transcript_cursor_move`), falling back to a plain scroll-to-top only when
+/// there is no exchange at the cursor or nothing landable.
 pub(crate) fn transcript_cursor_first(s: &mut AppState) {
     if s.chat.view == PanelView::Journal {
         if !s.chat.journal_list.is_empty() {
@@ -1839,7 +2021,26 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
         return;
     }
     if s.chat.view == PanelView::Question {
-        s.chat_panel.scroll_transcript_to_edge(false);
+        // A pending Question view is showing the thinking render — re-
+        // rendering here would paint the previous exchange over it, so
+        // degrade to plain scrolling until the answer lands.
+        if s.chat.pending {
+            s.chat_panel.scroll_transcript_to_edge(false);
+            return;
+        }
+        let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+            s.chat_panel.scroll_transcript_to_edge(false);
+            return;
+        };
+        let rows = build_single_exchange_rows(e);
+        let landable = landable_mask(&rows);
+        let Some(first) = landable.iter().position(|&l| l) else {
+            s.chat_panel.scroll_transcript_to_edge(false);
+            return;
+        };
+        s.chat.row_cursor = first;
+        s.chat.page_idx = 0;
+        render_current_question(s);
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
@@ -1864,8 +2065,10 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
 /// `G` on the transcript: symmetric counterpart to `transcript_cursor_first`
 /// — moves the row cursor to the LAST landable row (Gloss view), moves
 /// `journal_cursor` to the last entry (Journal view, or falls back to
-/// scroll-to-bottom when `journal_list` is empty), or scrolls to the bottom
-/// (Question view).
+/// scroll-to-bottom when `journal_list` is empty), or (Question view) lands
+/// the row cursor on the last landable widget of the current exchange's rows,
+/// falling back to scroll-to-bottom only when there is no exchange at the
+/// cursor or nothing landable.
 pub(crate) fn transcript_cursor_last(s: &mut AppState) {
     if s.chat.view == PanelView::Journal {
         let len = s.chat.journal_list.len();
@@ -1878,7 +2081,26 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
         return;
     }
     if s.chat.view == PanelView::Question {
-        s.chat_panel.scroll_transcript_to_edge(true);
+        // A pending Question view is showing the thinking render — re-
+        // rendering here would paint the previous exchange over it, so
+        // degrade to plain scrolling until the answer lands.
+        if s.chat.pending {
+            s.chat_panel.scroll_transcript_to_edge(true);
+            return;
+        }
+        let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+            s.chat_panel.scroll_transcript_to_edge(true);
+            return;
+        };
+        let rows = build_single_exchange_rows(e);
+        let landable = landable_mask(&rows);
+        let Some(last) = landable.iter().rposition(|&l| l) else {
+            s.chat_panel.scroll_transcript_to_edge(true);
+            return;
+        };
+        s.chat.row_cursor = last;
+        s.chat.page_idx = s.chat.pages.len().saturating_sub(1);
+        render_current_question(s);
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
@@ -1917,12 +2139,13 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
 /// check only fires in that all-unlandable case, and exists purely so `V`
 /// cannot anchor a selection on a speaker label by construction.
 pub(crate) fn toggle_transcript_visual(s: &mut AppState) {
-    // No row_cursor/row_owner axis in Journal or Question view (see
-    // `transcript_cursor_move`'s same guard) — `V` has nothing to anchor a
-    // selection over there, so it's a no-op rather than silently entering a
-    // selection state that `y`/render_transcript would then act on over the
-    // WRONG (Gloss-view, whole-`exchanges`) content instead of what's on
-    // screen.
+    // Journal has no row_cursor/row_owner axis, and Question now HAS a row
+    // cursor (see `transcript_cursor_move`) but `V` stays scoped to the Gloss
+    // transcript regardless — a single Q&A's visual-selection semantics are
+    // deliberately not defined here, so it's a no-op rather than silently
+    // entering a selection state that `y`/render_transcript would then act on
+    // over the WRONG (Gloss-view, whole-`exchanges`) content instead of
+    // what's on screen.
     if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
         crate::logging::log("CHAT-VISUAL: V ignored (journal/question view)");
         return;
@@ -1989,8 +2212,10 @@ pub(crate) fn exit_transcript_visual(s: &mut AppState) -> bool {
 /// `landable_mask`, which gates j/k/V-anchor landing, not what `V`+`y` copies
 /// once spanned.
 pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
-    // Journal and Question views have no row_cursor/row_owner axis (see
-    // `transcript_cursor_move`'s guard) — `y` would otherwise copy whatever
+    // Journal has no row_cursor/row_owner axis, and Question now HAS a row
+    // cursor (see `transcript_cursor_move`) but `y` stays scoped to the Gloss
+    // transcript regardless — a single Q&A's yank semantics are deliberately
+    // not defined here. Without this guard `y` would otherwise copy whatever
     // stale Gloss-view row_cursor points at (from the whole `exchanges`
     // list), silently yanking content that isn't even the one on screen.
     if matches!(state_rc.borrow().chat.view, PanelView::Journal | PanelView::Question) {
@@ -2298,17 +2523,19 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
 /// lives at slot #1.
 pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
-    let answer_row = if question.is_empty() {
-        R::GlossAnswer(answer.to_string())
+    let mut rows = vec![R::SavedMark, question_row(question)];
+    if question.is_empty() {
+        rows.push(R::GlossAnswer(answer.to_string()));
     } else {
-        R::Answer(answer.to_string())
-    };
+        rows.extend(split_answer_paragraphs(answer).into_iter().map(R::Answer));
+    }
     // Show the saved entry scrolled to the very top (Q: line first), so a long
     // answer doesn't land the viewport mid-answer. No row cursor: this static
-    // snapshot isn't the j/k-navigable transcript.
+    // snapshot isn't the j/k-navigable transcript. Paragraph-split so page 0
+    // holds the answer's opening paragraphs (an unsplit answer was one
+    // oversized widget that fell off page 0 entirely).
     let (fam, sz) = transcript_font(s);
-    s.chat_panel
-        .render_rows_to_top(&[R::SavedMark, question_row(question), answer_row], &fam, sz);
+    s.chat_panel.render_rows_to_top(&rows, &fam, sz);
 }
 
 /// Size and position the panel for the current placement. Pinned: fill the
