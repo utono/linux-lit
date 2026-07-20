@@ -349,7 +349,6 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // `\` cycles the segment overlays: journal Q&A → gloss → synopsis
         // (wraps; advance arms live in the overlay modal handlers).
         (KeyCombo::plain("backslash"), Action::CycleSegmentOverlays),
-        (KeyCombo::plain("H"), Action::ToggleVocabPopup),
     ]
 }
 

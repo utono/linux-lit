@@ -71,7 +71,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("u", "U", "start time", "U: undo ts", &[("M-u", "scansion")]),
     key("i", "I", "2-col translation", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-M-d", "debug log"), ("M-d", "dim tog")]),
-    key("h", "H", "dlg fwd", "H: auto vocab", &[("C-h", "synopsis")]),
+    key("h", "", "dlg fwd", "", &[("C-h", "synopsis")]),
     key("t", "T", "dlg back", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
     key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}"), ("C-M-n", "nav test")]),
     bare("s", "S", "toggle sync"),
@@ -323,7 +323,6 @@ the last-closed gloss/journal overlay; overlays close via Escape) \
         "drill back" => "Action::JumpToPrevVocab -> InputMode::VocabLoop \
 — src/input/actions/concordance.rs",
         "vocab hi" => "Action::ToggleVocabHighlight — src/app.rs",
-        "auto vocab" => "Action::ToggleVocabPopup — src/app/vocab_popup.rs",
         "vocab tap" => "Action::VocabPopupTap (visible: next word; rr: \
 show/hide via ChordState::PendingR) — src/input/keymap.rs",
         "vocab Q&A" => "Action::VocabJournalAsk (popup visible + vocab word \
