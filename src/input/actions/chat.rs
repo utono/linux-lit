@@ -264,6 +264,7 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
+    chat_loop_teardown(s);
     // A pinned passage (Tab from V-mode) keeps its selection tag painted for as
     // long as the pin lives — the pin dies with ChatState below, so the mark
     // goes with it. Harmless no-op when nothing was pinned (the reader never
@@ -309,6 +310,7 @@ pub(crate) fn on_work_switched(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
+    chat_loop_teardown(s);
     s.chat = Default::default();
     // Discard any pending R→a/b rewrite stash so a later ask isn't mistaken
     // for a rewrite (mirrors journal::close_prompt).
@@ -655,6 +657,7 @@ pub(crate) fn focus_transcript(s: &mut AppState) {
 /// Chat layout: the reader pane gains input focus (full reader keys live;
 /// the panel stays open and visible).
 pub(crate) fn focus_reader(s: &mut AppState) {
+    chat_loop_teardown(s);
     s.input_mode = crate::app::InputMode::Reader;
     // Tab-cycle cue: flash the widget that just became active.
     use gtk4::prelude::Cast;
@@ -1301,6 +1304,7 @@ pub(crate) fn cycle_gloss(s: &mut AppState, delta: i32) {
     if n <= 1 {
         return; // nothing to cycle to
     }
+    chat_loop_stop(s);
     // Order is load-bearing: gloss_index must land BEFORE push_gloss_exchange,
     // whose chip reads it to render "n of N".
     s.chat.gloss_index = wrap_index(s.chat.gloss_index, delta, n);
@@ -1526,6 +1530,7 @@ pub(crate) fn toggle_panel_view(state_rc: &Rc<RefCell<AppState>>) {
         return;
     };
     let mut s = state_rc.borrow_mut();
+    chat_loop_stop(&mut s);
     s.chat.view = flip_view(s.chat.view);
     match s.chat.view {
         PanelView::Journal => {
@@ -1903,6 +1908,7 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
     // authoritative), not `render_transcript`. Falls back to plain scrolling
     // only when there is no exchange at the cursor or nothing landable.
     if s.chat.view == PanelView::Journal {
+        let prev_entry = s.chat.journal_cursor;
         let len = s.chat.journal_list.len();
         if len == 0 {
             s.chat_panel.scroll_transcript_step(delta as f64);
@@ -1930,6 +1936,9 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         s.chat.page_idx = new_page;
         if let Some(&entry) = s.chat.journal_row_owner.get(new_cursor) {
             s.chat.journal_cursor = entry;
+        }
+        if s.chat.journal_cursor != prev_entry {
+            chat_loop_stop(s);
         }
         render_journal_view_inner(s, false);
         return;
@@ -2011,12 +2020,16 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
 /// `transcript_cursor_move`), falling back to a plain scroll-to-top only when
 /// there is no exchange at the cursor or nothing landable.
 pub(crate) fn transcript_cursor_first(s: &mut AppState) {
+    let prev_entry = s.chat.journal_cursor;
     if s.chat.view == PanelView::Journal {
         if !s.chat.journal_list.is_empty() {
             s.chat.journal_cursor = 0;
             render_journal_view(s);
         } else {
             s.chat_panel.scroll_transcript_to_edge(false);
+        }
+        if s.chat.view == PanelView::Journal && s.chat.journal_cursor != prev_entry {
+            chat_loop_stop(s);
         }
         return;
     }
@@ -2070,6 +2083,7 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
 /// falling back to scroll-to-bottom only when there is no exchange at the
 /// cursor or nothing landable.
 pub(crate) fn transcript_cursor_last(s: &mut AppState) {
+    let prev_entry = s.chat.journal_cursor;
     if s.chat.view == PanelView::Journal {
         let len = s.chat.journal_list.len();
         if len != 0 {
@@ -2077,6 +2091,9 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
             render_journal_view(s);
         } else {
             s.chat_panel.scroll_transcript_to_edge(true);
+        }
+        if s.chat.view == PanelView::Journal && s.chat.journal_cursor != prev_entry {
+            chat_loop_stop(s);
         }
         return;
     }
