@@ -704,7 +704,7 @@ pub fn neighbor_block(neighbors: &[crate::db::queries::NeighborGloss]) -> Option
     }
     let mut block = String::from(
         "---\nNeighboring glosses (already written for ADJACENT passages in \
-         this scene) — do NOT recycle their characterizing verbs, metaphors, \
+         this scene). Do NOT recycle their characterizing verbs, metaphors, \
          images, or other rhetorical devices — choose fresh, equally precise \
          language:\n",
     );
@@ -1109,7 +1109,7 @@ mod tests {
         }];
         let block = neighbor_block(&n).unwrap();
         assert!(block.contains("Neighboring glosses"));
-        assert!(block.contains("do NOT recycle"));
+        assert!(block.contains("Do NOT recycle"));
         assert!(block.contains("TGV.1.2.1-TGV.1.2.3"));
         assert!(block.contains("Julia fishes for advice."));
         assert!(neighbor_block(&[]).is_none());

@@ -1547,7 +1547,16 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
             (crate::gloss::INNER_MONOLOGUE_EDIT_PROMPT.as_str(), msg, "inner-monologue")
         }
         "reader-gloss" => {
-            let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            let mut msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+            crate::logging::log(&format!(
+                "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+                neighbors.len(), ctx.start_citation, ctx.end_citation
+            ));
+            if let Some(block) = crate::gloss::neighbor_block(&neighbors) {
+                msg.push_str("\n\n");
+                msg.push_str(&block);
+            }
             (crate::gloss::READER_GLOSS_EDIT_PROMPT.as_str(), msg, "reader-gloss")
         }
         _ => {
