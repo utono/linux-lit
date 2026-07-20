@@ -4663,13 +4663,7 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
 /// Only the trailing three dot-separated numbers matter, so an `-Amb`-suffixed
 /// abbrev (or any abbrev with dots) parses the same. Returns `None` if the tail
 /// is not three integers.
-pub(crate) fn parse_citation(cite: &str) -> Option<(i64, i64, i64)> {
-    let mut parts = cite.rsplitn(4, '.');
-    let line = parts.next()?.parse().ok()?;
-    let div2 = parts.next()?.parse().ok()?;
-    let div1 = parts.next()?.parse().ok()?;
-    Some((div1, div2, line))
-}
+pub(crate) use crate::db::models::parse_citation;
 
 /// True if the line `(div1, div2, line_in_div)` falls within any glossed
 /// passage's `[start_citation, end_citation]` range. Passages never cross a

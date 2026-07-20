@@ -3,8 +3,8 @@
 //! each advance closes the current overlay by RESTORING its saved pre-open
 //! position (never the jump-to-source close), so every stop shows the same
 //! segment even after Ctrl+n/p traversal inside an overlay. Empty stops keep
-//! their standalone fallbacks: journal → work-wide Q&A picker (which ends the
-//! lap), gloss/synopsis → toast, landing back in the reader at the anchor.
+//! their standalone fallbacks: every stop (journal, gloss, synopsis) toasts,
+//! landing back in the reader at the anchor.
 //! Escape and each overlay's own close/flip keys are untouched.
 
 use std::cell::RefCell;
