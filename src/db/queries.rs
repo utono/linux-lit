@@ -2050,6 +2050,80 @@ pub fn find_glossed_passages(
     rows.collect()
 }
 
+#[derive(Debug, Clone)]
+pub struct NeighborGloss {
+    pub start_citation: String,
+    pub end_citation: String,
+    pub gloss_text: String,
+}
+
+/// The `n` nearest preceding and `n` nearest following glossed passages in
+/// the SAME scene (work + div1 + div2), by the trailing line number of the
+/// citation, excluding any passage whose line range overlaps
+/// [start_line, end_line]. Returned in reading order. Feeds the reader-gloss
+/// "neighboring glosses — do not recycle their devices" prompt block.
+pub fn find_neighbor_glosses(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    start_line: i64,
+    end_line: i64,
+    gloss_type: &str,
+    n: usize,
+) -> Result<Vec<NeighborGloss>, rusqlite::Error> {
+    // Trailing-line-number extraction idiom shared with find_glossed_passages.
+    let line_of = |col: &str| {
+        format!("CAST(replace({col}, rtrim({col}, '0123456789'), '') AS INTEGER)")
+    };
+    let s_line = line_of("p.start_citation");
+    let e_line = line_of("p.end_citation");
+    let sql = format!(
+        "SELECT p.start_citation, p.end_citation, g.gloss_text, {s_line} AS s_ln \
+         FROM passages p JOIN glosses g ON g.passage_id = p.id \
+         WHERE p.work_abbrev = ?1 AND p.div1 = ?2 AND p.div2 = ?3 \
+           AND g.gloss_type = ?4 \
+           AND NOT ({s_line} <= ?6 AND {e_line} >= ?5) \
+         ORDER BY s_ln"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<(NeighborGloss, i64)> = stmt
+        .query_map(
+            rusqlite::params![work_abbrev, div1, div2, gloss_type, start_line, end_line],
+            |r| {
+                Ok((
+                    NeighborGloss {
+                        start_citation: r.get(0)?,
+                        end_citation: r.get(1)?,
+                        gloss_text: r.get(2)?,
+                    },
+                    r.get::<_, i64>(3)?,
+                ))
+            },
+        )?
+        .collect::<Result<_, _>>()?;
+    let before: Vec<&(NeighborGloss, i64)> =
+        rows.iter().filter(|(_, ln)| *ln < start_line).collect();
+    let after: Vec<&(NeighborGloss, i64)> =
+        rows.iter().filter(|(_, ln)| *ln > end_line).collect();
+    let mut out: Vec<NeighborGloss> = Vec::new();
+    for (g, _) in before.iter().rev().take(n).rev() {
+        out.push(NeighborGloss {
+            start_citation: g.start_citation.clone(),
+            end_citation: g.end_citation.clone(),
+            gloss_text: g.gloss_text.clone(),
+        });
+    }
+    for (g, _) in after.iter().take(n) {
+        out.push(NeighborGloss {
+            start_citation: g.start_citation.clone(),
+            end_citation: g.end_citation.clone(),
+            gloss_text: g.gloss_text.clone(),
+        });
+    }
+    Ok(out)
+}
+
 /// Every reader-gloss gloss across all works, with body text + citation +
 /// speaker, for the Ctrl+f cross-corpus search popup. Joins passages for the
 /// work/citation/speaker that the glosses row lacks.
@@ -3710,6 +3784,53 @@ mod passages_div1_div2_tests {
                 ("Cym".to_string(), 1, 2, "only-variant".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn neighbor_glosses_same_scene_nearest_two_each_side() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (id INTEGER PRIMARY KEY, hash TEXT, \
+               work_abbrev TEXT, start_citation TEXT, end_citation TEXT, \
+               div1 INTEGER, div2 INTEGER, character TEXT, source_text TEXT); \
+             CREATE TABLE glosses (id INTEGER PRIMARY KEY, passage_id INTEGER, \
+               gloss_type TEXT, gloss_text TEXT);",
+        )
+        .unwrap();
+        // Scene 1.2 line ranges: 1-3, 4-8, 9-12, 14-20, 21-25; scene 1.3: 1-4.
+        let rows: &[(i64, &str, &str, i64, i64)] = &[
+            (1, "TGV.1.2.1", "TGV.1.2.3", 1, 2),
+            (2, "TGV.1.2.4", "TGV.1.2.8", 1, 2),
+            (3, "TGV.1.2.9", "TGV.1.2.12", 1, 2),
+            (4, "TGV.1.2.14", "TGV.1.2.20", 1, 2),
+            (5, "TGV.1.2.21", "TGV.1.2.25", 1, 2),
+            (6, "TGV.1.3.1", "TGV.1.3.4", 1, 3),
+        ];
+        for (id, s, e, d1, d2) in rows {
+            conn.execute(
+                "INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text) \
+                 VALUES (?1, '', 'TGV', ?2, ?3, ?4, ?5, '', '')",
+                rusqlite::params![id, s, e, d1, d2],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO glosses (passage_id, gloss_type, gloss_text) \
+                 VALUES (?1, 'reader-gloss', 'gloss for ' || ?2)",
+                rusqlite::params![id, s],
+            )
+            .unwrap();
+        }
+        // New passage 1.2.9-12 == row 3's span: glossing lines 9..=12.
+        let got = find_neighbor_glosses(&conn, "TGV", 1, 2, 9, 12, "reader-gloss", 2).unwrap();
+        let cites: Vec<&str> = got.iter().map(|g| g.start_citation.as_str()).collect();
+        // 2 nearest before (1-3, 4-8) + 2 nearest after (14-20, 21-25), in
+        // reading order; the overlapping row 3 and scene 1.3 are excluded.
+        assert_eq!(cites, vec!["TGV.1.2.1", "TGV.1.2.4", "TGV.1.2.14", "TGV.1.2.21"]);
+
+        // n=1 keeps only the immediate neighbors.
+        let got1 = find_neighbor_glosses(&conn, "TGV", 1, 2, 9, 12, "reader-gloss", 1).unwrap();
+        let cites1: Vec<&str> = got1.iter().map(|g| g.start_citation.as_str()).collect();
+        assert_eq!(cites1, vec!["TGV.1.2.4", "TGV.1.2.14"]);
     }
 }
 
