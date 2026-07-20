@@ -17,12 +17,16 @@ cursor, pagination, and sync state are never touched: the loop runs on a
 ## Background: how the cross-work case arises
 
 The panel's gloss/journal lists are populated only from
-`ChatState.pinned_passage`, which is captured from the work loaded at pin
-time. Nothing clears or re-pins the panel when the main card switches works
-(concordance `r`/`R` jump, library picker), so the panel goes stale — still
-showing work A while the card shows work B. That stale-pin state is the
-trigger scenario, and it means the handler must resolve the source work from
-the entry itself, **never** from `AppState.current_work`.
+`ChatState.pinned_passage`, captured from the work loaded at pin time, and
+**every main-card work switch wipes the panel** (`chat::on_work_switched`,
+called from `display_work` at `src/app/mod.rs:3408`, resets the whole
+`ChatState`). That wipe is deliberate and stays. So today the panel can only
+ever show the current work; the cross-work case arrives with a planned future
+workflow — an `f` finder inside the chat panel that surfaces gloss/journal
+entries belonging to *other* works. This feature must be ready for it: the
+handler resolves the source work from the entry itself, **never** from
+`AppState.current_work`, so it is correct now (same-work by construction) and
+needs no change when the cross-work finder lands.
 
 Proven precedents combined by this feature:
 
@@ -68,15 +72,19 @@ multi-instance abstraction — over-engineering for one consumer.
 At `space` time, resolve in this order; any unresolvable step is a **no-op
 with a chapter-toast** stating the reason:
 
-1. **Entry → work + line range.**
-   - Gloss view: `ChatState.gloss_ctx.work_abbrev` +
+1. **Entry → work + line range.** Every panel view (Gloss, Journal,
+   Question) displays content about the SAME pinned passage, so resolution
+   is uniform:
+   - `ChatState.gloss_ctx` present: `gloss_ctx.work_abbrev` +
      `gloss_ctx.source_line_numbers` (already-resolved `line_mapping.id`s;
-     first/last bound the passage).
-   - Journal view: the pinned passage's own work identity + citations →
-     `line_id_for_location(conn, abbrev, div1, div2, line)`.
-   - Missing work or range (e.g. future author-scope notes, whose
-     `work_abbrev` column holds an author string and which carry no
-     citations): toast "no source passage to play".
+     first/last bound the passage). This is the entry's own identity — the
+     future cross-work finder installs a `gloss_ctx` for whatever it loads.
+   - No `gloss_ctx` but a raw `pinned_passage` (pinned, not yet glossed):
+     line ids from `pinned_passage.cursor_lines` (`Line.id`), work from
+     `current_work` — safe here because a raw pin is same-work by
+     construction (the work-switch wipe guarantees it).
+   - Neither, or empty line lists (e.g. future author-scope notes with no
+     citations): toast "No source passage to play".
 2. **Work → media.** `list_media_for_work(conn, abbrev)`; prefer a path
    containing `/aax-Arkangel/`, else the first item (the
    `play_selected_echo` rule). No media → toast. No media picker — the
@@ -137,14 +145,20 @@ swaps, no gating changes needed.
   toggle → nav-stop → exit restore, incl. `main_was_playing` preservation).
 - **New DB query:** `line_end_time` unit-tested alongside `line_start_time`.
 - **Manual acceptance** (audio can't be verified under the `LIT_NO_MPV`
-  headless harness): pin a gloss in work A; concordance-jump the card to
-  work B; `space` in the panel — hear A's passage looping, card unchanged;
-  `space` toggles pause; navigate entries — loop stops, main stays paused;
-  Escape — main resumes iff it was playing; close the panel — chat MPV
-  process is gone (`pgrep`-verifiable by socket name).
+  headless harness): pin a passage and gloss it; `space` in the panel —
+  hear the passage looping on a SECOND mpv process while the main card's
+  player is paused with its position intact; `space` toggles pause;
+  navigate entries — loop stops, main stays paused; Escape — main resumes
+  iff it was playing; close the panel — the chat MPV process is gone
+  (`pgrep`-verifiable, socket `/tmp/mpvsocket-chat-*`). Cross-work play
+  becomes observable only when the future `f` finder lands.
 
 ## Out of scope (explicitly deferred)
 
+- The `f` cross-work gloss/journal finder itself (the future workflow this
+  feature's resolution rule is forward-compatible with).
+- Preserving the pinned panel across main-card work switches (explicitly
+  rejected: every work switch keeps wiping the panel).
 - Highlighting/karaoke of the looping line inside the chat panel.
 - Loop-follows-navigation audition mode.
 - Author-scope notes in the chat panel (if ever added, they hit the defined
