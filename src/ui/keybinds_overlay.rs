@@ -476,7 +476,6 @@ fn expand_action(label: &str) -> String {
         "BCP echo turns" => "BCP echo turns picker",
         "Shx echo turns" => "Shakespeare echo turns picker",
         "vocab hi" => "toggle vocab highlight",
-        "auto vocab" => "toggle auto-vocab popup",
         "toggle signs" => "toggle sign column",
         "chat side" => "flip chat panel column",
         "toggle sync" => "toggle playback sync",
