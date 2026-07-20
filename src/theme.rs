@@ -313,6 +313,19 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
     // text_fg rides the dedicated ink floor (contrast-only), NOT the avoid
     // list — the avoid rule's hue escape let a near-ink-dark tint pass as
     // "distinct" when it read as plain body text.
+    // Per-root explicit gloss overrides: a hue chosen FOR one wallpaper root
+    // (e.g. the dusty-rose roots pair with a complementary sage green). Keys
+    // are candidate root hexes; looked up by the ACTIVE variant's root
+    // (case-insensitive), falling back to the theme-wide explicit key, then
+    // the derived default. Treated exactly like an explicit value by the
+    // guards below — the hue is deliberate.
+    let by_root = |key: &str| -> Option<String> {
+        lit.get(key)?
+            .as_object()?
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&root_color))
+            .and_then(|(_, v)| v.as_str().map(str::to_string))
+    };
     let reader_gloss = {
         // An EXPLICIT reader_gloss is a deliberate hue choice and must stay that
         // hue across ALL root variants. The root (wallpaper) is CYCLEABLE and
@@ -321,7 +334,9 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         // (the wallpaper cycled, the text flipped color). So skip the root
         // distinctness check for an explicit value (bg + ink legibility still
         // apply); only the DERIVED focus_color default guards against root.
-        match str_field(lit, "reader_gloss") {
+        // A `reader_gloss_by_root` entry for the active root outranks the
+        // theme-wide key — it was picked for exactly this wallpaper.
+        match by_root("reader_gloss_by_root").or_else(|| str_field(lit, "reader_gloss")) {
             Some(base) => ensure_gloss_color_min(
                 &base, &text_bg, None, Some(&text_fg), &[],
                 READER_GLOSS_MIN_CONTRAST,
@@ -340,8 +355,11 @@ fn resolve_theme_variant(name: &str, val: &Value, variant: u8) -> Theme {
         // it to an explicit same-as-gloss value rotated the cursor color to a
         // jarring complement (teal→pink, navy→red). So: explicit → no avoid;
         // derived (complement) → keep the avoid so the fallback pair stays
-        // distinct.
-        match str_field(lit, "reader_gloss_cursor") {
+        // distinct. A `reader_gloss_cursor_by_root` entry for the active root
+        // outranks the theme-wide key (same rule as reader_gloss_by_root).
+        match by_root("reader_gloss_cursor_by_root")
+            .or_else(|| str_field(lit, "reader_gloss_cursor"))
+        {
             Some(base) => ensure_gloss_color_min(
                 &base, &text_bg, Some(&root_color), Some(&text_fg), &[],
                 READER_GLOSS_MIN_CONTRAST,
@@ -2025,6 +2043,31 @@ mod tests {
             assert_eq!(v.root_color, *w, "variant {i} root_color");
             assert_eq!(v.root_variant, i as u8, "variant {i} index");
         }
+    }
+
+    #[test]
+    fn per_root_gloss_override_applies_only_on_its_root() {
+        // A reader_gloss_by_root entry keyed by a candidate root wins on THAT
+        // variant (verbatim when it clears the floors); other variants fall
+        // back to the theme-wide explicit reader_gloss. Same for the cursor
+        // map. Case-insensitive key match.
+        let json: serde_json::Value = serde_json::from_str(
+            r##"{ "meta": {"display": "S", "type": "light"},
+                "dwl": {"rootcolor": "#08526b", "focuscolor": "#8a6a45",
+                        "rootcolor_candidates": ["#41819b", "#B5637A"]},
+                "kitty": {"background": "#f0ede4", "active_tab_foreground": "#2c2c2c"},
+                "linux-lit": {"reader_gloss": "#8c5a3c",
+                              "reader_gloss_cursor": "#8c5a3c",
+                              "reader_gloss_by_root": {"#b5637a": "#286b49"},
+                              "reader_gloss_cursor_by_root": {"#b5637a": "#286b49"}} }"##,
+        )
+        .unwrap();
+        let teal = resolve_theme_variant("s", &json, 0);
+        assert_eq!(teal.reader_gloss, "#8c5a3c", "non-matching root keeps the theme-wide gloss");
+        assert_eq!(teal.reader_gloss_cursor, "#8c5a3c");
+        let rose = resolve_theme_variant("s", &json, 1);
+        assert_eq!(rose.reader_gloss, "#286b49", "rose root gets its per-root gloss verbatim");
+        assert_eq!(rose.reader_gloss_cursor, "#286b49");
     }
 
     #[test]
