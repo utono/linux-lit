@@ -36,6 +36,14 @@ const CHAT_PANEL_TOP_INSET: i32 = 19;
 /// Toast strings reused at ≥2 chat.rs sites (audit #90). Durations stay
 /// inline at the call sites (the #70 precedent). "Rewritten" and "Nothing to
 /// rewrite" live in navigation.rs beside the other cross-file toast consts.
+/// CSS classes toggled by the placement machinery — the float/pinned skins on
+/// the panel container and the squared-corner seam on the reading card beside
+/// a pinned panel. Must match the theme.rs selector names (audit #91): a typo
+/// at one add/remove site silently breaks placement styling.
+const CLASS_PANEL_FLOAT: &str = "chat-panel-float";
+const CLASS_PANEL_PINNED: &str = "chat-panel-pinned";
+const CLASS_CARD_CHAT_SEAM: &str = "card-chat-seam";
+
 const TOAST_NO_PANEL_ROOM: &str = "No room for chat panel at this layout";
 const TOAST_NO_PASSAGE: &str = "No passage at the cursor";
 const TOAST_WAIT_PREVIOUS_REPLY: &str = "Waiting for the previous reply\u{2026}";
@@ -262,9 +270,9 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.chat_panel.render_rows(&[], &fam, sz);
     s.chat_layout_open = false;
     s.chat_placement = ChatPlacement::Pinned;
-    s.chat_panel.container.remove_css_class("chat-panel-float");
-    s.chat_panel.container.remove_css_class("chat-panel-pinned");
-    s.page_turn_overlay.remove_css_class("card-chat-seam");
+    s.chat_panel.container.remove_css_class(CLASS_PANEL_FLOAT);
+    s.chat_panel.container.remove_css_class(CLASS_PANEL_PINNED);
+    s.page_turn_overlay.remove_css_class(CLASS_CARD_CHAT_SEAM);
     s.chat_panel.container.set_margin_start(24);
     reapply_card_margins(s);
     s.input_mode = crate::app::InputMode::Reader;
@@ -416,7 +424,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
         return;
     }
     s.chat_placement = ChatPlacement::Pinned;
-    s.chat_panel.container.remove_css_class("chat-panel-float");
+    s.chat_panel.container.remove_css_class(CLASS_PANEL_FLOAT);
     reapply_card_margins(s); // pin the card left again (panel abuts on the right)
     let ww = s.window.width().max(0);
     let (card_w, _) = crate::app::layout::main_card_rect(s);
@@ -2657,11 +2665,11 @@ pub(crate) fn size_panel(s: &AppState) {
             let panel_h = card_h.max(0);
             s.chat_panel.container.set_valign(gtk4::Align::Start);
             s.chat_panel.container.set_margin_top(top_margin);
-            s.chat_panel.container.remove_css_class("chat-panel-float");
-            s.chat_panel.container.add_css_class("chat-panel-pinned");
+            s.chat_panel.container.remove_css_class(CLASS_PANEL_FLOAT);
+            s.chat_panel.container.add_css_class(CLASS_PANEL_PINNED);
             // Square the card's right corners so it meets the panel's hairline
             // seam flush (no rounded sliver of root at top-right/bottom-right).
-            s.page_turn_overlay.add_css_class("card-chat-seam");
+            s.page_turn_overlay.add_css_class(CLASS_CARD_CHAT_SEAM);
             s.chat_panel.size_to(w, panel_h);
         }
         ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
@@ -2670,11 +2678,11 @@ pub(crate) fn size_panel(s: &AppState) {
                 s.chat_placement == ChatPlacement::FloatRight,
             );
             s.chat_panel.container.set_margin_start(x.max(0));
-            s.chat_panel.container.remove_css_class("chat-panel-pinned");
-            s.chat_panel.container.add_css_class("chat-panel-float");
+            s.chat_panel.container.remove_css_class(CLASS_PANEL_PINNED);
+            s.chat_panel.container.add_css_class(CLASS_PANEL_FLOAT);
             // Float placement leaves the card alone (it overlays a column), so
             // the card keeps all four rounded corners.
-            s.page_turn_overlay.remove_css_class("card-chat-seam");
+            s.page_turn_overlay.remove_css_class(CLASS_CARD_CHAT_SEAM);
             // Clear the header band: `valign: Center` + full `card_h` used to
             // put the panel's top edge at the CARD's own top edge (same y as
             // `content_hbox`), painting over the running-head/act-scene
