@@ -42,13 +42,16 @@ fn synopsis_overlay_never_clips() {
         .wait_for_viewport_rect(Duration::from_secs(8))
         .expect("app reported its reading-viewport rect");
 
-    // Front matter (before Chapter 1) has no synopsis, so `h` would show nothing.
-    // Advance into a chapter first — `3` is next-chapter in the RPD keymap.
-    h.key("3", 250).expect("3 -> next chapter");
+    // Front matter (before a scene with synopsis data) may show nothing, so
+    // advance one scene first — `{` (braceleft) is JumpToNextScene in the RPD
+    // keymap. (`h` used to open the synopsis and `3` used to jump a scene; both
+    // binds moved — `h` is now CursorNextDialogueNoSeek and the synopsis opener
+    // is Ctrl+h. See src/input/keymap_config.rs.)
+    h.key("braceleft", 250).expect("{ -> next scene");
     h.settle(Duration::from_millis(400));
 
-    // Open the synopsis overlay.
-    h.key("h", 300).expect("h -> synopsis overlay");
+    // Open the synopsis overlay — Ctrl+h (ShowSynopsisOverlay).
+    h.chord(&["ctrl"], "h").expect("Ctrl+h -> synopsis overlay");
     let region = h
         .wait_for_overlay_viewport_rect(Duration::from_secs(8))
         .expect("overlay reported its viewport rect");

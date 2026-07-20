@@ -741,6 +741,32 @@ When a half line clips at the bottom edge of a scrolled surface:
       per-source `line_h`s. (`gloss_overlay.rs::block_height_overhead`,
       2026-07-17.)
 
+17. **A clip E2E (`overlay_clipping` / `line_clipping`) FAILS with the viewport
+    rect never appearing (`TEST_OVERLAY_VIEWPORT_RECT never appeared …`) OR a
+    "clip" on a work you didn't expect — a STALE TEST, not a production clip.**
+    The clip e2e tests drive the app through the CURRENT keymap and load
+    whatever `config-dev.json` `last_work` is; both drift out from under a test
+    frozen at write-time. Two distinct tells:
+    - **Overlay rect never logged** → the test's key script sends a bind that
+      MOVED. `overlay_clipping` originally sent plain `h` (then `ShowSynopsisOverlay`)
+      and `3` (then `JumpToNextScene`); both rebound (`h` → `CursorNextDialogueNoSeek`,
+      synopsis → **`Ctrl+h`**; scene-next → **`{`**/`braceleft`). The overlay
+      never opened, so no rect. **Verify the test's keys against
+      `src/input/keymap_config.rs` AND `~/.config/linux-lit/keymap.json` before
+      touching any clip code** — the production synopsis overlay was fine.
+      Fix: update the test's key script (`h.chord(&["ctrl"], "h")`,
+      `h.key("braceleft", …)`), not production. (2026-07-20.)
+    - **A clip on an unexpected work** (the attribution run's Bleak House
+      `first row h=52 margin=0` top clip) → the run's `config-dev.json`
+      `last_work` differed from the canonical shared config. The tests have NO
+      work-override env var; they load `last_work` (currently `Cym`, a two-column
+      play, which passes cleanly). A clip reported against a work the shared
+      config does not load is not reproducible from the canonical state — confirm
+      the `last_work` the failing run used before assuming a production bug.
+    Neither is a clip-math bug: no clip path (a/b/c) is involved. Diagnose by
+    reading `target/ui/*.png` — a genuine overlay/main-card render with a real
+    clip vs. a card that never changed state (overlay never opened).
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
