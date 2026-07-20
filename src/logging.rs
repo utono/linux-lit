@@ -69,6 +69,21 @@ pub fn log_always(msg: &str) {
     write_line(msg);
 }
 
+/// Log a stable, test-parsed viewport rect line: `{tag} x y w h` (rounded
+/// ints). The e2e pixel harness greps these exact lines, so every
+/// `TEST_*_VIEWPORT_RECT` emitter must share this one format; the tag strings
+/// stay literal at call sites so they remain greppable.
+pub fn log_viewport_rect(tag: &str, r: &gtk4::graphene::Rect) {
+    log(&format!(
+        "{} {} {} {} {}",
+        tag,
+        r.x().round() as i32,
+        r.y().round() as i32,
+        r.width().round() as i32,
+        r.height().round() as i32
+    ));
+}
+
 /// Log with format args, like `log_fmt!("x={} y={}", x, y)`.
 #[macro_export]
 macro_rules! log_fmt {

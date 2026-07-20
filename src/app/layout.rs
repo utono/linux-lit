@@ -449,6 +449,34 @@ pub(crate) fn apply_card_sizing(
 /// card's on-screen allocation is exactly `content_hbox`'s allocation. We read
 /// that allocation directly when it's settled (post-first-layout), and fall back
 /// to the computed width + window-minus-chrome height before first allocation.
+/// Column-float geometry shared by the vocab float and the chat float: the
+/// (x, width) of the reading column the float covers, extended to the column
+/// divider so the float's border sits exactly on the divider instead of
+/// leaving a sliver of card (the column stops 8px short of it — the divider's
+/// CSS margin). `over_right` selects the right column.
+pub(crate) fn column_float_rect(state: &AppState, over_right: bool) -> (i32, i32) {
+    let col = if over_right {
+        &state.right_scrolled_overlay
+    } else {
+        &state.scrolled_overlay
+    };
+    let (mut x, mut w) = col
+        .compute_bounds(&state.window)
+        .map(|b| (b.x() as i32, b.width() as i32))
+        .unwrap_or((24, MIN_TWO_COLUMN_COLUMN_WIDTH));
+    if let Some(d) = state.column_divider.compute_bounds(&state.window) {
+        let (d_left, d_right) = (d.x() as i32, (d.x() + d.width()) as i32);
+        if over_right {
+            let new_x = d_left.min(x);
+            w += x - new_x;
+            x = new_x;
+        } else {
+            w = w.max(d_right - x);
+        }
+    }
+    (x, w)
+}
+
 pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
     let alloc_w = s.content_hbox.width();
     let alloc_h = s.content_hbox.height();

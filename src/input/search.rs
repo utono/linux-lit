@@ -41,20 +41,7 @@ pub(crate) fn execute_search_with_query(state: &mut AppState, query: &str) {
     let re = build_matcher(query);
 
     // Collect into a local vec to avoid simultaneous immutable+mutable borrow of state.
-    let mut new_matches: Vec<SearchMatch> = Vec::new();
-
-    if state.line_map.is_some() {
-        // Text file mode: search the buffer text directly
-        let text = state.buffer.text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
-        for (line_idx, line_text) in text.as_str().lines().enumerate() {
-            collect_line(line_text, &re, line_idx, &mut new_matches);
-        }
-    } else {
-        // Original: search work.lines
-        for (line_idx, line) in work.lines.iter().enumerate() {
-            collect_line(&line.text, &re, line_idx, &mut new_matches);
-        }
-    }
+    let new_matches = scan_matches(state, work, &re);
 
     state.search_matches = new_matches;
 
@@ -315,20 +302,7 @@ fn collect_matches(state_rc: &Rc<RefCell<AppState>>) {
         None => return,
     };
     let re = build_matcher(&query);
-    let mut new_matches: Vec<SearchMatch> = Vec::new();
-
-    if state.line_map.is_some() {
-        let text = state
-            .buffer
-            .text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
-        for (line_idx, line_text) in text.as_str().lines().enumerate() {
-            collect_line(line_text, &re, line_idx, &mut new_matches);
-        }
-    } else {
-        for (line_idx, line) in work.lines.iter().enumerate() {
-            collect_line(&line.text, &re, line_idx, &mut new_matches);
-        }
-    }
+    let new_matches = scan_matches(&state, work, &re);
 
     state.search_matches = new_matches;
     apply_highlights(&state);
@@ -529,6 +503,30 @@ fn goto_match_idx(state: &mut AppState, new_idx: usize) {
     seek_and_resume(state);
 }
 
+/// The matcher scan shared by `execute_search_with_query` and
+/// `collect_matches`: text-file mode searches the buffer text directly (byte
+/// offsets stay consistent with the buffer); DB mode searches `work.lines`.
+fn scan_matches(
+    state: &AppState,
+    work: &crate::db::models::Work,
+    re: &regex::Regex,
+) -> Vec<SearchMatch> {
+    let mut new_matches: Vec<SearchMatch> = Vec::new();
+    if state.line_map.is_some() {
+        let text = state
+            .buffer
+            .text(&state.buffer.start_iter(), &state.buffer.end_iter(), false);
+        for (line_idx, line_text) in text.as_str().lines().enumerate() {
+            collect_line(line_text, re, line_idx, &mut new_matches);
+        }
+    } else {
+        for (line_idx, line) in work.lines.iter().enumerate() {
+            collect_line(&line.text, re, line_idx, &mut new_matches);
+        }
+    }
+    new_matches
+}
+
 fn clear_highlights(state: &AppState) {
     let (start, end) = state.buffer.bounds();
     state.buffer.remove_tag(&state.search_tag, &start, &end);
@@ -537,32 +535,19 @@ fn clear_highlights(state: &AppState) {
         .remove_tag(&state.search_current_tag, &start, &end);
 }
 
-fn apply_highlights(state: &AppState) {
-    for m in &state.search_matches {
-        let Some(line_start) = state.buffer.iter_at_line(m.line_index as i32) else {
-            continue;
-        };
-        let mut line_end = line_start;
-        if !line_end.ends_line() {
-            line_end.forward_to_line_end();
-        }
-        let line_text = state.buffer.text(&line_start, &line_end, false);
-        let char_start = line_text[..m.byte_start.min(line_text.len())].chars().count() as i32;
-        let char_end = line_text[..m.byte_end.min(line_text.len())].chars().count() as i32;
-        let mut match_start = line_start;
-        match_start.forward_chars(char_start);
-        let mut match_end = line_start;
-        match_end.forward_chars(char_end);
-        state.buffer.apply_tag(&state.search_tag, &match_start, &match_end);
-    }
-}
-
-fn apply_current_highlight(state: &AppState) {
-    if state.search_matches.is_empty() { return; }
-    let m = &state.search_matches[state.search_match_idx];
-    let Some(line_start) = state.buffer.iter_at_line(m.line_index as i32) else { return; };
+/// Buffer iterators (plus char offsets, for logging) for a match's highlighted
+/// range: the line's `byte_start..byte_end` converted to char offsets and
+/// walked from the line start. `None` when the buffer no longer has the
+/// match's line.
+fn match_iters(
+    state: &AppState,
+    m: &SearchMatch,
+) -> Option<(gtk4::TextIter, gtk4::TextIter, i32, i32)> {
+    let line_start = state.buffer.iter_at_line(m.line_index as i32)?;
     let mut line_end = line_start;
-    if !line_end.ends_line() { line_end.forward_to_line_end(); }
+    if !line_end.ends_line() {
+        line_end.forward_to_line_end();
+    }
     let line_text = state.buffer.text(&line_start, &line_end, false);
     let char_start = line_text[..m.byte_start.min(line_text.len())].chars().count() as i32;
     let char_end = line_text[..m.byte_end.min(line_text.len())].chars().count() as i32;
@@ -570,6 +555,22 @@ fn apply_current_highlight(state: &AppState) {
     match_start.forward_chars(char_start);
     let mut match_end = line_start;
     match_end.forward_chars(char_end);
+    Some((match_start, match_end, char_start, char_end))
+}
+
+fn apply_highlights(state: &AppState) {
+    for m in &state.search_matches {
+        let Some((match_start, match_end, _, _)) = match_iters(state, m) else {
+            continue;
+        };
+        state.buffer.apply_tag(&state.search_tag, &match_start, &match_end);
+    }
+}
+
+fn apply_current_highlight(state: &AppState) {
+    if state.search_matches.is_empty() { return; }
+    let m = &state.search_matches[state.search_match_idx];
+    let Some((match_start, match_end, char_start, char_end)) = match_iters(state, m) else { return; };
     state.buffer.apply_tag(&state.search_current_tag, &match_start, &match_end);
     crate::log_fmt!(
         "SEARCH_HL: current idx={} line={} chars={}..{}",
@@ -580,16 +581,7 @@ fn apply_current_highlight(state: &AppState) {
 fn remove_current_highlight(state: &AppState) {
     if state.search_matches.is_empty() { return; }
     let m = &state.search_matches[state.search_match_idx];
-    let Some(line_start) = state.buffer.iter_at_line(m.line_index as i32) else { return; };
-    let mut line_end = line_start;
-    if !line_end.ends_line() { line_end.forward_to_line_end(); }
-    let line_text = state.buffer.text(&line_start, &line_end, false);
-    let char_start = line_text[..m.byte_start.min(line_text.len())].chars().count() as i32;
-    let char_end = line_text[..m.byte_end.min(line_text.len())].chars().count() as i32;
-    let mut match_start = line_start;
-    match_start.forward_chars(char_start);
-    let mut match_end = line_start;
-    match_end.forward_chars(char_end);
+    let Some((match_start, match_end, _, _)) = match_iters(state, m) else { return; };
     state.buffer.remove_tag(&state.search_current_tag, &match_start, &match_end);
 }
 

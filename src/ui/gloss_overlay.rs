@@ -1818,13 +1818,7 @@ impl GlossOverlay {
         let sc = self.gloss_scrolled.clone();
         glib::idle_add_local_once(move || {
             if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
-                crate::logging::log(&format!(
-                    "TEST_OVERLAY_VIEWPORT_RECT {} {} {} {}",
-                    r.x().round() as i32,
-                    r.y().round() as i32,
-                    r.width().round() as i32,
-                    r.height().round() as i32
-                ));
+                crate::logging::log_viewport_rect("TEST_OVERLAY_VIEWPORT_RECT", &r);
             } else {
                 crate::logging::log(
                     "TEST_OVERLAY_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",

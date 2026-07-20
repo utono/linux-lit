@@ -100,28 +100,8 @@ pub(crate) fn position_vocab_popup(state: &AppState) {
     use gtk4::prelude::WidgetExt;
     if state.column_count() == 2 {
         let over_right = !crate::input::actions::chat::cursor_in_right_column(state);
-        let col = if over_right {
-            &state.right_scrolled_overlay
-        } else {
-            &state.scrolled_overlay
-        };
         let (_, card_h) = crate::app::layout::main_card_rect(state);
-        let (mut x, mut w) = col
-            .compute_bounds(&state.window)
-            .map(|b| (b.x() as i32, b.width() as i32))
-            .unwrap_or((24, crate::app::MIN_TWO_COLUMN_COLUMN_WIDTH));
-        // Extend to the column divider so the panel border sits on it
-        // instead of leaving a sliver of card (same as the chat float).
-        if let Some(d) = state.column_divider.compute_bounds(&state.window) {
-            let (d_left, d_right) = (d.x() as i32, (d.x() + d.width()) as i32);
-            if over_right {
-                let new_x = d_left.min(x);
-                w += x - new_x;
-                x = new_x;
-            } else {
-                w = w.max(d_right - x);
-            }
-        }
+        let (x, w) = crate::app::layout::column_float_rect(state, over_right);
         state.vocab_popup.popup.place_float(x, w, card_h);
         return;
     }

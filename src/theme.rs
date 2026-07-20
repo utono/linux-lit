@@ -41,6 +41,20 @@ const READER_GLOSS_ROOT_MIN_CONTRAST: f64 = 1.8;
 /// luminance floor still guarantees it is not the ink's own weight.
 const READER_GLOSS_INK_MIN_CONTRAST: f64 = 1.5;
 
+/// Hue distance (degrees) at which two colors read as DIFFERENT colors on
+/// screen; the "visually distinct" half of the hue-OR-contrast guard in
+/// `ensure_gloss_color_min`.
+const HUE_DISTINCT_MIN_DEG: f64 = 40.0;
+
+/// The paired fallback: when two colors sit closer than
+/// `HUE_DISTINCT_MIN_DEG` in hue, they still read as distinct if their
+/// contrast ratio clears this floor.
+const TINT_DISTINCT_MIN_CONTRAST: f64 = 1.4;
+
+/// Saturation floor for derived tints — below this a pushed tint washes out
+/// into gray instead of reading as the base hue.
+const TINT_MIN_SATURATION: f64 = 0.50;
+
 /// Thresholds above which an ink's HUE reads on screen (vs a near-black or
 /// muted ink where only luminance registers). Tuned on the theme corpus:
 /// zenbones/zenwritten #286486 (lum .11, sat .54), tokyonight-day #3760bf
@@ -664,8 +678,8 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (f64, f64, f64) {
 
 /// Hue distance in degrees [0, 180] between two hex colors.
 fn hue_distance(c1: &str, c2: &str) -> f64 {
-    let (h1, _, _) = rgb_to_hsl(hex_to_rgb(c1).0, hex_to_rgb(c1).1, hex_to_rgb(c1).2);
-    let (h2, _, _) = rgb_to_hsl(hex_to_rgb(c2).0, hex_to_rgb(c2).1, hex_to_rgb(c2).2);
+    let (h1, _, _) = { let (r, g, b) = hex_to_rgb(c1); rgb_to_hsl(r, g, b) };
+    let (h2, _, _) = { let (r, g, b) = hex_to_rgb(c2); rgb_to_hsl(r, g, b) };
     let d = (h1 - h2).abs();
     d.min(1.0 - d) * 360.0
 }
@@ -684,12 +698,7 @@ fn complement_hex(hex: &str) -> String {
 /// to 21.0 (black on white). Used to keep the gloss tints legible on the reading
 /// background and distinct from body text.
 fn contrast_ratio(a_hex: &str, b_hex: &str) -> f64 {
-    let lin = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
-    let lum = |hex: &str| {
-        let (r, g, b) = hex_to_rgb(hex);
-        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
-    };
-    let (la, lb) = (lum(a_hex) + 0.05, lum(b_hex) + 0.05);
+    let (la, lb) = (relative_luminance(a_hex) + 0.05, relative_luminance(b_hex) + 0.05);
     if la > lb { la / lb } else { lb / la }
 }
 
@@ -720,7 +729,7 @@ fn ensure_gloss_color_min(
             // Root: hue-OR-contrast — the root is a mid-luminance saturated
             // surface, so a far-away hue reads as a different color.
             && root_hex.map_or(true, |r| {
-                hue_distance(c, r) >= 40.0
+                hue_distance(c, r) >= HUE_DISTINCT_MIN_DEG
                     || contrast_ratio(c, r) >= READER_GLOSS_ROOT_MIN_CONTRAST
             })
             // Ink: on a light bg the ink is usually near-black (hue-blind),
@@ -732,12 +741,16 @@ fn ensure_gloss_color_min(
             && ink_hex.map_or(true, |i| {
                 if bg_is_light {
                     contrast_ratio(c, i) >= READER_GLOSS_INK_MIN_CONTRAST
-                        && (!hue_perceptible(i) || hue_distance(c, i) >= 40.0)
+                        && (!hue_perceptible(i) || hue_distance(c, i) >= HUE_DISTINCT_MIN_DEG)
                 } else {
-                    hue_distance(c, i) >= 40.0 || contrast_ratio(c, i) >= 1.4
+                    hue_distance(c, i) >= HUE_DISTINCT_MIN_DEG
+                        || contrast_ratio(c, i) >= TINT_DISTINCT_MIN_CONTRAST
                 }
             })
-            && avoid.iter().all(|a| hue_distance(c, a) >= 40.0 || contrast_ratio(c, a) >= 1.4)
+            && avoid.iter().all(|a| {
+                hue_distance(c, a) >= HUE_DISTINCT_MIN_DEG
+                    || contrast_ratio(c, a) >= TINT_DISTINCT_MIN_CONTRAST
+            })
     };
     if ok(base_hex) {
         return base_hex.to_string();
@@ -747,7 +760,7 @@ fn ensure_gloss_color_min(
     // Push lightness toward the side with headroom against the bg; raise S.
     // The deeper rungs exist for the root floor: a mid-lightness root needs
     // the tint pushed well past the card-bg floor before it clears both.
-    let s2 = s.max(0.50);
+    let s2 = s.max(TINT_MIN_SATURATION);
     for &l in if bg_is_light {
         // darker, for a light bg — fine-grained so the narrow window between
         // the card floor and the root floor (dark root + light card) is hit
@@ -770,7 +783,7 @@ fn ensure_gloss_color_min(
     // first try (existing themes keep their colors),
     // then widening alternates. Falls back to the highest-contrast-vs-bg
     // candidate if (theoretically) no rotation satisfies the full guard.
-    let s2 = s.max(0.50);
+    let s2 = s.max(TINT_MIN_SATURATION);
     let rungs: &[f64] = if bg_is_light {
         &[0.36, 0.30, 0.24, 0.42, 0.18, 0.12]
     } else {

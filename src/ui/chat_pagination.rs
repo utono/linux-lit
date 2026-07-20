@@ -25,45 +25,46 @@ pub(crate) struct ChatWidget {
 /// only the text). MIRRORS the `.chat-*` rules in `theme.rs` — keep in sync.
 ///
 /// Every row also inherits `.chat-transcript label { padding-bottom: 3px }`
-/// (theme.rs:1369) UNLESS a more specific `.chat-transcript label.chat-a-*`
-/// selector overrides it to 0px (chat-a-speaker, chat-a-verse, chat-a-stage,
-/// chat-a-verse-flush, chat-a-stage-flush all override; chat-q/chat-a/
-/// chat-chip/chat-error/chat-saved/chat-a-src-lead/chat-a-gloss do not, so
-/// they keep the blanket 3px). The 3px is folded into each total below so the
-/// computed height matches what GTK actually renders — omitting it would
-/// undercount every un-overridden row by 3px and drift pagination.
+/// UNLESS a more specific `.chat-transcript label.chat-a-*` selector overrides
+/// it to 0px (chat-a-speaker, chat-a-verse, chat-a-stage, chat-a-verse-flush,
+/// chat-a-stage-flush all override; chat-q/chat-a/chat-chip/chat-error/
+/// chat-saved/chat-a-src-lead/chat-a-gloss do not, so they keep the blanket
+/// 3px). The 3px is folded into each total below so the computed height
+/// matches what GTK actually renders — omitting it would undercount every
+/// un-overridden row by 3px and drift pagination.
 pub(crate) fn class_pad(class: &str) -> i32 {
     match class {
-        // padding-top 10 (theme.rs:1392/1394/1398/1400/1401) + blanket
-        // padding-bottom 3 (not overridden for these classes) = 13.
+        // padding-top 10 + blanket padding-bottom 3 (not overridden for
+        // these classes) = 13.
         "chat-q" => 13,
         "chat-a" => 13,
         "chat-chip" => 13,
         "chat-error" => 13,
         "chat-saved" => 13,
-        // padding-top 14 (theme.rs:1424) + padding-bottom 0 override
-        // (theme.rs:1434) = 14.
-        "chat-a-speaker" => 14,
-        // padding-top 0 (theme.rs:1441) + padding-bottom 0 override
-        // (theme.rs:1442) = 0.
-        "chat-a-verse" => 0,
-        // padding-top 0 (theme.rs:1457) + padding-bottom 0 override
-        // (theme.rs:1458) = 0.
-        "chat-a-verse-flush" => 0,
-        // padding-top 8 (theme.rs:1446) + padding-bottom 0 override
-        // (theme.rs:1447) = 8.
-        "chat-a-stage" => 8,
-        // padding-top 8 (theme.rs:1460) + padding-bottom 0 override
-        // (theme.rs:1461) = 8.
-        "chat-a-stage-flush" => 8,
-        // padding-top 18 (theme.rs:1462) + blanket padding-bottom 3
-        // (no override for chat-a-gloss) = 21.
+        // Source base classes: padding-top per `base_padding_top` + a
+        // padding-bottom 0 override, so the total IS the base padding-top.
+        "chat-a-speaker" | "chat-a-verse" | "chat-a-verse-flush" | "chat-a-stage"
+        | "chat-a-stage-flush" => base_padding_top(class),
+        // padding-top 26 + blanket padding-bottom 3
+        // (no override for chat-a-gloss) = 29.
         "chat-a-gloss" => 29,
-        // padding-top 44 (theme.rs:1428) + blanket padding-bottom 3
-        // (no override for chat-a-src-lead) = 47. NOTE: chat-a-src-lead is only
+        // padding-top 26 + blanket padding-bottom 3
+        // (no override for chat-a-src-lead) = 29. NOTE: chat-a-src-lead is only
         // ever an extra_class, never a base class, so this arm is unused by
         // pagination — src_lead_extra_pad handles the effective extra instead.
         "chat-a-src-lead" => 29,
+        _ => 0,
+    }
+}
+
+/// The `padding-top` of each SOURCE base class's `.chat-a-*` rule in theme.rs
+/// — the one table `class_pad` and `src_lead_extra_pad` must both agree on
+/// (they hand-copied it until audit #89). MIRRORS theme.rs; keep in sync.
+fn base_padding_top(class: &str) -> i32 {
+    match class {
+        "chat-a-speaker" => 14,
+        "chat-a-verse" | "chat-a-verse-flush" => 0,
+        "chat-a-stage" | "chat-a-stage-flush" => 8,
         _ => 0,
     }
 }
@@ -72,44 +73,38 @@ pub(crate) fn class_pad(class: &str) -> i32 {
 /// of the base class's own `padding-top`.
 ///
 /// The src-lead rule in theme.rs is a COMPOUND selector
-/// `.chat-transcript label.chat-a-src-lead { padding-top: 44px }` (specificity
+/// `.chat-transcript label.chat-a-src-lead { padding-top: 26px }` (specificity
 /// 0,0,2,1). Every base source rule (`.chat-a-speaker`, `.chat-a-verse`,
 /// `.chat-a-stage`, `.chat-a-*-flush`) is a single-class selector (0,0,1,0), so
 /// src-lead WINS for ALL of them regardless of stylesheet order: the rendered
-/// `padding-top` of a src-lead row is 44 for EVERY source base class. (This
+/// `padding-top` of a src-lead row is 26 for EVERY source base class. (This
 /// replaced the old source-order collision, where only `chat-a-speaker` — the
 /// one base rule ordered before src-lead — won and everything else got 0.)
 ///
-/// padding-top is non-additive (44 REPLACES the base, it does not stack), and
+/// padding-top is non-additive (26 REPLACES the base, it does not stack), and
 /// `class_pad(&w.class)` has already added the base's own padding-top. So the
-/// EXTRA src-lead contributes over the base is `44 - base_padding_top`, clamped
+/// EXTRA src-lead contributes over the base is `26 - base_padding_top`, clamped
 /// at ≥0, per base class:
-///   `chat-a-speaker`      base pt 14 → +30
-///   `chat-a-verse`        base pt 0  → +44
-///   `chat-a-verse-flush`  base pt 0  → +44
-///   `chat-a-stage`        base pt 8  → +36
-///   `chat-a-stage-flush`  base pt 8  → +36
+///   `chat-a-speaker`      base pt 14 → +12
+///   `chat-a-verse`        base pt 0  → +26
+///   `chat-a-verse-flush`  base pt 0  → +26
+///   `chat-a-stage`        base pt 8  → +18
+///   `chat-a-stage-flush`  base pt 8  → +18
 ///
 /// Do NOT use `class_pad("chat-a-src-lead")` — that would double-count the base
 /// pad already added by `class_pad(&w.class)`.
 ///
 /// SYNC: three things must stay in lockstep or the src-lead row is mis-measured
 /// (undercount → bottom clip; overcount → underfill): (1) `SRC_LEAD_PADDING_TOP`
-/// = `.chat-a-src-lead { padding-top }` in theme.rs (~1428); (2) the CSS selector
+/// = `.chat-a-src-lead { padding-top }` in theme.rs; (2) the CSS selector
 /// stays a COMPOUND (`.chat-transcript label.chat-a-src-lead`) so it wins for all
-/// source classes; (3) the per-class base padding-top values subtracted below
-/// match theme.rs. Change any one and update the others.
+/// source classes; (3) `base_padding_top`'s table matches theme.rs. Change any
+/// one and update the others.
 pub(crate) fn src_lead_extra_pad(base_class: &str) -> i32 {
     const SRC_LEAD_PADDING_TOP: i32 = 26; // theme.rs .chat-a-src-lead padding-top
-    // Base padding-top of each source class (theme.rs). src-lead's 26 wins via
-    // its compound selector, so the extra it adds over the base is 26 - base_pt.
-    let base_pt = match base_class {
-        "chat-a-speaker" => 14,
-        "chat-a-verse" | "chat-a-verse-flush" => 0,
-        "chat-a-stage" | "chat-a-stage-flush" => 8,
-        _ => 0,
-    };
-    (SRC_LEAD_PADDING_TOP - base_pt).max(0)
+    // src-lead's 26 wins via its compound selector, so the extra it adds over
+    // the base is 26 - base_padding_top.
+    (SRC_LEAD_PADDING_TOP - base_padding_top(base_class)).max(0)
 }
 
 /// Per-widget heights + group-start flags for pagination. `measure(text)` is the

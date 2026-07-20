@@ -1157,13 +1157,7 @@ pub(crate) fn emit_test_viewport_rect(state: &AppState) {
     }
     // Bounds of the scrolled text viewport in the window's coordinate space.
     if let Some(r) = state.scrolled_window.compute_bounds(&state.window) {
-        log_fmt!(
-            "TEST_VIEWPORT_RECT {} {} {} {}",
-            r.x().round() as i32,
-            r.y().round() as i32,
-            r.width().round() as i32,
-            r.height().round() as i32
-        );
+        crate::logging::log_viewport_rect("TEST_VIEWPORT_RECT", &r);
     } else {
         crate::logging::log("TEST_VIEWPORT_RECT unavailable (compute_bounds returned None)");
     }

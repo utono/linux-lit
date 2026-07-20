@@ -333,7 +333,7 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
         s.gloss_list.get(s.gloss_index).map(|gloss| {
             // Copy the id prefaced with a label so a paste self-identifies.
             let copied = format!("Gloss ID: {}", gloss.gloss_id);
-            let _ = std::process::Command::new("wl-copy").arg(&copied).spawn();
+            crate::ui::copy_to_clipboard(&copied);
             crate::logging::log(&format!("GLOSS: copied \"{}\" to clipboard", copied));
             copied
         })
@@ -2156,7 +2156,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
                 return;
             }
             if let Ok(conn) = crate::db::queries::open_db_rw() {
-                let _ = crate::db::queries::ensure_synopsis_audio_table(&conn);
+                let _ = crate::db::migrations::ensure_synopsis_audio_table(&conn);
                 let _ = crate::db::queries::save_synopsis_audio(
                     &conn, &work_abbrev, div1, div2, *index as i64,
                     &path.to_string_lossy(), &voice_id, &model_id,
@@ -2285,7 +2285,7 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             return;
         }
         if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::ensure_synopsis_audio_table(&conn);
+            let _ = crate::db::migrations::ensure_synopsis_audio_table(&conn);
             let _ = crate::db::queries::save_synopsis_audio(
                 &conn,
                 &work_abbrev,
@@ -2458,7 +2458,7 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             return;
         }
         if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::ensure_journal_audio_table(&conn);
+            let _ = crate::db::migrations::ensure_journal_audio_table(&conn);
             let _ = crate::db::queries::save_journal_audio(
                 &conn,
                 entry_id,

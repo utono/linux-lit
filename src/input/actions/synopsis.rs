@@ -276,7 +276,7 @@ pub(crate) fn copy_synopsis_id(state: &Rc<RefCell<AppState>>) {
     let msg = match id {
         Some(id) => {
             let s = id.to_string();
-            let _ = std::process::Command::new("wl-copy").arg(&s).spawn();
+            crate::ui::copy_to_clipboard(&s);
             crate::logging::log(&format!("SYNOPSIS: copied id {} to clipboard", s));
             format!("Copied id {}", s)
         }

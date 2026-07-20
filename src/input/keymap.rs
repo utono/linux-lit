@@ -2875,7 +2875,7 @@ fn handle_block_visual_key(
                 ((cfg.yank_text)(&s.gloss_overlay), s.gloss_overlay.visual_selection_len())
             };
             if !text.is_empty() {
-                let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+                crate::ui::copy_to_clipboard(&text);
                 crate::logging::log(&format!("{}: copied {} blocks", cfg.log_tag, n));
             }
             {
@@ -2940,7 +2940,7 @@ fn handle_journal_visual_key(
                 (s.journal_overlay.visual_selection_text(), s.journal_overlay.visual_selection_len())
             };
             if !text.is_empty() {
-                let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+                crate::ui::copy_to_clipboard(&text);
                 crate::logging::log(&format!("JOURNAL: copied {} blocks", n));
             }
             {

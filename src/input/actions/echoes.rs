@@ -852,7 +852,7 @@ pub(crate) fn copy_selected_echo(state_rc: &Rc<RefCell<AppState>>) {
             .unwrap_or_else(|| link.echo_work_abbrev.clone());
         let sentence = link.echo_text.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
         let text = format!("\"{}\" — {} {}.{}", sentence, title, link.echo_div1, link.echo_div2);
-        let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+        crate::ui::copy_to_clipboard(&text);
         crate::logging::log(&format!("ECHOES: copied \"{}\"", text));
     }
 }

@@ -5,6 +5,7 @@ pub mod concordance;
 pub mod echo_channel;
 pub mod echoes;
 pub mod line_types;
+pub mod migrations;
 pub mod models;
 pub mod play_pages;
 pub mod prose_pages;

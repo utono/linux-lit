@@ -6,6 +6,7 @@ pub mod authorship;
 pub mod bookmarks;
 pub mod chapters;
 pub mod chat;
+pub mod chat_rows;
 pub(crate) mod claude_bridge;
 pub mod concordance;
 pub mod corpus_search;
