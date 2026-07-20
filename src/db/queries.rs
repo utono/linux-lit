@@ -2078,9 +2078,15 @@ pub fn find_neighbor_glosses(
     };
     let s_line = line_of("p.start_citation");
     let e_line = line_of("p.end_citation");
+    // The glosses table keeps one row per regloss, so a twice-reglossed passage
+    // has multiple matching rows. Join on the NEWEST gloss (MAX id) per passage
+    // so each passage yields exactly one row carrying its current text — else a
+    // reglossed neighbor eats both `n` slots and may return a superseded revision.
     let sql = format!(
         "SELECT p.start_citation, p.end_citation, g.gloss_text, {s_line} AS s_ln \
          FROM passages p JOIN glosses g ON g.passage_id = p.id \
+           AND g.id = (SELECT MAX(g2.id) FROM glosses g2 \
+                       WHERE g2.passage_id = p.id AND g2.gloss_type = ?4) \
          WHERE p.work_abbrev = ?1 AND p.div1 = ?2 AND p.div2 = ?3 \
            AND g.gloss_type = ?4 \
            AND NOT ({s_line} <= ?6 AND {e_line} >= ?5) \
@@ -3831,6 +3837,77 @@ mod passages_div1_div2_tests {
         let got1 = find_neighbor_glosses(&conn, "TGV", 1, 2, 9, 12, "reader-gloss", 1).unwrap();
         let cites1: Vec<&str> = got1.iter().map(|g| g.start_citation.as_str()).collect();
         assert_eq!(cites1, vec!["TGV.1.2.4", "TGV.1.2.14"]);
+    }
+
+    #[test]
+    fn neighbor_glosses_dedupe_revisions_newest_per_passage() {
+        // A twice-reglossed neighbor keeps two rows in the glosses table (one
+        // per revision). The JOIN must NOT yield one NeighborGloss per revision:
+        // that would (a) let a single passage eat both `n` slots and (b) risk
+        // returning a superseded revision. Each passage must occupy ONE slot and
+        // the NEWEST gloss text (highest g.id) must be returned.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (id INTEGER PRIMARY KEY, hash TEXT, \
+               work_abbrev TEXT, start_citation TEXT, end_citation TEXT, \
+               div1 INTEGER, div2 INTEGER, character TEXT, source_text TEXT); \
+             CREATE TABLE glosses (id INTEGER PRIMARY KEY, passage_id INTEGER, \
+               gloss_type TEXT, gloss_text TEXT);",
+        )
+        .unwrap();
+        // Two before-neighbors and one after-neighbor of the glossed range 9..=12.
+        let passages: &[(i64, &str, &str)] = &[
+            (1, "TGV.1.2.1", "TGV.1.2.3"),
+            (2, "TGV.1.2.4", "TGV.1.2.8"),
+            (3, "TGV.1.2.14", "TGV.1.2.20"),
+        ];
+        for (id, s, e) in passages {
+            conn.execute(
+                "INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text) \
+                 VALUES (?1, '', 'TGV', ?2, ?3, 1, 2, '', '')",
+                rusqlite::params![id, s, e],
+            )
+            .unwrap();
+        }
+        // Passage 2 is reglossed twice: an OLDER row then a NEWER row. Insert the
+        // older text at the LOWER id and the newer text at the HIGHER id.
+        conn.execute(
+            "INSERT INTO glosses (id, passage_id, gloss_type, gloss_text) \
+             VALUES (10, 2, 'reader-gloss', 'OLD text for 4-8')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO glosses (id, passage_id, gloss_type, gloss_text) \
+             VALUES (20, 2, 'reader-gloss', 'NEW text for 4-8')",
+            [],
+        )
+        .unwrap();
+        // Single glosses for passages 1 and 3.
+        conn.execute(
+            "INSERT INTO glosses (id, passage_id, gloss_type, gloss_text) \
+             VALUES (5, 1, 'reader-gloss', 'gloss for 1-3')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO glosses (id, passage_id, gloss_type, gloss_text) \
+             VALUES (6, 3, 'reader-gloss', 'gloss for 14-20')",
+            [],
+        )
+        .unwrap();
+
+        let got = find_neighbor_glosses(&conn, "TGV", 1, 2, 9, 12, "reader-gloss", 2).unwrap();
+        // (a) passage 2 occupies exactly ONE slot: 3 passages -> 3 rows total.
+        assert_eq!(got.len(), 3);
+        let cites: Vec<&str> = got.iter().map(|g| g.start_citation.as_str()).collect();
+        assert_eq!(cites, vec!["TGV.1.2.1", "TGV.1.2.4", "TGV.1.2.14"]);
+        // (b) the newest revision text is returned for the reglossed passage.
+        let reglossed = got
+            .iter()
+            .find(|g| g.start_citation == "TGV.1.2.4")
+            .unwrap();
+        assert_eq!(reglossed.gloss_text, "NEW text for 4-8");
     }
 }
 

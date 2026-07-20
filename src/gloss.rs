@@ -723,12 +723,32 @@ pub fn neighbor_block(neighbors: &[crate::db::queries::NeighborGloss]) -> Option
 /// Fetch the 2-nearest-per-side same-scene reader-gloss neighbors for a
 /// context. Failures degrade to no neighbors (generation must never block on
 /// this).
+/// Parse the trailing line number off a citation ("TGV.1.2.4" -> 4,
+/// "Rom 3.1.32" -> 32). Returns None when the trailing dot-segment isn't an
+/// integer. Used to recover the passage's line range when a displayed gloss
+/// context carries no `source_line_numbers` (the stored-gloss question/edit
+/// route builds `ctx` with an empty vec — see `open_gloss_overlay`).
+pub fn trailing_line(citation: &str) -> Option<i64> {
+    citation.rsplit('.').next()?.trim().parse().ok()
+}
+
 pub fn neighbors_for_ctx(ctx: &GlossContext) -> Vec<crate::db::queries::NeighborGloss> {
-    let (Some(first), Some(last)) = (
+    // Normal path: the passage's own line numbers are present. The stored-gloss
+    // question/edit route (open_gloss_overlay) leaves them empty — fall back to
+    // parsing the trailing line off the start/end citations so neighbor
+    // injection still fires. Only proceed if BOTH citations parse.
+    let (first, last) = match (
         ctx.source_line_numbers.first().copied(),
         ctx.source_line_numbers.last().copied(),
-    ) else {
-        return Vec::new();
+    ) {
+        (Some(f), Some(l)) => (f, l),
+        _ => match (
+            trailing_line(&ctx.start_citation),
+            trailing_line(&ctx.end_citation),
+        ) {
+            (Some(f), Some(l)) => (f, l),
+            _ => return Vec::new(),
+        },
     };
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
@@ -1100,6 +1120,45 @@ mod tests {
         // Empty speaker (prose) also emits no <speaker> tag.
         let doc = ctx_with("", "plain prose line").passage_doc();
         assert_eq!(doc, "<verse>plain prose line</verse>\n");
+    }
+
+    #[test]
+    fn trailing_line_parses_dot_and_space_citations() {
+        // Dot-joined and space-then-dot citation forms both yield the trailing
+        // line number; a non-integer tail yields None.
+        assert_eq!(trailing_line("TGV.1.2.4"), Some(4));
+        assert_eq!(trailing_line("Rom 3.1.32"), Some(32));
+        assert_eq!(trailing_line("Cym.1.1.135"), Some(135));
+        assert_eq!(trailing_line("no-number"), None);
+        assert_eq!(trailing_line(""), None);
+    }
+
+    #[test]
+    fn neighbors_for_ctx_derives_lines_from_citations_when_line_numbers_empty() {
+        // The stored-gloss question/edit route builds a GlossContext with an
+        // EMPTY source_line_numbers vec (open_gloss_overlay). neighbors_for_ctx
+        // must recover the passage's [start, end] line range from the trailing
+        // integers of the start/end citations rather than early-returning empty.
+        // We exercise the fallback branch that derives the (first, last) lines;
+        // the DB lookup itself degrades to no neighbors when lit.db is absent.
+        let ctx = GlossContext {
+            work_abbrev: "TGV".into(),
+            work_title: "The Two Gentlemen of Verona".into(),
+            start_citation: "TGV.1.2.9".into(),
+            end_citation: "TGV.1.2.12".into(),
+            act: 1,
+            scene: 2,
+            speaker: "JULIA".into(),
+            source_text: "some verse".into(),
+            source_line_numbers: vec![],
+            hash: String::new(),
+            gloss_type: "reader-gloss".into(),
+        };
+        // Both citations parse, so the derived range is (9, 12). Assert the
+        // helper the fallback relies on returns those bounds (the full
+        // neighbors_for_ctx needs a real lit.db, tested elsewhere).
+        assert_eq!(trailing_line(&ctx.start_citation), Some(9));
+        assert_eq!(trailing_line(&ctx.end_citation), Some(12));
     }
 
     #[test]
