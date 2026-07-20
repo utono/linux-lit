@@ -4,6 +4,9 @@
 //! player's cursor-sync engine. Spawned lazily by the transcript's `space`
 //! loop; quit whenever focus leaves the transcript (see the design doc
 //! docs/superpowers/specs/2026-07-20-chat-panel-space-loop-design.md).
+//!
+//! Known leak (by design): a WM-level window close has no `close_request`
+//! handler, so it can leave a paused chat mpv behind, invisible to discovery.
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -28,36 +31,51 @@ pub struct ChatLoopState {
     pub armed: bool,
     pub paused: bool,
     pub main_was_playing: bool,
+    /// Generation token bumped on every arm/stop/teardown. `spawn_and_arm`
+    /// captures the value at arm and refuses to send the arm command if it
+    /// has changed by the time the socket is up — otherwise a teardown inside
+    /// the ~3s launch window would arm a process nothing tracks (audible
+    /// loop, no handle). Arc<AtomicU64> so the detached thread can read it.
+    pub arm_gen: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl ChatLoopState {
     /// Arm-time capture: remember (sticky-OR) whether WE are the reason the
-    /// main player is paused. Returns whether the main player must be paused
-    /// now. Sticky because a re-arm after a nav-stop sees mpv_playing ==
-    /// false (we paused it at the first arm) and must not forget the restore.
-    pub fn on_arm(&mut self, mpv_playing: bool) -> bool {
+    /// main player is paused. Returns `(pause_main, generation)` — the u64 is
+    /// the token `spawn_and_arm` must still see to actually arm. Sticky
+    /// because a re-arm after a nav-stop sees mpv_playing == false (we paused
+    /// it at the first arm) and must not forget the restore.
+    pub fn on_arm(&mut self, mpv_playing: bool) -> (bool, u64) {
+        use std::sync::atomic::Ordering;
         self.main_was_playing = self.main_was_playing || mpv_playing;
         self.armed = true;
         self.paused = false;
-        mpv_playing
+        let gen = self.arm_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        (mpv_playing, gen)
     }
 
     /// Nav-stop: disarm only. Main stays paused; the restore flag survives so
-    /// a later full teardown still resumes correctly.
+    /// a later full teardown still resumes correctly. Bumps the generation so
+    /// any in-flight arm is cancelled.
     pub fn on_stop(&mut self) {
+        use std::sync::atomic::Ordering;
         self.armed = false;
         self.paused = false;
+        self.arm_gen.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Full teardown. Returns whether the main player must be resumed —
     /// keyed on main_was_playing ALONE (it is set only at arm and cleared
     /// only here, so it precisely encodes "we paused main and haven't
     /// restored it"), never on armed, which a nav-stop already cleared.
+    /// Bumps the generation so any in-flight arm is cancelled.
     pub fn on_teardown(&mut self) -> bool {
+        use std::sync::atomic::Ordering;
         let resume = self.main_was_playing;
         self.armed = false;
         self.paused = false;
         self.main_was_playing = false;
+        self.arm_gen.fetch_add(1, Ordering::SeqCst);
         resume
     }
 }
@@ -176,7 +194,15 @@ impl ChatPlayer {
 /// a detached thread: a first launch waits up to ~3s for the IPC socket
 /// (mirroring discover_or_launch_blocking), which must never block the GTK
 /// thread. State was already updated optimistically by the caller.
-pub fn spawn_and_arm(socket_path: String, media_path: String, a: f64, b: Option<f64>) {
+pub fn spawn_and_arm(
+    socket_path: String,
+    media_path: String,
+    a: f64,
+    b: Option<f64>,
+    gen: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    expected: u64,
+) {
+    use std::sync::atomic::Ordering;
     std::thread::spawn(move || {
         if UnixStream::connect(&socket_path).is_err() {
             let _ = std::fs::remove_file(&socket_path); // stale leftover, if any
@@ -187,6 +213,13 @@ pub fn spawn_and_arm(socket_path: String, media_path: String, a: f64, b: Option<
                     break;
                 }
             }
+        }
+        // A stop/teardown during the launch window bumped the generation; do
+        // NOT arm a process nothing tracks — quit it instead.
+        if gen.load(Ordering::SeqCst) != expected {
+            send_json(&socket_path, r#"{"command":["quit"]}"#);
+            crate::logging::log("CHAT-MPV: arm cancelled (stale generation), quit sent");
+            return;
         }
         send_json(&socket_path, &arm_command_json(&media_path, a, b));
         crate::logging::log(&format!(
@@ -285,7 +318,7 @@ mod tests {
         // arm(playing) → nav-stop → full teardown must resume: the nav-stop
         // cleared `armed`, but main_was_playing still says we paused main.
         let mut st = ChatLoopState::default();
-        assert!(st.on_arm(true));
+        assert!(st.on_arm(true).0);
         st.on_stop();
         assert!(st.on_teardown());
     }
@@ -297,7 +330,7 @@ mod tests {
         let mut st = ChatLoopState::default();
         st.on_arm(true);
         st.on_stop();
-        assert!(!st.on_arm(false)); // we don't re-pause; already paused
+        assert!(!st.on_arm(false).0); // we don't re-pause; already paused
         assert!(st.on_teardown());
     }
 
@@ -305,7 +338,7 @@ mod tests {
     fn teardown_does_not_resume_when_main_was_not_playing() {
         // We never paused main → never resume it.
         let mut st = ChatLoopState::default();
-        assert!(!st.on_arm(false));
+        assert!(!st.on_arm(false).0);
         assert!(!st.on_teardown());
     }
 
@@ -315,8 +348,35 @@ mod tests {
         st.on_arm(true);
         assert!(st.on_teardown());
         // Fresh cycle where main was NOT playing → flag actually cleared.
-        assert!(!st.on_arm(false));
+        assert!(!st.on_arm(false).0);
         assert!(!st.on_teardown());
+    }
+
+    #[test]
+    fn arm_generation_increases_each_arm() {
+        let mut st = ChatLoopState::default();
+        let g1 = st.on_arm(true).1;
+        let g2 = st.on_arm(false).1;
+        assert!(g2 > g1);
+    }
+
+    #[test]
+    fn stop_makes_prior_generation_stale() {
+        use std::sync::atomic::Ordering;
+        let mut st = ChatLoopState::default();
+        let g = st.on_arm(true).1;
+        assert_eq!(st.arm_gen.load(Ordering::SeqCst), g); // fresh: matches
+        st.on_stop();
+        assert_ne!(st.arm_gen.load(Ordering::SeqCst), g); // now stale
+    }
+
+    #[test]
+    fn teardown_makes_prior_generation_stale() {
+        use std::sync::atomic::Ordering;
+        let mut st = ChatLoopState::default();
+        let g = st.on_arm(true).1;
+        st.on_teardown();
+        assert_ne!(st.arm_gen.load(Ordering::SeqCst), g); // teardown invalidates
     }
 
     #[test]

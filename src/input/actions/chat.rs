@@ -2860,7 +2860,8 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
     // (sticky across re-arms — a re-arm after a nav-stop sees mpv_playing ==
     // false because we paused main at the first arm).
     let mpv_playing = s.mpv_playing;
-    let pause_main = s.chat_loop.on_arm(mpv_playing);
+    let (pause_main, arm_gen_val) = s.chat_loop.on_arm(mpv_playing);
+    let arm_gen = s.chat_loop.arm_gen.clone();
     if pause_main {
         let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
     }
@@ -2880,7 +2881,7 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         "CHAT-LOOP: arm {} lines {}..{} a={:.2} b={:?} media={}",
         src.work_abbrev, first_id, last_id, a, b, media.path
     ));
-    crate::mpv::chat_player::spawn_and_arm(socket, media.path, a, b);
+    crate::mpv::chat_player::spawn_and_arm(socket, media.path, a, b, arm_gen, arm_gen_val);
 }
 
 /// Nav-stop: disarm the loop but keep the chat mpv process AND keep the main
