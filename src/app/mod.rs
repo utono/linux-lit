@@ -1766,12 +1766,10 @@ pub fn build_window(
     let page_image_overlay = crate::ui::page_image_overlay::PageImageOverlay::new();
     page_image_overlay.attach_to(&page_turn_overlay);
 
-    // Action popup overlay for visual mode. Stays on the INNER overlay: it only
-    // appears in Visual mode on the main reading card, which the chat panel
-    // never coexists with, and gloss/journal dialogs anchor off its parent to
-    // find the overlay to attach to (they now climb to the outermost Overlay).
+    // Action popup overlay for visual mode. Constructed here (used by the
+    // AppState struct literal below); attached to the OUTER overlay further
+    // down, alongside the other Task-12b re-homes.
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    corpus_search_popup.overlay.add_overlay(&action_popup_widget.container);
 
     // NOTE: the vocab popup and add-vocab card are re-homed onto the OUTER
     // overlay (added AFTER the chat panel, below) so they float ABOVE the chat
@@ -1920,6 +1918,12 @@ pub fn build_window(
     // the toasts so a transient status toast still paints over them.
     vocab_popup.attach_to(&outer_overlay);
     outer_overlay.add_overlay(vocab_add_card.container());
+    // Action popup (Visual mode) also floats on the OUTER overlay, above the
+    // chat panel: Tab moves focus to the reader without closing the panel
+    // (`focus_reader`), and Ctrl+a enters Visual mode with no chat_layout_open
+    // gate (src/input/visual.rs), so the popup can open while the panel is
+    // still visible — it must not render UNDER it like the inner overlay would.
+    outer_overlay.add_overlay(&action_popup_widget.container);
     // Transient toasts sit on the OUTER overlay, added AFTER the chat panel, so
     // they render on top of the floating chat panel rather than behind it (the
     // chat panel is left-aligned + center-valigned and would otherwise obscure
