@@ -40,6 +40,11 @@ pub struct Harness {
     runtime_dir: PathBuf,
     wayland_display: String,
     cage: Child,
+    /// The app log for THIS run, inside the harness tempdir (`LIT_LOG_PATH`).
+    /// Isolates the test from any live `cargo run` session: the app under test
+    /// neither truncates nor interleaves with the live instance's
+    /// `linux-lit-dev.log`, and log assertions can't read the wrong process.
+    log_path: PathBuf,
 }
 
 impl Harness {
@@ -56,6 +61,9 @@ impl Harness {
     {
         let runtime = tempfile::tempdir()?;
         let runtime_dir = runtime.path().to_path_buf();
+        // Per-run app log (the app truncates + writes it itself on startup).
+        // See the `log_path` field docs for why this is not the shared dev log.
+        let log_path = runtime_dir.join("linux-lit-test.log");
 
         let mut cmd = Command::new("cage");
         // `cage -- <app> <args>`: cage opens a headless output, maps the single
@@ -74,6 +82,7 @@ impl Harness {
             // aborts with a stack overflow.
             .env("GDK_BACKEND", "wayland")
             .env("GSK_RENDERER", "cairo")
+            .env("LIT_LOG_PATH", &log_path)
             // don't nest inside or talk to the real session:
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
@@ -97,6 +106,7 @@ impl Harness {
             runtime_dir,
             wayland_display,
             cage,
+            log_path,
         })
     }
 
@@ -268,13 +278,13 @@ impl Harness {
     /// clipping detector's `--region`. Doubles as a readiness gate: the rect is
     /// logged at the moment the window is revealed and painted.
     ///
-    /// Reads the dev log at `$HOME/utono/linux-lit/linux-lit-dev.log` (where the
-    /// app writes under `LIT_DEV`). The harness truncates it before launch so a
-    /// stale rect from a prior run isn't picked up.
+    /// Reads this run's own app log (`LIT_LOG_PATH` in the harness tempdir), so
+    /// a stale rect from a prior run — or a live `cargo run` session's log —
+    /// can never be picked up.
     pub fn wait_for_viewport_rect(&self, timeout: Duration) -> io::Result<(i32, i32, i32, i32)> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+            if let Ok(text) = fs::read_to_string(&self.log_path) {
                 // last matching line wins (most recent reveal)
                 if let Some(rect) = text
                     .lines()
@@ -308,7 +318,7 @@ impl Harness {
     ) -> io::Result<(i32, i32, i32, i32)> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+            if let Ok(text) = fs::read_to_string(&self.log_path) {
                 if let Some(rect) = text
                     .lines()
                     .rev()
@@ -342,7 +352,7 @@ impl Harness {
     ) -> io::Result<(i32, i32, i32, i32)> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+            if let Ok(text) = fs::read_to_string(&self.log_path) {
                 if let Some(rect) = text
                     .lines()
                     .rev()
@@ -376,7 +386,7 @@ impl Harness {
     ) -> io::Result<(i32, i32, i32, i32)> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+            if let Ok(text) = fs::read_to_string(&self.log_path) {
                 if let Some(rect) = text
                     .lines()
                     .rev()
@@ -407,7 +417,7 @@ impl Harness {
     /// still compile the shared harness.
     #[allow(dead_code)]
     pub fn read_dev_log(&self) -> String {
-        fs::read_to_string(Self::dev_log_path()).unwrap_or_default()
+        fs::read_to_string(&self.log_path).unwrap_or_default()
     }
 
     /// The horizontal band all journal-overlay text ink must stay inside
@@ -418,7 +428,7 @@ impl Harness {
     pub fn wait_for_journal_content_band(&self, timeout: Duration) -> io::Result<(i32, i32)> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(text) = fs::read_to_string(Self::dev_log_path()) {
+            if let Ok(text) = fs::read_to_string(&self.log_path) {
                 if let Some(band) = text
                     .lines()
                     .rev()
@@ -483,16 +493,13 @@ impl Harness {
         ))
     }
 
-    /// Path to the dev log the app writes under `LIT_DEV`.
-    fn dev_log_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(home).join("utono/linux-lit/linux-lit-dev.log")
-    }
-
-    /// Truncate the dev log so `wait_for_viewport_rect` can't read a stale rect
-    /// from a previous run. Call before `start_app`. Best-effort.
-    pub fn reset_dev_log() {
-        let _ = fs::write(Self::dev_log_path(), b"");
+    /// Truncate this run's app log mid-test so a later wait can't match a line
+    /// from an earlier phase (e.g. the journal author band re-emitting its
+    /// rects). No pre-start call is needed: the app truncates + creates the
+    /// per-run `LIT_LOG_PATH` file itself on startup. Best-effort.
+    #[allow(dead_code)]
+    pub fn reset_dev_log(&self) {
+        let _ = fs::write(&self.log_path, b"");
     }
 }
 

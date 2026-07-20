@@ -13,8 +13,13 @@
 //!     a fraction of the budget. First page must fill ≥ 50% of the viewport.
 //!
 //! Depends on live lit.db content: the Shakespeare author-scope note (the
-//! `import-corpus-note` skill's "Loading the Cry" import). Ham (Shakespeare)
-//! is the entry work.
+//! `import-corpus-note` skill's "Loading the Cry" import). Cym (Shakespeare)
+//! is the entry work — it must be a Shakespeare work that has journal pages of
+//! its own, because Ctrl+j on a work with NO pages only toasts ("No journal
+//! pages yet") and the overlay (and its Alt+a author band) is unreachable.
+//! When the landing scene's band is empty, Ctrl+j opens the work-wide Q&A
+//! picker instead of the overlay (46941ce6) — the test confirms the first row
+//! (Return) to reveal the overlay in that case.
 //!
 //! Run:
 //!     ./scripts/e2e-env.sh cargo test --test journal_markdown -- --ignored --nocapture
@@ -53,14 +58,13 @@ fn cursor_indices(log: &str) -> Vec<usize> {
 #[test]
 #[ignore = "needs cage + grim + wtype + python numpy/pillow; run with --ignored"]
 fn corpus_note_markdown_renders_and_navigates() {
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),
         &[
             ("LIT_DEV", "1"),
             ("LIT_HEADLESS_TEST", "1"),
-            ("LIT_START_WORK", "Ham"),
+            ("LIT_START_WORK", "Cym"),
         ],
     )
     .expect("launch linux-lit in cage");
@@ -82,13 +86,22 @@ fn corpus_note_markdown_renders_and_navigates() {
     h.settle(Duration::from_millis(400));
 
     // Open the journal overlay, then jump to the AUTHOR band (the corpus note).
-    h.chord(&["ctrl"], "j").expect("Ctrl+j -> journal overlay");
-    let _ = h
-        .wait_for_journal_viewport_rect(Duration::from_secs(8))
-        .expect("journal overlay opened (TEST_JOURNAL_VIEWPORT_RECT)");
+    // Ctrl+j opens the cursor scene's band directly when it has Q&As; on an
+    // empty scene band it opens the work-wide picker instead — confirm the
+    // first row to reveal the overlay.
+    h.chord(&["ctrl"], "j").expect("Ctrl+j -> journal overlay/picker");
+    if h
+        .wait_for_journal_viewport_rect(Duration::from_secs(4))
+        .is_err()
+    {
+        h.key("Return", 250).expect("Return -> confirm picker row");
+        let _ = h
+            .wait_for_journal_viewport_rect(Duration::from_secs(8))
+            .expect("journal overlay opened after picker confirm (TEST_JOURNAL_VIEWPORT_RECT)");
+    }
     h.settle(Duration::from_millis(400));
 
-    Harness::reset_dev_log(); // fresh log: the author band emits its own rects
+    h.reset_dev_log(); // fresh log: the author band emits its own rects
     h.chord(&["alt"], "a").expect("Alt+a -> author band");
     let region = h
         .wait_for_journal_viewport_rect(Duration::from_secs(8))

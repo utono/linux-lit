@@ -30,7 +30,6 @@ fn app_binary() -> PathBuf {
 #[test]
 #[ignore = "needs cage + grim + wtype + python numpy/pillow; run with --ignored"]
 fn synopsis_overlay_never_clips() {
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),

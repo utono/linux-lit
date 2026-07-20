@@ -187,7 +187,6 @@ fn prose_pages_tile_without_gaps() {
     //    exists for whatever fingerprint this run settles at, even if BH's
     //    lit.db table was previously stored at a different (e.g. real-monitor)
     //    geometry.
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),

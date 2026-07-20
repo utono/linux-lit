@@ -34,7 +34,6 @@ fn app_binary() -> PathBuf {
 /// `~/utono/litdb/data/lit.db`. LIT_DEV=1 → dev id + dev log; LIT_HEADLESS_TEST=1
 /// → MPV is skipped (no window to cover the reader, no leaked process).
 fn start() -> Harness {
-    Harness::reset_dev_log();
     Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),

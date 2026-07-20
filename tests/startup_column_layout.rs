@@ -35,7 +35,6 @@ fn app_binary() -> PathBuf {
 #[test]
 #[ignore = "needs cage + grim + wlr-randr; run with --ignored"]
 fn two_column_play_starts_two_column_no_reflow() {
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),
@@ -82,7 +81,6 @@ fn two_column_play_starts_two_column_no_reflow() {
 #[test]
 #[ignore = "needs cage + grim + wlr-randr; run with --ignored"]
 fn short_prologue_fills_first_spread_right_column() {
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),

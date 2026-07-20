@@ -41,16 +41,17 @@ fn app_binary() -> PathBuf {
 #[test]
 #[ignore = "needs cage + grim + wtype + python numpy/pillow; run with --ignored"]
 fn journal_overlay_ask_card_never_clips() {
-    Harness::reset_dev_log();
-    // Use Ham (Hamlet) — always present, single-column prose work with journal
-    // support. LIT_START_WORK makes the test hermetic regardless of saved config.
+    // Use Cym — a work whose journal has pages of its own. Ctrl+j on a work
+    // with NO pages only toasts ("No journal pages yet"), so the overlay would
+    // be unreachable (46941ce6). LIT_START_WORK makes the test hermetic
+    // regardless of saved config.
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),
         &[
             ("LIT_DEV", "1"),
             ("LIT_HEADLESS_TEST", "1"),
-            ("LIT_START_WORK", "Ham"),
+            ("LIT_START_WORK", "Cym"),
         ],
     )
     .expect("launch linux-lit in cage");
@@ -66,25 +67,31 @@ fn journal_overlay_ask_card_never_clips() {
     h.key("3", 250).expect("3 -> next chapter");
     h.settle(Duration::from_millis(400));
 
-    // Open the journal Q&A overlay: Ctrl+j (ToggleJournalOverlay).
-    h.chord(&["ctrl"], "j").expect("Ctrl+j -> journal overlay");
+    // Open the journal Q&A overlay: Ctrl+j (ToggleJournalOverlay). On an empty
+    // scene band this opens the work-wide picker instead — confirm the first
+    // row (Return) to reveal the overlay.
+    h.chord(&["ctrl"], "j").expect("Ctrl+j -> journal overlay/picker");
 
     // Wait for the overlay's scrolled viewport rect (emitted from show_page once
     // the vadjustment gets a non-zero range — after the first layout pass).
-    let _region = h
-        .wait_for_journal_viewport_rect(Duration::from_secs(8))
-        .expect("journal overlay reported its viewport rect (TEST_JOURNAL_VIEWPORT_RECT)");
+    if h
+        .wait_for_journal_viewport_rect(Duration::from_secs(4))
+        .is_err()
+    {
+        h.key("Return", 250).expect("Return -> confirm picker row");
+        let _ = h
+            .wait_for_journal_viewport_rect(Duration::from_secs(8))
+            .expect("journal overlay opened after picker confirm (TEST_JOURNAL_VIEWPORT_RECT)");
+    }
     h.settle(Duration::from_millis(500));
 
-    // Type literal `A` to open the ask card — the reported-bug path. Today the
+    // Press `r` to open the ask card — the reported-bug path (the opener moved
+    // from `A` to `r` across all three overlays; `A` is TTS now). Today the
     // ask card overlaps the (unchanged-height) scroll viewport and occludes the
     // lower rows; the structural fix must make the viewport shrink so no row sits
     // behind the card. The overlay emits TEST_JOURNAL_ASK_VIEWPORT_RECT from
     // open_ask_card so the harness reads the with-ask-card-open rect.
-    // Using type_text (wtype text mode) rather than chord to ensure the uppercase
-    // keysym (GDK_KEY_A) reaches the journal overlay — wtype's -M shift / -k a
-    // leaves the keyval as lowercase `a`, which the journal keymap doesn't match.
-    h.type_text("A", 200).expect("A -> open ask card");
+    h.key("r", 200).expect("r -> open ask card");
 
     let ask_region = h
         .wait_for_journal_ask_viewport_rect(Duration::from_secs(8))

@@ -27,7 +27,6 @@ fn app_binary() -> PathBuf {
 }
 
 fn start() -> Harness {
-    Harness::reset_dev_log();
     Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),

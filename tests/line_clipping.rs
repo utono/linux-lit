@@ -36,7 +36,6 @@ fn app_binary() -> PathBuf {
 #[test]
 #[ignore = "needs cage + grim + wtype + python numpy/pillow; run with --ignored"]
 fn first_and_last_lines_never_clip() {
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),

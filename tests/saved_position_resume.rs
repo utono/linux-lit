@@ -42,7 +42,6 @@ fn app_binary() -> PathBuf {
 #[test]
 #[ignore = "needs cage + grim + wlr-randr; run with --ignored"]
 fn reopen_restores_saved_position_not_epilogue() {
-    Harness::reset_dev_log();
     // Resume H8 at the Porter's line in Scene 3 (buffer 4192) — the exact saved
     // position the live bug reproduced from. Scene 4 and the EPILOGUE follow it,
     // so the canonical final spread (which the bug wrongly jumped to) is several

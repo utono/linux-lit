@@ -60,7 +60,6 @@ fn gloss_cursor_lines(log: &str) -> usize {
 #[test]
 #[ignore = "needs cage + grim + wtype + python numpy/pillow; run with --ignored"]
 fn tt_dedication_gloss_fills_and_paginates() {
-    Harness::reset_dev_log();
     let h = Harness::start_app(
         &app_binary(),
         std::iter::empty::<&str>(),
