@@ -10,6 +10,24 @@ use gtk4::{Align, Box as GtkBox, Label, Orientation, Separator};
 /// One titled group of `(key, action)` rows (e.g. "Navigation", "TTS / voice").
 pub type Group<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
+/// The vim-EDIT-mode group shared verbatim by the gloss and synopsis legends —
+/// both front the ONE shared vim engine, so a new vim bind is one edit here.
+/// The journal legend keeps its own copy: its Ctrl+v hint deliberately reads
+/// "(also in the r ask prompt)" (per-overlay wording, not drift).
+pub const VIM_EDIT_GROUP: Group<'static> = ("Vim edit mode (after e)", &[
+    ("h j k l / w b e / 0 ^ $", "motions"),
+    ("g g / G / f t F T / %", "go top/end · find · match"),
+    ("i a o / I A O", "insert / append / open line"),
+    ("x dd D / cw ciw / r J ~", "delete · change · replace · join"),
+    ("y p P / v V", "yank · put · visual"),
+    ("H", "highlight selection (visual; toggles)"),
+    ("u / Ctrl+R / .", "undo · redo · repeat"),
+    ("Ctrl+v", "paste clipboard (also in ask prompts)"),
+    (":w / :wq", "save / save & quit"),
+    ("R", "ask Claude to rewrite"),
+    (":q / Esc / :q!", "quit (warns if unsaved) · force"),
+]);
+
 /// A per-overlay Ctrl+/ keybind legend: the centered card built by `build_legend`
 /// plus its translucent scrim, with the show/hide/attach lifecycle. One concrete
 /// type shared by the gloss, synopsis, and journal legends (audit #50) — each of
