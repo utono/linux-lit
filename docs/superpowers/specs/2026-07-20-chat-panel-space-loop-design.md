@@ -127,8 +127,12 @@ struct ChatLoopState {
 - **`Escape` in the transcript while armed:** full teardown — stop the loop
   and resume the main MPV iff `main_was_playing` (runs *before* Escape's
   normal leave-panel behavior).
-- **Panel close / leaving `ChatTranscript`:** full teardown **plus `quit`**
-  to the chat MPV process; resume main iff `main_was_playing`.
+- **Full teardown** (stop the loop, `quit` the chat MPV process, resume main
+  iff `main_was_playing`) fires when focus returns to the READER (Tab /
+  Escape), when the panel closes, on a work switch, and on app quit. Opening
+  the panel's OWN ask/rewrite prompt (`a` / `r` / `R` → `ChatPrompt`) does
+  NOT tear down — the loop keeps playing while composing, and control returns
+  to the transcript afterwards.
 
 The main MPV is paused for the duration of any loop, so its sync engine is
 naturally quiescent: no `suppress_sync_until` timers, no `SetTimestamps`

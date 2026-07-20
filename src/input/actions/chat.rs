@@ -2839,14 +2839,17 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         crate::input::navigation::show_chapter_toast_secs(&s, "No timestamps for this passage", 2);
         return;
     };
+    // Loop from a hair before the first line (preroll), every pass.
+    let a = crate::input::navigation::preroll_seek_time(start);
     // b-point: last line's end_time, else the next start AFTER the last
-    // line's own start, else play once (no loop).
+    // line's own start, else play once (no loop). A corrupt out-of-order end
+    // timestamp (b <= a) is rejected so it degrades to play-once rather than
+    // a degenerate zero/negative loop.
     let last_start = crate::db::queries::line_start_time(&conn, last_id, media.media_id)
         .unwrap_or(start);
     let b = crate::db::queries::line_end_time(&conn, last_id, media.media_id)
-        .or_else(|| crate::db::queries::next_start_after(&conn, media.media_id, last_start));
-    // Loop from a hair before the first line (preroll), every pass.
-    let a = crate::input::navigation::preroll_seek_time(start);
+        .or_else(|| crate::db::queries::next_start_after(&conn, media.media_id, last_start))
+        .filter(|&b| b > a);
 
     let mut s = state.borrow_mut();
     if b.is_none() {
