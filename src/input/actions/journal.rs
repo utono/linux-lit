@@ -699,6 +699,11 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     // painting one. (Normal band navigation goes through `render_current`, which
     // keeps the diff; the Ctrl+Shift+p revision browse paints its own.)
     s.journal_overlay.clear_rewrite_diff();
+    // Vocab tint: the filtered render bypasses recolor_journal_cached_blocks
+    // (the shared post-render vocab hook), so tint the filtered entry here.
+    if s.vocab_highlight_visible {
+        s.journal_overlay.apply_vocab_tags(&s.vocab_words);
+    }
 }
 
 /// Activate a term filter: fetch matches, store filter state, render the
@@ -1854,11 +1859,26 @@ pub(crate) fn open_rewrite_target(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
+    // The chooser must stack above EVERYTHING, including the chat panel — the
+    // panel-initiated `R` opens it while the chat panel is visible. The action
+    // popup lives on the INNER (corpus_search_popup) overlay, but the chat panel
+    // is a child of the window-level OUTER overlay, which draws over the whole
+    // inner stack — a chooser added to the popup's immediate parent renders
+    // UNDER the panel (the reported bug). Climb to the outermost Overlay
+    // ancestor instead, exactly like `show_delete_confirmation`.
     let overlay_parent = {
         let s = state.borrow();
-        s.action_popup_widget.container.parent()
+        let mut widget = s.action_popup_widget.container.parent();
+        let mut outermost: Option<gtk4::Overlay> = None;
+        while let Some(w) = widget {
+            if let Ok(o) = w.clone().downcast::<gtk4::Overlay>() {
+                outermost = Some(o);
+            }
+            widget = w.parent();
+        }
+        outermost
     };
-    let overlay_parent = match overlay_parent.and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
+    let overlay_parent = match overlay_parent {
         Some(o) => o,
         None => return,
     };

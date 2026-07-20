@@ -115,19 +115,39 @@ impl VocabPopup {
         self.container.set_height_request(-1);
     }
 
-    /// Two-column placement: a full-column panel over one reading column
-    /// (mirrors the chat panel's float geometry — x/w in window coords from
-    /// the column overlay's compute_bounds, h = card height, vertically
-    /// centered like the card).
+    /// Two-column placement: a COMPACT card centered in the reading column
+    /// the cursor is NOT in (x/w = that column's window-coord rect from
+    /// layout::column_float_rect). Natural height, capped width — never the
+    /// full column panel it used to be. `h` is accepted for signature
+    /// compatibility but unused: the card takes its natural height (content is
+    /// short, and the Journal view caps its own body height).
     pub fn place_float(&self, x: i32, w: i32, h: i32) {
         self.container.add_css_class("vocab-popup-float");
+        let width = (w - 48).clamp(200, 420);
+        let centered_x = x + (w - width) / 2;
         self.container.set_halign(gtk4::Align::Start);
         self.container.set_valign(gtk4::Align::Center);
-        self.container.set_margin_start(x.max(0));
+        self.container.set_margin_start(centered_x.max(0));
         self.container.set_margin_end(0);
         self.container.set_margin_bottom(0);
-        self.container.set_width_request(w.max(0));
-        self.container.set_height_request(h.max(0));
+        self.container.set_width_request(width);
+        self.container.set_height_request(-1);
+        // Never taller than the card: content itself is short (definition +
+        // etymology); the Journal view already caps its body height.
+        let _ = h;
+    }
+
+    /// Overlay/chat placement: compact card anchored to the window's lower
+    /// right, natural size (the popup floats above the overlay chain).
+    pub fn place_corner(&self) {
+        self.container.remove_css_class("vocab-popup-float");
+        self.container.set_halign(gtk4::Align::End);
+        self.container.set_valign(gtk4::Align::End);
+        self.container.set_margin_start(0);
+        self.container.set_margin_end(24);
+        self.container.set_margin_bottom(24);
+        self.container.set_width_request(-1);
+        self.container.set_height_request(-1);
     }
 
     pub fn show(&self) {

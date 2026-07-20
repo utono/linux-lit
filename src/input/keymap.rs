@@ -204,6 +204,43 @@ pub fn handle_key(
         }
     }
 
+    // rr chord, all vocab surfaces: a second quick `r` toggles the popup.
+    // Runs BEFORE mode dispatch so the overlay/chat handlers share it; armed
+    // only by surfaces that bind `r` to the vocab tap. Any other key clears the
+    // pending tap and dispatches normally, in every mode. The chord state is
+    // cleared before the per-mode match so a non-`r` key still routes onward.
+    if key_state.borrow().chord == ChordState::PendingR {
+        key_state.borrow_mut().chord = ChordState::None;
+        if key_name == "r" && !is_ctrl && !is_shift && !is_alt {
+            // InputMode is Copy — take the value out of the borrow before the
+            // per-mode match so no read borrow is held across vocab_chord_toggle
+            // (which takes a mutable borrow).
+            let mode = state.borrow().input_mode;
+            match mode {
+                crate::app::InputMode::Reader => {
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::CursorLine, false);
+                    return true;
+                }
+                crate::app::InputMode::GlossOverlay => {
+                    let words = gloss_overlay_scope_words(state);
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    return true;
+                }
+                crate::app::InputMode::JournalOverlay => {
+                    let words = journal_overlay_scope_words(state);
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    return true;
+                }
+                crate::app::InputMode::ChatTranscript => {
+                    let words = chat_scope_words(state);
+                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Mode dispatch — delegate to per-mode handler functions
     let mode = state.borrow().input_mode;
     if mode != crate::app::InputMode::Reader {
@@ -258,7 +295,7 @@ pub fn handle_key(
             crate::app::InputMode::Visual => handle_visual_key(state, key_state, key_name, is_ctrl, tokio_handle),
             crate::app::InputMode::PageCalibration => handle_page_calibration_key(state, key_state, key_name),
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
-            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl),
+            crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift, is_alt),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
             crate::app::InputMode::Reader => unreachable!(),
         };
@@ -305,41 +342,6 @@ pub fn handle_key(
         }
     }
 
-    // rr sequence check: a second quick `r` toggles the vocab popup's
-    // visibility — show when hidden, hide when visible (the first tap
-    // already cycled a word when it was visible; see Action::VocabPopupTap).
-    // Any other key clears the pending tap and dispatches normally.
-    if key_state.borrow().chord == ChordState::PendingR {
-        key_state.borrow_mut().chord = ChordState::None;
-        if key_name == "r" && !is_ctrl && !is_shift && !is_alt {
-            let mut s = state.borrow_mut();
-            if s.vocab_popup.popup.is_visible() {
-                s.vocab_popup.auto = false;
-                crate::app::vocab_popup::close_vocab_popup(&mut s);
-            } else {
-                // Opening the popup also turns vocab highlighting ON if it was
-                // off (and persists it), so the words the popup lists are goled
-                // in the body too. Rebuild matches from the current word set so
-                // a live-added word is included.
-                if !s.vocab_highlight_visible {
-                    s.vocab_highlight_visible = true;
-                    crate::app::refresh_vocab_matches(&mut s);
-                    crate::app::apply_vocab_highlighting(&s);
-                    if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
-                        if let Err(e) = crate::db::queries::open_db_rw().and_then(|conn| {
-                            crate::db::queries::set_vocab_highlight(&conn, &abbrev, true)
-                        }) {
-                            crate::logging::log(&format!("VOCAB: persist failed for {abbrev}: {e}"));
-                        }
-                    }
-                }
-                s.vocab_popup.auto = true;
-                crate::app::vocab_popup::open_vocab_popup(&mut s);
-            }
-            return true;
-        }
-    }
-
     // .. sequence check: the first `.` toggled the bookmark
     // (Action::BookmarkTap); the second quick `.` reverts that toggle (net
     // zero) and opens the bookmark picker instead.
@@ -374,6 +376,88 @@ pub fn handle_key(
     }
 
     false
+}
+
+/// Shared body for the `rr` chord across every vocab surface. Toggles the
+/// popup: if visible, close it (clearing `auto`); if hidden, ensure vocab
+/// highlighting is on (enabling + persisting it when it was off, exactly as the
+/// old Reader-only path did) and open the popup for `scope`. `corner=true`
+/// anchors the compact card to the window's lower right (overlay/chat).
+///
+/// Takes a single `borrow_mut` for the whole body — the caller must not hold
+/// any borrow of `state` across this call (the hoisted chord block copies the
+/// InputMode out of its borrow first, so this is the only borrow).
+fn vocab_chord_toggle(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    scope: crate::app::vocab_popup::VocabScope,
+    corner: bool,
+) {
+    let mut s = state.borrow_mut();
+    if s.vocab_popup.popup.is_visible() {
+        s.vocab_popup.auto = false;
+        crate::app::vocab_popup::close_vocab_popup(&mut s);
+        return;
+    }
+    // Opening the popup also turns vocab highlighting ON if it was off (and
+    // persists it), so the words the popup lists are golded in the body too.
+    // Rebuild matches from the current word set so a live-added word is
+    // included.
+    if !s.vocab_highlight_visible {
+        s.vocab_highlight_visible = true;
+        crate::app::refresh_vocab_matches(&mut s);
+        crate::app::apply_vocab_highlighting(&s);
+        if let Some(abbrev) = s.current_work.as_ref().map(|w| w.abbrev.clone()) {
+            if let Err(e) = crate::db::queries::open_db_rw().and_then(|conn| {
+                crate::db::queries::set_vocab_highlight(&conn, &abbrev, true)
+            }) {
+                crate::logging::log(&format!("VOCAB: persist failed for {abbrev}: {e}"));
+            }
+        }
+    }
+    s.vocab_popup.auto = true;
+    crate::app::vocab_popup::open_vocab_popup_scoped(&mut s, scope, corner);
+}
+
+/// Vocab words visible in the gloss overlay (the `rr` scope there): scan the
+/// overlay's CURRENT cursor block for the user's vocab words.
+fn gloss_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    let s = state.borrow();
+    let text = match s.gloss_overlay.current_block_text() {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    crate::vocab_scan::scan_lines(text.lines().enumerate(), &s.vocab_words, true)
+        .into_iter()
+        .map(|sp| sp.word)
+        .collect()
+}
+
+/// Vocab words visible in the journal overlay (the `rr` scope there): scan the
+/// overlay's CURRENT cursor block for the user's vocab words.
+fn journal_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    let s = state.borrow();
+    let text = match s.journal_overlay.current_block_text() {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    crate::vocab_scan::scan_lines(text.lines().enumerate(), &s.vocab_words, true)
+        .into_iter()
+        .map(|sp| sp.word)
+        .collect()
+}
+
+/// Vocab words visible in the chat transcript (the `rr` scope there): scan the
+/// SELECTED exchange's visible text rows for the user's vocab words. The
+/// selection lives in AppState (not the panel), so the accessor is on the chat
+/// action layer (`selected_exchange_texts`); we scan each row here.
+fn chat_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    let s = state.borrow();
+    let texts = crate::input::actions::chat::selected_exchange_texts(&s);
+    let mut out = Vec::new();
+    for t in &texts {
+        crate::vocab_scan::scan_line(t, 0, &s.vocab_words, &mut out);
+    }
+    out.into_iter().map(|sp| sp.word).collect()
 }
 
 /// Handle a key RELEASE. Only used for the Shift-tap timestamp delete/undo:
@@ -1374,55 +1458,34 @@ fn handle_segment_vim_key(
     }
 }
 
-/// Key handler for the add-vocab input card (InputMode::AddVocab). Same vim
-/// engine + gloss_overlay edit buffer as SegmentVim, but :w / :wq SUBMIT the
-/// typed word (lookup + insert) instead of being refused. :q/:q!/double-Esc
-/// cancel.
+/// Key handler for the add-vocab input card (InputMode::AddVocab). Feeds the
+/// dedicated `vocab_add_card` (its own AskCard, above the whole overlay chain)
+/// through the shared `ask_vim_intercept`, so :w / :wq / Ctrl+Enter SUBMIT the
+/// typed word (lookup + insert); :q / :q! / double-Esc cancel and restore the
+/// surface it opened from. The card is a vim editor, so it owns EVERY key while
+/// open (mirrors `handle_chat_prompt_key`'s feed shape).
 fn handle_add_vocab_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
     key_char: Option<char>,
     is_ctrl: bool,
 ) -> bool {
-    use crate::input::vim::{EditorAction, VimKey};
-
-    if key_name == "Escape" && !is_ctrl {
-        if is_double_esc() {
-            crate::input::actions::vocab_add::close(state);
-            return true;
-        }
-        let _ = state.borrow().gloss_overlay.feed_edit_key(VimKey::Esc);
-        return true;
-    }
-
-    // Ctrl+Enter is an always-available submit (in addition to `:w`), so the
-    // reader never has to leave Insert to add the word — mirrors the ask-card
-    // vim editor's Ctrl+Enter submit.
-    if is_ctrl && (key_name == "Return" || key_name == "KP_Enter") {
-        crate::input::actions::vocab_add::submit(state);
-        return true;
-    }
-
-    let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
-        return true;
-    };
-
-    let action = state.borrow().gloss_overlay.feed_edit_key(vk);
-    match action {
-        EditorAction::Save | EditorAction::SaveQuit => {
-            crate::input::actions::vocab_add::submit(state);
-            true
-        }
-        EditorAction::OpenRewrite => true, // R is inert here
-        EditorAction::Cancel | EditorAction::CancelForce => {
-            crate::input::actions::vocab_add::close(state);
-            true
-        }
-        EditorAction::CopyToClipboard(text) => {
-            copy_to_clipboard(&text);
-            true
-        }
-        EditorAction::ToggleHighlight | EditorAction::Nop => true,
+    let ask_open = state.borrow().vocab_add_card.is_open();
+    match ask_vim_intercept(
+        ask_open,
+        key_name,
+        key_char,
+        is_ctrl,
+        state,
+        |st, k| st.borrow().vocab_add_card.feed_vim_key(k),
+        crate::input::actions::vocab_add::submit,
+        crate::input::actions::vocab_add::close,
+        |st, t| st.borrow().vocab_add_card.paste_text(t),
+    ) {
+        AskIntercept::Consumed => true,
+        // Card closed underneath us — swallow the key (the close path already
+        // restored the prior mode; nothing else should run in AddVocab mode).
+        AskIntercept::NotHandled => true,
     }
 }
 
@@ -1503,7 +1566,16 @@ fn handle_chat_transcript_key(
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,
     is_ctrl: bool,
+    is_shift: bool,
+    is_alt: bool,
 ) -> bool {
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the transcript. It
+    // floats above the whole overlay chain and restores ChatTranscript on close.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
+    }
+
     // gg chord -> first landable row (mirrors the journal/gloss/synopsis
     // overlays' block cursor; see keymap.rs:1457 for the sibling this
     // mirrors). Checked BEFORE the match below so a completed `gg` never
@@ -1592,10 +1664,11 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             true
         }
-        "r" => {
-            // Journal view: `r` asks a NEW question (the panel's own ask input,
-            // same as `a`), matching the main journal overlay's `r`. Other
-            // views keep regloss.
+        // Ctrl+r: re-gloss / ask (the OLD plain-`r` body, moved off `r` — which
+        // is now the vocab surface, mirroring the gloss/journal overlays + main
+        // card). Journal view asks a NEW question (the panel's own ask input,
+        // same as `a`); other views regloss. Ctrl+r is free in this handler.
+        "r" if is_ctrl && !is_shift => {
             if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
                 crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             } else {
@@ -1603,9 +1676,10 @@ fn handle_chat_transcript_key(
             }
             true
         }
-        "R" => {
-            // Journal view: `R` opens the rewrite popup on the selected entry
-            // (Task 5). Other views keep regloss.
+        // Ctrl+w: rewrite / re-gloss (the OLD plain-`R` body, moved off `R`).
+        // Journal view opens the rewrite popup on the selected entry (Task 5);
+        // other views regloss. Ctrl+w is free in this handler.
+        "w" if is_ctrl => {
             if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
                 crate::input::actions::chat::rewrite_journal_entry(state);
             } else {
@@ -1613,6 +1687,24 @@ fn handle_chat_transcript_key(
             }
             true
         }
+        // `r`: vocab surface (re-gloss/ask moved to Ctrl+r, mirroring the
+        // gloss/journal overlays + main card). If the popup is already up, `r`
+        // cycles to the next word; either way it arms the `rr` chord so a quick
+        // second `r` toggles the popup (see the hoisted PendingR block at the
+        // top of handle_key, which scopes to this transcript's visible words via
+        // chat_scope_words).
+        "r" if !is_ctrl => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_next(&mut s);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
+            true
+        }
+        // `R`: vocab R reserved unbound, mirrors the main card + overlays. The
+        // rewrite/re-gloss body moved to Ctrl+w (handled in the is_ctrl arm
+        // above). Consumed so it can't fall through.
+        "R" => true,
         // `\`: toggle the panel between the pinned passage's GLOSS(es) and its
         // saved JOURNAL Q&As (scope='passage', exact citation match). Was on
         // `t` before `t` became cursor-up; `\` cycles overlays in the reader,
@@ -1680,6 +1772,16 @@ fn handle_chat_transcript_key(
         // (mirrors the reader's own visual-mode Escape); only a SECOND
         // Escape, with no selection active, focuses the reader.
         "Escape" => {
+            // Popup-close comes FIRST: if the vocab popup is up, Escape only
+            // closes it (clearing auto-show) and stays in the panel — before the
+            // loop-teardown / V-select-exit / focus-reader precedence below
+            // (mirrors the gloss/journal overlays' Escape arm).
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+                return true;
+            }
             let mut s = state.borrow_mut();
             crate::input::actions::chat::chat_loop_teardown(&mut s);
             if crate::input::actions::chat::exit_transcript_visual(&mut s) {
@@ -1745,6 +1847,14 @@ fn handle_journal_key(
             }
             return true;
         }
+    }
+
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the journal overlay.
+    // Checked BEFORE the plain Ctrl+\ picker below so the three-modifier chord
+    // wins. It floats above the whole overlay chain and restores this mode.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
     }
 
     // Ctrl+\: open the work-wide Q&A picker. Checked BEFORE the plain Alt/Ctrl
@@ -1830,6 +1940,34 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
+            // Ctrl+r: ask a new Q&A in the current band (moved off plain `r`,
+            // which is now the vocab surface, mirroring the gloss overlay + main
+            // card). Sits AFTER the Ctrl+Shift+r revision-restore arm above so
+            // Shift still wins. GATED by the term filter exactly like the plain-r
+            // ask below: while a filter shows a cross-work entry there is no clear
+            // home band for a new Q&A, so swallow it with the same clear-filter
+            // toast instead of asking against the wrong band. (This is the is_ctrl
+            // block, which returns before the shared intercept further down, so
+            // the gate must be duplicated here.)
+            "r" => {
+                if state.borrow().journal.filter.is_some() {
+                    crate::input::navigation::show_chapter_toast_secs(
+                        &state.borrow(),
+                        "Clear the term filter (Esc) for this key",
+                        3,
+                    );
+                    return true;
+                }
+                crate::input::actions::journal::begin_ask(state);
+                return true;
+            }
+            // Ctrl+w: open the rewrite TARGET chooser (q question / a answer / b
+            // both) for the displayed Q&A (moved off plain `R`). Ctrl+w is free
+            // in this handler.
+            "w" => {
+                crate::input::actions::journal::open_rewrite_target(state);
+                return true;
+            }
             // Ctrl+j: Escape-only close policy — consumed no-op (was: close
             // the journal). Consumed so Ctrl+j can't fall through to the
             // plain j block-nav arm.
@@ -1899,20 +2037,24 @@ fn handle_journal_key(
     }
 
     match key_name {
-        // `r` opens the ask card to create a new Q&A in the current band,
-        // matching the gloss + synopsis overlays where `r` opens a journal Q&A.
-        // (Moved from A to r across all three overlays.)
-        "r" => {
-            crate::input::actions::journal::begin_ask(state);
+        // `r`: vocab surface (ask-a-question moved to Ctrl+r, mirroring the
+        // gloss overlay + main card). If the popup is already up, `r` cycles to
+        // the next word; either way it arms the `rr` chord so a quick second `r`
+        // toggles the popup (see the hoisted PendingR block at the top of
+        // handle_key, which scopes to this overlay's current-block words).
+        // NOTE: the term-filter clear-toast intercept above still wins while a
+        // filter is active.
+        "r" if !is_ctrl => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_next(&mut s);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
             true
         }
-        // `R` opens the rewrite TARGET chooser (q question / a answer / b both):
-        // a single key then routes to improve-question, the answer-only rewrite
-        // prompt, or both. Works directly from the Q&A view (no `e` editor).
-        "R" => {
-            crate::input::actions::journal::open_rewrite_target(state);
-            true
-        }
+        // `R`: vocab R reserved unbound, mirrors main card. The rewrite TARGET
+        // chooser moved to Ctrl+w (handled in the is_ctrl block above).
+        "R" => true,
         "e" => {
             crate::input::actions::journal::begin_edit(state);
             true
@@ -2055,6 +2197,15 @@ fn handle_journal_key(
         // in the overlay); else an active overlay search clears (stay); else an
         // active term filter clears (stay); else close.
         "Escape" => {
+            // Popup-close comes FIRST: if the vocab popup is up, Escape only
+            // closes it (clearing auto-show) and stays in the overlay — before
+            // the rewrite-diff / filter / search / close precedence below.
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+                return true;
+            }
             // A revision browse always drops on Escape (view-only state must
             // not leak into the next open); Task 7 clears the diff-highlight.
             state.borrow_mut().rewrite_browse = None;
@@ -2112,6 +2263,13 @@ fn handle_gloss_key(
     ) {
         AskIntercept::Consumed => return true,
         AskIntercept::NotHandled => {}
+    }
+
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the gloss overlay. It
+    // floats above the whole overlay chain and restores this mode on close.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
     }
 
     // Shift+Space: batch-synthesize all prose blocks (cache-only).
@@ -2233,6 +2391,13 @@ fn handle_gloss_key(
                 );
                 return true;
             }
+            // Ctrl+r: ask-Claude rewrite of the displayed gloss (moved off plain
+            // `R`, which is now reserved for the vocab surface, mirroring the
+            // main card). Opens the rewrite prompt in INSERT.
+            "r" => {
+                crate::input::actions::gloss::begin_rewrite(state);
+                return true;
+            }
             // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the
             // only overlay-to-overlay navigation). Consumed no-op.
             "j" => return true,
@@ -2288,13 +2453,9 @@ fn handle_gloss_key(
             crate::input::actions::gloss::begin_edit(state);
             true
         }
-        // R: ask-Claude rewrite of the displayed gloss, straight from the read
-        // view (same prompt the vim editor's `R` opens — no need to enter `e`
-        // first). Opens in INSERT. Mirrors journal `R`.
-        "R" => {
-            crate::input::actions::gloss::begin_rewrite(state);
-            true
-        }
+        // R: vocab R reserved unbound, mirrors main card. The ask-Claude
+        // rewrite moved to Ctrl+r (handled in the is_ctrl block above).
+        "R" => true,
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
         "u" => {
             crate::input::actions::gloss::show_undo_confirmation(
@@ -2394,6 +2555,14 @@ fn handle_gloss_key(
         // without a reload; falls back to the pre-open page). Gloss has no
         // journal-style term filter, so the precedence is simpler.
         "Escape" => {
+            // Popup-close comes FIRST: if the vocab popup is up, Escape only
+            // closes it (clearing auto-show) and stays in the overlay.
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+                return true;
+            }
             // A revision browse always drops on Escape (view-only state must
             // not leak into the next open); Task 7 clears the diff-highlight.
             state.borrow_mut().rewrite_browse = None;
@@ -2429,9 +2598,18 @@ fn handle_gloss_key(
             }
             true
         }
-        // r: dropped (cross-create: journal ask card for the gloss passage;
-        // asking happens from the reader). Consumed no-op.
-        "r" => true,
+        // r: vocab surface. If the popup is already up, `r` cycles to the next
+        // word; either way it arms the `rr` chord so a quick second `r` toggles
+        // the popup (see the hoisted PendingR block at the top of handle_key,
+        // which scopes to this overlay's current-block words).
+        "r" if !is_ctrl => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_next(&mut s);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
+            true
+        }
         "v" => {
             crate::input::actions::settings::open_voice_picker(
                 state,

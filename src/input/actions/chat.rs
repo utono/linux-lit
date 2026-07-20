@@ -260,6 +260,24 @@ pub(crate) fn reapply_card_margins(s: &AppState) {
     );
 }
 
+/// One rule shows at a time, only while the chat panel is open: the panel's
+/// when the panel has focus (transcript or prompt), the card's when the
+/// reader does. Both hidden when the panel is closed.
+pub(crate) fn update_focus_rules(s: &AppState) {
+    let open = s.chat_layout_open;
+    let panel_focused = matches!(
+        s.input_mode,
+        crate::app::InputMode::ChatTranscript | crate::app::InputMode::ChatPrompt
+    );
+    s.chat_panel.set_focus_rule_visible(open && panel_focused);
+    s.card_focus_rule.set_visible(open && !panel_focused);
+    crate::logging::log(&format!(
+        "FOCUS RULE: panel={} card={}",
+        open && panel_focused,
+        open && !panel_focused
+    ));
+}
+
 pub(crate) fn close_chat_layout(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
@@ -286,6 +304,7 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::Reader;
     s.chat_panel.hide();
     crate::logging::log("CHAT: layout closed");
+    update_focus_rules(s);
 }
 
 /// Work switch with the panel open: history clears (context would be from
@@ -430,6 +449,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
             "CHAT: regate floated panel ({:?})",
             s.chat_placement
         ));
+        update_focus_rules(s);
         return;
     }
     s.chat_placement = ChatPlacement::Pinned;
@@ -445,6 +465,7 @@ pub(crate) fn regate_panel(s: &mut AppState) {
     }
     size_panel(s);
     crate::logging::log(&format!("CHAT: regate kept panel (free={}px)", free));
+    update_focus_rules(s);
 }
 
 /// `Tab` from visual (`V`) mode: open the chat panel PINNED to the selection.
@@ -635,6 +656,7 @@ fn focus_prompt_in_mode(s: &mut AppState, insert: bool) {
     }
     // Tab-cycle cue: flash the widget that just became active.
     s.chat_panel.flash_input();
+    update_focus_rules(s);
 }
 
 /// The honest title/hint pair for the current chat mode (revision vs ask).
@@ -652,6 +674,7 @@ pub(crate) fn focus_transcript(s: &mut AppState) {
     s.input_mode = crate::app::InputMode::ChatTranscript;
     // Tab-cycle cue: flash the widget that just became active.
     s.chat_panel.flash_transcript();
+    update_focus_rules(s);
 }
 
 /// Chat layout: the reader pane gains input focus (full reader keys live;
@@ -662,6 +685,7 @@ pub(crate) fn focus_reader(s: &mut AppState) {
     // Tab-cycle cue: flash the widget that just became active.
     use gtk4::prelude::Cast;
     crate::ui::flash_widget(s.content_hbox.clone().upcast_ref::<gtk4::Widget>());
+    update_focus_rules(s);
 }
 
 /// Submit the chat prompt's current text as a new turn: builds the segment
@@ -985,6 +1009,19 @@ fn transcript_rows(
 /// same clamp-on-every-render discipline `row_cursor` itself already gets, so
 /// a selection anchored on content that later shrinks (e.g. a regloss) can
 /// never point past the end of the rendered rows.
+/// Re-render whichever chat-panel view is currently active, in place. Used by
+/// cross-surface refreshes (e.g. add-vocab) that mutate state the panel reads
+/// through its render path (`sync_panel_vocab_highlight`) but that do not
+/// themselves change the view or cursor. View-agnostic so the caller need not
+/// know whether the panel is showing Gloss, Journal, or a single Question.
+pub(crate) fn rerender_current_view(s: &mut AppState) {
+    match s.chat.view {
+        PanelView::Journal => render_journal_view(s),
+        PanelView::Question => render_current_question(s),
+        PanelView::Gloss => render_transcript(s),
+    }
+}
+
 pub(crate) fn render_transcript(s: &mut AppState) {
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
     let n = row_owner.len();
@@ -1013,6 +1050,22 @@ pub(crate) fn render_transcript(s: &mut AppState) {
 ///
 /// `cursor_widget` is `None` for views with no row cursor (a placeholder-only
 /// list); then the FIRST page is shown and no accent bar is painted.
+/// Push the current vocab-highlight state (word set + span color, or an empty
+/// set + `None` when highlighting is off) onto the chat panel so the next
+/// `append_spec_label` tints matches. The panel has no AppState access of its
+/// own, so every transcript render funnels through here and syncs first —
+/// covering work switch, the Alt+\ toggle, and add-vocab without a separate
+/// hook at each of those sites. Uses `theme.vocab_fg`, the SAME color the main
+/// card's `vocab_tag` uses.
+fn sync_panel_vocab_highlight(s: &AppState) {
+    let (words, color) = if s.vocab_highlight_visible {
+        (s.vocab_words.clone(), Some(s.theme.vocab_fg.clone()))
+    } else {
+        (std::collections::HashSet::new(), None)
+    };
+    s.chat_panel.set_vocab_highlight(words, color);
+}
+
 fn render_paginated(
     s: &mut AppState,
     rows: &[crate::ui::chat_panel::TranscriptRow],
@@ -1020,6 +1073,7 @@ fn render_paginated(
     selection: Option<(usize, usize)>,
 ) {
     use crate::ui::chat_pagination::page_of_widget;
+    sync_panel_vocab_highlight(s);
     let specs = crate::ui::chat_panel::row_widget_specs(rows);
     let (fam, sz) = transcript_font(s);
     let pages = s.chat_panel.paginate_specs(&specs, &fam, sz);
@@ -1713,7 +1767,12 @@ pub(crate) fn request_reader_gloss(
     if state_rc.borrow().chat.pending {
         return; // in flight; a second '-' or 'r' must not double-fire
     }
-    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+    crate::logging::log(&format!(
+        "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+        neighbors.len(), ctx.start_citation, ctx.end_citation
+    ));
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None, &neighbors);
     {
         let mut s = state_rc.borrow_mut();
         s.chat.pending = true;
@@ -1815,6 +1874,7 @@ fn render_transcript_thinking_gloss(s: &AppState, ctx: &crate::gloss::GlossConte
     // being reglossed; the new gloss replaces it when it lands.
     let rows = vec![R::GlossAnswer(ctx.passage_doc()), R::Thinking];
     let (fam, sz) = transcript_font(s);
+    sync_panel_vocab_highlight(s);
     s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
@@ -1852,6 +1912,7 @@ fn render_transcript_with_thinking(s: &AppState, question: &str, _chip: &str) {
         R::Thinking,
     ];
     let (fam, sz) = transcript_font(s);
+    sync_panel_vocab_highlight(s);
     s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
@@ -1860,6 +1921,7 @@ fn render_transcript_with_error(s: &AppState, msg: &str) {
     let (mut rows, _, _) = transcript_rows(s);
     rows.push(R::Error(msg.to_string()));
     let (fam, sz) = transcript_font(s);
+    sync_panel_vocab_highlight(s);
     s.chat_panel.render_rows(&rows, &fam, sz);
 }
 
@@ -2228,6 +2290,38 @@ pub(crate) fn exit_transcript_visual(s: &mut AppState) -> bool {
 /// passage, it just isn't something you'd cursor onto or copy ALONE. Compare
 /// `landable_mask`, which gates j/k/V-anchor landing, not what `V`+`y` copies
 /// once spanned.
+/// The visible TEXT rows of the currently-SELECTED exchange, for the `rr`
+/// vocab-popup scope (`chat_scope_words` in keymap.rs). The panel has no
+/// AppState access, so this accessor lives on the action layer where the
+/// selection axes (`s.chat.cursor` for Gloss/Question exchanges,
+/// `s.chat.journal_cursor` for the Journal list) are known. Returns the
+/// selected item's question + answer rows via the SAME `row_widget_texts`
+/// exploder the yank path uses — so the scope matches exactly what is painted
+/// (speaker/verse/gloss rows included; chips/thinking/saved marks skipped as
+/// non-text). Empty when nothing is selected.
+pub(crate) fn selected_exchange_texts(s: &AppState) -> Vec<String> {
+    use crate::ui::chat_panel::{row_widget_texts, TranscriptRow as R};
+    let rows: Vec<R> = if s.chat.view == PanelView::Journal {
+        match s.chat.journal_list.get(s.chat.journal_cursor) {
+            Some(p) => {
+                let mut rows = vec![question_row(&p.question)];
+                rows.extend(split_answer_paragraphs(&p.answer).into_iter().map(R::Answer));
+                rows
+            }
+            None => Vec::new(),
+        }
+    } else {
+        match s.chat.exchanges.get(s.chat.cursor) {
+            Some(e) => build_single_exchange_rows(e),
+            None => Vec::new(),
+        }
+    };
+    rows.iter()
+        .filter(|r| !matches!(r, R::Chip(_) | R::Thinking | R::SavedMark))
+        .flat_map(row_widget_texts)
+        .collect()
+}
+
 pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
     // Journal has no row_cursor/row_owner axis, and Question now HAS a row
     // cursor (see `transcript_cursor_move`) but `y` stays scoped to the Gloss
@@ -2452,6 +2546,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         let (mut rows, _, _) = transcript_rows(&s);
         rows.push(crate::ui::chat_panel::TranscriptRow::Thinking);
         let (fam, sz) = transcript_font(&s);
+        sync_panel_vocab_highlight(&s);
         s.chat_panel.render_rows(&rows, &fam, sz);
         crate::input::navigation::show_persistent_chapter_toast(&s, "Consolidating\u{2026}");
     }
@@ -2552,6 +2647,7 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     // holds the answer's opening paragraphs (an unsplit answer was one
     // oversized widget that fell off page 0 entirely).
     let (fam, sz) = transcript_font(s);
+    sync_panel_vocab_highlight(s);
     s.chat_panel.render_rows_to_top(&rows, &fam, sz);
 }
 

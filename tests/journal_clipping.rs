@@ -85,13 +85,14 @@ fn journal_overlay_ask_card_never_clips() {
     }
     h.settle(Duration::from_millis(500));
 
-    // Press `r` to open the ask card — the reported-bug path (the opener moved
-    // from `A` to `r` across all three overlays; `A` is TTS now). Today the
-    // ask card overlaps the (unchanged-height) scroll viewport and occludes the
-    // lower rows; the structural fix must make the viewport shrink so no row sits
-    // behind the card. The overlay emits TEST_JOURNAL_ASK_VIEWPORT_RECT from
+    // Press Ctrl+r to open the ask card — the reported-bug path (the opener
+    // moved from `A` to `r`, then to Ctrl+r when plain `r` became the vocab
+    // popup tap; `A` is TTS now). Today the ask card overlaps the
+    // (unchanged-height) scroll viewport and occludes the lower rows; the
+    // structural fix must make the viewport shrink so no row sits behind the
+    // card. The overlay emits TEST_JOURNAL_ASK_VIEWPORT_RECT from
     // open_ask_card so the harness reads the with-ask-card-open rect.
-    h.key("r", 200).expect("r -> open ask card");
+    h.chord(&["ctrl"], "r").expect("Ctrl+r -> open ask card");
 
     let ask_region = h
         .wait_for_journal_ask_viewport_rect(Duration::from_secs(8))

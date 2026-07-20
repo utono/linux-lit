@@ -3,53 +3,57 @@ use std::rc::Rc;
 
 use crate::app::AppState;
 
-/// Ctrl+Alt+\ on the main card: open an EMPTY vim-input card to type a vocab
-/// word. Reuses the gloss_overlay edit buffer, exactly like segment_vim, but
-/// starts blank and pre-seeded into Insert mode so the reader can type
-/// immediately. On :w the word is looked up + inserted; :q/Esc cancels.
+/// Ctrl+Alt+\ from any surface: open a dedicated compact vim-input card to type
+/// a vocab word. Its own `AskCard` (attached above the whole overlay chain), so
+/// it opens OVER the gloss/journal overlays and the chat transcript — the old
+/// gloss-overlay reuse could not, since the gloss overlay was either busy or
+/// below the journal. Opens in INSERT so the reader can type immediately. On :w
+/// the word is looked up + inserted; :q/Esc cancels and restores the prior mode.
 pub(crate) fn open(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     if s.current_work.is_none() {
         return;
     }
-    // A single-word input needs a COMPACT card, not the full reading-card
-    // rectangle (overlay_card_size) the segment/gloss overlays use for
-    // paragraphs — that filled the whole screen. Size it to title chrome + one
-    // input row + the "-- INSERT --" footer, and cap the width so it reads as an
-    // input strip. The container is Align::Center, so this floats centered.
-    let (full_w, _) = crate::app::layout::overlay_card_size(&s);
-    let cw = full_w.min(560);
-    let h = 140;
-    s.gloss_overlay
-        .show_gloss_with_color("Add vocab word", "", cw, h, Some(&s.theme.root_color), &[]);
-    // Float the input strip ON TOP of the still-visible reading card — suppress
-    // the full-bleed matting scrim the reading overlays use (which blanks the
-    // reader). See [[project_picker_overlay_not_chain]].
-    s.gloss_overlay.set_scrim_visible(false);
+    // Remember the surface we opened from so close() returns to it (Reader,
+    // either overlay, or the chat transcript).
+    let prior = s.input_mode;
+    s.vocab_add_return_mode = Some(prior);
     let (fill, fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
-    s.gloss_overlay.set_edit_copy_only(false); // saving IS allowed here
-    s.gloss_overlay.enter_edit_buffer("", &fill, &fg);
-    // Seed Insert mode so the reader can type immediately.
-    let _ = s
-        .gloss_overlay
-        .feed_edit_key(crate::input::vim::VimKey::Char('i'));
+    // `open_insert` starts the vim engine in INSERT (type immediately, no `i`).
+    // card_width = 0 keeps the card's fixed 560px input-strip request and its
+    // centered float rather than re-insetting to an overlay prose column.
+    s.vocab_add_card.open_insert(
+        "Add vocab word",
+        ":w add \u{b7} Esc cancel",
+        "",
+        0,
+        &fill,
+        &fg,
+    );
     s.input_mode = crate::app::InputMode::AddVocab;
     crate::logging::log("VOCAB ADD: opened input card");
 }
 
-/// Close the input card without saving and return to the reader.
+/// Close the input card without saving and restore the surface it opened from.
 pub(crate) fn close(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
-    s.gloss_overlay.exit_edit_buffer();
-    s.gloss_overlay.hide();
-    crate::app::return_to_reader_mode(&mut s);
+    s.vocab_add_card.close();
+    let back = s
+        .vocab_add_return_mode
+        .take()
+        .unwrap_or(crate::app::InputMode::Reader);
+    if back == crate::app::InputMode::Reader {
+        crate::app::return_to_reader_mode(&mut s);
+    } else {
+        s.input_mode = back;
+    }
     crate::logging::log("VOCAB ADD: cancelled");
 }
 
 /// :w in the input card: normalize, look up locally, insert + refresh. On a
 /// local miss, fall back to the Claude API (async) with an in-flight guard.
 pub(crate) fn submit(state_rc: &Rc<RefCell<AppState>>) {
-    let raw = state_rc.borrow().gloss_overlay.edit_buffer_text();
+    let raw = state_rc.borrow().vocab_add_card.take_text();
     let word = crate::vocab_lookup::normalize_vocab_word(&raw);
     close(state_rc);
 

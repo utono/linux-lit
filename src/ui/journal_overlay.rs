@@ -134,6 +134,12 @@ pub struct JournalOverlay {
     /// Placeholder colors; `set_search_colors` wires them to the theme (Task 5).
     search_tag: gtk4::TextTag,
     search_current_tag: gtk4::TextTag,
+    /// Vocab-word foreground tint (mirrors the main reading card's `vocab_tag`
+    /// and the gloss overlay's). Registered once here like the search tags;
+    /// placeholder color until `set_vocab_color` wires it to the theme. Applied
+    /// over the current buffer by `apply_vocab_tags` after every populate/recolor
+    /// (gated on `vocab_highlight_visible` at the action-layer call sites).
+    vocab_tag: gtk4::TextTag,
     /// Ephemeral rewrite diff-highlight tag (Task 4 of the rewrite-revision-
     /// history feature). Marks the char ranges a custom-prompt rewrite changed;
     /// applied by `apply_rewrite_diff` (Tasks 5/6), cleared by `clear_rewrite_diff`
@@ -513,6 +519,13 @@ impl JournalOverlay {
             .background("#ffe000") // placeholder; set via set_rewrite_diff_color
             .build();
         view.buffer().tag_table().add(&rewrite_diff_tag);
+        // Vocab-word tint tag: same one-time registration as the search tags.
+        // Placeholder color; `set_vocab_color` wires it to the theme.
+        let vocab_tag = gtk4::TextTag::builder()
+            .name("journal_vocab_word")
+            .foreground("#3b5bdb") // placeholder; set via set_vocab_color
+            .build();
+        view.buffer().tag_table().add(&vocab_tag);
 
         Self {
             overlay,
@@ -568,6 +581,7 @@ impl JournalOverlay {
             panel_color,
             search_tag,
             search_current_tag,
+            vocab_tag,
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
@@ -1021,6 +1035,38 @@ impl JournalOverlay {
     pub fn set_search_colors(&self, all: &str, current: &str) {
         self.search_tag.set_background(Some(all));
         self.search_current_tag.set_background(Some(current));
+    }
+
+    /// Theme wiring for the vocab-word tint (mirrors the main card's
+    /// `vocab_tag` color). Called from `build_window` AND the theme-apply path.
+    pub fn set_vocab_color(&self, color: &str) {
+        self.vocab_tag.set_foreground(Some(color));
+    }
+
+    /// Re-scan the CURRENT buffer text and tint vocab words. Idempotent per
+    /// populate: remove-then-apply so page turns never stack stale tags.
+    /// Mirrors `GlossOverlay::apply_vocab_tags`.
+    pub fn apply_vocab_tags(&self, words: &std::collections::HashSet<String>) {
+        let buffer = self.view.buffer();
+        let (start, end) = (buffer.start_iter(), buffer.end_iter());
+        buffer.remove_tag(&self.vocab_tag, &start, &end);
+        if words.is_empty() {
+            return;
+        }
+        let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+        let spans = crate::vocab_scan::scan_lines(
+            text.lines().enumerate(),
+            words,
+            true, // skip all-caps speaker header lines
+        );
+        for s in spans {
+            if let Some(mut line_iter) = buffer.iter_at_line(s.line_index as i32) {
+                let mut a = line_iter.clone();
+                a.forward_chars(s.char_start as i32);
+                line_iter.forward_chars(s.char_end as i32);
+                buffer.apply_tag(&self.vocab_tag, &a, &line_iter);
+            }
+        }
     }
 
     /// True while a rewrite diff highlight is currently applied.

@@ -6,6 +6,17 @@ use gtk4::prelude::WidgetExt;
 use crate::app::AppState;
 
 pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
+    // A visible vocab popup closes first — Escape inside the popup dismisses
+    // it and nothing else (spec 2026-07-20 vocab-surfaces).
+    {
+        let mut s = state.borrow_mut();
+        if s.vocab_popup.popup.is_visible() {
+            s.vocab_popup.auto = false;
+            crate::app::vocab_popup::close_vocab_popup(&mut s);
+            crate::logging::log("ESCAPE: closed vocab popup");
+            return;
+        }
+    }
     // Toasts take top priority: if any transient toast pill is on screen,
     // Escape just dismisses it and does nothing else (no tearing down
     // concordance / AB-loop / search state). `chapter_toast` is shared by the

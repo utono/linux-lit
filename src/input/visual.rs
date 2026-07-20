@@ -620,7 +620,12 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
-    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+    crate::logging::log(&format!(
+        "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+        neighbors.len(), ctx.start_citation, ctx.end_citation
+    ));
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None, &neighbors);
     let state_for_result = std::rc::Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {
@@ -854,7 +859,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
-    let user_msg = crate::gloss::build_user_message(&ctx, None, None);
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None, &[]);
     let state_for_result = std::rc::Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {

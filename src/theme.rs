@@ -1345,9 +1345,12 @@ pub fn generate_css(
            border-radius: 12px; padding: 20px 24px; }} \
          .vocab-popup {{ background-color: {root}; color: {vocab_popup_fg}; \
            padding: 16px 20px; border-radius: 12px; }} \
-         .vocab-popup.vocab-popup-float {{ background-color: {bg}; \
-           border: 1px solid alpha({fg}, 0.25); border-radius: 8px; \
-           padding: 12px 16px; }} \
+         .vocab-popup.vocab-popup-float {{ background-color: {root}; \
+           border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
+           padding: 14px 18px; }} \
+         .vocab-add-card {{ background-color: {root}; \
+           border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
+           padding: 6px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
          .vocab-popup .definition-word {{ font-size: 16px; color: {vocab_popup_fg}; }} \
@@ -1392,6 +1395,13 @@ pub fn generate_css(
             this zero — keep the two in sync (it also assumes .chat-transcript's \
             zero padding-top below). */ \
          .chat-panel {{ background-color: {bg}; padding: 0 12px 12px 12px; }} \
+         /* Focus cue: a short rule (~ three hyphens) marking whichever surface \
+            (panel or card) has focus while the chat layout is open. Shared by \
+            the panel's own copy (ChatPanel::new) and the main card's twin \
+            (page_turn_overlay overlay child); exactly one shows at a time \
+            (see chat::update_focus_rules). */ \
+         .focus-rule {{ background-color: alpha({fg}, 0.55); \
+           border-radius: 1px; }} \
          /* Pinned placement: the panel abuts the card's right edge, separated \
             only by a 1px hairline seam (its border-left, painting over the 1px \
             gap size_panel leaves). Rounded on the RIGHT (outer) corners only — \

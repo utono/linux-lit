@@ -313,6 +313,17 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
 
     // Update vocab tag foreground
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);
+    // The gloss overlay's vocab tint mirrors the main card's vocab_fg.
+    state.gloss_overlay.set_vocab_color(&theme.vocab_fg);
+    // The journal overlay's vocab tint mirrors the main card's vocab_fg too.
+    state.journal_overlay.set_vocab_color(&theme.vocab_fg);
+    // Chat transcript vocab spans bake theme.vocab_fg into label markup at
+    // render time, so a theme change leaves them the old color until the next
+    // natural re-render. When the chat layout is open, re-render the current
+    // view so the spans repaint with the new vocab color immediately.
+    if state.chat_layout_open {
+        crate::input::actions::chat::rerender_current_view(state);
+    }
 
     // Update reader-gloss tints to the new theme's contrast-guarded gloss colors.
     state.reader_gloss_tag.set_property("foreground", &theme.reader_gloss);

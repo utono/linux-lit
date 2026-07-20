@@ -308,6 +308,10 @@ pub struct AppState {
     /// suppression: TimePos ticks inside this window must not clear the tint.
     pub phrase_paint_hold: Option<std::time::Instant>,
     pub page_turn_overlay: gtk4::Overlay,
+    /// Focus cue: the main card's twin of the chat panel's focus rule. See
+    /// `card_focus_rule` construction (build_window) and
+    /// `chat::update_focus_rules`.
+    pub card_focus_rule: gtk4::Box,
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
     /// Running-head strip labels living inside `top_spacer` (the card's top
@@ -632,6 +636,13 @@ pub struct AppState {
     /// Word currently awaiting a Claude definition fallback (add-vocab). Guards
     /// against a duplicate paid request / double insert on repeat submit.
     pub vocab_add_pending: Option<String>,
+    /// Compact floating add-vocab input (Ctrl+Alt+\). Its own AskCard so it
+    /// can open OVER the gloss/journal overlays (the old gloss-overlay reuse
+    /// couldn't — the gloss overlay was either busy or below the journal).
+    pub vocab_add_card: crate::ui::ask_card::AskCard,
+    /// Mode to restore when the add-vocab card closes (it can open from
+    /// Reader, either overlay, or the chat transcript).
+    pub vocab_add_return_mode: Option<InputMode>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
@@ -1504,6 +1515,19 @@ pub fn build_window(
     page_turn_overlay.set_hexpand(true);
     page_turn_overlay.add_css_class("page-turn-overlay");
 
+    // Focus cue: the card's twin of the chat panel's focus_rule (see
+    // ChatPanel::new) — shown centered near the top of the main card only
+    // while the chat layout is open AND the reader (not the panel) has
+    // focus. Driven by chat::update_focus_rules.
+    let card_focus_rule = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    card_focus_rule.add_css_class("focus-rule");
+    card_focus_rule.set_size_request(24, 2);
+    card_focus_rule.set_halign(gtk4::Align::Center);
+    card_focus_rule.set_valign(gtk4::Align::Start);
+    card_focus_rule.set_margin_top(36); // inside TOP_SPACER_HEIGHT=74
+    card_focus_rule.set_visible(false);
+    page_turn_overlay.add_overlay(&card_focus_rule);
+
     // Centered text card container — width_request controls the card width
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
@@ -1601,6 +1625,10 @@ pub fn build_window(
     // search color (Task 4 of the rewrite-revision-history feature).
     gloss_overlay.set_rewrite_diff_color(&search_all);
     journal_overlay.set_rewrite_diff_color(&search_all);
+    // Vocab-word tint in the gloss overlay uses the SAME theme color as the
+    // main card's vocab_tag (theme.vocab_fg).
+    gloss_overlay.set_vocab_color(&theme.vocab_fg);
+    journal_overlay.set_vocab_color(&theme.vocab_fg);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();
@@ -1738,12 +1766,16 @@ pub fn build_window(
     let page_image_overlay = crate::ui::page_image_overlay::PageImageOverlay::new();
     page_image_overlay.attach_to(&page_turn_overlay);
 
-    // Action popup overlay for visual mode
+    // Action popup overlay for visual mode. Constructed here (used by the
+    // AppState struct literal below); attached to the OUTER overlay further
+    // down, alongside the other Task-12b re-homes.
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
-    corpus_search_popup.overlay.add_overlay(&action_popup_widget.container);
 
-    // Add vocab popup to full-width overlay so it appears to the right of the text card
-    vocab_popup.attach_to(&corpus_search_popup.overlay);
+    // NOTE: the vocab popup and add-vocab card are re-homed onto the OUTER
+    // overlay (added AFTER the chat panel, below) so they float ABOVE the chat
+    // panel — the inner overlay renders BEHIND the panel. Both use
+    // window-relative geometry, and the outer overlay is also window-filling,
+    // so their placement math is unchanged.
 
     // Debug-mode indicator (lower-left corner, next to sync icon, hidden by default)
     let debug_icon = gtk4::Label::new(Some("⚙"));
@@ -1847,6 +1879,19 @@ pub fn build_window(
     search_bar.container.set_margin_top(120);
     corpus_search_popup.overlay.add_overlay(&search_bar.container);
 
+    // Dedicated add-vocab input card (Ctrl+Alt+\). A compact floating AskCard
+    // attached to the SAME layer as the vocab popup — above the whole overlay
+    // chain AND above the chat panel — so it can open OVER the gloss/journal
+    // overlays and the chat transcript, unlike the old gloss-overlay reuse.
+    // Reader focus returns to the main text view; float centered, capped to an
+    // input strip. Added to the OUTER overlay after the chat panel (below).
+    let vocab_add_card = crate::ui::ask_card::AskCard::new(0, &text_view);
+    vocab_add_card.container().add_css_class("vocab-add-card");
+    vocab_add_card.container().set_halign(gtk4::Align::Center);
+    vocab_add_card.container().set_valign(gtk4::Align::Center);
+    vocab_add_card.container().set_size_request(560, -1);
+    vocab_add_card.set_input_height(56);
+
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&corpus_search_popup.overlay);
 
@@ -1864,6 +1909,21 @@ pub fn build_window(
     outer_overlay.add_overlay(&concordance_bar.container);
     outer_overlay.add_overlay(&title_bar);
     outer_overlay.add_overlay(&chat_panel.container);
+    // Vocab popup + add-vocab card float ABOVE the chat panel: they are added to
+    // the OUTER overlay AFTER the chat panel so they z-stack over it (the inner
+    // corpus_search overlay renders BEHIND the panel). Both use window-relative
+    // geometry (place_strip/place_float/place_corner margins, window-anchored
+    // compute_point), and the outer overlay is also window-filling, so their
+    // placement math is identical to attaching on the inner overlay. Kept BELOW
+    // the toasts so a transient status toast still paints over them.
+    vocab_popup.attach_to(&outer_overlay);
+    outer_overlay.add_overlay(vocab_add_card.container());
+    // Action popup (Visual mode) also floats on the OUTER overlay, above the
+    // chat panel: Tab moves focus to the reader without closing the panel
+    // (`focus_reader`), and Ctrl+a enters Visual mode with no chat_layout_open
+    // gate (src/input/visual.rs), so the popup can open while the panel is
+    // still visible — it must not render UNDER it like the inner overlay would.
+    outer_overlay.add_overlay(&action_popup_widget.container);
     // Transient toasts sit on the OUTER overlay, added AFTER the chat panel, so
     // they render on top of the floating chat panel rather than behind it (the
     // chat panel is left-aligned + center-valigned and would otherwise obscure
@@ -1943,6 +2003,7 @@ pub fn build_window(
         active_phrase: None,
         phrase_paint_hold: None,
         page_turn_overlay: page_turn_overlay.clone(),
+        card_focus_rule: card_focus_rule.clone(),
         bottom_clip,
         top_spacer,
         running_head_work,
@@ -2106,6 +2167,8 @@ pub fn build_window(
         dim_enabled,
         vocab_highlight_visible: false,
         vocab_add_pending: None,
+        vocab_add_card,
+        vocab_add_return_mode: None,
         vocab_popup: crate::app::vocab_popup::VocabPopupState {
             popup: vocab_popup,
             data: Vec::new(),
@@ -2613,6 +2676,7 @@ pub fn build_window(
                     glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
                         if let Ok(mut s) = st.try_borrow_mut() {
                             crate::input::actions::chat::regate_panel(&mut s);
+                            crate::input::actions::chat::update_focus_rules(&s);
                         }
                     });
                 }
@@ -4472,45 +4536,14 @@ fn build_vocab_matches(state: &mut AppState) {
             }
             None => line_text,
         };
-        let mut char_offset = 0usize;
-        let mut in_word = false;
-        let mut word_start = 0usize;
-        let mut word_buf = String::new();
-
-        for ch in scan_text.chars() {
-            let is_word_char = ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}';
-            if is_word_char {
-                if !in_word {
-                    word_start = char_offset;
-                    word_buf.clear();
-                    in_word = true;
-                }
-                word_buf.push(ch);
-            } else if in_word {
-                let lower = word_buf.to_lowercase();
-                if state.vocab_words.contains(&lower) {
-                    state.vocab_matches.push(VocabMatch {
-                        word: lower,
-                        line_index: line_idx,
-                        char_start: word_start,
-                        char_end: char_offset,
-                    });
-                }
-                in_word = false;
-            }
-            char_offset += 1;
-        }
-        if in_word {
-            let lower = word_buf.to_lowercase();
-            if state.vocab_words.contains(&lower) {
-                state.vocab_matches.push(VocabMatch {
-                    word: lower,
-                    line_index: line_idx,
-                    char_start: word_start,
-                    char_end: char_offset,
-                });
-            }
-        }
+        let mut spans = Vec::new();
+        crate::vocab_scan::scan_line(scan_text, line_idx, &state.vocab_words, &mut spans);
+        state.vocab_matches.extend(spans.into_iter().map(|s| VocabMatch {
+            word: s.word,
+            line_index: s.line_index,
+            char_start: s.char_start,
+            char_end: s.char_end,
+        }));
     }
 }
 
@@ -4588,11 +4621,30 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
     // it (it derives from the cursor line's vocab words). open_vocab_popup is a
     // no-op-ish when the cursor line has no vocab word, so the word only shows
     // when the cursor sits on a line containing it.
-    if state.vocab_popup.popup.is_visible() {
-        crate::app::vocab_popup::refresh_vocab_popup(state);
-    } else {
-        state.vocab_popup.auto = true;
-        crate::app::vocab_popup::open_vocab_popup(state);
+    if state.input_mode == InputMode::Reader {
+        if state.vocab_popup.popup.is_visible() {
+            crate::app::vocab_popup::refresh_vocab_popup(state);
+        } else {
+            state.vocab_popup.auto = true;
+            crate::app::vocab_popup::open_vocab_popup(state);
+        }
+    }
+
+    // Cross-surface refresh: the add-vocab card can fire while a gloss/journal
+    // overlay or the chat panel is showing (it floats above them). Re-tint any
+    // surface currently visible so the just-added word picks up its highlight
+    // without waiting for a re-open. The Reader-scoped popup block above is left
+    // intact (its own is_visible/mode guards keep it a no-op off-Reader).
+    if state.gloss_overlay.is_visible() {
+        state.gloss_overlay.apply_vocab_tags(&state.vocab_words);
+    }
+    if state.journal_overlay.is_visible() {
+        state.journal_overlay.apply_vocab_tags(&state.vocab_words);
+    }
+    if state.chat_layout_open {
+        // Re-render the active panel view so its labels re-run
+        // `sync_panel_vocab_highlight` with the new word set (Task 9).
+        crate::input::actions::chat::rerender_current_view(state);
     }
 
     let verb = if outcome_added { "added" } else { "already have" };

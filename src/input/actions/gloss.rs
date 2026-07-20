@@ -1424,6 +1424,11 @@ pub(crate) fn persist_render_install_gloss(
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
     s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs);
+    // This install path re-populates the buffer but does NOT run
+    // `recolor_cached_blocks` (unlike the display sites), so tint vocab here.
+    if s.vocab_highlight_visible {
+        s.gloss_overlay.apply_vocab_tags(&s.vocab_words);
+    }
     s.gloss_overlay.set_position(new_idx, all.len());
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
     s.gloss_list = all;
@@ -1461,11 +1466,16 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
             (crate::gloss::INNER_MONOLOGUE_ADD_PROMPT.as_str(), msg, "inner-monologue")
         }
         "reader-gloss" => {
-            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+            let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+            crate::logging::log(&format!(
+                "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+                neighbors.len(), ctx.start_citation, ctx.end_citation
+            ));
+            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None, &neighbors);
             (crate::gloss::READER_GLOSS_QUESTION_PROMPT.as_str(), msg, "reader-gloss")
         }
         _ => {
-            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None);
+            let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None, &[]);
             (crate::gloss::USER_QUESTION_PROMPT.as_str(), msg, "teacher-generic")
         }
     };
@@ -1542,7 +1552,16 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
             (crate::gloss::INNER_MONOLOGUE_EDIT_PROMPT.as_str(), msg, "inner-monologue")
         }
         "reader-gloss" => {
-            let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            let mut msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
+            let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+            crate::logging::log(&format!(
+                "GLOSS NEIGHBORS: {} neighbor(s) for {}-{}",
+                neighbors.len(), ctx.start_citation, ctx.end_citation
+            ));
+            if let Some(block) = crate::gloss::neighbor_block(&neighbors) {
+                msg.push_str("\n\n");
+                msg.push_str(&block);
+            }
             (crate::gloss::READER_GLOSS_EDIT_PROMPT.as_str(), msg, "reader-gloss")
         }
         _ => {
@@ -1808,6 +1827,9 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
             crate::log_fmt!("RECOLOR: {}#{} not cached (voice {})", kind_str, index, vid);
             false
         });
+        if s.vocab_highlight_visible {
+            s.gloss_overlay.apply_vocab_tags(&s.vocab_words);
+        }
         return;
     }
 
@@ -1840,6 +1862,9 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         }
         false
     });
+    if s.vocab_highlight_visible {
+        s.gloss_overlay.apply_vocab_tags(&s.vocab_words);
+    }
 }
 
 /// Borrow `state` and recolor. For async synth-completion sites that hold an
@@ -1857,6 +1882,12 @@ pub(crate) fn recolor_cached_blocks_rc(state: &Rc<RefCell<AppState>>) {
 pub(crate) fn recolor_journal_cached_blocks(s: &AppState) {
     if s.input_mode != crate::app::InputMode::JournalOverlay {
         return;
+    }
+    // Vocab tint mirrors the gloss overlay: this is the shared post-render hook
+    // (render_current + every j/k/x/y/g/G nav path routes through here), so tint
+    // the freshly rendered buffer whenever the vocab surface is visible.
+    if s.vocab_highlight_visible {
+        s.journal_overlay.apply_vocab_tags(&s.vocab_words);
     }
     let entry_id = match s.journal.pages.get(s.journal.page_index) {
         Some(p) => p.id,

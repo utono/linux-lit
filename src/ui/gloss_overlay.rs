@@ -191,6 +191,12 @@ pub struct GlossOverlay {
     /// the theme (Task 5).
     search_tag: gtk4::TextTag,
     search_current_tag: gtk4::TextTag,
+    /// Vocab-word foreground tint (mirrors the main reading card's `vocab_tag`).
+    /// Registered once here like the search tags; placeholder color until
+    /// `set_vocab_color` wires it to the theme. Applied over the current buffer
+    /// by `apply_vocab_tags` after every populate/recolor (gated on
+    /// `vocab_highlight_visible`).
+    vocab_tag: gtk4::TextTag,
     /// Ephemeral rewrite diff-highlight tag (Task 4 of the rewrite-revision-
     /// history feature). Marks the char ranges a custom-prompt rewrite changed;
     /// applied by `apply_rewrite_diff` (Tasks 5/6), cleared by `clear_rewrite_diff`
@@ -578,6 +584,13 @@ impl GlossOverlay {
             .background("#ffe000") // placeholder; set via set_rewrite_diff_color
             .build();
         gloss_view.buffer().tag_table().add(&rewrite_diff_tag);
+        // Vocab-word tint tag: same one-time registration as the search tags.
+        // Placeholder color; `set_vocab_color` wires it to the theme.
+        let vocab_tag = gtk4::TextTag::builder()
+            .name("gloss_vocab_word")
+            .foreground("#3b5bdb") // placeholder; set via set_vocab_color
+            .build();
+        gloss_view.buffer().tag_table().add(&vocab_tag);
 
         GlossOverlay {
             overlay,
@@ -639,6 +652,7 @@ impl GlossOverlay {
             pre_edit_family: RefCell::new(None),
             search_tag,
             search_current_tag,
+            vocab_tag,
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
@@ -684,6 +698,58 @@ impl GlossOverlay {
     pub fn set_search_colors(&self, all: &str, current: &str) {
         self.search_tag.set_background(Some(all));
         self.search_current_tag.set_background(Some(current));
+    }
+
+    /// Theme wiring for the vocab-word tint (mirrors the main card's
+    /// `vocab_tag` color). Called from `build_window` AND the theme-apply path.
+    pub fn set_vocab_color(&self, color: &str) {
+        self.vocab_tag.set_foreground(Some(color));
+    }
+
+    /// Re-scan the CURRENT buffer text and tint vocab words. Idempotent per
+    /// populate: remove-then-apply so page turns never stack stale tags.
+    pub fn apply_vocab_tags(&self, words: &std::collections::HashSet<String>) {
+        let buffer = self.gloss_view.buffer();
+        let (start, end) = (buffer.start_iter(), buffer.end_iter());
+        buffer.remove_tag(&self.vocab_tag, &start, &end);
+        if words.is_empty() {
+            return;
+        }
+        let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+        let spans = crate::vocab_scan::scan_lines(
+            text.lines().enumerate(),
+            words,
+            true, // skip all-caps speaker header lines
+        );
+        for s in spans {
+            if let Some(mut line_iter) = buffer.iter_at_line(s.line_index as i32) {
+                let mut a = line_iter.clone();
+                a.forward_chars(s.char_start as i32);
+                line_iter.forward_chars(s.char_end as i32);
+                buffer.apply_tag(&self.vocab_tag, &a, &line_iter);
+            }
+        }
+    }
+
+    /// Text of the overlay's CURRENT cursor block, or None when the card has no
+    /// blocks (echoes/synopsis/loading/empty gloss). Resolves the SAME block as
+    /// `current_block()` (the TTS `Ctrl+Space`/`A` path) — same `blocks` +
+    /// `cursor_block` bookkeeping — reading the buffer text of its line span so
+    /// the vocab `rr` scope and the read-aloud block are always identical.
+    pub fn current_block_text(&self) -> Option<String> {
+        let ranges = self.blocks.borrow();
+        if ranges.is_empty() {
+            return None;
+        }
+        let i = self.cursor_block.get().min(ranges.len() - 1);
+        let r = ranges.get(i)?;
+        let buffer = self.gloss_view.buffer();
+        let start = buffer.iter_at_line(r.start_line)?;
+        let mut end = buffer.iter_at_line(r.end_line)?;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        Some(buffer.text(&start, &end, false).to_string())
     }
 
     /// True while a rewrite diff highlight is currently applied.
@@ -2995,14 +3061,6 @@ impl GlossOverlay {
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.
         self.ask_host.card().close();
-    }
-
-    /// Show/hide the full-bleed matting scrim independently. The add-vocab input
-    /// card is a small FLOATING strip that must sit ON TOP of the still-visible
-    /// reading card, not behind the opaque scrim that the reading overlays use —
-    /// so it calls `set_scrim_visible(false)` after showing its container.
-    pub fn set_scrim_visible(&self, visible: bool) {
-        self.scrim.set_visible(visible);
     }
 
     pub fn set_position(&self, index: usize, total: usize) {
