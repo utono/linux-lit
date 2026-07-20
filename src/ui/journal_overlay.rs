@@ -734,13 +734,7 @@ impl JournalOverlay {
             let id = adj.connect_changed(move |adj| {
                 if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
                     if r.width() > 0.0 && r.height() > 0.0 {
-                        crate::logging::log(&format!(
-                            "TEST_JOURNAL_VIEWPORT_RECT {} {} {} {}",
-                            r.x().round() as i32,
-                            r.y().round() as i32,
-                            r.width().round() as i32,
-                            r.height().round() as i32
-                        ));
+                        crate::logging::log_viewport_rect("TEST_JOURNAL_VIEWPORT_RECT", &r);
                         // The horizontal band ALL text ink must stay inside:
                         // the inset panel span (accent bar at left_margin −
                         // JOURNAL_BODY_INDENT, panel pad beyond it) in window
@@ -1408,13 +1402,7 @@ impl JournalOverlay {
             let sc = self.scrolled.clone();
             glib::idle_add_local_once(move || {
                 if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
-                    crate::logging::log(&format!(
-                        "TEST_JOURNAL_ASK_VIEWPORT_RECT {} {} {} {}",
-                        r.x().round() as i32,
-                        r.y().round() as i32,
-                        r.width().round() as i32,
-                        r.height().round() as i32
-                    ));
+                    crate::logging::log_viewport_rect("TEST_JOURNAL_ASK_VIEWPORT_RECT", &r);
                 } else {
                     crate::logging::log(
                         "TEST_JOURNAL_ASK_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
