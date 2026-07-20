@@ -872,16 +872,11 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
                 saved_id: None,
             });
             s.chat.cursor = s.chat.exchanges.len() - 1;
-            snap_row_cursor_to_exchange(&mut s);
-            // Stay in Question view (set at submit) and render ONLY this
-            // Q&A — not the whole transcript (render_transcript), which
-            // would bring the gloss and any earlier exchanges back above it.
-            // `t` still reaches the full gloss transcript from here.
+            // Question view renders over its OWN row space (Q: row = widget
+            // 0); land the accent bar there, at the top of the new entry.
+            s.chat.row_cursor = 0;
+            s.chat.page_idx = 0;
             debug_assert_eq!(s.chat.view, PanelView::Question);
-            render_current_question(&mut s);
-            // Answer visible: hand focus to the transcript so j/k/s work
-            // immediately. The input was already hidden on submit.
-            focus_transcript(&mut s);
             // Auto-save the FIRST follow-up Q&A on this passage so the
             // reader doesn't have to press `s`. Any further follow-up in the
             // same panel session (count > 1) still requires `s` — this fires
@@ -891,6 +886,9 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             // "Revise this entry" — surprising when nothing was manually
             // saved yet. `s` still works afterward and arms revision then,
             // same as it always has for a not-yet-revision-armed save.
+            //
+            // Auto-save BEFORE the render so the SavedMark row is part of the
+            // first render and s.chat.pages match the rows j/k rebuilds.
             if is_first_question_exchange(&s.chat.exchanges) {
                 let idx = s.chat.exchanges.len() - 1;
                 match persist_exchange_to_journal(&mut s, idx) {
@@ -906,6 +904,14 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
                     }
                 }
             }
+            // Stay in Question view (set at submit) and render ONLY this
+            // Q&A — not the whole transcript (render_transcript), which
+            // would bring the gloss and any earlier exchanges back above it.
+            // `t` still reaches the full gloss transcript from here.
+            render_current_question(&mut s);
+            // Answer visible: hand focus to the transcript so j/k/s work
+            // immediately. The input was already hidden on submit.
+            focus_transcript(&mut s);
         },
         move |st, msg| {
             let mut s = st.borrow_mut();
@@ -1036,20 +1042,21 @@ fn render_paginated(
 /// Render `PanelView::Question`: exactly the exchange at `s.chat.cursor` —
 /// its `Q:` row + answer row (+ `SavedMark` once saved), via
 /// `build_single_exchange_rows` — NOT the gloss, NOT any other exchange.
-/// Plain `render_rows` (no row-cursor accent bar, no visual-selection
-/// painting), same choice `render_journal_view` makes: a one-exchange view
-/// has nothing for `j`/`k`'s row axis to usefully cycle over, so it degrades
-/// to viewport scrolling (see `transcript_cursor_move`'s `Question` guard).
-/// No-ops (renders nothing) when `cursor` is out of range — defensive; every
-/// real call site sets `cursor` to a just-pushed exchange's own index first.
+/// Renders through `render_paginated`, at `s.chat.row_cursor` (Question-view
+/// widget space: the `Q:` row is widget 0), painting the accent bar and
+/// making `s.chat.pages`/`page_idx` authoritative for the Question-view
+/// j/k/gg/G arms. No-ops (renders nothing) when `cursor` is out of range —
+/// defensive; every real call site sets `cursor` to a just-pushed exchange's
+/// own index first.
 pub(crate) fn render_current_question(s: &mut AppState) {
-    let (fam, sz) = transcript_font(s);
     let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+        let (fam, sz) = transcript_font(s);
         s.chat_panel.render_rows(&[], &fam, sz);
         return;
     };
     let rows = build_single_exchange_rows(e);
-    s.chat_panel.render_rows(&rows, &fam, sz);
+    let cursor = Some(s.chat.row_cursor);
+    render_paginated(s, &rows, cursor, None);
 }
 
 /// Snap the row cursor to the EXCHANGE cursor's (`s.chat.cursor`) leading
