@@ -345,6 +345,32 @@ pub(crate) fn copy_gloss_id(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Delete a gloss row plus its cached TTS audio: the DB row (`delete_gloss`),
+/// its audio rows (`delete_gloss_audio`), and the on-disk mp3 dir. Returns
+/// `(audio_rows, mp3_files)` for the caller's verification toast. Shared by
+/// the gloss overlay's `D` and the chat panel's `D` so the two purge paths
+/// cannot drift. `work_abbrev: None` skips the on-disk dir (no context to
+/// locate it) — the DB purge still runs.
+pub(crate) fn purge_gloss_data(work_abbrev: Option<&str>, gloss_id: i64) -> (usize, usize) {
+    let mut audio_rows = 0usize;
+    if let Ok(conn) = crate::db::queries::open_db_rw() {
+        let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
+        audio_rows = crate::db::queries::delete_gloss_audio(&conn, gloss_id).unwrap_or(0);
+    }
+    let mut mp3_files = 0usize;
+    if let Some(abbrev) = work_abbrev {
+        let dir = gloss_audio_dir(abbrev, gloss_id);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            mp3_files = entries
+                .flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mp3"))
+                .count();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    (audio_rows, mp3_files)
+}
+
 pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
     // Phase 1: delete under a mutable borrow and gather counts for the
     // verification pill (audio rows purged + .mp3 files removed). The borrow is
@@ -356,24 +382,9 @@ pub(crate) fn delete_current_gloss(state_rc: &Rc<RefCell<AppState>>) {
         let Some(gloss) = s.gloss_list.get(idx) else { return };
         let gloss_id = gloss.gloss_id;
 
-        let mut audio_rows = 0usize;
-        if let Ok(conn) = crate::db::queries::open_db_rw() {
-            let _ = crate::db::queries::delete_gloss(&conn, gloss_id);
-            audio_rows = crate::db::queries::delete_gloss_audio(&conn, gloss_id).unwrap_or(0);
-        }
-        // Count .mp3 files in the gloss's audio dir before removing it, so the
-        // pill verifies the on-disk files actually went too.
-        let mut mp3_files = 0usize;
-        if let Some(ctx) = s.gloss_context.as_ref() {
-            let dir = gloss_audio_dir(&ctx.work_abbrev, gloss_id);
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                mp3_files = entries
-                    .flatten()
-                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("mp3"))
-                    .count();
-            }
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+        let abbrev = s.gloss_context.as_ref().map(|c| c.work_abbrev.clone());
+        let (audio_rows, mp3_files) = purge_gloss_data(abbrev.as_deref(), gloss_id);
+
         crate::logging::log(&format!(
             "GLOSS: deleted gloss {} ({} audio rows, {} mp3 files)",
             gloss_id, audio_rows, mp3_files
