@@ -1766,12 +1766,18 @@ pub fn build_window(
     let page_image_overlay = crate::ui::page_image_overlay::PageImageOverlay::new();
     page_image_overlay.attach_to(&page_turn_overlay);
 
-    // Action popup overlay for visual mode
+    // Action popup overlay for visual mode. Stays on the INNER overlay: it only
+    // appears in Visual mode on the main reading card, which the chat panel
+    // never coexists with, and gloss/journal dialogs anchor off its parent to
+    // find the overlay to attach to (they now climb to the outermost Overlay).
     let action_popup_widget = crate::ui::action_popup::ActionPopup::new();
     corpus_search_popup.overlay.add_overlay(&action_popup_widget.container);
 
-    // Add vocab popup to full-width overlay so it appears to the right of the text card
-    vocab_popup.attach_to(&corpus_search_popup.overlay);
+    // NOTE: the vocab popup and add-vocab card are re-homed onto the OUTER
+    // overlay (added AFTER the chat panel, below) so they float ABOVE the chat
+    // panel — the inner overlay renders BEHIND the panel. Both use
+    // window-relative geometry, and the outer overlay is also window-filling,
+    // so their placement math is unchanged.
 
     // Debug-mode indicator (lower-left corner, next to sync icon, hidden by default)
     let debug_icon = gtk4::Label::new(Some("⚙"));
@@ -1877,18 +1883,16 @@ pub fn build_window(
 
     // Dedicated add-vocab input card (Ctrl+Alt+\). A compact floating AskCard
     // attached to the SAME layer as the vocab popup — above the whole overlay
-    // chain — so it can open OVER the gloss/journal overlays and the chat
-    // transcript, unlike the old gloss-overlay reuse. Reader focus returns to
-    // the main text view; float centered, capped to an input strip.
+    // chain AND above the chat panel — so it can open OVER the gloss/journal
+    // overlays and the chat transcript, unlike the old gloss-overlay reuse.
+    // Reader focus returns to the main text view; float centered, capped to an
+    // input strip. Added to the OUTER overlay after the chat panel (below).
     let vocab_add_card = crate::ui::ask_card::AskCard::new(0, &text_view);
     vocab_add_card.container().add_css_class("vocab-add-card");
     vocab_add_card.container().set_halign(gtk4::Align::Center);
     vocab_add_card.container().set_valign(gtk4::Align::Center);
     vocab_add_card.container().set_size_request(560, -1);
     vocab_add_card.set_input_height(56);
-    corpus_search_popup
-        .overlay
-        .add_overlay(vocab_add_card.container());
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.append(&corpus_search_popup.overlay);
@@ -1907,6 +1911,15 @@ pub fn build_window(
     outer_overlay.add_overlay(&concordance_bar.container);
     outer_overlay.add_overlay(&title_bar);
     outer_overlay.add_overlay(&chat_panel.container);
+    // Vocab popup + add-vocab card float ABOVE the chat panel: they are added to
+    // the OUTER overlay AFTER the chat panel so they z-stack over it (the inner
+    // corpus_search overlay renders BEHIND the panel). Both use window-relative
+    // geometry (place_strip/place_float/place_corner margins, window-anchored
+    // compute_point), and the outer overlay is also window-filling, so their
+    // placement math is identical to attaching on the inner overlay. Kept BELOW
+    // the toasts so a transient status toast still paints over them.
+    vocab_popup.attach_to(&outer_overlay);
+    outer_overlay.add_overlay(vocab_add_card.container());
     // Transient toasts sit on the OUTER overlay, added AFTER the chat panel, so
     // they render on top of the floating chat panel rather than behind it (the
     // chat panel is left-aligned + center-valigned and would otherwise obscure
