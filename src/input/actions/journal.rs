@@ -699,6 +699,11 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     // painting one. (Normal band navigation goes through `render_current`, which
     // keeps the diff; the Ctrl+Shift+p revision browse paints its own.)
     s.journal_overlay.clear_rewrite_diff();
+    // Vocab tint: the filtered render bypasses recolor_journal_cached_blocks
+    // (the shared post-render vocab hook), so tint the filtered entry here.
+    if s.vocab_highlight_visible {
+        s.journal_overlay.apply_vocab_tags(&s.vocab_words);
+    }
 }
 
 /// Activate a term filter: fetch matches, store filter state, render the

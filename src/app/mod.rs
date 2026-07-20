@@ -1604,6 +1604,7 @@ pub fn build_window(
     // Vocab-word tint in the gloss overlay uses the SAME theme color as the
     // main card's vocab_tag (theme.vocab_fg).
     gloss_overlay.set_vocab_color(&theme.vocab_fg);
+    journal_overlay.set_vocab_color(&theme.vocab_fg);
 
     // Journal picker overlays the journal overlay (above journal, below translation)
     let journal_picker = JournalQaPicker::new();

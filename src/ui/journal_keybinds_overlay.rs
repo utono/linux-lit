@@ -13,6 +13,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Alt+s", "current scene band"),
         ("Alt+w", "whole-work band"),
         ("Alt+a", "author corpus band"),
+        ("r", "vocab popup (rr toggles \u{b7} r next word)"),
+        ("Esc", "close vocab popup / close (jump to source)"),
     ]),
     ("Playback / TTS", &[
         ("a", "play / pause (MPV, same as main card)"),
@@ -21,8 +23,8 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+s", "restart cursor block TTS from start (synthesizes on miss)"),
     ]),
     ("Editing", &[
-        ("r", "ask a new question"),
-        ("R", "ask Claude to rewrite this Q&A"),
+        ("C-r", "ask a new question"),
+        ("C-w", "ask Claude to rewrite this Q&A"),
         ("Ctrl+Shift+n / Ctrl+Shift+p", "browse rewrite history (view-only)"),
         ("Ctrl+Shift+r", "restore the viewed revision"),
         ("e", "edit Q&A in place (vim)"),

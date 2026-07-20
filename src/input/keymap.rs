@@ -432,10 +432,18 @@ fn gloss_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<S
         .collect()
 }
 
-/// Vocab words visible in the journal overlay (the `rr` scope there).
-/// Filled by Task 8.
-fn journal_overlay_scope_words(_state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
-    Vec::new()
+/// Vocab words visible in the journal overlay (the `rr` scope there): scan the
+/// overlay's CURRENT cursor block for the user's vocab words.
+fn journal_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
+    let s = state.borrow();
+    let text = match s.journal_overlay.current_block_text() {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    crate::vocab_scan::scan_lines(text.lines().enumerate(), &s.vocab_words, true)
+        .into_iter()
+        .map(|sp| sp.word)
+        .collect()
 }
 
 /// Vocab words visible in the chat transcript (the `rr` scope there).
@@ -1898,6 +1906,21 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
+            // Ctrl+r: ask a new Q&A in the current band (moved off plain `r`,
+            // which is now the vocab surface, mirroring the gloss overlay + main
+            // card). Sits AFTER the Ctrl+Shift+r revision-restore arm above so
+            // Shift still wins.
+            "r" => {
+                crate::input::actions::journal::begin_ask(state);
+                return true;
+            }
+            // Ctrl+w: open the rewrite TARGET chooser (q question / a answer / b
+            // both) for the displayed Q&A (moved off plain `R`). Ctrl+w is free
+            // in this handler.
+            "w" => {
+                crate::input::actions::journal::open_rewrite_target(state);
+                return true;
+            }
             // Ctrl+j: Escape-only close policy — consumed no-op (was: close
             // the journal). Consumed so Ctrl+j can't fall through to the
             // plain j block-nav arm.
@@ -1967,20 +1990,24 @@ fn handle_journal_key(
     }
 
     match key_name {
-        // `r` opens the ask card to create a new Q&A in the current band,
-        // matching the gloss + synopsis overlays where `r` opens a journal Q&A.
-        // (Moved from A to r across all three overlays.)
-        "r" => {
-            crate::input::actions::journal::begin_ask(state);
+        // `r`: vocab surface (ask-a-question moved to Ctrl+r, mirroring the
+        // gloss overlay + main card). If the popup is already up, `r` cycles to
+        // the next word; either way it arms the `rr` chord so a quick second `r`
+        // toggles the popup (see the hoisted PendingR block at the top of
+        // handle_key, which scopes to this overlay's current-block words).
+        // NOTE: the term-filter clear-toast intercept above still wins while a
+        // filter is active.
+        "r" if !is_ctrl => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_next(&mut s);
+            }
+            KeyState::start_chord(key_state, ChordState::PendingR);
             true
         }
-        // `R` opens the rewrite TARGET chooser (q question / a answer / b both):
-        // a single key then routes to improve-question, the answer-only rewrite
-        // prompt, or both. Works directly from the Q&A view (no `e` editor).
-        "R" => {
-            crate::input::actions::journal::open_rewrite_target(state);
-            true
-        }
+        // `R`: vocab R reserved unbound, mirrors main card. The rewrite TARGET
+        // chooser moved to Ctrl+w (handled in the is_ctrl block above).
+        "R" => true,
         "e" => {
             crate::input::actions::journal::begin_edit(state);
             true
@@ -2123,6 +2150,15 @@ fn handle_journal_key(
         // in the overlay); else an active overlay search clears (stay); else an
         // active term filter clears (stay); else close.
         "Escape" => {
+            // Popup-close comes FIRST: if the vocab popup is up, Escape only
+            // closes it (clearing auto-show) and stays in the overlay — before
+            // the rewrite-diff / filter / search / close precedence below.
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                s.vocab_popup.auto = false;
+                crate::app::vocab_popup::close_vocab_popup(&mut s);
+                return true;
+            }
             // A revision browse always drops on Escape (view-only state must
             // not leak into the next open); Task 7 clears the diff-highlight.
             state.borrow_mut().rewrite_browse = None;

@@ -315,6 +315,8 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
     state.vocab_tag.set_property("foreground", &theme.vocab_fg);
     // The gloss overlay's vocab tint mirrors the main card's vocab_fg.
     state.gloss_overlay.set_vocab_color(&theme.vocab_fg);
+    // The journal overlay's vocab tint mirrors the main card's vocab_fg too.
+    state.journal_overlay.set_vocab_color(&theme.vocab_fg);
 
     // Update reader-gloss tints to the new theme's contrast-guarded gloss colors.
     state.reader_gloss_tag.set_property("foreground", &theme.reader_gloss);

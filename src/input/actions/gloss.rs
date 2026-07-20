@@ -1883,6 +1883,12 @@ pub(crate) fn recolor_journal_cached_blocks(s: &AppState) {
     if s.input_mode != crate::app::InputMode::JournalOverlay {
         return;
     }
+    // Vocab tint mirrors the gloss overlay: this is the shared post-render hook
+    // (render_current + every j/k/x/y/g/G nav path routes through here), so tint
+    // the freshly rendered buffer whenever the vocab surface is visible.
+    if s.vocab_highlight_visible {
+        s.journal_overlay.apply_vocab_tags(&s.vocab_words);
+    }
     let entry_id = match s.journal.pages.get(s.journal.page_index) {
         Some(p) => p.id,
         None => return,
