@@ -9,6 +9,10 @@ pub enum MpvCommand {
     VolumeAdjust(f64),
     TogglePause,
     Pause,
+    /// Resume without seeking (pause=no). Counterpart of `Pause` for the
+    /// chat-loop exit path, which must restore playback exactly where the
+    /// arm-time `Pause` left it.
+    Resume,
     ResumeAndSeek(f64),
     SetSpeed(f64),
     Connect(String),

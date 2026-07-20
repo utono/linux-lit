@@ -704,6 +704,12 @@ pub struct AppState {
     pub sync_enabled: bool,
     pub mpv_connected: bool,
     pub mpv_playing: bool,
+    /// Transcript `space` loop state (see mpv::chat_player). On AppState, not
+    /// ChatState: ChatState is Default-reset on panel close/work switch and
+    /// the chat mpv process must be quit explicitly, never silently dropped.
+    pub chat_loop: crate::mpv::chat_player::ChatLoopState,
+    /// Handle to the chat panel's dedicated mpv process, if one was spawned.
+    pub chat_player: Option<crate::mpv::chat_player::ChatPlayer>,
     pub concordance_resume_playback: bool,
     pub sync_enabled_before_concordance: Option<bool>,
     pub skip_mpv_discovery: bool,
@@ -2146,6 +2152,8 @@ pub fn build_window(
         sync_enabled: true,
         mpv_connected: false,
         mpv_playing: false,
+        chat_loop: Default::default(),
+        chat_player: None,
         concordance_resume_playback: false,
         sync_enabled_before_concordance: None,
         skip_mpv_discovery: false,

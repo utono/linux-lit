@@ -102,6 +102,7 @@ pub fn handle_key(
     // that; also accept "l" for layouts that report the unshifted name.
     if is_shift && is_ctrl && (key_name == "L" || key_name == "l") {
         crate::app::save_position(&mut state.borrow_mut());
+        crate::input::actions::chat::chat_loop_teardown(&mut state.borrow_mut());
         let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
         state.borrow().window.close();
         return true;
@@ -1680,10 +1681,19 @@ fn handle_chat_transcript_key(
         // Escape, with no selection active, focuses the reader.
         "Escape" => {
             let mut s = state.borrow_mut();
+            crate::input::actions::chat::chat_loop_teardown(&mut s);
             if crate::input::actions::chat::exit_transcript_visual(&mut s) {
                 return true;
             }
             crate::input::actions::chat::focus_reader(&mut s);
+            true
+        }
+        // `space`: loop playback of the displayed entry's source passage on
+        // the chat panel's DEDICATED mpv (armed → pause toggle). The global
+        // reader space guard only intercepts in InputMode::Reader, so the
+        // key reaches this arm untouched.
+        "space" => {
+            crate::input::actions::chat::toggle_source_loop(state);
             true
         }
         _ => true,
@@ -4115,6 +4125,7 @@ fn dispatch_action(
         EscapeReaderMode => crate::input::actions::escape::escape_reader_mode(state),
         SaveAndQuit => {
             crate::app::save_position(&mut state.borrow_mut());
+            crate::input::actions::chat::chat_loop_teardown(&mut state.borrow_mut());
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::Quit);
             state.borrow().window.close();
         }

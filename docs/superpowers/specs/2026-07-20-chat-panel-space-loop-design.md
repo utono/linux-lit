@@ -76,13 +76,20 @@ with a chapter-toast** stating the reason:
    Question) displays content about the SAME pinned passage, so resolution
    is uniform:
    - `ChatState.gloss_ctx` present: `gloss_ctx.work_abbrev` +
-     `gloss_ctx.source_line_numbers` (already-resolved `line_mapping.id`s;
-     first/last bound the passage). This is the entry's own identity — the
-     future cross-work finder installs a `gloss_ctx` for whatever it loads.
+     `gloss_ctx.act`/`gloss_ctx.scene` (the passage's `div1`/`div2`) +
+     `gloss_ctx.source_line_numbers` (per-division line numbers,
+     `line_in_div` — NOT `line_mapping.id`s; first/last bound the passage).
+     These are resolved to global `line_mapping.id`s at space-time via
+     `line_id_for_location(conn, abbrev, div1, div2, line_in_div)` — the
+     `echoes::play_selected_echo` precedent — because `line_mapping.id` is a
+     global autoincrement and a `line_in_div` can never match it directly.
+     This is the entry's own identity — the future cross-work finder installs
+     a `gloss_ctx` for whatever it loads.
    - No `gloss_ctx` but a raw `pinned_passage` (pinned, not yet glossed):
-     line ids from `pinned_passage.cursor_lines` (`Line.id`), work from
-     `current_work` — safe here because a raw pin is same-work by
-     construction (the work-switch wipe guarantees it).
+     `div1`/`div2` + first/last `line_in_div` from
+     `pinned_passage.cursor_lines`, work from `current_work` — safe here
+     because a raw pin is same-work by construction (the work-switch wipe
+     guarantees it). Resolved to ids the same way.
    - Neither, or empty line lists (e.g. future author-scope notes with no
      citations): toast "No source passage to play".
 2. **Work → media.** `list_media_for_work(conn, abbrev)`; prefer a path
@@ -120,8 +127,12 @@ struct ChatLoopState {
 - **`Escape` in the transcript while armed:** full teardown — stop the loop
   and resume the main MPV iff `main_was_playing` (runs *before* Escape's
   normal leave-panel behavior).
-- **Panel close / leaving `ChatTranscript`:** full teardown **plus `quit`**
-  to the chat MPV process; resume main iff `main_was_playing`.
+- **Full teardown** (stop the loop, `quit` the chat MPV process, resume main
+  iff `main_was_playing`) fires when focus returns to the READER (Tab /
+  Escape), when the panel closes, on a work switch, and on app quit. Opening
+  the panel's OWN ask/rewrite prompt (`a` / `r` / `R` → `ChatPrompt`) does
+  NOT tear down — the loop keeps playing while composing, and control returns
+  to the transcript afterwards.
 
 The main MPV is paused for the duration of any loop, so its sync engine is
 naturally quiescent: no `suppress_sync_until` timers, no `SetTimestamps`

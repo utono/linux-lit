@@ -32,6 +32,14 @@ pub fn set_mpv_background(color: &str) {
 }
 
 pub fn derive_socket_path(media_path: &str) -> String {
+    derive_socket_path_marked(media_path, "")
+}
+
+/// Socket path with an extra `marker` segment after the instance infix
+/// (e.g. "chat-" for the chat panel's dedicated player). A marked socket is
+/// invisible to the main player's discovery, which only ever derives
+/// unmarked paths — so probe/connect/stale-clean can't cross the streams.
+pub fn derive_socket_path_marked(media_path: &str, marker: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     let author = extract_author(media_path, &home);
     let basename = Path::new(media_path)
@@ -46,9 +54,9 @@ pub fn derive_socket_path(media_path: &str) -> String {
 
     let is_ytdlp = media_path.contains("/yt-dlp-mlj/");
     let socket_path = if is_ytdlp {
-        format!("/tmp/mpvsocket-{}ytdlp-{}-{}", infix, author, basename)
+        format!("/tmp/mpvsocket-{}{}ytdlp-{}-{}", infix, marker, author, basename)
     } else {
-        format!("/tmp/mpvsocket-{}{}-{}", infix, author, basename)
+        format!("/tmp/mpvsocket-{}{}{}-{}", infix, marker, author, basename)
     };
 
     if socket_path.len() > 95 {
@@ -143,6 +151,13 @@ fn probe_socket(path: &Path) -> bool {
 /// already handles "no MPV" gracefully — see the discovery/connect path).
 pub fn launch_mpv(media_path: &str) -> String {
     let socket_path = derive_socket_path(media_path);
+    launch_mpv_at(&socket_path, media_path);
+    socket_path
+}
+
+/// Launch mpv listening on an explicit socket path (the chat player passes a
+/// `chat-`-marked one). Same args and headless guards as `launch_mpv`.
+pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
     // LIT_NO_MPV: diagnostic toggle to launch with no MPV at all (A/B the startup
     // flicker against the MPV window-map). Same skip as the headless test path.
     if std::env::var_os("LIT_HEADLESS_TEST").is_some()
@@ -152,7 +167,7 @@ pub fn launch_mpv(media_path: &str) -> String {
             "MPV: skipped (LIT_HEADLESS_TEST/LIT_NO_MPV) for {}",
             media_path
         ));
-        return socket_path;
+        return;
     }
     // Paint MPV's window backdrop with the reader's root color so the
     // letterbox/border matte around video (and the idle backdrop) matches the
@@ -197,7 +212,6 @@ pub fn launch_mpv(media_path: &str) -> String {
         Ok(_) => crate::logging::log(&format!("MPV: launched for {} (app-id=mpv-lit)", media_path)),
         Err(e) => crate::logging::log(&format!("MPV: launch failed: {}", e)),
     }
-    socket_path
 }
 
 /// Blocking discover-or-launch (audit #65): reuse an existing MPV socket for
@@ -283,5 +297,22 @@ mod tests {
     #[test]
     fn test_scan_sockets_runs() {
         let _sockets = scan_sockets();
+    }
+
+    #[test]
+    fn test_derive_socket_path_marked_chat() {
+        let home = std::env::var("HOME").unwrap();
+        let path = format!("{}/Music/shakespeare-william/Hamlet.m4b", home);
+        let socket = derive_socket_path_marked(&path, "chat-");
+        // Slot 1 in unit tests → no instance infix; the marker sits where the
+        // infix would extend: /tmp/mpvsocket-{infix}{marker}{author}-{basename}.
+        assert!(socket.starts_with("/tmp/mpvsocket-chat-shakespeare-william-"));
+        assert!(socket.contains("Hamlet.m4b"));
+        // The unmarked path is a DIFFERENT socket — main-player discovery can
+        // never probe/stale-clean the chat player's socket.
+        assert_ne!(socket, derive_socket_path(&path));
+        // Truncation cap still applies with a marker.
+        let long = format!("{}/Music/author/{}.m4b", home, "a".repeat(100));
+        assert!(derive_socket_path_marked(&long, "chat-").len() <= 95);
     }
 }
