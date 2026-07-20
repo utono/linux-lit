@@ -31,6 +31,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("D", "delete: Gloss view → current gloss · Journal view → Q&A (y/Esc confirm)"),
         ("V", "visual select rows (j/k/h/t extend)"),
         ("y", "yank selection or cursor row → clipboard"),
+        ("space", "loop the entry's source audio · armed: pause/resume"),
     ]),
     ("Prompt (vim editor)", &[
         ("a", "from transcript: open the input in insert"),
