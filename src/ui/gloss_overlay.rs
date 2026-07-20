@@ -3003,6 +3003,14 @@ impl GlossOverlay {
         self.ask_host.card().close();
     }
 
+    /// Show/hide the full-bleed matting scrim independently. The add-vocab input
+    /// card is a small FLOATING strip that must sit ON TOP of the still-visible
+    /// reading card, not behind the opaque scrim that the reading overlays use —
+    /// so it calls `set_scrim_visible(false)` after showing its container.
+    pub fn set_scrim_visible(&self, visible: bool) {
+        self.scrim.set_visible(visible);
+    }
+
     pub fn set_position(&self, index: usize, total: usize) {
         self.gloss_pos.set((index, total));
         // Footer-LEFT label: the cross-gloss counter "Gloss N of M" for the

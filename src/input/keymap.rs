@@ -1378,6 +1378,14 @@ fn handle_add_vocab_key(
         return true;
     }
 
+    // Ctrl+Enter is an always-available submit (in addition to `:w`), so the
+    // reader never has to leave Insert to add the word — mirrors the ask-card
+    // vim editor's Ctrl+Enter submit.
+    if is_ctrl && (key_name == "Return" || key_name == "KP_Enter") {
+        crate::input::actions::vocab_add::submit(state);
+        return true;
+    }
+
     let Some(vk) = gtk_key_to_vim(key_name, key_char, is_ctrl) else {
         return true;
     };

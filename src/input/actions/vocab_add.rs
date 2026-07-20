@@ -12,9 +12,20 @@ pub(crate) fn open(state_rc: &Rc<RefCell<AppState>>) {
     if s.current_work.is_none() {
         return;
     }
-    let (cw, h) = crate::app::layout::overlay_card_size(&s);
+    // A single-word input needs a COMPACT card, not the full reading-card
+    // rectangle (overlay_card_size) the segment/gloss overlays use for
+    // paragraphs — that filled the whole screen. Size it to title chrome + one
+    // input row + the "-- INSERT --" footer, and cap the width so it reads as an
+    // input strip. The container is Align::Center, so this floats centered.
+    let (full_w, _) = crate::app::layout::overlay_card_size(&s);
+    let cw = full_w.min(560);
+    let h = 140;
     s.gloss_overlay
         .show_gloss_with_color("Add vocab word", "", cw, h, Some(&s.theme.root_color), &[]);
+    // Float the input strip ON TOP of the still-visible reading card — suppress
+    // the full-bleed matting scrim the reading overlays use (which blanks the
+    // reader). See [[project_picker_overlay_not_chain]].
+    s.gloss_overlay.set_scrim_visible(false);
     let (fill, fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
     s.gloss_overlay.set_edit_copy_only(false); // saving IS allowed here
     s.gloss_overlay.enter_edit_buffer("", &fill, &fg);
