@@ -1761,11 +1761,13 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
     // act on) from the owner. An empty `journal_list` has no landable widget,
     // so it falls back to plain scrolling like Question.
     //
-    // Question is a flat, uncycled view with no row_cursor/row_owner of its
-    // own — it doesn't go through `render_transcript` (it uses
-    // `render_current_question`, plain `render_rows`, no accent bar). A
-    // single Q&A is rarely taller than the panel, and even when it is, plain
-    // scrolling reads it fully — j/k just scrolls.
+    // Question now steps the SAME widget-space `row_cursor` machinery as the
+    // Journal arm above, but over `build_single_exchange_rows` for just the
+    // one exchange at `s.chat.cursor` (Q: row + one widget per answer
+    // paragraph) — it renders via `render_current_question`'s
+    // `render_paginated` path (accent bar, `s.chat.pages`/`page_idx`
+    // authoritative), not `render_transcript`. Falls back to plain scrolling
+    // only when there is no exchange at the cursor or nothing landable.
     if s.chat.view == PanelView::Journal {
         let len = s.chat.journal_list.len();
         if len == 0 {
@@ -1799,7 +1801,30 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         return;
     }
     if s.chat.view == PanelView::Question {
-        s.chat_panel.scroll_transcript_step(delta as f64);
+        let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        };
+        // Same widget-space stepping as the Journal arm, over this ONE
+        // exchange's rows (Q: row + one widget per answer paragraph).
+        // s.chat.pages/page_idx are authoritative — the last Question render
+        // (render_paginated) computed them for exactly these rows.
+        let rows = build_single_exchange_rows(e);
+        let landable = landable_mask(&rows);
+        if !landable.iter().any(|&l| l) {
+            s.chat_panel.scroll_transcript_step(delta as f64);
+            return;
+        }
+        let (new_cursor, new_page) = crate::ui::chat_pagination::step_cursor_paged(
+            s.chat.row_cursor,
+            delta,
+            s.chat.page_idx,
+            &s.chat.pages,
+            &landable,
+        );
+        s.chat.row_cursor = new_cursor;
+        s.chat.page_idx = new_page;
+        render_current_question(s);
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
@@ -1833,9 +1858,11 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
 /// `journal_cursor` to
 /// entry 0 and re-renders (or, on an empty `journal_list`, falls back to a
 /// plain scroll-to-top — there is no entry to land on). In
-/// `PanelView::Question` (no row cursor — see `transcript_cursor_move`'s
-/// guard) this is a plain scroll-to-top, mirroring how `j`/`k` degrade to
-/// scrolling in that view.
+/// `PanelView::Question` this instead lands the row cursor on the first
+/// landable widget of the current exchange's rows — the `Q:` row — via
+/// `render_current_question` (same `build_single_exchange_rows` source as
+/// `transcript_cursor_move`), falling back to a plain scroll-to-top only when
+/// there is no exchange at the cursor or nothing landable.
 pub(crate) fn transcript_cursor_first(s: &mut AppState) {
     if s.chat.view == PanelView::Journal {
         if !s.chat.journal_list.is_empty() {
@@ -1847,7 +1874,19 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
         return;
     }
     if s.chat.view == PanelView::Question {
-        s.chat_panel.scroll_transcript_to_edge(false);
+        let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+            s.chat_panel.scroll_transcript_to_edge(false);
+            return;
+        };
+        let rows = build_single_exchange_rows(e);
+        let landable = landable_mask(&rows);
+        let Some(first) = landable.iter().position(|&l| l) else {
+            s.chat_panel.scroll_transcript_to_edge(false);
+            return;
+        };
+        s.chat.row_cursor = first;
+        s.chat.page_idx = 0;
+        render_current_question(s);
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
@@ -1872,8 +1911,10 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
 /// `G` on the transcript: symmetric counterpart to `transcript_cursor_first`
 /// — moves the row cursor to the LAST landable row (Gloss view), moves
 /// `journal_cursor` to the last entry (Journal view, or falls back to
-/// scroll-to-bottom when `journal_list` is empty), or scrolls to the bottom
-/// (Question view).
+/// scroll-to-bottom when `journal_list` is empty), or (Question view) lands
+/// the row cursor on the last landable widget of the current exchange's rows,
+/// falling back to scroll-to-bottom only when there is no exchange at the
+/// cursor or nothing landable.
 pub(crate) fn transcript_cursor_last(s: &mut AppState) {
     if s.chat.view == PanelView::Journal {
         let len = s.chat.journal_list.len();
@@ -1886,7 +1927,19 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
         return;
     }
     if s.chat.view == PanelView::Question {
-        s.chat_panel.scroll_transcript_to_edge(true);
+        let Some(e) = s.chat.exchanges.get(s.chat.cursor) else {
+            s.chat_panel.scroll_transcript_to_edge(true);
+            return;
+        };
+        let rows = build_single_exchange_rows(e);
+        let landable = landable_mask(&rows);
+        let Some(last) = landable.iter().rposition(|&l| l) else {
+            s.chat_panel.scroll_transcript_to_edge(true);
+            return;
+        };
+        s.chat.row_cursor = last;
+        s.chat.page_idx = s.chat.pages.len().saturating_sub(1);
+        render_current_question(s);
         return;
     }
     let (rows, _cursor_row, row_owner) = transcript_rows(s);
@@ -1925,12 +1978,13 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
 /// check only fires in that all-unlandable case, and exists purely so `V`
 /// cannot anchor a selection on a speaker label by construction.
 pub(crate) fn toggle_transcript_visual(s: &mut AppState) {
-    // No row_cursor/row_owner axis in Journal or Question view (see
-    // `transcript_cursor_move`'s same guard) — `V` has nothing to anchor a
-    // selection over there, so it's a no-op rather than silently entering a
-    // selection state that `y`/render_transcript would then act on over the
-    // WRONG (Gloss-view, whole-`exchanges`) content instead of what's on
-    // screen.
+    // Journal has no row_cursor/row_owner axis, and Question now HAS a row
+    // cursor (see `transcript_cursor_move`) but `V` stays scoped to the Gloss
+    // transcript regardless — a single Q&A's visual-selection semantics are
+    // deliberately not defined here, so it's a no-op rather than silently
+    // entering a selection state that `y`/render_transcript would then act on
+    // over the WRONG (Gloss-view, whole-`exchanges`) content instead of
+    // what's on screen.
     if s.chat.view == PanelView::Journal || s.chat.view == PanelView::Question {
         crate::logging::log("CHAT-VISUAL: V ignored (journal/question view)");
         return;
@@ -1997,8 +2051,10 @@ pub(crate) fn exit_transcript_visual(s: &mut AppState) -> bool {
 /// `landable_mask`, which gates j/k/V-anchor landing, not what `V`+`y` copies
 /// once spanned.
 pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
-    // Journal and Question views have no row_cursor/row_owner axis (see
-    // `transcript_cursor_move`'s guard) — `y` would otherwise copy whatever
+    // Journal has no row_cursor/row_owner axis, and Question now HAS a row
+    // cursor (see `transcript_cursor_move`) but `y` stays scoped to the Gloss
+    // transcript regardless — a single Q&A's yank semantics are deliberately
+    // not defined here. Without this guard `y` would otherwise copy whatever
     // stale Gloss-view row_cursor points at (from the whole `exchanges`
     // list), silently yanking content that isn't even the one on screen.
     if matches!(state_rc.borrow().chat.view, PanelView::Journal | PanelView::Question) {
