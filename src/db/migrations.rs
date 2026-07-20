@@ -304,3 +304,184 @@ pub fn ensure_journal_audio_table(conn: &Connection) -> Result<(), rusqlite::Err
              ON journal_audio(entry_id);"
     ))
 }
+
+/// Generic marker table for one-shot migrations/cleanups that must run
+/// exactly once ever, across the DB's whole lifetime — as opposed to the
+/// `ensure_*` DDL probes above, which are safe to re-run every launch because
+/// `CREATE TABLE IF NOT EXISTS` / column-existence checks are naturally
+/// idempotent. A cleanup like `purge_stale_passage_journal_audio` is NOT: its
+/// WHERE clause matches a durable data shape (passage-scope entries with
+/// source_text), so re-running it on every launch would delete legitimate
+/// rows created after the first run, not just the originally-stale ones.
+pub fn ensure_one_time_migrations_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS one_time_migrations (
+             key         TEXT PRIMARY KEY,
+             applied_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+         )",
+    )
+}
+
+/// Marker key claimed by `purge_stale_passage_journal_audio` so the cleanup
+/// below runs exactly once across the DB's lifetime.
+const PURGE_PASSAGE_JOURNAL_AUDIO_KEY: &str = "purge-passage-journal-audio-2026-07-20";
+
+/// One-time cleanup for the verse-source paragraph-regrouping fix (commit
+/// 9ac15c5e): that change collapsed a passage Q&A's quoted `<verse>`/`<stage>`
+/// source lines from one-paragraph-per-line into a single multi-line
+/// paragraph, shifting every `paragraph_index` at and after the source block
+/// for that entry. `journal_audio` has no stored text/hash to validate a
+/// cache hit against (see JOURNAL_AUDIO_COLUMNS) — both playback paths
+/// (`play_journal_block`, `find_cached_journal_block_audio` in
+/// src/input/actions/gloss.rs) serve strictly by (entry_id, paragraph_index,
+/// voice_id), so any passage entry with cached audio synthesized before the
+/// regrouping would silently replay a stale take at the collided index
+/// forever. Passage-scope entries with a non-null `source_text` are exactly
+/// the ones whose paragraph layout changed; delete their cached rows so
+/// `find_journal_audio` misses and `play_journal_block` re-synthesizes
+/// on demand (mirrors `purge_journal_audio`'s delete-and-resynthesize
+/// contract, just scoped to the affected entries instead of one).
+///
+/// The WHERE clause is NOT naturally idempotent: it matches on the durable
+/// shape "passage entry with source_text", so a fresh passage Q&A answered
+/// (and its audio re-synthesized) after the first run would match the SAME
+/// clause on the next launch and get deleted again — silently re-billing
+/// ElevenLabs synthesis forever. This fn claims a persistent marker in
+/// `one_time_migrations` (caller must `ensure_one_time_migrations_table`
+/// first) before deleting anything; if the marker was already claimed by a
+/// prior run, it returns `Ok(0)` without touching `journal_audio` at all.
+pub fn purge_stale_passage_journal_audio(conn: &Connection) -> Result<usize, rusqlite::Error> {
+    let claimed = conn.execute(
+        "INSERT OR IGNORE INTO one_time_migrations (key) VALUES (?1)",
+        [PURGE_PASSAGE_JOURNAL_AUDIO_KEY],
+    )?;
+    if claimed == 0 {
+        // Marker already present from a prior run — already applied, skip.
+        return Ok(0);
+    }
+    conn.execute(
+        "DELETE FROM journal_audio
+         WHERE entry_id IN (
+             SELECT id FROM journal_entries
+             WHERE scope = 'passage' AND source_text IS NOT NULL
+         )",
+        [],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal in-memory `journal_entries` shape (only the columns the purge
+    /// query reads) so the test doesn't depend on the full production DDL in
+    /// db/journal.rs.
+    fn make_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE journal_entries (
+                id          INTEGER PRIMARY KEY,
+                scope       TEXT NOT NULL DEFAULT 'scene',
+                source_text TEXT
+            );",
+        )
+        .unwrap();
+        ensure_journal_audio_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        conn
+    }
+
+    fn insert_entry(conn: &Connection, id: i64, scope: &str, source_text: Option<&str>) {
+        conn.execute(
+            "INSERT INTO journal_entries (id, scope, source_text) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, scope, source_text],
+        )
+        .unwrap();
+    }
+
+    fn insert_audio(conn: &Connection, entry_id: i64, paragraph_index: i64) {
+        conn.execute(
+            "INSERT INTO journal_audio (entry_id, paragraph_index, audio_path, voice_id, model_id)
+             VALUES (?1, ?2, '/tmp/x.mp3', 'voice1', 'eleven_v3')",
+            rusqlite::params![entry_id, paragraph_index],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn purge_deletes_only_passage_entries_with_source_text() {
+        let conn = make_test_db();
+
+        // Entry 1: passage scope with quoted verse source — affected.
+        insert_entry(&conn, 1, "passage", Some("<verse>a</verse>\n<verse>b</verse>"));
+        insert_audio(&conn, 1, 0);
+        insert_audio(&conn, 1, 1);
+
+        // Entry 2: scene-scope Q&A — never had a source block, unaffected.
+        insert_entry(&conn, 2, "scene", None);
+        insert_audio(&conn, 2, 0);
+
+        // Entry 3: passage scope but no source_text (e.g. a non-verse passage
+        // note) — paragraph layout never shifted, unaffected.
+        insert_entry(&conn, 3, "passage", None);
+        insert_audio(&conn, 3, 0);
+
+        let deleted = purge_stale_passage_journal_audio(&conn).unwrap();
+        assert_eq!(deleted, 2);
+
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM journal_audio", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 2);
+
+        let entry1_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM journal_audio WHERE entry_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(entry1_rows, 0);
+    }
+
+    #[test]
+    fn purge_is_marker_guarded_and_spares_fresh_rows_after_first_run() {
+        let conn = make_test_db();
+        insert_entry(&conn, 1, "passage", Some("<verse>a</verse>"));
+        insert_audio(&conn, 1, 0);
+
+        assert_eq!(purge_stale_passage_journal_audio(&conn).unwrap(), 1);
+
+        // A fresh passage Q&A is answered (and its audio synthesized) AFTER
+        // the first run — entry 2 matches the exact same WHERE clause as
+        // entry 1 did (passage scope, non-null source_text).
+        insert_entry(&conn, 2, "passage", Some("<verse>c</verse>"));
+        insert_audio(&conn, 2, 0);
+
+        // Second run must short-circuit on the marker (0 deleted), NOT
+        // re-run the DELETE — otherwise it would match and wipe entry 2's
+        // brand-new audio, re-billing synthesis on every launch.
+        assert_eq!(purge_stale_passage_journal_audio(&conn).unwrap(), 0);
+
+        let entry2_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM journal_audio WHERE entry_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(entry2_rows, 1, "fresh audio inserted after the first run must survive");
+    }
+
+    #[test]
+    fn purge_on_missing_journal_entries_table_is_a_query_error_not_a_panic() {
+        // ensure_journal_audio_table alone (no journal_entries table) mirrors
+        // a theoretical DB where journal_audio was created before journal
+        // entries ever existed. The caller (`BOOKMARKS_INIT`) already treats
+        // this fn's Result as `let _ =`, matching every other ensure_* call.
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_journal_audio_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        assert!(purge_stale_passage_journal_audio(&conn).is_err());
+    }
+}

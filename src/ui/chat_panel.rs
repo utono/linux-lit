@@ -100,8 +100,9 @@ impl ChatPanel {
         // padding on the row's own CSS class — a Box spacing would add itself
         // to all of them and no per-row rule could take it back.
         let transcript_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        // Reader font, slightly smaller than the main card (theme.rs sets
-        // .chat-transcript to font_size - 2pt); the row labels inherit it.
+        // Reader font at the main card's size (theme.rs sets .chat-transcript
+        // to the reader font_size — the historical -2pt shrink was removed);
+        // the row labels inherit it.
         transcript_box.add_css_class("chat-transcript");
         let transcript_scroll = gtk4::ScrolledWindow::new();
         transcript_scroll.add_css_class("chat-transcript-scroll");

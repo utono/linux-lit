@@ -174,8 +174,11 @@ fn paragraph_texts(full: &str) -> Vec<String> {
 }
 
 /// Which buffer lines the prepended source paragraphs occupy, by role.
-/// Paragraphs render joined by "\n\n", so paragraph `i` is buffer line `2*i`.
-/// Order of source paragraphs is: `[speaker?] verse+ [citation?] separator`.
+/// Paragraphs render joined by "\n\n", so paragraph `i` starts one blank line
+/// after paragraph `i-1` ends. The verse paragraph is a single `\n`-joined
+/// block, so it spans MULTIPLE buffer lines — `verse_lines` lists each of them
+/// (the hang-indent tag is applied per line). Order of source paragraphs is:
+/// `[speaker?] verse [citation?] separator`.
 struct SourceLineRoles {
     speaker_line: Option<i32>,
     verse_lines: Vec<i32>,
@@ -183,27 +186,44 @@ struct SourceLineRoles {
     separator_line: i32,
 }
 
-/// Map the `count` leading source paragraphs to their buffer lines by role.
-/// `has_speaker`/`has_citation` say whether the first paragraph is a speaker
-/// label and whether the paragraph before the trailing `———` is a citation.
-fn source_line_roles(count: usize, has_speaker: bool, has_citation: bool) -> SourceLineRoles {
-    let line = |para_idx: usize| (para_idx * 2) as i32;
+/// Map the leading source paragraphs to their buffer lines by role. `paras` are
+/// the source paragraph TEXTS (the first `source_para_count` of
+/// `all_paragraphs`), each possibly multi-line (`\n`-joined). Paragraphs render
+/// joined by "\n\n"; the start line of paragraph `i` is the sum of every prior
+/// paragraph's line count plus one blank separator line each. `has_speaker`/
+/// `has_citation` say whether the first paragraph is a speaker label and whether
+/// the paragraph before the trailing `———` is a citation.
+fn source_line_roles(paras: &[String], has_speaker: bool, has_citation: bool) -> SourceLineRoles {
+    let count = paras.len();
+    // Buffer start line of each source paragraph: paragraph i starts after all
+    // prior paragraphs' lines plus one blank line separating each from the next.
+    let mut starts: Vec<i32> = Vec::with_capacity(count);
+    let mut line = 0i32;
+    for p in paras {
+        starts.push(line);
+        let para_lines = p.split('\n').count() as i32;
+        line += para_lines + 1; // +1 for the blank separator line
+    }
     let last = count - 1; // separator is always the last source paragraph
-    let separator_line = line(last);
+    let separator_line = starts[last];
     let citation_para = if has_citation { Some(last - 1) } else { None };
     let speaker_para = if has_speaker { Some(0usize) } else { None };
     let first_verse = if has_speaker { 1 } else { 0 };
-    // Verse runs up to (but not including) the citation, else the separator.
-    let last_verse = citation_para.unwrap_or(last).saturating_sub(1);
-    let verse_lines = if last_verse >= first_verse {
-        (first_verse..=last_verse).map(line).collect()
-    } else {
-        Vec::new()
+    // The verse block is the single paragraph before the citation (else the
+    // separator). Expand it to every buffer line it spans so the hang-indent
+    // tag lands on each quoted line.
+    let verse_para = citation_para.unwrap_or(last).checked_sub(1);
+    let verse_lines = match verse_para {
+        Some(vp) if vp >= first_verse => {
+            let n = paras[vp].split('\n').count() as i32;
+            (starts[vp]..starts[vp] + n).collect()
+        }
+        _ => Vec::new(),
     };
     SourceLineRoles {
-        speaker_line: speaker_para.map(line),
+        speaker_line: speaker_para.map(|p| starts[p]),
         verse_lines,
-        citation_line: citation_para.map(line),
+        citation_line: citation_para.map(|p| starts[p]),
         separator_line,
     }
 }
@@ -1349,7 +1369,9 @@ impl JournalOverlay {
     /// centered separator. No-op off page 0 or when there is no source block.
     /// Runs after `set_text` (like `apply_hi_color`), applying tags by buffer
     /// line. The source paragraphs are the first `source_para_count` entries of
-    /// `all_paragraphs`, joined by "\n\n", so paragraph i is buffer line 2*i.
+    /// `all_paragraphs`, joined by "\n\n"; `source_line_roles` maps each to its
+    /// buffer line(s) from the paragraph texts (the verse block is one
+    /// `\n`-joined paragraph spanning several lines).
     fn apply_source_style(&self) {
         if self.page_idx.get() != 0 {
             return;
@@ -1395,11 +1417,13 @@ impl JournalOverlay {
                     .build(),
             );
         }
+        let paras = self.all_paragraphs.borrow();
         let roles = source_line_roles(
-            count,
+            &paras[..count.min(paras.len())],
             self.source_has_speaker.get(),
             self.source_has_citation.get(),
         );
+        drop(paras);
         let apply_line = |name: &str, line: i32| {
             if let Some(tag) = table.lookup(name) {
                 let Some(start) = buffer.iter_at_line(line) else {
@@ -2363,24 +2387,50 @@ mod prefix_question_tests {
 mod source_line_roles_tests {
     use super::source_line_roles;
 
+    fn p(s: &str) -> Vec<String> {
+        s.split('|').map(|x| x.to_string()).collect()
+    }
+
     #[test]
     fn maps_paragraphs_to_buffer_lines() {
-        // 6 source paras: speaker, v1, v2, v3, citation, ———
-        let roles = source_line_roles(6, true, true);
+        // 4 source paras: speaker, verse(3-line block), citation, ———.
+        // Rendered joined by "\n\n":
+        //   0 speaker
+        //   1 blank
+        //   2 v1   3 v2   4 v3   (the one verse paragraph, 3 lines)
+        //   5 blank
+        //   6 citation
+        //   7 blank
+        //   8 ———
+        let paras = p("SPEAKER|v1\nv2\nv3|— cite|———");
+        let roles = source_line_roles(&paras, true, true);
         assert_eq!(roles.speaker_line, Some(0));
-        assert_eq!(roles.verse_lines, vec![2, 4, 6]); // buffer lines 2,4,6
-        assert_eq!(roles.citation_line, Some(8)); // 5th para -> line 8
-        assert_eq!(roles.separator_line, 10); // 6th para -> line 10
+        assert_eq!(roles.verse_lines, vec![2, 3, 4]);
+        assert_eq!(roles.citation_line, Some(6));
+        assert_eq!(roles.separator_line, 8);
     }
 
     #[test]
     fn no_speaker_no_citation() {
-        // 2 source paras: v1, ———
-        let roles = source_line_roles(2, false, false);
+        // 2 source paras: verse(1-line block), ———.
+        let paras = p("v1|———");
+        let roles = source_line_roles(&paras, false, false);
         assert_eq!(roles.speaker_line, None);
         assert_eq!(roles.verse_lines, vec![0]);
         assert_eq!(roles.citation_line, None);
         assert_eq!(roles.separator_line, 2);
+    }
+
+    #[test]
+    fn multi_line_verse_no_speaker_with_citation() {
+        // 3 source paras: verse(2-line block), citation, ———.
+        //   0 v1  1 v2  2 blank  3 citation  4 blank  5 ———
+        let paras = p("v1\nv2|— cite|———");
+        let roles = source_line_roles(&paras, false, true);
+        assert_eq!(roles.speaker_line, None);
+        assert_eq!(roles.verse_lines, vec![0, 1]);
+        assert_eq!(roles.citation_line, Some(3));
+        assert_eq!(roles.separator_line, 5);
     }
 }
 
