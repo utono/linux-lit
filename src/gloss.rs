@@ -187,7 +187,7 @@ Keep the body paragraphs short. Each body paragraph should run two to four sente
 
 NEVER quote the source text. Do not reproduce any wording from the work's prose or verse, whether inside quotation marks or not, and do not set off phrases from the text in quotes. Refer to moments, images, and speeches by describing or paraphrasing them in your own words. (Proper nouns — the work's title, place names, and character names — are not source quotation and may be used normally.) If a precise phrase from the text seems essential, paraphrase its sense rather than reproducing it.
 
-Write for a thoughtful reader: clear, specific, and concrete. No markdown, no bullet lists, no numbered lists, no headers — flowing prose paragraphs only. Do not use the = sign; write paraphrases as prose. Be substantive but not padded.";
+Write for a thoughtful reader: clear, specific, and concrete. No markdown, no bullet lists, no numbered lists, no headers — flowing prose paragraphs only. Do not use the = sign; write paraphrases as prose. Set the title of any work you cite in quotation marks — \"Paradise Lost\" — never in asterisks or any other italics markup, and never bare. Be substantive but not padded.";
     let (genre, unit, units) = genre_unit(work_type);
     template_or("journal.qa", FALLBACK)
         .replace("{genre}", genre)

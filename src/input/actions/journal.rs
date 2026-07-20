@@ -91,6 +91,9 @@ device, rhetorical figure, or term of art (e.g. conceit, ironize, metonymy, or \
 a legal or prosodic term) — gloss it briefly in a parenthetical the first time, \
 so the student learns the vocabulary as they read (e.g. \"ironize (turn against \
 itself)\", \"conceit (an extended, ingenious metaphor)\").\n\
+Set the title of any work the question cites in quotation marks — \
+\"Paradise Lost\" — never in asterisks or any other italics markup, and \
+never bare.\n\
 {terms}\n\
 Return ONLY the improved question as a single line of plain text — no preamble, \
 no quotes, no markdown, no explanation.";
