@@ -144,6 +144,10 @@ pub enum Action {
     AddVocabWord,
     ToggleGlossOverlay,
     ToggleJournalOverlay,
+    /// Ctrl+Alt+g: toggle the main-card tint on lines covered by a
+    /// reader-gloss or journal passage Q&A. Persisted in config
+    /// (`annotation_tint`); segments recolor immediately.
+    ToggleAnnotationTint,
     /// Reader-only: reopen whichever of the gloss/journal overlays was last
     /// open (fresh from the cursor). No-op with a toast if none remembered.
     /// Overlays themselves close via Escape only.
@@ -320,6 +324,7 @@ impl Action {
             | Action::AddVocabWord
             | Action::ToggleGlossOverlay
             | Action::ToggleJournalOverlay
+            | Action::ToggleAnnotationTint
             | Action::ToggleLastOverlay
             | Action::CycleSegmentOverlays
             | Action::OpenJournalPicker
@@ -474,6 +479,7 @@ impl Action {
             Action::AddVocabWord => "AddVocabWord",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
             Action::ToggleJournalOverlay => "ToggleJournalOverlay",
+            Action::ToggleAnnotationTint => "ToggleAnnotationTint",
             Action::ToggleLastOverlay => "ToggleLastOverlay",
             Action::CycleSegmentOverlays => "CycleSegmentOverlays",
             Action::OpenJournalPicker => "OpenJournalPicker",

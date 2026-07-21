@@ -55,7 +55,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "phrase hl"), ("C-p", "Q&A page \u{25b2}")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "term filter", "", &[("M-f", "font info"), ("C-f", "corpus search")]),
-    key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick")]),
+    key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("C-M-g", "annot tint")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "prev work")]),
     key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
@@ -68,7 +68,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[("C-o", "last overlay")]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
-    key("u", "U", "start time", "U: undo ts", &[("M-u", "scansion")]),
+    key("u", "U", "", "U: undo ts", &[("M-u", "scansion")]),
     key("i", "I", "2-col translation", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-M-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "", "dlg fwd", "", &[("C-h", "synopsis")]),
@@ -85,7 +85,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("j", "J", "next speaker", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
     key("k", "K", "prev speaker", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
-    bare("b", "B", ""),
+    bare("b", "B", "start time"),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "vim copy", "V: visual mode", &[]),
@@ -305,6 +305,9 @@ via `-`, not Tab). From inside the panel, Tab focuses the reader again; in the \
 transcript j/h move down, k/t move up, `\\` toggles gloss ↔ journal, `-` \
 closes. — src/input/keymap.rs (reader section) + src/input/actions/chat.rs",
         "gloss tog" => "Action::ToggleGlossOverlay — src/input/actions/gloss.rs",
+        "annot tint" => "Action::ToggleAnnotationTint (toggle the main-card \
+tint on lines covered by a reader-gloss or journal passage Q&A; persisted in \
+config) — src/input/keymap.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
         "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
         "last overlay" => "Action::ToggleLastOverlay (reader only: reopens \
@@ -476,6 +479,7 @@ fn expand_action(label: &str) -> String {
         "conc picker" => "concordance picker",
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
+        "annot tint" => "toggle gloss/journal line tint",
         "gloss chat" => "reader-gloss chat at cursor",
         "gloss pick" => "gloss picker",
         "last gloss" => "reopen last gloss",

@@ -169,6 +169,10 @@ pub struct Config {
     pub elevenlabs_model_id: String,
     #[serde(default = "default_dim_enabled")]
     pub dim_enabled: bool,
+    /// Whether main-card lines covered by a reader-gloss or journal passage
+    /// Q&A are tinted (theme.reader_gloss). Ctrl+Alt+g toggles.
+    #[serde(default = "default_annotation_tint")]
+    pub annotation_tint: bool,
     #[serde(default = "default_scansion_level")]
     pub scansion_level: String,
     #[serde(default = "default_show_cursor_line")]
@@ -307,6 +311,10 @@ fn default_dim_enabled() -> bool {
     false
 }
 
+fn default_annotation_tint() -> bool {
+    true
+}
+
 fn default_scansion_level() -> String {
     "off".to_string()
 }
@@ -374,6 +382,7 @@ impl Default for Config {
             elevenlabs_voice_id: default_elevenlabs_voice_id(),
             elevenlabs_model_id: default_elevenlabs_model_id(),
             dim_enabled: default_dim_enabled(),
+            annotation_tint: default_annotation_tint(),
             scansion_level: default_scansion_level(),
             show_cursor_line: true,
             phrase_highlight_prose: PhraseHighlightMode::Phrase,

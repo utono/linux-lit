@@ -336,6 +336,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("Z"), Action::OpenConcordanceListPicker),
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
+        // Ctrl+Alt+g: toggle the reader-gloss/journal segment tint on the
+        // main card (rounds out the g gloss family).
+        (KeyCombo::ctrl_alt("g"), Action::ToggleAnnotationTint),
         // Ctrl+f: cross-corpus journal/gloss regex search popup. Also wired
         // directly (bypassing this table) from the journal/gloss overlay key
         // handlers, which short-circuit before reaching keymap.lookup.
@@ -381,7 +384,7 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // u/i plain binds are swapped (2026-07-11): i sets the start time,
         // u sets the start timestamp (swapped with i). Their modifier families
         // stay put (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
-        (KeyCombo::plain("u"), Action::SetStartTime),
+        (KeyCombo::plain("b"), Action::SetStartTime),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         // Authorship moved off Ctrl+a (now CloseChatLayout). plain("A") is the
         // shifted `a` (cf. plain("G") normalization above).
@@ -509,7 +512,7 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("a")), None);
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
-        assert_eq!(m.get(&KeyCombo::plain("u")), Some(&Action::SetStartTime));
+        assert_eq!(m.get(&KeyCombo::plain("b")), Some(&Action::SetStartTime));
         assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
         assert_eq!(m.get(&KeyCombo::alt("u")), Some(&Action::CycleScansion));
         assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::SetEndTime));

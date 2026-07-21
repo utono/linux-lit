@@ -4196,6 +4196,28 @@ fn dispatch_action(
             }
             crate::logging::log(&format!("VOCAB: highlighting {}", if s.vocab_highlight_visible { "on" } else { "off" }));
         }
+        ToggleAnnotationTint => {
+            let mut s = state.borrow_mut();
+            s.config.annotation_tint = !s.config.annotation_tint;
+            crate::config::save(&s.config);
+            // Recompute honors the new flag: clears the tint (and on-cursor
+            // variant) when off, re-derives the glossed/journal line set when
+            // on. update_highlight then swaps the cursor line to its on-cursor
+            // color.
+            crate::app::apply_reader_gloss_highlighting(&mut s);
+            if s.config.annotation_tint {
+                crate::input::highlight::update_highlight(&mut s);
+            }
+            let on = s.config.annotation_tint;
+            crate::input::navigation::show_chapter_toast(
+                &s,
+                if on { "Annotation tint on" } else { "Annotation tint off" },
+            );
+            crate::logging::log(&format!(
+                "ANNOT_TINT: {}",
+                if on { "on" } else { "off" }
+            ));
+        }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
         ToggleJournalOverlay => crate::input::actions::journal::toggle_overlay(state),
         ToggleLastOverlay => {

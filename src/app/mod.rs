@@ -4735,6 +4735,19 @@ pub fn apply_reader_gloss_highlighting(state: &mut AppState) {
         &state.buffer.end_iter(),
     );
 
+    // Tint toggled off (Ctrl+Alt+g): leave the set empty so every repaint path
+    // (update_highlight, dim) is a no-op, and strip the on-cursor variant tag
+    // too — it is normally managed by repaint_reader_gloss_visible, which
+    // won't run with an empty set.
+    if !state.config.annotation_tint {
+        state.buffer.remove_tag(
+            &state.reader_gloss_cursor_tag,
+            &state.buffer.start_iter(),
+            &state.buffer.end_iter(),
+        );
+        return;
+    }
+
     let work = match state.current_work.as_ref() {
         Some(w) => w,
         None => return,
