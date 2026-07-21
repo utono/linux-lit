@@ -1445,11 +1445,11 @@ pub fn generate_css(
             `chat_first_line_top_margin`). Bottom keeps its 16px breathing room. */ \
          .chat-transcript {{ font-family: {font}; font-size: {size}pt; \
            padding-right: 14px; padding-top: 0px; padding-bottom: 16px; }} \
-         /* padding-right keeps the row text clear of the cursor accent bar \
-            (.chat-cursor-row's inset -3px box-shadow paints at the label's \
-            right edge): 6px pad − 3px bar = a 3px gap. Applied to EVERY row \
-            (not just the cursor row) so a cursor move never rewraps text. \
-            MIRRORED by chat_panel::transcript_wrap_width — keep in sync. */ \
+         /* padding-right gives every row a little clearance at the label's \
+            right edge (it originally cleared the since-removed cursor accent \
+            bar). Applied to EVERY row (not just the cursor row) so a cursor \
+            move never rewraps text. MIRRORED by \
+            chat_panel::transcript_wrap_width — keep in sync. */ \
          .chat-transcript label {{ padding-bottom: 3px; padding-right: 6px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
@@ -1596,13 +1596,14 @@ pub fn generate_css(
             background wash makes a bare-on-root Answer/Question row (no \
             indent of its own) still read as the current line, not just a \
             thin rule. */ \
-         /* Cursor row: the inset accent bar alone marks it — NO background \
-            wash (it read as a distracting highlight over the cursor segment; \
-            the bar suffices, matching the reading card's own cursor cue). \
-            The bar insets from the RIGHT edge (negative x offset) — the \
-            user wants it beside the segment's right side, clear of the \
-            panel's left border. */ \
-         .chat-cursor-row {{ box-shadow: inset -3px 0 0 {cursor_bg}; }} \
+         /* Cursor row: washed with the MAIN CARD's karaoke tint \
+            (phrase_highlight_bg — the active root color at the theme's \
+            karaoke alpha), replacing the earlier inset right accent bar: the \
+            user wants the cursor segment to read exactly like the card's \
+            spoken-phrase highlight. Follows root-variant cycling because \
+            apply_theme_to_state regenerates this CSS with the re-derived \
+            tint. */ \
+         .chat-cursor-row {{ background-color: {phrase_bg}; }} \
          /* V panel-local visual selection (chat panel's own y yank -
             distinct from the reader's AppState.visual_selection, a
             different space entirely). Reuses selection_bg, the SAME blue
@@ -1610,9 +1611,9 @@ pub fn generate_css(
             synopsis/journal hi marker already use, so a selected row reads
             as selected in the same color everywhere in the app.
             chat-cursor-row may paint on the SAME widget as the anchor/
-            single-row-selection case; the two backgrounds simply layer
-            (cursor's box-shadow accent bar stays on top), so no override
-            is needed. */ \
+            single-row-selection case; both rules set background-color at
+            equal specificity, so THIS later rule wins on such a widget and
+            the row reads as selected — intended. */ \
          .chat-visual-row {{ background-color: {selection_bg}; }} \
          /* `y` copy-confirmation flash (replaces the old \"Copied N lines\" \
             toast): a brief wash on the ROW(S) actually copied, reusing \
@@ -1625,11 +1626,11 @@ pub fn generate_css(
             .chat-transcript label rule (implicit, inherited) has no \
             transition of its own - so add scripted `remove_css_class` after \
             160ms is a hard cut, not a fade. Kept quiet (low alpha, no \
-            border/shadow) so it does not fight `.chat-cursor-row`'s inset \
-            accent bar or `.chat-visual-row`'s selection wash when a flashed \
-            row is ALSO the cursor row or in the just-cleared selection - the \
-            three backgrounds simply layer like chat-cursor-row/chat-visual-row \
-            already do (see that comment above). */ \
+            border/shadow) so it does not fight `.chat-cursor-row`'s karaoke \
+            wash or `.chat-visual-row`'s selection wash when a flashed row is \
+            ALSO the cursor row or in the just-cleared selection - being the \
+            LAST of the three equal-specificity background rules, it wins \
+            for the flash's 160ms, then the underlying class shows again. */ \
          .chat-flash-row {{ background-color: alpha({cursor_bg}, 0.22); \
            transition: none; }} \
          .chat-input {{ background-color: {bg}; \
@@ -1694,6 +1695,7 @@ pub fn generate_css(
         // contrast_on(root_color), correct only while the Pinned panel was
         // transparent-over-root.)
         chat_ink = theme.text_fg,
+        phrase_bg = theme.phrase_highlight_bg,
         divider_bottom = divider_bottom_px,
         q_body = CHAT_QUOTE_BODY_INDENT,
         q_speaker = CHAT_QUOTE_SPEAKER_INDENT,
