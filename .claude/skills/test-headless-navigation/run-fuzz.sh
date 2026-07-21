@@ -60,9 +60,13 @@ echo "[fuzz] building…" >&2
 cargo build >&2 || { echo "build failed" >&2; exit 1; }
 
 # Private DB copy — sharing lit.db with a live session causes SQLite lock
-# contention that stalls the fuzz right after the first scene jump.
+# contention that stalls the fuzz right after the first scene jump. Use
+# sqlite3's online .backup, not cp: a raw cp of a WAL database mid-write by a
+# live session yields a torn copy ("malformed database schema ... invalid
+# rootpage") and the app aborts at startup.
 echo "[fuzz] copying DB → $DB_COPY" >&2
-cp "$DB_SRC" "$DB_COPY" || { echo "DB copy failed" >&2; exit 1; }
+rm -f "$DB_COPY" "$DB_COPY-wal" "$DB_COPY-shm"
+sqlite3 "$DB_SRC" ".backup '$DB_COPY'" || { echo "DB copy failed" >&2; exit 1; }
 : > "$LOG"
 
 RT="$(mktemp -d)"
