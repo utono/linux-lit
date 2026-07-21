@@ -765,6 +765,13 @@ pub(crate) fn reader_gloss_chat_at_cursor(
         crate::input::actions::chat::close_chat_layout(&mut state_rc.borrow_mut());
         return;
     }
+    // Prose: `-` routes to the gloss OVERLAY, not the chat panel — open the
+    // gloss covering the cursor, or background-gloss the cursor paragraph
+    // (toast) and open the overlay when the gloss lands.
+    if state_rc.borrow().is_prose() {
+        crate::input::actions::gloss::prose_gloss_overlay_at_cursor(state_rc);
+        return;
+    }
     let span = crate::input::actions::gloss::reader_gloss_passage_at_cursor(&state_rc.borrow());
     let Some((start, end)) = span else {
         let s = state_rc.borrow();

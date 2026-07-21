@@ -3075,6 +3075,15 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// passage covers the cursor. Saves `gloss_return_pos` from the current
 /// reader position so Escape/cycle-advance can restore it.
 pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
+    if !try_open_gloss_at_cursor(state) {
+        show_tts_toast(state, "No gloss on this line");
+    }
+}
+
+/// The open half of `open_gloss_at_cursor` without the miss toast: returns
+/// false (opening nothing) when no glossed passage covers the cursor, so the
+/// prose `-` path can fall through to background glossing instead of toasting.
+pub(crate) fn try_open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
     const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
 
     // Resolve the cursor line -> its (work abbrev, (div1, div2, line_in_div)).
@@ -3082,27 +3091,15 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
         let s = state.borrow();
         let work = match s.current_work.as_ref() {
             Some(w) => w,
-            None => {
-                drop(s);
-                show_tts_toast(state, "No gloss on this line");
-                return;
-            }
+            None => return false,
         };
         let wl = match s.work_line_for_buffer(s.current_line) {
             Some(wl) => wl,
-            None => {
-                drop(s);
-                show_tts_toast(state, "No gloss on this line");
-                return;
-            }
+            None => return false,
         };
         let line = match work.lines.get(wl) {
             Some(l) => l,
-            None => {
-                drop(s);
-                show_tts_toast(state, "No gloss on this line");
-                return;
-            }
+            None => return false,
         };
         (
             // Glosses are STORED under the canonical base abbrev, so look them
@@ -3118,10 +3115,7 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     // cursor line. All read-only DB work happens before any state mutation.
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
-        Err(_) => {
-            show_tts_toast(state, "No gloss on this line");
-            return;
-        }
+        Err(_) => return false,
     };
     let passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, GLOSS_TYPES)
         .unwrap_or_default();
@@ -3134,10 +3128,7 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     });
     let (passage_index, passage) = match covering {
         Some((i, p)) => (i, p.clone()),
-        None => {
-            show_tts_toast(state, "No gloss on this line");
-            return;
-        }
+        None => return false,
     };
 
     let all_glosses = crate::db::queries::find_glosses_by_start(
@@ -3149,8 +3140,7 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     .unwrap_or_default();
 
     if all_glosses.is_empty() {
-        show_tts_toast(state, "No gloss on this line");
-        return;
+        return false;
     }
 
     // All resolution done; mutate state and open the overlay under one borrow.
@@ -3160,6 +3150,161 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     // Opened from the reader cursor, not the picker (from_picker = false): Escape
     // uses the saved reader page, not the picker return path.
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
+    true
+}
+
+/// Prose `-` (`ReaderGlossChatAtCursor` routed here by
+/// `visual::reader_gloss_chat_at_cursor`): open the gloss overlay on the
+/// gloss covering the cursor. When none exists, gloss the cursor paragraph in
+/// the BACKGROUND — reading continues under a "Glossing…" toast, and the
+/// overlay opens on the new gloss when the reply lands (unlike visual-mode
+/// gloss, which opens the overlay immediately on its loading card).
+pub(crate) fn prose_gloss_overlay_at_cursor(state: &Rc<RefCell<AppState>>) {
+    if try_open_gloss_at_cursor(state) {
+        return;
+    }
+    background_gloss_cursor_segment(state);
+}
+
+/// Gloss the cursor's paragraph block as a reader-gloss without opening any
+/// surface, then open the gloss overlay on the saved gloss. Guarded by
+/// `AppState.prose_gloss_pending` so a second `-` mid-flight cannot double-fire
+/// the paid API call.
+fn background_gloss_cursor_segment(state_rc: &Rc<RefCell<AppState>>) {
+    let prepared = {
+        let s = state_rc.borrow();
+        if s.prose_gloss_pending.get() {
+            crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 2);
+            return;
+        }
+        let block = crate::input::visual::cursor_block_bounds(&s);
+        let ctx = block.and_then(|(start, end)| {
+            let work = s.current_work.as_ref()?;
+            let lines: Vec<crate::db::models::Line> = (start..=end)
+                .filter_map(|bl| {
+                    s.work_line_for_buffer(bl)
+                        .and_then(|wi| work.lines.get(wi).cloned())
+                })
+                .collect();
+            crate::gloss::build_context_for_type(work, &lines, "reader-gloss")
+        });
+        match ctx {
+            Some(c) => Some((c, s.config.claude_model.clone())),
+            None => None,
+        }
+    };
+    let Some((ctx, model)) = prepared else {
+        show_tts_toast(state_rc, "Nothing to gloss here");
+        return;
+    };
+
+    {
+        let s = state_rc.borrow();
+        s.prose_gloss_pending.set(true);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 4);
+    }
+
+    let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
+    crate::logging::log(&format!(
+        "PROSE-GLOSS: background glossing {}-{} ({} neighbor(s))",
+        ctx.start_citation, ctx.end_citation, neighbors.len()
+    ));
+    let user_msg = crate::gloss::build_user_message(&ctx, None, None, &neighbors);
+
+    let model_for_db = model.clone();
+    let ctx_ok = ctx.clone();
+    let on_success = move |sr: &Rc<RefCell<AppState>>, reply: String| {
+        let open = {
+            let mut s = sr.borrow_mut();
+            s.prose_gloss_pending.set(false);
+            // Persists the row, reloads the chat-side gloss cache, and re-derives
+            // the glossed-line tint so the paragraph colors immediately.
+            let saved =
+                crate::input::actions::chat::save_reader_gloss(&mut s, &ctx_ok, &reply, &model_for_db);
+            if saved.is_none() {
+                crate::input::navigation::show_chapter_toast_secs(&s, "Gloss not saved", 3);
+                return;
+            }
+            // Only yank the user into the overlay from plain reading in the
+            // same work; anywhere else (another mode, another work), announce
+            // and let Ctrl+g open it.
+            let same_work = s
+                .current_work
+                .as_ref()
+                .map(|w| w.canonical_abbrev.as_str() == ctx_ok.work_abbrev)
+                .unwrap_or(false);
+            if s.input_mode == crate::app::InputMode::Reader && same_work {
+                true
+            } else {
+                crate::input::navigation::show_chapter_toast_secs(&s, "Gloss ready", 3);
+                false
+            }
+        };
+        if open {
+            open_gloss_overlay_by_start(sr, &ctx_ok.work_abbrev, &ctx_ok.start_citation);
+        }
+    };
+    let on_error = move |sr: &Rc<RefCell<AppState>>, e: &str| {
+        let s = sr.borrow();
+        s.prose_gloss_pending.set(false);
+        crate::input::navigation::show_chapter_toast_secs(&s, "Gloss failed", 3);
+        crate::logging::log(&format!("PROSE-GLOSS: API error: {}", e));
+    };
+
+    crate::input::actions::claude_bridge::run_claude_request(
+        state_rc,
+        (*crate::gloss::READER_GLOSS_PROMPT).clone(),
+        user_msg,
+        model,
+        on_success,
+        on_error,
+    );
+}
+
+/// Open the gloss overlay on the passage keyed by `start_citation` (the
+/// background-gloss completion path — the cursor may have moved since the
+/// request fired, so resolve by the glossed passage's own key, not the
+/// cursor). Newest-first ordering makes index 0 the just-saved reader-gloss.
+fn open_gloss_overlay_by_start(
+    state: &Rc<RefCell<AppState>>,
+    work_abbrev: &str,
+    start_citation: &str,
+) {
+    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let passages = crate::db::queries::find_glossed_passages(&conn, work_abbrev, GLOSS_TYPES)
+        .unwrap_or_default();
+    let Some(idx) = passages.iter().position(|p| p.start_citation == start_citation) else {
+        return;
+    };
+    let passage = passages[idx].clone();
+    let all_glosses = crate::db::queries::find_glosses_by_start(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+        GLOSS_TYPES,
+    )
+    .unwrap_or_default();
+    if all_glosses.is_empty() {
+        return;
+    }
+
+    let mut s = state.borrow_mut();
+    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    open_gloss_overlay(
+        &mut s,
+        passages,
+        idx,
+        passage,
+        all_glosses,
+        false,
+        Some("reader-gloss"),
+        true,
+    );
+    crate::logging::log("PROSE-GLOSS: opened overlay on background gloss");
 }
 
 /// Reopen whichever toggleable overlay (gloss/journal) was last open

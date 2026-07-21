@@ -345,6 +345,10 @@ pub struct AppState {
     pub content_hbox: gtk4::Box,
     /// Chat layout (Tab): card pinned right, left chat panel visible.
     pub chat_layout_open: bool,
+    /// Prose `-` background gloss in flight (`gloss::prose_gloss_overlay_at_cursor`).
+    /// A second `-` while set must not double-fire the paid API call — the
+    /// chat panel's twin guard is `chat.pending`, which this path never sets.
+    pub prose_gloss_pending: std::cell::Cell<bool>,
     /// Set by `chat::on_work_switched` when a work switch happened with the
     /// panel open: the panel's width hold was released immediately (so it
     /// can't inflate the window), and the real re-gate/resize is deferred
@@ -2031,6 +2035,7 @@ pub fn build_window(
         right_gutter_renderer: None,
         content_hbox: content_hbox.clone(),
         chat_layout_open: false,
+        prose_gloss_pending: std::cell::Cell::new(false),
         chat_regate_pending: false,
         chat_placement: crate::input::actions::chat::ChatPlacement::Pinned,
         vbox: vbox.clone(),
