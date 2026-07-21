@@ -254,35 +254,77 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
 
-/// `c` in the synopsis overlay: copy the current scene's `scene_synopses.id` to
-/// the clipboard and toast it, mirroring gloss `c` (gloss_id) and journal `c`
-/// (page id). Toasts "No synopsis id" when no row exists yet for the scene
-/// (e.g. a synopsis shown from cache that was never persisted).
+/// `c` in the synopsis overlay: copy a troubleshooting payload for the current
+/// scene's synopsis to the clipboard — work abbrev, work_type, scene/chapter
+/// key, `scene_synopses.id`, authoring model, and the litdb `api_prompts` key
+/// that generates this kind of synopsis (`synopsis.batch` for plays,
+/// `synopsis.chapter-tiered` for prose). Enough to run the litdb `synopses`
+/// skill's queries without re-deriving anything. When no row exists yet the
+/// scene context is still copied (a missing row needs the same key to debug).
 pub(crate) fn copy_synopsis_id(state: &Rc<RefCell<AppState>>) {
     let lookup = {
         let s = state.borrow();
         let (div1, div2) = s.synopsis_overlay_scene;
-        s.current_work
-            .as_ref()
-            .map(|w| (w.canonical_abbrev.clone(), div1, div2))
+        let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
+        s.current_work.as_ref().map(|w| {
+            (
+                w.canonical_abbrev.clone(),
+                w.title.clone(),
+                w.work_type.clone(),
+                div1,
+                div2,
+                label,
+            )
+        })
     };
-    let Some((abbrev, div1, div2)) = lookup else { return };
+    let Some((abbrev, title, work_type, div1, div2, label)) = lookup else { return };
 
-    let id = crate::db::queries::open_db()
+    let info = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::queries::synopsis_id(&conn, &abbrev, div1, div2).ok())
+        .and_then(|conn| {
+            crate::db::queries::synopsis_debug_info(&conn, &abbrev, div1, div2).ok()
+        })
         .flatten();
 
-    let msg = match id {
-        Some(id) => {
-            let s = id.to_string();
-            crate::ui::copy_to_clipboard(&s);
-            crate::logging::log(&format!("SYNOPSIS: copied id {} to clipboard", s));
-            format!("Copied id {}", s)
+    let prompt_key = if work_type == "play" {
+        "synopsis.batch"
+    } else {
+        "synopsis.chapter-tiered"
+    };
+    let (id_line, model_line, tiers_line) = match &info {
+        Some(i) => (
+            i.id.to_string(),
+            i.claude_model.clone().unwrap_or_else(|| "unset".into()),
+            if i.has_tiers { "present" } else { "absent" }.to_string(),
+        ),
+        None => ("none (no scene_synopses row)".into(), "n/a".into(), "n/a".into()),
+    };
+    let payload = format!(
+        "work_abbrev: {}\n\
+         title: {}\n\
+         work_type: {}\n\
+         scene: {} (div1={}, div2={})\n\
+         synopsis_id: {}\n\
+         claude_model: {}\n\
+         tiered gist/precis/account: {}\n\
+         batch prompt key (api_prompts): {}\n\
+         in-app revision prompt keys: synopsis.amend / synopsis.edit\n\
+         table: scene_synopses in ~/utono/litdb/data/lit.db\n\
+         skill: ~/utono/litdb/.claude/skills/synopses\n",
+        abbrev, title, work_type, label, div1, div2, id_line, model_line, tiers_line, prompt_key,
+    );
+    crate::ui::copy_to_clipboard(&payload);
+    let msg = match info {
+        Some(i) => {
+            crate::logging::log(&format!(
+                "SYNOPSIS: copied debug info (id {}) to clipboard",
+                i.id
+            ));
+            format!("Copied synopsis debug info (id {})", i.id)
         }
         None => {
-            crate::logging::log("SYNOPSIS: no synopsis id to copy");
-            "No synopsis id".to_string()
+            crate::logging::log("SYNOPSIS: copied debug info (no row) to clipboard");
+            "Copied synopsis debug info (no row)".to_string()
         }
     };
     crate::input::navigation::show_chapter_toast_secs(&state.borrow(), &msg, 2);

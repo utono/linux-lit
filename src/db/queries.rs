@@ -519,20 +519,38 @@ pub fn restore_synopsis_text(
     Ok(())
 }
 
-/// Look up the `scene_synopses.id` for a scene, keyed by `(work, div1, div2)`.
+/// Row facts the synopsis overlay's `c` (copy debug info) bind needs to
+/// troubleshoot the litdb prompts that created a synopsis: the row id, the
+/// authoring model, and whether the tiered prose columns
+/// (gist/precis/account) are populated.
+pub struct SynopsisDebugInfo {
+    pub id: i64,
+    pub claude_model: Option<String>,
+    pub has_tiers: bool,
+}
+
+/// Look up the `scene_synopses` row for a scene, keyed by `(work, div1, div2)`.
 /// Returns `None` when no synopsis row exists for that scene yet. Used by the
-/// synopsis overlay's `c` (copy id) bind, mirroring gloss `c` (gloss_id).
-pub fn synopsis_id(
+/// synopsis overlay's `c` (copy debug info) bind.
+pub fn synopsis_debug_info(
     conn: &Connection,
     work_abbrev: &str,
     div1: i64,
     div2: i64,
-) -> Result<Option<i64>, rusqlite::Error> {
+) -> Result<Option<SynopsisDebugInfo>, rusqlite::Error> {
     conn.query_row(
-        "SELECT id FROM scene_synopses \
+        "SELECT id, claude_model, \
+                (gist IS NOT NULL AND precis IS NOT NULL AND account IS NOT NULL) \
+         FROM scene_synopses \
          WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3",
         rusqlite::params![work_abbrev, div1, div2],
-        |row| row.get::<_, i64>(0),
+        |row| {
+            Ok(SynopsisDebugInfo {
+                id: row.get(0)?,
+                claude_model: row.get(1)?,
+                has_tiers: row.get(2)?,
+            })
+        },
     )
     .optional()
 }

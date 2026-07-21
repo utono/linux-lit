@@ -661,6 +661,12 @@ pub struct AppState {
     /// The (div1, div2) scene currently displayed in the synopsis overlay. n/p
     /// step this through the work's scenes; the `A` amend targets it too.
     pub synopsis_overlay_scene: (i64, i64),
+    /// Per-scene synopsis overlay cursor memory: the global block index the
+    /// cursor sat on when Escape closed the overlay, keyed by (div1, div2).
+    /// Ctrl+h on the same scene reopens the overlay at that block (clamped, so
+    /// an edited/shrunk synopsis still lands in range). Cleared on work switch
+    /// — scene keys collide across works.
+    pub synopsis_cursor_memory: HashMap<(i64, i64), usize>,
     /// The (div1, div2) scene whose synopsis the open `A` amend prompt targets.
     pub synopsis_amend_scene: (i64, i64),
     /// Single-level undo for the `A` amend flow: the scene and its synopsis text
@@ -2199,6 +2205,7 @@ pub fn build_window(
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
         synopsis_overlay_scene: (0, 0),
+        synopsis_cursor_memory: HashMap::new(),
         synopsis_amend_scene: (0, 0),
         synopsis_undo: None,
         synopsis_prompt_kind: SynopsisPromptKind::Ask,
@@ -3598,6 +3605,9 @@ pub fn display_work_at_with_prepared(
         if let Ok(conn) = crate::db::queries::open_db() {
             let base_abbrev = work.canonical_abbrev.as_str();
             state.synopsis_cache = crate::db::queries::load_synopses(&conn, base_abbrev);
+            // Scene keys collide across works — drop the previous work's
+            // overlay cursor memory along with its synopses.
+            state.synopsis_cursor_memory.clear();
             crate::logging::log(&format!(
                 "SYNOPSIS: loaded {} scene synopses for {}",
                 state.synopsis_cache.len(),

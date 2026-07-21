@@ -22,7 +22,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("R", "ask Claude to rewrite this synopsis"),
         ("e", "edit synopsis in place (vim)"),
         ("u", "undo last edit (confirm)"),
-        ("c", "copy synopsis id"),
+        ("c", "copy synopsis debug info"),
     ]),
     super::keybinds_legend::VIM_EDIT_GROUP,
     ("Journal", &[

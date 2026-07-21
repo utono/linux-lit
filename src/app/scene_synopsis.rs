@@ -417,6 +417,14 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
+    // Escape remembered where the cursor sat in this scene's synopsis — reopen
+    // there (clamped by restore_full_cursor) instead of at block 0.
+    if let Some(&saved) = s.synopsis_cursor_memory.get(&(div1, div2)) {
+        if saved > 0 {
+            s.gloss_overlay.restore_full_cursor(saved);
+            log(&format!("SYNOPSIS: restored cursor block {} for ({},{})", saved, div1, div2));
+        }
+    }
     crate::input::actions::gloss::recolor_cached_blocks(&s);
     s.input_mode = InputMode::SynopsisOverlay;
 }

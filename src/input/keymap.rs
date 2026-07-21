@@ -2877,8 +2877,13 @@ fn handle_synopsis_overlay_key(
         return true;
     }
     // Escape with the card closed hides the overlay and returns to Reader.
+    // Remember the scene's block cursor first so Ctrl+h on the same scene
+    // reopens the synopsis where it was.
     if key_name == "Escape" {
         let mut s = state.borrow_mut();
+        let scene = s.synopsis_overlay_scene;
+        let cursor = s.gloss_overlay.full_cursor();
+        s.synopsis_cursor_memory.insert(scene, cursor);
         s.gloss_overlay.hide();
         crate::app::return_to_reader_mode(&mut s);
         return true;
@@ -2942,8 +2947,8 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::synopsis::begin_rewrite(state);
             true
         }
-        // c: copy the current scene's scene_synopses.id to the clipboard + toast,
-        // mirroring gloss `c` (gloss_id) and journal `c` (page id).
+        // c: copy the current scene's synopsis troubleshooting payload (abbrev,
+        // work_type, scene key, synopsis id, model, litdb prompt key) + toast.
         "c" => {
             crate::input::actions::synopsis::copy_synopsis_id(state);
             true

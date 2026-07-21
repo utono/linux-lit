@@ -2151,6 +2151,29 @@ impl GlossOverlay {
         self.sync_cursor_page();
     }
 
+    /// The paginated GLOBAL cursor index (into `all_blocks`). Read on Escape
+    /// from the synopsis overlay so the scene's cursor position can be
+    /// remembered and restored on the next Ctrl+h open.
+    pub fn full_cursor(&self) -> usize {
+        self.cursor_full.get()
+    }
+
+    /// Jump the paginated global cursor to `idx` (clamped to the block list),
+    /// turning to the page that contains it. Used to reopen the synopsis
+    /// overlay at the block the reader escaped from. No-op when the current
+    /// render isn't paginated or has no blocks.
+    pub fn restore_full_cursor(&self, idx: usize) {
+        if !self.paginated.get() {
+            return;
+        }
+        let total = self.all_blocks.borrow().len();
+        if total == 0 {
+            return;
+        }
+        self.cursor_full.set(idx.min(total - 1));
+        self.sync_cursor_page();
+    }
+
     fn full_cursor_to_end(&self, last: bool) {
         let total = self.all_blocks.borrow().len();
         if total == 0 {
