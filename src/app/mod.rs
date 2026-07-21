@@ -1883,8 +1883,10 @@ pub fn build_window(
     // attached to the SAME layer as the vocab popup — above the whole overlay
     // chain AND above the chat panel — so it can open OVER the gloss/journal
     // overlays and the chat transcript, unlike the old gloss-overlay reuse.
-    // Reader focus returns to the main text view; float centered, capped to an
-    // input strip. Added to the OUTER overlay after the chat panel (below).
+    // Reader focus returns to the main text view; floats capped to an input
+    // strip — valign here is only the fallback; each open() re-anchors it to
+    // the half of the window opposite the cursor line (vocab_add.rs). Added to
+    // the OUTER overlay after the chat panel (below).
     let vocab_add_card = crate::ui::ask_card::AskCard::new(0, &text_view);
     vocab_add_card.container().add_css_class("vocab-add-card");
     vocab_add_card.container().set_halign(gtk4::Align::Center);

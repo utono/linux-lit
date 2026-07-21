@@ -18,6 +18,7 @@ pub(crate) fn open(state_rc: &Rc<RefCell<AppState>>) {
     // either overlay, or the chat transcript).
     let prior = s.input_mode;
     s.vocab_add_return_mode = Some(prior);
+    place_away_from_cursor(&s);
     let (fill, fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
     // `open_insert` starts the vim engine in INSERT (type immediately, no `i`).
     // card_width = 0 keeps the card's fixed 560px input-strip request and its
@@ -32,6 +33,42 @@ pub(crate) fn open(state_rc: &Rc<RefCell<AppState>>) {
     );
     s.input_mode = crate::app::InputMode::AddVocab;
     crate::logging::log("VOCAB ADD: opened input card");
+}
+
+/// Anchor the floating card to whichever half of the window the cursor segment
+/// is NOT in, so the card never covers the line being read: cursor on-screen in
+/// the top half → card sits low (End + bottom margin); bottom half → card sits
+/// high (Start + top margin). Falls back to the old centered float when the
+/// cursor's geometry is unavailable (e.g. pre-layout).
+fn place_away_from_cursor(s: &AppState) {
+    use gtk4::prelude::*;
+    const EDGE_MARGIN: i32 = 120;
+    let container = s.vocab_add_card.container();
+    let adj = s.scrolled_window.vadjustment();
+    let placed = s
+        .buffer
+        .iter_at_line(s.current_line as i32)
+        .map(|iter| {
+            let (y, h) = s.text_view.line_yrange(&iter);
+            let screen_y = y as f64 + h as f64 / 2.0 - adj.value();
+            screen_y < adj.page_size() / 2.0
+        })
+        .map(|cursor_in_top_half| {
+            if cursor_in_top_half {
+                container.set_valign(gtk4::Align::End);
+                container.set_margin_top(0);
+                container.set_margin_bottom(EDGE_MARGIN);
+            } else {
+                container.set_valign(gtk4::Align::Start);
+                container.set_margin_top(EDGE_MARGIN);
+                container.set_margin_bottom(0);
+            }
+        });
+    if placed.is_none() {
+        container.set_valign(gtk4::Align::Center);
+        container.set_margin_top(0);
+        container.set_margin_bottom(0);
+    }
 }
 
 /// Close the input card without saving and restore the surface it opened from.
