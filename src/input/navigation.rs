@@ -2631,6 +2631,38 @@ pub(crate) fn show_chapter_toast_secs(state: &AppState, text: &str, secs: u64) {
     });
 }
 
+/// `show_chapter_toast_secs` with NO expiry timer: the toast holds until
+/// `release_chapter_toast_hold` (gen-guarded) or until any later toast
+/// supersedes it (bumping the generation hands the borrow/restore to that
+/// toast). For in-flight operations of unknown duration — the prose
+/// background gloss keeps "Glossing…" up for the whole API round-trip.
+pub(crate) fn show_chapter_toast_hold(state: &AppState, text: &str) -> u64 {
+    let gen = state.chapter_toast_gen.get().wrapping_add(1);
+    state.chapter_toast_gen.set(gen);
+    log_fmt!("CHAPTER_TOAST: show hold gen={} text={:?}", gen, text);
+    begin_chapter_toast_borrow(state);
+    state.chapter_toast.set_text(text);
+    state.chapter_toast.set_visible(true);
+    gen
+}
+
+/// Release a held toast: restore the act/scene pill (or hide the strip) unless
+/// a later toast already took over the borrow — then the release is its
+/// expiry's job, not ours.
+pub(crate) fn release_chapter_toast_hold(state: &AppState, gen: u64) {
+    if state.chapter_toast_gen.get() != gen {
+        log_fmt!("CHAPTER_TOAST: release hold gen={} superseded (current={})",
+            gen, state.chapter_toast_gen.get());
+        return;
+    }
+    log_fmt!("CHAPTER_TOAST: release hold gen={}", gen);
+    restore_chapter_toast(
+        &state.chapter_toast,
+        &state.chapter_toast_borrowed,
+        &state.chapter_toast_saved,
+    );
+}
+
 /// Show a transient bottom-center message on `label` (a toast widget OTHER than
 /// `chapter_toast` — e.g. `speed_toast`, `search_toast`), and when it expires
 /// bring the persistent act/scene pill back if it is toggled on. Used by the
