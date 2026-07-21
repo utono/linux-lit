@@ -92,6 +92,12 @@ pub struct LoopSource {
     pub div2: i64,
     pub first_line_in_div: i64,
     pub last_line_in_div: i64,
+    /// Exact text of the first/last passage lines — the fallback lookup key
+    /// when the (div1, div2, line_in_div) location misses because the entry's
+    /// numbering came from a different edition than the one being played
+    /// (`work_abbrev` is canonical, the numbers are the loaded edition's).
+    pub first_text: String,
+    pub last_text: String,
 }
 
 /// Resolve the source passage for the loop. `gloss_ctx` (the entry's own
@@ -119,17 +125,21 @@ pub fn loop_source_from(
             div2: ctx.scene,
             first_line_in_div: first,
             last_line_in_div: last,
+            first_text: ctx.source_text.lines().next().unwrap_or("").to_string(),
+            last_text: ctx.source_text.lines().last().unwrap_or("").to_string(),
         });
     }
     let p = pinned?;
-    let first = p.cursor_lines.first()?.line_in_div;
-    let last = p.cursor_lines.last()?.line_in_div;
+    let first = p.cursor_lines.first()?;
+    let last = p.cursor_lines.last()?;
     Some(LoopSource {
         work_abbrev: current_abbrev?.to_string(),
         div1: p.div1,
         div2: p.div2,
-        first_line_in_div: first,
-        last_line_in_div: last,
+        first_line_in_div: first.line_in_div,
+        last_line_in_div: last.line_in_div,
+        first_text: first.text.clone(),
+        last_text: last.text.clone(),
     })
 }
 
@@ -141,6 +151,39 @@ pub fn pick_default_media(items: &[MediaItem]) -> Option<MediaItem> {
         .find(|m| m.path.contains("/aax-Arkangel/"))
         .cloned()
         .or_else(|| items.first().cloned())
+}
+
+/// Pick the loop's media AND the edition abbrev whose `line_mapping` rows the
+/// passage must be resolved in, from `media_for_base_work`'s
+/// (association abbrev, media) rows. Canonical prose abbrevs (`BH`) own no
+/// media — only their editions do — and each edition numbers its divisions
+/// independently, so media and lookup abbrev must be chosen TOGETHER:
+/// 1. rows keyed by `base` itself (the Shakespeare model, where `Cym` owns
+///    both mapping and media) — the original `pick_default_media` rule;
+/// 2. the loaded edition of the same base (the voice the user is hearing);
+/// 3. any edition: Arkangel path first, else the highest-priority row.
+pub fn pick_edition_media(
+    rows: &[(String, MediaItem)],
+    base: &str,
+    current_abbrev: Option<&str>,
+) -> Option<(String, MediaItem)> {
+    let of = |abbrev: &str| -> Vec<MediaItem> {
+        rows.iter().filter(|(a, _)| a == abbrev).map(|(_, m)| m.clone()).collect()
+    };
+    if let Some(m) = pick_default_media(&of(base)) {
+        return Some((base.to_string(), m));
+    }
+    if let Some(cur) = current_abbrev {
+        if cur.strip_prefix(base).is_some_and(|rest| rest.starts_with('-')) {
+            if let Some(m) = pick_default_media(&of(cur)) {
+                return Some((cur.to_string(), m));
+            }
+        }
+    }
+    rows.iter()
+        .find(|(_, m)| m.path.contains("/aax-Arkangel/"))
+        .or_else(|| rows.first())
+        .map(|(a, m)| (a.clone(), m.clone()))
 }
 
 /// The single loadfile that arms the whole loop: per-file options seek to
@@ -293,7 +336,7 @@ mod tests {
             act: 3,
             scene: 5,
             speaker: String::new(),
-            source_text: String::new(),
+            source_text: "first line\nmiddle line\nlast line".into(),
             source_line_numbers: vec![41, 42, 43],
             hash: String::new(),
             gloss_type: String::new(),
@@ -306,11 +349,51 @@ mod tests {
         // line_in_div values — resolved to ids at space-time.
         assert_eq!((src.div1, src.div2), (3, 5));
         assert_eq!((src.first_line_in_div, src.last_line_in_div), (41, 43));
+        // The passage's own text rides along as the cross-edition fallback key.
+        assert_eq!(src.first_text, "first line");
+        assert_eq!(src.last_text, "last line");
         // Empty line list → unresolvable, not a bogus 0..0 range.
         let empty = crate::gloss::GlossContext { source_line_numbers: vec![], ..ctx };
         assert!(loop_source_from(Some(&empty), None, Some("TGV-Amb")).is_none());
         // Nothing pinned at all → None.
         assert!(loop_source_from(None, None, Some("TGV-Amb")).is_none());
+    }
+
+    #[test]
+    fn pick_edition_media_exact_base_keeps_shakespeare_model() {
+        // Rows keyed by the base itself win, with the Arkangel preference.
+        let rows = vec![
+            ("Cym".to_string(), media("/m/plain.m4b")),
+            ("Cym".to_string(), media("/m/aax-Arkangel/cym.m4b")),
+            ("Cym-BBC".to_string(), media("/m/bbc.m4b")),
+        ];
+        let (abbrev, m) = pick_edition_media(&rows, "Cym", Some("Cym-Amb")).unwrap();
+        assert_eq!(abbrev, "Cym");
+        assert_eq!(m.path, "/m/aax-Arkangel/cym.m4b");
+    }
+
+    #[test]
+    fn pick_edition_media_prefers_loaded_edition_for_prose() {
+        // No base-keyed rows (the prose model): the loaded edition of the
+        // same base wins over a higher-priority sibling edition.
+        let rows = vec![
+            ("BH-Margolyes".to_string(), media("/m/margolyes.m4b")),
+            ("BH-Vance".to_string(), media("/m/vance.m4b")),
+        ];
+        let (abbrev, m) = pick_edition_media(&rows, "BH", Some("BH-Vance")).unwrap();
+        assert_eq!(abbrev, "BH-Vance");
+        assert_eq!(m.path, "/m/vance.m4b");
+        // A DIFFERENT base loaded (the cross-work finder case): fall through
+        // to Arkangel-else-first among the editions.
+        let (abbrev, m) = pick_edition_media(&rows, "BH", Some("TGV-Amb")).unwrap();
+        assert_eq!(abbrev, "BH-Margolyes");
+        assert_eq!(m.path, "/m/margolyes.m4b");
+        // A base that merely PREFIXES another ("BH" vs "BHX-Foo") never
+        // matches as an edition.
+        let odd = vec![("BHX-Foo".to_string(), media("/m/x.m4b"))];
+        let (abbrev, _) = pick_edition_media(&odd, "BH", Some("BHX-Foo")).unwrap();
+        assert_eq!(abbrev, "BHX-Foo"); // via the any-edition fallback only
+        assert!(pick_edition_media(&[], "BH", None).is_none());
     }
 
     #[test]

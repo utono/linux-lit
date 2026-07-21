@@ -2957,13 +2957,15 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
 
     // Resolve the entry's OWN source work + line range (never current_work
     // for a glossed entry — the future cross-work `f` finder relies on it).
-    let src = {
+    let (src, current_abbrev) = {
         let s = state.borrow();
-        crate::mpv::chat_player::loop_source_from(
+        let current = s.current_work.as_ref().map(|w| w.abbrev.clone());
+        let src = crate::mpv::chat_player::loop_source_from(
             s.chat.gloss_ctx.as_ref(),
             s.chat.pinned_passage.as_ref(),
-            s.current_work.as_ref().map(|w| w.abbrev.as_str()),
-        )
+            current.as_deref(),
+        );
+        (src, current)
     };
     let Some(src) = src else {
         let s = state.borrow();
@@ -2978,32 +2980,20 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         crate::input::navigation::show_chapter_toast_secs(&s, "Database unavailable", 2);
         return;
     };
-    // The LoopSource carries per-division line numbers (line_in_div); resolve
-    // them to global line_mapping ids here (the echoes precedent). A
-    // line_in_div can never match a line_mapping.id lookup directly.
-    let Some(first_id) = crate::db::queries::line_id_for_location(
-        &conn,
-        &src.work_abbrev,
-        src.div1,
-        src.div2,
-        src.first_line_in_div,
-    ) else {
-        let s = state.borrow();
-        crate::input::navigation::show_chapter_toast_secs(&s, "Could not locate the passage lines", 2);
-        return;
-    };
-    let last_id = crate::db::queries::line_id_for_location(
-        &conn,
-        &src.work_abbrev,
-        src.div1,
-        src.div2,
-        src.last_line_in_div,
-    )
-    .unwrap_or(first_id);
-    let media = crate::db::queries::list_media_for_work(&conn, &src.work_abbrev)
+    // Media and the id-lookup abbrev are chosen TOGETHER: a glossed entry's
+    // work_abbrev is CANONICAL (`BH`), which for prose owns neither media
+    // associations nor the edition's division numbering — both live on the
+    // editions (`BH-Vance`), and each edition numbers divisions independently.
+    let media = crate::db::queries::media_for_base_work(&conn, &src.work_abbrev)
         .ok()
-        .and_then(|items| crate::mpv::chat_player::pick_default_media(&items));
-    let Some(media) = media else {
+        .and_then(|rows| {
+            crate::mpv::chat_player::pick_edition_media(
+                &rows,
+                &src.work_abbrev,
+                current_abbrev.as_deref(),
+            )
+        });
+    let Some((lookup_abbrev, media)) = media else {
         let s = state.borrow();
         crate::input::navigation::show_chapter_toast_secs(
             &s,
@@ -3012,6 +3002,35 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         );
         return;
     };
+    // The LoopSource carries per-division line numbers (line_in_div); resolve
+    // them to global line_mapping ids here (the echoes precedent). A
+    // line_in_div can never match a line_mapping.id lookup directly. The
+    // location lookup misses when the entry's numbering came from a different
+    // edition than `lookup_abbrev` (cross-edition division skew), so fall
+    // back to matching the passage's own SOURCE TEXT near the stored line.
+    let resolve = |line_in_div: i64, text: &str| {
+        crate::db::queries::line_id_for_location(
+            &conn,
+            &lookup_abbrev,
+            src.div1,
+            src.div2,
+            line_in_div,
+        )
+        .or_else(|| {
+            crate::db::queries::line_id_near_text(&conn, &lookup_abbrev, text, line_in_div)
+        })
+    };
+    let Some(first_id) = resolve(src.first_line_in_div, &src.first_text) else {
+        let s = state.borrow();
+        crate::logging::log(&format!(
+            "CHAT-LOOP: unresolvable passage base={} lookup={} div=({},{}) lines={}..{}",
+            src.work_abbrev, lookup_abbrev, src.div1, src.div2,
+            src.first_line_in_div, src.last_line_in_div
+        ));
+        crate::input::navigation::show_chapter_toast_secs(&s, "Could not locate the passage lines", 2);
+        return;
+    };
+    let last_id = resolve(src.last_line_in_div, &src.last_text).unwrap_or(first_id);
     let Some(start) =
         crate::db::queries::line_start_time(&conn, first_id, media.media_id)
     else {

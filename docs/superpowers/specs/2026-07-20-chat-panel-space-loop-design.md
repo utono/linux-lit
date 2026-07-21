@@ -92,10 +92,19 @@ with a chapter-toast** stating the reason:
      guarantees it). Resolved to ids the same way.
    - Neither, or empty line lists (e.g. future author-scope notes with no
      citations): toast "No source passage to play".
-2. **Work → media.** `list_media_for_work(conn, abbrev)`; prefer a path
-   containing `/aax-Arkangel/`, else the first item (the
-   `play_selected_echo` rule). No media → toast. No media picker — the
-   "default media" is always auto-selected.
+2. **Work → media.** *(Revised 2026-07-20, post-ship.)* The entry's
+   `work_abbrev` is CANONICAL (`BH`), which for prose owns neither media
+   associations nor the editions' division numbering — both live on the
+   editions (`BH-Vance`), and edition chapter numbering can be offset from
+   the canonical's. So media and the id-lookup abbrev are chosen together via
+   `media_for_base_work` + `pick_edition_media`: rows keyed by the base
+   itself first (the Shakespeare model, original rule), else the loaded
+   edition of the same base, else Arkangel-path/priority among all editions.
+   Line ids then resolve against the chosen edition: `line_id_for_location`
+   first, falling back to `line_id_near_text` (match the passage's own
+   source TEXT, nearest `line_in_div`) to survive cross-edition skew.
+   No media → toast. No media picker — the "default media" is always
+   auto-selected.
 3. **Range → loop points.** `a = line_start_time(first_line, media_id)`.
    `b` needs a **new standalone query** `line_end_time(conn, line_id,
    media_id)` mirroring `line_start_time` against `line_timestamps.end_time`
