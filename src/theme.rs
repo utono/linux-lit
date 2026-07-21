@@ -1552,18 +1552,16 @@ pub fn generate_css(
             + deep indent already). \
             Flush rows share the GLOSS COMMENTARY's indent ({q_body}px, \
             .chat-a-gloss) — the user wants source and its glossing on one \
-            left edge, wrapping accepted — and render at 0.9em so a source \
-            line as wrapped by the MAIN CARD still (mostly) fits one panel \
-            row. Clip-safe: pagination measures at full size and full wrap \
-            width; at 0.9em the real line fits MORE characters than the \
-            measured one whenever the indent is under 10% of the panel \
-            width, so measurement only over-counts. */ \
+            left edge, wrapping accepted. Full 1em size: the historical \
+            0.9em shrink existed so a source line as wrapped by the MAIN \
+            CARD would (mostly) fit one panel row, but prose source rows \
+            are now re-flowed to the panel width (reflow_verse_markup), so \
+            the constraint is gone and the user wants the panel to read at \
+            the card's own size. */ \
          .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
-           font-size: 0.9em; \
            padding-left: {q_body}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 0px; }} \
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           font-size: 0.9em; \
            padding-left: {q_body}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
          .chat-a-gloss {{ color: {chat_ink}; padding-top: 26px; padding-left: {q_body}px; }} \
