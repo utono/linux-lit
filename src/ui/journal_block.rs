@@ -1,5 +1,5 @@
 //! Pure paragraph-block splitter for the journal Q&A overlay. A journal page
-//! buffer is plain text (`question\n\nanswer`, or verse + `———` + Q&A); blocks
+//! buffer is plain text (`question\n\nanswer`, or verse/citation + Q&A); blocks
 //! are maximal runs of non-blank lines, separated by one-or-more blank lines.
 
 #[derive(Debug, Clone, PartialEq)]

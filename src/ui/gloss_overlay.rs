@@ -2492,8 +2492,9 @@ impl GlossOverlay {
 
         // Speaker + verse header render FULL ink like the explication — no
         // dim color (the user found the dimmed source too recessed). The
-        // bold/small-caps/0.9-scale header styling and the verse hang-indent
-        // alone set the quoted source apart from the prose.
+        // bold/small-caps header styling and the verse hang-indent alone set
+        // the quoted source apart from the prose (all at the card's body size;
+        // only the speaker label shrinks, matching the main card).
         let (ranges, _nums) = populate_gloss_buffer(
             &self.gloss_view,
             &markup,
@@ -3152,12 +3153,11 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Conservative overhead for a Source (verse) block: the speaker heading's 36px
-/// `pixels_above_lines` + its scale-0.9 label + 10px `pixels_below_lines`, plus
-/// slack. OVER-estimate so a multi-line speech never clips its speaker label at a
+/// `pixels_above_lines` + its label + 10px `pixels_below_lines`, plus slack.
+/// OVER-estimate so a multi-line speech never clips its speaker label at a
 /// page top. Tied to gloss_render.rs `gloss-speaker` (pixels_above_lines 36,
-/// scale 0.9, pixels_below_lines 10) — the header restyle raised the label from
-/// scale 0.75 (→ ~14pt) to 0.9 (→ ~17pt) and added the 10px gap, so this budget
-/// grew from 56 to 72 to keep the over-estimate conservative.
+/// scale 0.75, pixels_below_lines 10); 72 was sized for a scale-0.9 label, so
+/// with the label back at 0.75 it only grew MORE conservative.
 const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 
 /// Conservative per-block height overhead. For Source (verse) blocks WITH a
