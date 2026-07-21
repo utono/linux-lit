@@ -2178,6 +2178,7 @@ pub fn build_window(
             line: None,
             fade_gen: Rc::new(Cell::new(0)),
             journal: None,
+            chat_inline: false,
         },
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),

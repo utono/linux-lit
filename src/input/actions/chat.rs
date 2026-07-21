@@ -282,6 +282,12 @@ pub(crate) fn close_chat_layout(s: &mut AppState) {
     if !s.chat_layout_open {
         return;
     }
+    // A chat-anchored vocab popup dies with the panel — without this it would
+    // strand mid-window (its slot geometry is panel-relative).
+    if s.vocab_popup.chat_inline {
+        s.vocab_popup.auto = false;
+        crate::app::vocab_popup::close_vocab_popup(s);
+    }
     chat_loop_teardown(s);
     // A pinned passage (Tab from V-mode) keeps its selection tag painted for as
     // long as the pin lives — the pin dies with ChatState below, so the mark
@@ -2305,14 +2311,7 @@ pub(crate) fn exit_transcript_visual(s: &mut AppState) -> bool {
 pub(crate) fn selected_exchange_texts(s: &AppState) -> Vec<String> {
     use crate::ui::chat_panel::{row_widget_texts, TranscriptRow as R};
     let rows: Vec<R> = if s.chat.view == PanelView::Journal {
-        match s.chat.journal_list.get(s.chat.journal_cursor) {
-            Some(p) => {
-                let mut rows = vec![question_row(&p.question)];
-                rows.extend(split_answer_paragraphs(&p.answer).into_iter().map(R::Answer));
-                rows
-            }
-            None => Vec::new(),
-        }
+        journal_or_exchange_rows(s)
     } else {
         match s.chat.exchanges.get(s.chat.cursor) {
             Some(e) => build_single_exchange_rows(e),
@@ -2323,6 +2322,46 @@ pub(crate) fn selected_exchange_texts(s: &AppState) -> Vec<String> {
         .filter(|r| !matches!(r, R::Chip(_) | R::Thinking | R::SavedMark))
         .flat_map(row_widget_texts)
         .collect()
+}
+
+/// The visible text of the transcript's CURSOR ROW only — the `r`-tap vocab
+/// scope (mirrors the main card, where the popup lists the cursor LINE's
+/// words, not the whole page's). `row_cursor` indexes the CURRENT VIEW's row
+/// list, so build the same rows that view renders (the dispatch
+/// `rerender_current_view` uses): Question = the single exchange's rows,
+/// Gloss = the whole transcript's. The Journal view has no row_cursor axis
+/// (see `yank_transcript_row_or_selection`), so it falls back to the whole
+/// selected entry via `selected_exchange_texts`.
+pub(crate) fn cursor_segment_texts(s: &AppState) -> Vec<String> {
+    use crate::ui::chat_panel::row_widget_texts;
+    let rows = match s.chat.view {
+        PanelView::Journal => return selected_exchange_texts(s),
+        PanelView::Question => match s.chat.exchanges.get(s.chat.cursor) {
+            Some(e) => build_single_exchange_rows(e),
+            None => Vec::new(),
+        },
+        PanelView::Gloss => transcript_rows(s).0,
+    };
+    // `row_cursor` is WIDGET-space: one transcript row (e.g. a Gloss answer)
+    // explodes into several widget rows, so flatten every row's widget texts
+    // and index into THAT — the same mapping the yank path
+    // (`yank_transcript_row_or_selection`) uses.
+    let all: Vec<String> = rows.iter().flat_map(row_widget_texts).collect();
+    all.get(s.chat.row_cursor).cloned().into_iter().collect()
+}
+
+/// The selected Journal entry's rows (question + answer paragraphs) — the
+/// Journal arm of `selected_exchange_texts`.
+fn journal_or_exchange_rows(s: &AppState) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+    use crate::ui::chat_panel::TranscriptRow as R;
+    match s.chat.journal_list.get(s.chat.journal_cursor) {
+        Some(p) => {
+            let mut rows = vec![question_row(&p.question)];
+            rows.extend(split_answer_paragraphs(&p.answer).into_iter().map(R::Answer));
+            rows
+        }
+        None => Vec::new(),
+    }
 }
 
 pub(crate) fn yank_transcript_row_or_selection(state_rc: &Rc<RefCell<AppState>>) {
@@ -2671,6 +2710,53 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
 /// float aligns the container top with the column start; pinned additionally
 /// subtracts `CHAT_PANEL_TOP_INSET` so the first LINE (not the container edge)
 /// aligns.
+/// Horizontal insets from the panel's outer edge to the transcript TEXT
+/// column (the "gloss text" margins): left = 1px border + 12px `.chat-panel`
+/// padding; right = 12px padding + 14px `.chat-transcript` padding-right +
+/// 1px border. MIRROR of theme.rs `.chat-panel` / `.chat-panel-float` /
+/// `.chat-transcript` — keep in sync.
+const CHAT_TEXT_INSET_L: i32 = 13;
+const CHAT_TEXT_INSET_R: i32 = 27;
+/// Gap between the raised panel bottom and the inline vocab popup below it.
+const VOCAB_SLOT_GAP: i32 = 12;
+
+/// When the vocab popup is anchored to the chat panel (`rr` in the
+/// transcript), carve its slot out of the panel height: the panel's bottom
+/// edge RAISES by the popup's measured height and the popup renders in the
+/// freed strip below — its left/right borders on the transcript text margins
+/// — instead of floating over the panel content. Returns the reduced panel
+/// height; full height when the popup is closed or anchored elsewhere.
+/// Called from both `size_panel` branches, so resize ticks re-place the slot.
+fn inline_vocab_slot(
+    s: &AppState,
+    panel_x: i32,
+    panel_top: i32,
+    panel_w: i32,
+    panel_h: i32,
+) -> i32 {
+    if !s.vocab_popup.chat_inline || !s.vocab_popup.popup.is_visible() {
+        return panel_h;
+    }
+    let pop_w = (panel_w - CHAT_TEXT_INSET_L - CHAT_TEXT_INSET_R).max(120);
+    // GTK4 `measure` INCLUDES the widget's own margins, and the popup may
+    // still carry a huge margin_top from a previous chat placement — measure
+    // with margins zeroed (place at y=0 first), THEN place at the final y,
+    // or the carved slot inflates by the stale margin.
+    s.vocab_popup.popup.place_chat(panel_x + CHAT_TEXT_INSET_L, 0, pop_w);
+    let (_min_h, nat_h, _, _) = s
+        .vocab_popup
+        .popup
+        .widget()
+        .measure(gtk4::Orientation::Vertical, pop_w);
+    let new_h = (panel_h - nat_h - VOCAB_SLOT_GAP).max(0);
+    s.vocab_popup.popup.place_chat(
+        panel_x + CHAT_TEXT_INSET_L,
+        panel_top + new_h + VOCAB_SLOT_GAP,
+        pop_w,
+    );
+    new_h
+}
+
 pub(crate) fn size_panel(s: &AppState) {
     let (card_w, card_h) = crate::app::layout::main_card_rect(s);
     match s.chat_placement {
@@ -2700,6 +2786,7 @@ pub(crate) fn size_panel(s: &AppState) {
             // Square the card's right corners so it meets the panel's hairline
             // seam flush (no rounded sliver of root at top-right/bottom-right).
             s.page_turn_overlay.add_css_class(CLASS_CARD_CHAT_SEAM);
+            let panel_h = inline_vocab_slot(s, start, top_margin, w, panel_h);
             s.chat_panel.size_to(w, panel_h);
         }
         ChatPlacement::FloatLeft | ChatPlacement::FloatRight => {
@@ -2745,6 +2832,7 @@ pub(crate) fn size_panel(s: &AppState) {
                 .max(0);
             s.chat_panel.container.set_valign(gtk4::Align::Start);
             s.chat_panel.container.set_margin_top(top_margin);
+            let panel_h = inline_vocab_slot(s, x.max(0), top_margin, w, panel_h);
             s.chat_panel.size_to(w, panel_h);
         }
     }

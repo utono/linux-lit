@@ -218,22 +218,38 @@ pub fn handle_key(
             let mode = state.borrow().input_mode;
             match mode {
                 crate::app::InputMode::Reader => {
-                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::CursorLine, false);
+                    vocab_chord_toggle(
+                        state,
+                        crate::app::vocab_popup::VocabScope::CursorLine,
+                        crate::app::vocab_popup::VocabAnchor::Reader,
+                    );
                     return true;
                 }
                 crate::app::InputMode::GlossOverlay => {
                     let words = gloss_overlay_scope_words(state);
-                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    vocab_chord_toggle(
+                        state,
+                        crate::app::vocab_popup::VocabScope::Words(words),
+                        crate::app::vocab_popup::VocabAnchor::Corner,
+                    );
                     return true;
                 }
                 crate::app::InputMode::JournalOverlay => {
                     let words = journal_overlay_scope_words(state);
-                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    vocab_chord_toggle(
+                        state,
+                        crate::app::vocab_popup::VocabScope::Words(words),
+                        crate::app::vocab_popup::VocabAnchor::Corner,
+                    );
                     return true;
                 }
                 crate::app::InputMode::ChatTranscript => {
                     let words = chat_scope_words(state);
-                    vocab_chord_toggle(state, crate::app::vocab_popup::VocabScope::Words(words), true);
+                    vocab_chord_toggle(
+                        state,
+                        crate::app::vocab_popup::VocabScope::Words(words),
+                        crate::app::vocab_popup::VocabAnchor::ChatPanel,
+                    );
                     return true;
                 }
                 _ => {}
@@ -381,8 +397,8 @@ pub fn handle_key(
 /// Shared body for the `rr` chord across every vocab surface. Toggles the
 /// popup: if visible, close it (clearing `auto`); if hidden, ensure vocab
 /// highlighting is on (enabling + persisting it when it was off, exactly as the
-/// old Reader-only path did) and open the popup for `scope`. `corner=true`
-/// anchors the compact card to the window's lower right (overlay/chat).
+/// old Reader-only path did) and open the popup for `scope`, anchored per
+/// `anchor` (reader placement / lower-right corner / below the chat panel).
 ///
 /// Takes a single `borrow_mut` for the whole body — the caller must not hold
 /// any borrow of `state` across this call (the hoisted chord block copies the
@@ -390,7 +406,7 @@ pub fn handle_key(
 fn vocab_chord_toggle(
     state: &Rc<RefCell<crate::app::AppState>>,
     scope: crate::app::vocab_popup::VocabScope,
-    corner: bool,
+    anchor: crate::app::vocab_popup::VocabAnchor,
 ) {
     let mut s = state.borrow_mut();
     if s.vocab_popup.popup.is_visible() {
@@ -415,7 +431,7 @@ fn vocab_chord_toggle(
         }
     }
     s.vocab_popup.auto = true;
-    crate::app::vocab_popup::open_vocab_popup_scoped(&mut s, scope, corner);
+    crate::app::vocab_popup::open_vocab_popup_scoped(&mut s, scope, anchor);
 }
 
 /// Vocab words visible in the gloss overlay (the `rr` scope there): scan the
@@ -446,13 +462,14 @@ fn journal_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec
         .collect()
 }
 
-/// Vocab words visible in the chat transcript (the `rr` scope there): scan the
-/// SELECTED exchange's visible text rows for the user's vocab words. The
-/// selection lives in AppState (not the panel), so the accessor is on the chat
-/// action layer (`selected_exchange_texts`); we scan each row here.
+/// Vocab words in the chat transcript's CURSOR SEGMENT (the `rr` scope
+/// there): scan only the cursor row's visible text — mirroring the main
+/// card, where the popup lists the cursor LINE's words, never the whole
+/// page's. The cursor lives in AppState (not the panel), so the accessor is
+/// on the chat action layer (`cursor_segment_texts`); we scan each row here.
 fn chat_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
     let s = state.borrow();
-    let texts = crate::input::actions::chat::selected_exchange_texts(&s);
+    let texts = crate::input::actions::chat::cursor_segment_texts(&s);
     let mut out = Vec::new();
     for t in &texts {
         crate::vocab_scan::scan_line(t, 0, &s.vocab_words, &mut out);

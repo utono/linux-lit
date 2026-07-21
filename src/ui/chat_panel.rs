@@ -257,15 +257,30 @@ impl ChatPanel {
     /// per-widget explosion when queried before any geometry exists.
     pub fn transcript_budget(&self) -> i32 {
         let alloc = self.transcript_scroll.height();
-        if alloc > 1 {
+        let req = self.container.height_request();
+        // A just-REQUESTED resize (size_to this tick, not yet allocated — the
+        // inline vocab-popup slot carving height off the panel, or handing it
+        // back on close) must paginate at the TARGET height, not the stale
+        // allocation: overflow past a raised bottom clips; a stale small
+        // budget underfills a regrown panel. While a request is pending
+        // (req differs from the allocated container height), derive the
+        // budget from the request. Once GTK re-allocates they agree and the
+        // allocated branch is exact again.
+        let pending_resize = req > 0 && req != self.container.height();
+        if alloc > 1 && !pending_resize {
             (alloc - CHAT_TRANSCRIPT_PAD_V - CHAT_BUDGET_SAFETY).max(1)
+        } else if alloc > 1 {
+            // Target scroll height = requested container height minus the
+            // non-scroll chrome, measured from the CURRENT allocation
+            // (container - scroll = input + marker row + spacing).
+            let chrome = (self.container.height() - alloc).max(0);
+            (req - chrome - CHAT_TRANSCRIPT_PAD_V - CHAT_BUDGET_SAFETY).max(1)
         } else {
             let container_h = self.container.height();
-            let container_req = self.container.height_request();
             let input_h = self.input.container().height();
             // - 8: the container Box spacing the always-present marker row
             // adds between the scroll and the input.
-            (container_h.max(container_req) - input_h.max(0)
+            (container_h.max(req) - input_h.max(0)
                 - CHAT_PAGE_MARKER_H - 8
                 - CHAT_TRANSCRIPT_PAD_V
                 - CHAT_BUDGET_SAFETY)
@@ -677,8 +692,12 @@ pub(crate) fn row_widget_landable(row: &TranscriptRow) -> Vec<bool> {
                 // widget, landable (it's the raw text, not a speaker label).
                 vec![true]
             } else {
+                // Speaker labels and the blank segment-separator rows
+                // (empty text, chat_gloss_rows) are chrome — never landable.
                 rows.iter()
-                    .map(|(kind, _)| *kind != ChatGlossRowKind::Speaker)
+                    .map(|(kind, text)| {
+                        *kind != ChatGlossRowKind::Speaker && !text.is_empty()
+                    })
                     .collect()
             }
         }

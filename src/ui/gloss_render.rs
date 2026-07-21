@@ -156,6 +156,7 @@ pub(crate) enum ChatGlossRowKind {
 pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
     let elements = parse_gloss_tags(markup);
     let mut rows: Vec<(ChatGlossRowKind, String)> = Vec::new();
+    let mut prev_was_verse_el = false;
     for el in &elements {
         match el {
             GlossElement::Speaker(name) => {
@@ -164,6 +165,13 @@ pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
                 }
             }
             GlossElement::Verse(text) => {
+                // Two consecutive <verse> ELEMENTS are two source SEGMENTS
+                // (prose paragraphs): render a blank line between them so the
+                // segments read separately (the user's rule). Lines WITHIN one
+                // element stay contiguous.
+                if prev_was_verse_el {
+                    rows.push((ChatGlossRowKind::Verse, String::new()));
+                }
                 let clean = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text)).0;
                 for line in clean.lines() {
                     if !line.trim().is_empty() {
@@ -192,6 +200,7 @@ pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
             // display row.
             GlossElement::Pron(_) => {}
         }
+        prev_was_verse_el = matches!(el, GlossElement::Verse(_));
     }
     rows
 }
@@ -763,6 +772,27 @@ mod chat_gloss_rows_tests {
         let m = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
         let rows = chat_gloss_rows(m);
         assert_eq!(rows, vec![(K::Verse, "a prose line".to_string())]);
+    }
+
+    // TWO consecutive <verse> ELEMENTS are two source SEGMENTS (prose
+    // paragraphs): a blank Verse row separates them so the panel renders a
+    // blank line between segments. Lines WITHIN one element stay contiguous,
+    // and a verse element after a gloss gets no separator.
+    #[test]
+    fn blank_row_between_consecutive_verse_elements() {
+        let m = "<verse>segment one</verse>\n<verse>segment two</verse>\n\
+                 <gloss>commentary</gloss>\n<verse>segment three</verse>";
+        let rows = chat_gloss_rows(m);
+        assert_eq!(
+            rows,
+            vec![
+                (K::Verse, "segment one".to_string()),
+                (K::Verse, String::new()),
+                (K::Verse, "segment two".to_string()),
+                (K::Gloss, "commentary".to_string()),
+                (K::Verse, "segment three".to_string()),
+            ]
+        );
     }
 
     // A multi-line <verse> body (as gloss_block_markups joins verse lines with
