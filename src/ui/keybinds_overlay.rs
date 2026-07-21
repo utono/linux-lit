@@ -289,11 +289,14 @@ Q&A filter; same as the journal overlay's f) — src/input/actions/journal.rs",
         // ── Gloss / echo system ──
         "gloss chat" => "Action::ReaderGlossChatAtCursor — a toggle. When the \
 chat panel is already open, `-` CLOSES it (the reader-side close path). \
-Otherwise it OPENS the panel on the reader-gloss covering the cursor line and \
-shows the stored gloss — focus lands in the transcript. The source passage is \
-NOT highlighted while the panel is open. No-op (toasts \"No gloss on this \
-line\") if the line has no reader-gloss. In visual (`V`) mode, `-` instead \
-glosses the selection (action_reader_gloss_chat). — src/input/actions/chat.rs",
+On PROSE works it otherwise opens the GLOSS OVERLAY on the gloss covering \
+the cursor — or, when the paragraph has no gloss yet, glosses it in the \
+background (\"Glossing\u{2026}\" toast, reading continues) and opens the \
+overlay when the gloss lands. On verse/play works it OPENS the panel on the \
+reader-gloss covering the cursor line and shows the stored gloss — focus \
+lands in the transcript; no-op (toasts \"No gloss on this line\") if the \
+line has no reader-gloss. In visual (`V`) mode, `-` instead glosses the \
+selection (action_reader_gloss_chat). — src/input/actions/gloss.rs",
         "focus chat" => "Tab (reader mode) — toggles focus between the main \
 card and an OPEN chat panel. No-op when the panel is closed (the panel opens \
 via `-`, not Tab). From inside the panel, Tab focuses the reader again; in the \
