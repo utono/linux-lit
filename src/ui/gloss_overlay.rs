@@ -2025,6 +2025,20 @@ impl GlossOverlay {
         ranges.get(i).map(|r| (r.kind, r.index))
     }
 
+    /// True while the block cursor still sits on the FIRST cursor stop of the
+    /// open gloss (never moved, or moved back). Escape's close reads this to
+    /// keep the peek-and-Escape position restore: only a moved cursor
+    /// re-lands the reader on the cursor block's source line. In paginated
+    /// mode the GLOBAL cursor decides (page-local block 0 on a later page IS
+    /// moved).
+    pub fn cursor_on_first_block(&self) -> bool {
+        if self.paginated.get() {
+            self.cursor_full.get() == 0
+        } else {
+            self.cursor_block.get() == 0
+        }
+    }
+
     /// `j`/`k`: move the block cursor down/up one block.
     pub fn cursor_next_block(&self) {
         self.step_cursor(1);

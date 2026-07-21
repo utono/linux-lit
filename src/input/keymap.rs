@@ -2612,10 +2612,11 @@ fn handle_gloss_key(
         }
         // Escape precedence: an active rewrite diff-highlight clears first (stay
         // in the overlay); else an active overlay search clears (stay); else
-        // close to the reader, landing on the glossed passage's source line
-        // (recomputes the reader-gloss tint so a just-created gloss colors
-        // without a reload; falls back to the pre-open page). Gloss has no
-        // journal-style term filter, so the precedence is simpler.
+        // close to the reader, landing on the source line of the block the
+        // overlay cursor was reading (passage source start when the cursor
+        // never moved; recomputes the reader-gloss tint so a just-created
+        // gloss colors without a reload; falls back to the pre-open page).
+        // Gloss has no journal-style term filter, so the precedence is simpler.
         "Escape" => {
             // Popup-close comes FIRST: if the vocab popup is up, Escape only
             // closes it (clearing auto-show) and stays in the overlay.

@@ -18,38 +18,12 @@ use crate::ui::gloss_block::BlockKind;
 /// Returns `false` if the current gloss context, work, or matching line can't
 /// be resolved, so the caller can restore the saved page instead.
 pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
-    let (start_citation, source_text) = match &s.gloss_context {
-        Some(ctx) => (ctx.start_citation.clone(), ctx.source_text.clone()),
+    let start_idx = match gloss_passage_start_idx(s) {
+        Some(i) => i,
         None => return false,
     };
-
-    // start_citation is `ABBR.div1.div2.line_in_div`; the gloss strips any
-    // `-Amb` suffix from the abbrev, so match on the numeric tail rather than
-    // the full citation string.
-    let target = crate::app::parse_citation(&start_citation);
-
     let work = match s.current_work.as_ref() {
         Some(w) => w,
-        None => return false,
-    };
-
-    // -Amb editions now render the canonical parity-numbered .txt (verified
-    // 2026-06-25; base and -Amb share text_file and (div1,div2,line_in_div)).
-    // Resolve by the citation tuple first — it is unique, so a repeated source
-    // line can't land on the wrong occurrence. Text match is the citationless
-    // (.txt-only) fallback.
-    let by_citation = target.and_then(|t| {
-        work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t)
-    });
-    let first_src = source_text.lines().next().map(str::trim).unwrap_or("");
-    let start_idx = match by_citation.or_else(|| {
-        if first_src.is_empty() {
-            None
-        } else {
-            work.lines.iter().position(|l| l.text.trim() == first_src)
-        }
-    }) {
-        Some(i) => i,
         None => return false,
     };
     let work_idx = work.lines[start_idx..]
@@ -57,8 +31,43 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
         .position(|l| l.is_dialogue)
         .map(|off| start_idx + off)
         .unwrap_or(start_idx);
+    jump_to_work_idx(s, work_idx)
+}
 
-    // Resolve the work index to a buffer line through the line map.
+/// Work-line index where the glossed passage's source text starts, or None
+/// when the gloss context/work/line can't be resolved.
+///
+/// `start_citation` is `ABBR.div1.div2.line_in_div`; the gloss strips any
+/// `-Amb` suffix from the abbrev, so match on the numeric tail rather than the
+/// full citation string. -Amb editions render the canonical parity-numbered
+/// .txt (verified 2026-06-25; base and -Amb share text_file and
+/// (div1,div2,line_in_div)). Resolve by the citation tuple first — it is
+/// unique, so a repeated source line can't land on the wrong occurrence. Text
+/// match is the citationless (.txt-only) fallback.
+fn gloss_passage_start_idx(s: &AppState) -> Option<usize> {
+    let ctx = s.gloss_context.as_ref()?;
+    let work = s.current_work.as_ref()?;
+    let target = crate::app::parse_citation(&ctx.start_citation);
+    let by_citation = target
+        .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
+    by_citation.or_else(|| {
+        let first_src = ctx.source_text.lines().next().map(str::trim).unwrap_or("");
+        if first_src.is_empty() {
+            None
+        } else {
+            work.lines.iter().position(|l| l.text.trim() == first_src)
+        }
+    })
+}
+
+/// Land the reader on `work_idx`: resolve it to a buffer line through the
+/// line map, then jump. Use jump_to_line, not center-on-cursor: when the
+/// source passage opens a scene (e.g. H8 Porter at (5,3,1)), naive centering
+/// lets the scene-break clamp pull the spread back to the PREVIOUS scene,
+/// leaving the cursor off-page. jump_to_line lands on the canonical spread
+/// for the line in EReader mode (the same page paging through the work would
+/// show).
+fn jump_to_work_idx(s: &mut AppState, work_idx: usize) -> bool {
     let buf_idx = if let Some(ref lm) = s.line_map {
         match lm.work_to_buffer.get(work_idx) {
             Some(&bi) => bi,
@@ -67,14 +76,88 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
     } else {
         work_idx
     };
-
-    // Use jump_to_line, not center-on-cursor: when the source passage opens a
-    // scene (e.g. H8 Porter at (5,3,1)), naive centering lets the scene-break
-    // clamp pull the spread back to the PREVIOUS scene, leaving the cursor
-    // off-page. jump_to_line lands on the canonical spread for the line in
-    // EReader mode (the same page paging through the work would show).
     crate::input::navigation::jump_to_line(s, buf_idx);
     true
+}
+
+/// Escape-close landing for a MOVED overlay cursor: resolve the overlay's
+/// selected block to its governing SOURCE excerpt (the block itself when the
+/// cursor sits on source verse; the nearest source block ABOVE when it sits
+/// on an explication paragraph) and land the reader on that excerpt's first
+/// line. Occurrence-counted across the gloss's source blocks so a repeated
+/// line (refrain) resolves by position, not first-match. Returns false when
+/// the block or its line can't be resolved, so the caller can fall back to
+/// the passage-start jump / saved-page restore.
+pub(crate) fn jump_to_gloss_cursor_source(s: &mut AppState, kind: BlockKind, index: i32) -> bool {
+    let gloss_text = match s.gloss_list.get(s.gloss_index) {
+        Some(g) => g.gloss_text.clone(),
+        None => return false,
+    };
+    let blocks = crate::ui::gloss_block::gloss_blocks(&gloss_text);
+    let pos = match blocks.iter().position(|b| b.kind == kind && b.index == index) {
+        Some(p) => p,
+        None => return false,
+    };
+    let src_pos = match blocks[..=pos].iter().rposition(|b| b.kind == BlockKind::Source) {
+        Some(p) => p,
+        None => return false,
+    };
+    let needle = match blocks[src_pos]
+        .display
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+    {
+        Some(l) => l.to_string(),
+        None => return false,
+    };
+    // Which occurrence of `needle` (among the gloss's source lines, in
+    // document order) opens this block.
+    let mut remaining = blocks[..src_pos]
+        .iter()
+        .filter(|b| b.kind == BlockKind::Source)
+        .flat_map(|b| b.display.lines())
+        .filter(|l| l.trim() == needle)
+        .count();
+
+    let start_idx = match gloss_passage_start_idx(s) {
+        Some(i) => i,
+        None => return false,
+    };
+    // Bound the scan to the passage's span (+ slack for the speaker/stage rows
+    // the gloss's segment lines don't carry).
+    let span = s
+        .gloss_context
+        .as_ref()
+        .map(|c| c.source_text.lines().count())
+        .unwrap_or(0)
+        + 8;
+    let work = match s.current_work.as_ref() {
+        Some(w) => w,
+        None => return false,
+    };
+    let mut target = None;
+    for (off, l) in work.lines[start_idx..].iter().take(span).enumerate() {
+        if l.text.trim() == needle {
+            if remaining == 0 {
+                target = Some(start_idx + off);
+                break;
+            }
+            remaining -= 1;
+        }
+    }
+    let hit = match target {
+        Some(t) => t,
+        None => return false,
+    };
+    // A block can open on a stage direction; keep the reader cursor on
+    // dialogue, same as the passage-start jump.
+    let work_idx = work.lines[hit..]
+        .iter()
+        .position(|l| l.is_dialogue)
+        .map(|off| hit + off)
+        .unwrap_or(hit);
+    jump_to_work_idx(s, work_idx)
 }
 
 pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) {
@@ -3029,6 +3112,10 @@ pub(crate) fn open_gloss_overlay(
 /// policy; `n`/Ctrl+g/Ctrl+j are consumed no-ops in this overlay.
 pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
+    // Capture the overlay's block-cursor selection BEFORE hide/cleanup: a
+    // moved cursor re-lands the reader on that block's source line below.
+    let cursor_block = s.gloss_overlay.current_block();
+    let cursor_moved = !s.gloss_overlay.cursor_on_first_block();
     // Closing the overlay must not leave a stale diff-highlight for the next
     // open session (Task 7).
     s.gloss_overlay.clear_rewrite_diff();
@@ -3047,16 +3134,22 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     s.gloss_search = None;
     s.gloss_last_pattern = None;
     crate::app::return_to_reader_mode(&mut s);
-    // Still showing the passage the overlay opened on from the reader? Then
-    // this is a peek-and-Escape: restore the exact saved reading position —
-    // closing must not re-frame the page the reader left (the "Escape
-    // repaginates" bug). Jump to the source start only after in-overlay
-    // passage traversal moved to a DIFFERENT passage. Mirrors the journal
-    // overlay's entry_page_id check in journal::toggle_overlay.
+    // Still showing the passage the overlay opened on from the reader, with
+    // the block cursor never moved off the first stop? Then this is a
+    // peek-and-Escape: restore the exact saved reading position — closing
+    // must not re-frame the page the reader left (the "Escape repaginates"
+    // bug). Mirrors the journal overlay's entry_page_id check in
+    // journal::toggle_overlay. A MOVED block cursor instead lands the reader
+    // on the source excerpt the cursor was reading (its governing source
+    // block's first line); in-overlay traversal to a DIFFERENT passage with
+    // an unmoved cursor falls back to that passage's source start.
     let entry = s.gloss_entry_citation.take();
     let on_entry_passage = entry.is_some()
         && s.gloss_context.as_ref().map(|c| c.start_citation.as_str()) == entry.as_deref();
-    let jumped = if on_entry_passage {
+    let jumped = if let Some((kind, index)) = cursor_block.filter(|_| cursor_moved) {
+        jump_to_gloss_cursor_source(&mut s, kind, index)
+            || (!on_entry_passage && jump_to_gloss_source_start(&mut s))
+    } else if on_entry_passage {
         false
     } else {
         jump_to_gloss_source_start(&mut s)
