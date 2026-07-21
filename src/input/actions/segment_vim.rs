@@ -26,8 +26,9 @@ pub(crate) fn open(state: &Rc<RefCell<AppState>>) {
             // Open the overlay chrome sized for this text, then swap the view
             // to the raw vim edit buffer — the same two-step the gloss `e`
             // editor uses, minus any stored artifact behind it.
+            let head = crate::app::scene_synopsis::cursor_head(&s);
             s.gloss_overlay.show_gloss_with_color(
-                "", &text, cw, h, Some(&s.theme.root_color), &[],
+                "", &text, cw, h, Some(&s.theme.root_color), &[], (&head.0, &head.1),
             );
             let (fill, fg) = (s.theme.cursor_bg.clone(), s.theme.cursor_fg.clone());
             s.gloss_overlay.set_edit_copy_only(true);

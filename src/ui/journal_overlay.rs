@@ -10,6 +10,11 @@ pub struct JournalOverlay {
     pub overlay: Overlay,
     scrim: gtk4::Box,
     container: gtk4::Box,
+    /// Running-head labels (work abbrev left, position right) above the scroll,
+    /// matching the main card strip and the synopsis/gloss overlays. Set via
+    /// `set_running_head` before each show; measured by `size_card`.
+    head_work: Label,
+    head_scene: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
@@ -310,9 +315,30 @@ impl JournalOverlay {
         container.set_valign(gtk4::Align::Center);
         container.set_visible(false);
 
-        // No title header: the footer already identifies the work + chapter
-        // (`<abbrev> <act>.<scene> · page N of M`), so the overlay drops the
-        // "<Work> — Chapter N" header that used to sit above the scroll.
+        // Running head matching the main card and the synopsis/gloss overlays:
+        // work abbrev (left) + position (right) in the small-caps
+        // `running-head-*` styles. Text is set by the action layer
+        // (`set_running_head`) BEFORE each show, so `size_card`'s measurement
+        // of the row (folded into the fixed chrome) is real.
+        let head_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        let head_work = Label::new(None);
+        head_work.add_css_class("running-head-work");
+        head_work.set_halign(gtk4::Align::Start);
+        head_work.set_valign(gtk4::Align::Center);
+        head_work.set_hexpand(true);
+        // Mirror the card strip's `.running-head` 40px side padding.
+        head_work.set_margin_start(40);
+        head_work.set_margin_top(24);
+        head_work.set_margin_bottom(12);
+        head_row.append(&head_work);
+        let head_scene = Label::new(None);
+        head_scene.add_css_class("running-head-scene");
+        head_scene.set_halign(gtk4::Align::End);
+        head_scene.set_valign(gtk4::Align::Center);
+        head_scene.set_margin_end(40);
+        head_scene.set_margin_top(24);
+        head_scene.set_margin_bottom(12);
+        head_row.append(&head_scene);
 
         let scrolled = gtk4::ScrolledWindow::new();
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
@@ -477,6 +503,7 @@ impl JournalOverlay {
         scroll_overlay.set_margin_bottom(20);
         scroll_overlay.set_margin_top(24);
 
+        container.append(&head_row);
         container.append(&scroll_overlay);
 
         // Footer mirroring the gloss overlay (gloss_overlay.rs footer_box):
@@ -560,6 +587,8 @@ impl JournalOverlay {
             overlay,
             scrim,
             container,
+            head_work,
+            head_scene,
             scrolled,
             view,
             clip_guard,
@@ -628,6 +657,14 @@ impl JournalOverlay {
     /// Set by the journal action layer before each show: `true` when the
     /// current work is prose, switching `size_card` to the main reading
     /// card's tighter prose margin (see `size_card`).
+    /// Set the running-head pair (work abbrev left, position right). MUST be
+    /// called before `show_page`/`show_loading` so `size_card` measures the
+    /// row at its real height.
+    pub fn set_running_head(&self, work: &str, position: &str) {
+        self.head_work.set_text(work);
+        self.head_scene.set_text(position);
+    }
+
     pub fn set_prose_reading(&self, prose: bool) {
         self.prose_reading.set(prose);
         // The ask card insets itself on open; keep it on the same column.
@@ -638,17 +675,19 @@ impl JournalOverlay {
         self.container.set_size_request(card_width, card_height);
         self.last_card_size.set((card_width, card_height));
         // Fixed-scroll-height (the host owns it): the scroll (vexpand off) gets an
-        // EXPLICIT height = pane minus the footer chrome — its height while the ask
+        // EXPLICIT height = pane minus the fixed chrome — its height while the ask
         // card is CLOSED. `ask_host.open` subtracts the ask slot, `close` restores
-        // this stored closed height. There is no title header anymore (the footer
-        // identifies the work + chapter), so only the scroll_overlay margins
-        // (UNACCOUNTED_CHROME_MARGINS = 44, which `preferred_size()` omits) and the
-        // footer count as fixed chrome.
+        // this stored closed height. Fixed chrome = the running-head row above the
+        // scroll (preferred size includes its 24/12 margins), the scroll_overlay
+        // margins (UNACCOUNTED_CHROME_MARGINS = 44, which `preferred_size()`
+        // omits), and the footer. Without the head's height the `valign=Center`
+        // container grows PAST `card_height` (the gloss overlay's title_scene bug).
+        let (_, head_h) = self.head_work.preferred_size();
         let (_, footer_h) = self.footer_container.preferred_size();
         self.ask_host.size(
             card_width,
             card_height,
-            UNACCOUNTED_CHROME_MARGINS,
+            head_h.height() + UNACCOUNTED_CHROME_MARGINS,
             footer_h.height(),
         );
         // Anchor the text to a card-relative margin rather than the small fixed

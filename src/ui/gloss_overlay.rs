@@ -1423,8 +1423,37 @@ impl GlossOverlay {
         self.title.remove_css_class("running-head-work");
         self.title.add_css_class("gloss-title");
         self.title.set_margin_bottom(0);
-        // The synopsis running head's right half never shows in gloss mode.
+        // The running head's right half never shows on the loading/diff cards.
         self.title_scene.set_visible(false);
+    }
+
+    /// Style the title row as the main card's RUNNING HEAD, not a chapter
+    /// heading: work abbrev at the start, position ("Chapter 10" /
+    /// "Act N, Scene M") at the end, in the same small-caps
+    /// `running-head-work`/`running-head-scene` styles the reading card uses.
+    /// Shared by the synopsis AND gloss-result views; the loading/diff paths
+    /// restore gloss-title and hide the right label (`set_gloss_title_style`).
+    /// Both labels stay visible together, so `title_pref_h` (margins included)
+    /// measures the whole row for the fixed-scroll-height budget.
+    fn show_running_head(&self, work: &str, position: &str) {
+        self.title.set_text(work);
+        self.title.remove_css_class("gloss-title");
+        self.title.remove_css_class("synopsis-header");
+        self.title.add_css_class("running-head-work");
+        self.title.set_attributes(None);
+        self.title.set_visible(true);
+        self.title.set_vexpand(false);
+        self.title.set_valign(Align::Center);
+        self.title.set_halign(Align::Start);
+        // Mirror the card strip's `.running-head` 40px side padding.
+        self.title.set_margin_start(40);
+        self.title.set_margin_top(24);
+        self.title.set_margin_bottom(12);
+        self.title_scene.set_text(position);
+        self.title_scene.set_margin_end(40);
+        self.title_scene.set_margin_top(24);
+        self.title_scene.set_margin_bottom(12);
+        self.title_scene.set_visible(true);
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
@@ -1466,7 +1495,7 @@ impl GlossOverlay {
         self.apply_font();
     }
 
-    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)]) {
+    pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)], head: (&str, &str)) {
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
@@ -1475,10 +1504,6 @@ impl GlossOverlay {
         // A fresh gloss render closes any open add/edit ask card and clears its
         // focus highlight (e.g. after an add/edit completes or n/p navigates).
         self.ask_host.card().close();
-        self.title.set_visible(false);
-        self.title.set_vexpand(false);
-        self.title.set_valign(Align::Start);
-        self.title.set_halign(Align::Start);
         // Wide side margins (card/5, uniform for all work types) keep the gloss
         // column at a comfortable reading measure. Anchor to the actual card
         // width (the overlay is full-screen), NOT the fixed column_width (1050)
@@ -1486,6 +1511,11 @@ impl GlossOverlay {
         // nearly edge to edge.
         let left = crate::ui::prose_column_margin(card_width);
         self.set_prose_margins(left);
+        // The gloss card carries the same running head as the synopsis view
+        // (work abbrev left, position right). AFTER set_prose_margins, which
+        // sets the title's start margin for the gloss-title look — the head
+        // uses the card strip's 40px padding instead.
+        self.show_running_head(head.0, head.1);
         self.set_gloss_hint();
         self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
@@ -1670,6 +1700,8 @@ impl GlossOverlay {
         self.last_card_size.set((card_width, card_height));
         self.ask_host.card().close();
         self.title.set_visible(false);
+        // The running head's right half must not leak into the echo view.
+        self.title_scene.set_visible(false);
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);
@@ -1801,30 +1833,7 @@ impl GlossOverlay {
             .map(|p| p.left_margin)
             .unwrap_or(inset + crate::ui::gloss_render::QUOTE_BODY_INDENT);
         let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
-        // The synopsis header is the main card's RUNNING HEAD, not a chapter
-        // heading: work abbrev at the start, position ("Chapter 10" /
-        // "Act N, Scene M") at the end, in the same small-caps
-        // `running-head-work`/`running-head-scene` styles the reading card
-        // uses. The gloss-result paths restore gloss-title and hide the
-        // right label (`set_gloss_title_style`).
-        self.title.set_text(work);
-        self.title.remove_css_class("gloss-title");
-        self.title.remove_css_class("synopsis-header");
-        self.title.add_css_class("running-head-work");
-        self.title.set_attributes(None);
-        self.title.set_visible(true);
-        self.title.set_vexpand(false);
-        self.title.set_valign(Align::Center);
-        self.title.set_halign(Align::Start);
-        // Mirror the card strip's `.running-head` 40px side padding.
-        self.title.set_margin_start(40);
-        self.title.set_margin_top(24);
-        self.title.set_margin_bottom(12);
-        self.title_scene.set_text(position);
-        self.title_scene.set_margin_end(40);
-        self.title_scene.set_margin_top(24);
-        self.title_scene.set_margin_bottom(12);
-        self.title_scene.set_visible(true);
+        self.show_running_head(work, position);
         self.hide_diff_labels();
         self.position_label.set_visible(false);
         self.echo_header_view.set_visible(false);

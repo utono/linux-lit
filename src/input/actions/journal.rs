@@ -620,6 +620,8 @@ pub(crate) fn render_current(s: &mut AppState) {
         Some(source_paragraphs(src, citation.as_deref()))
     });
 
+    let head = crate::app::scene_synopsis::cursor_head(s);
+    s.journal_overlay.set_running_head(&head.0, &head.1);
     s.journal_overlay.show_page(
         &footer_left,
         s.journal.page_index,
@@ -697,6 +699,10 @@ pub(crate) fn render_filtered_match(s: &mut AppState) {
     // Filtered view shows one entry at a time: page_index 0 of page_count 1.
     // No source block here — the term-browse filtered view is a distinct render
     // path from nav_page (kept scoped to the main viewer for now).
+    // Head names the ENTRY's own work/position (the filtered view can surface
+    // entries away from the cursor), matching the footer's citation.
+    let head_pos = crate::app::scene_synopsis::synopsis_label(s, p.div1, p.div2);
+    s.journal_overlay.set_running_head(&work_abbrev, &head_pos);
     s.journal_overlay
         .show_page(&footer_left, 0, 1, &p.question, &p.answer, &p.kind, None, cw, h);
     // Re-apply the overlay search against the just-rendered entry. For an
@@ -2174,7 +2180,12 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
     // Show the loading card immediately with the raw text so the UI isn't
     // dead during the improve-question round-trip; `ask_claude` re-shows it
     // with the improved phrasing once that call returns.
-    state.borrow().journal_overlay.show_loading(&text);
+    {
+        let s = state.borrow();
+        let head = crate::app::scene_synopsis::cursor_head(&s);
+        s.journal_overlay.set_running_head(&head.0, &head.1);
+        s.journal_overlay.show_loading(&text);
+    }
     // A brand-new ask has no saved entry/tags yet — derive candidate terms from
     // the scene text first, then ground the phrasing on them.
     extract_scene_terms(state, text, move |st, question, terms| {
@@ -2507,7 +2518,12 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         )
     };
 
-    state_rc.borrow().journal_overlay.show_loading(question);
+    {
+        let s = state_rc.borrow();
+        let head = crate::app::scene_synopsis::cursor_head(&s);
+        s.journal_overlay.set_running_head(&head.0, &head.1);
+        s.journal_overlay.show_loading(question);
+    }
 
     // For a Passage band, consume pending_passage — but ONLY when it belongs
     // to THIS band. A cancelled ask leaves a stale pending behind; using it

@@ -530,8 +530,9 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
     let gloss_text = all_glosses[0].gloss_text.clone();
+    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
-        &ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &[],
+        &ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &[], (&head.0, &head.1),
     );
     s.gloss_overlay.set_position(0, all_glosses.len());
     s.gloss_list = all_glosses;

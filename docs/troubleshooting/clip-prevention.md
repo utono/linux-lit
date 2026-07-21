@@ -767,6 +767,32 @@ When a half line clips at the bottom edge of a scrolled surface:
     reading `target/ui/*.png` — a genuine overlay/main-card render with a real
     clip vs. a card that never changed state (overlay never opened).
 
+18. **A fixed-scroll-height OVERLAY renders FULL-WINDOW height, top-anchored and
+    underfilled — content at the top, a huge blank band below, and a stale/
+    left-packed header line at the card's very top.** NOT a clip-path bug: a
+    chrome widget above the scroll is VISIBLE but UNACCOUNTED in the scroll
+    budget, so the `valign=Center` container's natural height exceeds
+    `card_height` (a height_request is only a minimum) and the card grows to the
+    window edges. The 2026-07-21 instance: the synopsis running head added a
+    `title_scene` label sharing the gloss overlay's title row; the gloss-result
+    path hid `title` directly (never calling `set_gloss_title_style`), leaving
+    `title_scene` visible with the previous synopsis's text — with the hexpand
+    `title` hidden, the box packed it LEFT (its `halign End` had no slack to act
+    on), which is the "position text at top-left" tell. Meanwhile `size_scroll`
+    charged `title_pref_h()` = 0 (title hidden), so the visible row's ~60px
+    pushed the container past the card.
+    - Tell: overlay flush to the window's top/bottom (no root band, no rounded
+      corners) while the synopsis view of the SAME widget sizes correctly;
+      content underfills because the scroll got the full `card_height` budget.
+    - Rule: every show path must leave the title-row labels in a state the
+      sizing call accounts for — a label visible in ANY mode must be measured
+      (or hidden) in EVERY mode. The gloss/journal overlays now show the
+      running head in their result views and charge its row height
+      (`size_scroll(card_height, title_pref_h())` / journal `size_card`'s
+      `head_h + UNACCOUNTED_CHROME_MARGINS`), keeping
+      title + margins + scroll + footer == card_height.
+    (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

@@ -981,6 +981,7 @@ fn apply_ipa_fix(
             let gloss_text = gloss.gloss_text.clone();
             let source_text = ctx.source_text.clone();
             let root_color = s.theme.root_color.clone();
+            let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
             s.gloss_overlay.show_gloss_with_color(
                 &source_text,
                 &gloss_text,
@@ -988,6 +989,7 @@ fn apply_ipa_fix(
                 h,
                 Some(&root_color),
                 &pairs,
+                (&head.0, &head.1),
             );
             s.gloss_overlay
                 .set_position(gloss_index_pos, s.gloss_list.len());
@@ -1078,9 +1080,10 @@ pub(crate) fn render_gloss_row(s: &mut AppState, new_idx: usize) {
     let source_text = ctx.source_text.clone();
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
+    let head = crate::app::scene_synopsis::synopsis_head(s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &source_text, &gloss_text, cw, h,
-        Some(&s.theme.root_color), &pairs,
+        Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
     );
     s.gloss_overlay.set_position(new_idx, s.gloss_list.len());
     s.gloss_overlay.set_citation(&gloss_start, &gloss_end);
@@ -1171,9 +1174,10 @@ fn persist_and_render_gloss(
     let mut s = state_rc.borrow_mut();
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
+    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, full_gloss, cw, h,
-        Some(&s.theme.root_color), &pairs,
+        Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
     );
     s.gloss_overlay.set_position(new_idx, all.len());
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -1246,9 +1250,10 @@ fn update_and_render_gloss_in_place(
     s.gloss_active_voice = 0;
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
+    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, full_gloss, cw, h,
-        Some(&s.theme.root_color), &pairs,
+        Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
     );
     s.gloss_overlay.set_position(gloss_index, s.gloss_list.len());
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -1451,9 +1456,10 @@ pub(crate) fn undo_gloss_edit(state_rc: &Rc<RefCell<AppState>>) {
     s.gloss_active_voice = 0;
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
+    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, &original, cw, h,
-        Some(&s.theme.root_color), &pairs,
+        Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
     );
     s.gloss_overlay.set_position(gloss_index, s.gloss_list.len());
     s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -1513,7 +1519,8 @@ pub(crate) fn persist_render_install_gloss(
 
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
-    s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs);
+    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
     // This install path re-populates the buffer but does NOT run
     // `recolor_cached_blocks` (unlike the display sites), so tint vocab here.
     if s.vocab_highlight_visible {
@@ -3060,6 +3067,7 @@ pub(crate) fn open_gloss_overlay(
 
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let source_lines: Vec<(String, i64)> = Vec::new();
+    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text,
         &all_glosses[idx].gloss_text,
@@ -3067,6 +3075,7 @@ pub(crate) fn open_gloss_overlay(
         h,
         Some(&s.theme.root_color),
         &source_lines,
+        (&head.0, &head.1),
     );
     s.gloss_overlay.set_position(idx, all_glosses.len());
     // Footer cites the DISPLAYED gloss's own passage span, not the group-wide

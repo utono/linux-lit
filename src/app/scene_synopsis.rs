@@ -109,6 +109,14 @@ pub fn synopsis_head(state: &AppState, div1: i64, div2: i64) -> (String, String)
     (work, synopsis_label(state, div1, div2))
 }
 
+/// Running-head pair for the reader cursor's scene — the gloss/journal
+/// overlays open at the cursor, so this is their `synopsis_head` equivalent
+/// when no per-gloss (act, scene) context is at hand.
+pub fn cursor_head(state: &AppState) -> (String, String) {
+    let (d1, d2) = current_scene_divs(state);
+    synopsis_head(state, d1, d2)
+}
+
 /// Get the (div1, div2) of the scene at the current line.
 /// When current_line is on an unmapped buffer line (scene header, separator,
 /// stage direction), walks forward then backward to find the nearest mapped line.
