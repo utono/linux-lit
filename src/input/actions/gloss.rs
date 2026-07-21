@@ -3233,15 +3233,18 @@ fn background_gloss_request(
     ctx: crate::gloss::GlossContext,
     model: String,
 ) {
-    {
+    let hold_gen = {
         let s = state_rc.borrow();
+        // A second `-` mid-flight: the held "Glossing…" toast is already up —
+        // re-toasting would steal its generation and expire it early.
         if s.prose_gloss_pending.get() {
-            crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 2);
             return;
         }
         s.prose_gloss_pending.set(true);
-        crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 4);
-    }
+        // Held (no expiry) for the whole round-trip; the completion handlers
+        // release it (overlay open) or supersede it (failure/ready toasts).
+        crate::input::navigation::show_chapter_toast_hold(&s, "Glossing\u{2026}")
+    };
 
     let neighbors = crate::gloss::neighbors_for_ctx(&ctx);
     crate::logging::log(&format!(
@@ -3273,6 +3276,10 @@ fn background_gloss_request(
                 .map(|w| w.canonical_abbrev.as_str() == ctx_ok.work_abbrev)
                 .unwrap_or(false);
             if s.input_mode == crate::app::InputMode::Reader && same_work {
+                // Drop the held "Glossing…" toast in the same breath as the
+                // overlay opens (the failure/ready toasts supersede it via
+                // their own generation bump instead).
+                crate::input::navigation::release_chapter_toast_hold(&s, hold_gen);
                 true
             } else {
                 crate::input::navigation::show_chapter_toast_secs(&s, "Gloss ready", 3);
