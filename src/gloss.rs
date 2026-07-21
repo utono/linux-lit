@@ -925,12 +925,20 @@ pub fn build_edit_gloss_message(
     existing_gloss: &str,
     pasted_lines: &str,
 ) -> String {
+    let header = if crate::db::line_types::is_prose_work(&ctx.work_type) {
+        format!("Work: \"{}\"\nChapter: {}\n\n", ctx.work_title, ctx.act)
+    } else {
+        format!(
+            "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n",
+            ctx.work_title, ctx.act, ctx.scene, ctx.speaker
+        )
+    };
     format!(
-        "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n\
+        "{}\
          --- ORIGINAL PASSAGE ---\n{}\n\n\
          --- EXISTING GLOSS ---\n{}\n\n\
          --- USER-PROVIDED LINES (use as subtext/context) ---\n{}",
-        ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
+        header,
         ctx.source_text,
         existing_gloss,
         pasted_lines,
@@ -1251,6 +1259,19 @@ mod tests {
     #[test]
     fn verse_user_message_keeps_play_header() {
         let msg = build_user_message(&test_ctx("play"), None, None, &[]);
+        assert!(msg.starts_with("Play: \"Bleak House\"\nAct: 10, Scene: 0\nSpeaker: UNKNOWN\n\n"));
+    }
+
+    #[test]
+    fn prose_edit_message_uses_work_chapter_header() {
+        let msg = build_edit_gloss_message(&test_ctx("prose"), "existing gloss", "pasted lines");
+        assert!(msg.starts_with("Work: \"Bleak House\"\nChapter: 10\n\n"));
+        assert!(!msg.contains("Speaker:") && !msg.contains("Scene:"));
+    }
+
+    #[test]
+    fn verse_edit_message_keeps_play_header() {
+        let msg = build_edit_gloss_message(&test_ctx("play"), "existing gloss", "pasted lines");
         assert!(msg.starts_with("Play: \"Bleak House\"\nAct: 10, Scene: 0\nSpeaker: UNKNOWN\n\n"));
     }
 
