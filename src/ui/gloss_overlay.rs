@@ -1404,6 +1404,9 @@ impl GlossOverlay {
     fn set_gloss_title_style(&self) {
         self.title.remove_css_class("synopsis-header");
         self.title.add_css_class("gloss-title");
+        // Drop the synopsis view's body-size Pango attribute so the gloss title
+        // renders at gloss-title's own CSS size again.
+        self.title.set_attributes(None);
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
@@ -1788,6 +1791,15 @@ impl GlossOverlay {
         // those. The gloss-result paths restore gloss-title.
         self.title.remove_css_class("gloss-title");
         self.title.add_css_class("synopsis-header");
+        // The heading renders at the SAME size as the synopsis body (the main
+        // card's font size for prose, the overlay reading size otherwise) — a
+        // Pango size attribute layered over the class, which keeps the quiet
+        // dim/underline look but overrides its fixed 16px font-size.
+        // `set_gloss_title_style` clears it when the widget returns to gloss use.
+        let body_pt = prose_card.as_ref().map(|p| p.font_size).unwrap_or(self.font_size.get());
+        let attrs = gtk4::pango::AttrList::new();
+        attrs.insert(gtk4::pango::AttrSize::new(body_pt * gtk4::pango::SCALE));
+        self.title.set_attributes(Some(&attrs));
         self.title.set_visible(true);
         self.title.set_vexpand(false);
         self.title.set_valign(Align::Start);

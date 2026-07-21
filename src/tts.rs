@@ -8,6 +8,10 @@ use std::path::Path;
 /// under LIT_HEADLESS_TEST, where there is no audio device.
 pub struct TtsPlayer {
     inner: Option<Inner>,
+    /// Sink gain (1.0 = 100%). Seeded at startup from `config.mpv_volume` so
+    /// TTS clips play at the same level as the MPV player; applied to every
+    /// sink `play_file` creates (and live to a playing sink on change).
+    volume: std::cell::Cell<f32>,
 }
 
 struct Inner {
@@ -20,7 +24,7 @@ struct Inner {
 impl TtsPlayer {
     pub fn new() -> Self {
         if std::env::var("LIT_HEADLESS_TEST").is_ok() {
-            return TtsPlayer { inner: None };
+            return TtsPlayer { inner: None, volume: std::cell::Cell::new(1.0) };
         }
         match rodio::OutputStream::try_default() {
             Ok((stream, handle)) => TtsPlayer {
@@ -29,10 +33,41 @@ impl TtsPlayer {
                     handle,
                     sink: RefCell::new(None),
                 }),
+                volume: std::cell::Cell::new(1.0),
             },
             Err(e) => {
                 crate::log_fmt!("TTS: no audio output device: {}", e);
-                TtsPlayer { inner: None }
+                TtsPlayer { inner: None, volume: std::cell::Cell::new(1.0) }
+            }
+        }
+    }
+
+    /// Set the player volume as a percent (100 = unity), matching how
+    /// `config.mpv_volume` expresses MPV's launch volume. Applies to the
+    /// currently playing sink (if any) and to every future clip.
+    pub fn set_volume_percent(&self, percent: u32) {
+        self.apply_volume(percent as f32 / 100.0);
+    }
+
+    /// Nudge the player volume by a percent delta (the Ctrl+Up/Down ±5 step),
+    /// clamped to 0..=150 — the same range `config.mpv_volume` accepts — so the
+    /// TTS level tracks MPV's relative `add volume` nudges. Applies live to a
+    /// playing clip.
+    pub fn adjust_volume_percent(&self, delta: f64) {
+        self.apply_volume((self.volume.get() + delta as f32 / 100.0).clamp(0.0, 1.5));
+    }
+
+    /// Current volume as a percent (100 = unity), for user-facing feedback.
+    #[must_use]
+    pub fn volume_percent(&self) -> u32 {
+        (self.volume.get() * 100.0).round() as u32
+    }
+
+    fn apply_volume(&self, v: f32) {
+        self.volume.set(v);
+        if let Some(inner) = &self.inner {
+            if let Some(sink) = inner.sink.borrow().as_ref() {
+                sink.set_volume(v);
             }
         }
     }
@@ -60,6 +95,7 @@ impl TtsPlayer {
         };
         match rodio::Sink::try_new(&inner.handle) {
             Ok(sink) => {
+                sink.set_volume(self.volume.get());
                 sink.append(decoder);
                 *inner.sink.borrow_mut() = Some(sink);
             }

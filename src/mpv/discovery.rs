@@ -14,6 +14,13 @@ pub fn set_mpv_volume(percent: u32) {
     MPV_VOLUME.store(percent, Ordering::Relaxed);
 }
 
+/// The configured MPV launch volume (percent). Read by the IPC client to
+/// re-assert the volume after connect/loadfile (watch_later restore in the
+/// user's mpv.conf would otherwise override the `--volume=` launch arg).
+pub fn mpv_volume() -> u32 {
+    MPV_VOLUME.load(Ordering::Relaxed)
+}
+
 /// MPV window background color (the letterbox/border matte around video and the
 /// idle backdrop) for the `--background-color=` arg. Set from the active
 /// theme's `root_color` so an MPV window opened by linux-lit matches the

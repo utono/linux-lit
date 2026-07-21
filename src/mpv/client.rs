@@ -21,6 +21,18 @@ pub async fn run(
     // (seek_time, resume_after_seek, optional ab_loop (a, b))
     let mut pending_seek_after_load: PendingSeek = None;
     let mut last_synced_work_idx: Option<usize> = None;
+    // Accumulated Ctrl+Up/Down nudges this session, in percent points. The
+    // desired level (config volume + nudges) is re-asserted after connect and
+    // after every file load — watch_later restore (save-position-on-quit in
+    // the user's mpv.conf) applies each file's SAVED volume at load time,
+    // silently overriding the `--volume=` launch arg otherwise.
+    let mut volume_delta: f64 = 0.0;
+    // The user's mpv.conf also has a CONDITIONAL auto-profile ([audio_auto]:
+    // `profile-cond=not video` -> [audio] volume=75) that fires at track
+    // selection — AFTER the file-loaded event — so an assert at file-loaded
+    // still loses. Re-assert once more on the FIRST time-pos tick after each
+    // connect/load: by then profiles and watch_later restore have all fired.
+    let mut assert_volume_on_timepos = false;
 
     loop {
         if let Some(ref mut r) = reader {
@@ -36,6 +48,13 @@ pub async fn run(
                         }
                         Ok(_) => {
                             if is_file_loaded_event(&line_buf) {
+                                // Undo any watch_later volume restore for this file
+                                // (and again on the next time-pos tick, once the
+                                // conditional auto-profiles have fired too).
+                                assert_volume_on_timepos = true;
+                                if let Some(w) = writer.as_mut() {
+                                    let _ = send_command(w, &set_property_cmd("volume", desired_volume(volume_delta))).await;
+                                }
                                 if let Some((seek_time, resume, ab_loop)) = pending_seek_after_load.take() {
                                     if let Some(w) = writer.as_mut() {
                                         crate::logging::log(&format!(
@@ -52,6 +71,14 @@ pub async fn run(
                                 }
                             }
                             if let Some(pos) = parse_time_pos(&line_buf) {
+                                if assert_volume_on_timepos {
+                                    assert_volume_on_timepos = false;
+                                    if let Some(w) = writer.as_mut() {
+                                        let v = desired_volume(volume_delta);
+                                        let _ = send_command(w, &set_property_cmd("volume", v)).await;
+                                        crate::logging::log(&format!("MPV: volume asserted to {} post-load", v));
+                                    }
+                                }
                                 let _ = evt_tx.send(MpvEvent::TimePos(pos)).await;
                                 if let Some(idx) = find_line_for_time(pos, &timestamps, &line_id_to_index, last_synced_work_idx) {
                                     last_synced_work_idx = Some(idx);
@@ -74,7 +101,7 @@ pub async fn run(
                     ) {
                         last_synced_work_idx = None;
                     }
-                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
+                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load, &mut volume_delta, &mut assert_volume_on_timepos).await;
                 }
             }
         } else {
@@ -89,7 +116,7 @@ pub async fn run(
                     ) {
                         last_synced_work_idx = None;
                     }
-                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load).await;
+                    handle_command(cmd, &mut reader, &mut writer, &evt_tx, &mut timestamps, &mut line_id_to_index, &mut pending_seek_after_load, &mut volume_delta, &mut assert_volume_on_timepos).await;
                 }
                 None => break,
             }
@@ -105,6 +132,8 @@ async fn handle_command(
     timestamps: &mut Vec<(i64, f64, f64)>,
     line_id_to_index: &mut HashMap<i64, usize>,
     pending_seek_after_load: &mut PendingSeek,
+    volume_delta: &mut f64,
+    assert_volume_on_timepos: &mut bool,
 ) {
     match cmd {
         MpvCommand::Connect(path) => {
@@ -122,7 +151,14 @@ async fn handle_command(
                 return;
             }
             match connect_and_observe(&path).await {
-                Ok((r, w)) => {
+                Ok((r, mut w)) => {
+                    // Assert the desired volume on connect: the first file may
+                    // have loaded (with a watch_later volume restore) before
+                    // this IPC connection existed to see its file-loaded event.
+                    // Re-assert on the first time-pos tick too — the mpv.conf
+                    // conditional auto-profiles can fire after this point.
+                    *assert_volume_on_timepos = true;
+                    let _ = send_command(&mut w, &set_property_cmd("volume", desired_volume(*volume_delta))).await;
                     *reader = Some(r);
                     *writer = Some(w);
                     let _ = evt_tx.send(MpvEvent::ConnectionStatus(true)).await;
@@ -174,6 +210,9 @@ async fn handle_command(
             }
         }
         MpvCommand::VolumeAdjust(delta) => {
+            // Remember the nudge so connect/file-loaded re-asserts land on the
+            // nudged level, not back on the config default.
+            *volume_delta += delta;
             if let Some(w) = writer.as_mut() {
                 let cmd = format!(r#"{{"command":["add","volume",{}]}}"#, delta);
                 let _ = send_command(w, &cmd).await;
@@ -297,6 +336,12 @@ async fn connect_and_observe(
 /// byte-identical JSON envelope every dynamic-value set_property send repeats.
 fn set_property_cmd(prop: &str, val: impl std::fmt::Display) -> String {
     format!(r#"{{"command":["set_property","{}",{}]}}"#, prop, val)
+}
+
+/// The volume the player should sit at: the configured launch volume plus the
+/// session's accumulated Ctrl+Up/Down nudges, clamped to the config range.
+fn desired_volume(volume_delta: f64) -> f64 {
+    (crate::mpv::discovery::mpv_volume() as f64 + volume_delta).clamp(0.0, 150.0)
 }
 
 /// Build an absolute-seek IPC command to `time` seconds. The byte-identical

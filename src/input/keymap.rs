@@ -2468,14 +2468,23 @@ fn handle_gloss_key(
                 open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Gloss);
                 return true;
             }
-            // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
-            // VolumeUp/VolumeDown (and the echoes overlay).
+            // Ctrl+Up/Ctrl+Down adjust MPV volume, mirroring the reader's
+            // VolumeUp/VolumeDown (and the echoes overlay); with Shift the
+            // step goes to the TTS clip player instead.
             "Up" => {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                if is_shift {
+                    adjust_tts_volume(state, 5.0);
+                } else {
+                    adjust_volume(state, 5.0);
+                }
                 return true;
             }
             "Down" => {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+                if is_shift {
+                    adjust_tts_volume(state, -5.0);
+                } else {
+                    adjust_volume(state, -5.0);
+                }
                 return true;
             }
             _ => {}
@@ -3017,14 +3026,23 @@ fn handle_synopsis_overlay_key(
             open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Synopsis);
             true
         }
-        // Ctrl+Up/Ctrl+Down adjust volume, mirroring the reader's
-        // VolumeUp/VolumeDown (and the echoes overlay).
+        // Ctrl+Up/Ctrl+Down adjust MPV volume, mirroring the reader's
+        // VolumeUp/VolumeDown (and the echoes overlay); Ctrl+Shift steps the
+        // TTS clip player instead.
         "Up" if is_ctrl => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+            if is_shift {
+                adjust_tts_volume(state, 5.0);
+            } else {
+                adjust_volume(state, 5.0);
+            }
             true
         }
         "Down" if is_ctrl => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+            if is_shift {
+                adjust_tts_volume(state, -5.0);
+            } else {
+                adjust_volume(state, -5.0);
+            }
             true
         }
         "j" => {
@@ -3553,11 +3571,11 @@ fn handle_echoes_overlay_key(
             // dropped no-op now).
             "Tab" | "ISO_Left_Tab" => return true,
             "Up" => {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0));
+                adjust_volume(state, 5.0);
                 return true;
             }
             "Down" => {
-                let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0));
+                adjust_volume(state, -5.0);
                 return true;
             }
             "slash" => {
@@ -4129,8 +4147,8 @@ fn dispatch_action(
         SeekLongBackward => do_mpv_seek(state, -60.0),
         SeekLongForward => do_mpv_seek(state, 60.0),
         SeekBackward30 => do_mpv_seek(state, -30.0),
-        VolumeUp => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(5.0)); }
-        VolumeDown => { let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(-5.0)); }
+        VolumeUp => adjust_volume(state, 5.0),
+        VolumeDown => adjust_volume(state, -5.0),
         TogglePlaybackSpeed => {
             let mut s = state.borrow_mut();
             let new_speed = next_playback_speed(s.playback_speed);
@@ -4589,6 +4607,25 @@ pub(crate) fn next_playback_speed(current: f64) -> f64 {
     } else {
         1.0
     }
+}
+
+/// Ctrl+Up/Down (and VolumeUp/VolumeDown): the relative `add volume` IPC to
+/// MPV only. The in-process TTS player has its own Ctrl+Shift step
+/// (`adjust_tts_volume`).
+fn adjust_volume(state: &Rc<RefCell<AppState>>, delta: f64) {
+    let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(delta));
+}
+
+/// Ctrl+Shift+Up/Down in the TTS overlays: ±step ONLY the in-process rodio
+/// TTS player (MPV untouched), live on a playing clip; toasts the new level.
+fn adjust_tts_volume(state: &Rc<RefCell<AppState>>, delta: f64) {
+    let s = state.borrow();
+    s.tts.adjust_volume_percent(delta);
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &format!("TTS volume: {}%", s.tts.volume_percent()),
+        2,
+    );
 }
 
 /// MPV seek with brief sync suppression. Common pattern for o/e/O/E/Left.
