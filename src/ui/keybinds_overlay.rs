@@ -350,7 +350,7 @@ then Ctrl+a in visual mode, for a passage Q&A). Shift+a = authorship; \
 Ctrl+Shift+a = attribution set. — src/input/keymap.rs",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",
-        "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9 -> 0.8) \
+        "cycle speed" => "Action::TogglePlaybackSpeed (1.0 -> 1.3 -> 0.9) \
 — src/input/keymap.rs",
         "seek −3.5" => "Action::SeekShortBackward — src/input/phrase_highlight.rs, \
 src/input/keymap.rs",
