@@ -289,9 +289,10 @@ impl ChatPanel {
     }
 
     /// The pixel wrap width a transcript label lays out at — the scroll's
-    /// allocated width minus the transcript's horizontal padding (padding-right
-    /// 14px, theme.rs:1368). Falls back to the container's requested width when
-    /// unallocated so measurement matches the eventual wrap.
+    /// allocated width minus the transcript's horizontal padding (`.chat-transcript`
+    /// padding-right 14px) and each label's own padding-right (6px, the accent-bar
+    /// clearance; both in theme.rs — keep in sync). Falls back to the container's
+    /// requested width when unallocated so measurement matches the eventual wrap.
     fn transcript_wrap_width(&self) -> i32 {
         let w = self.transcript_scroll.width();
         let w = if w > 1 {
@@ -299,7 +300,7 @@ impl ChatPanel {
         } else {
             self.container.width().max(self.container.width_request()).max(1)
         };
-        (w - 14).max(1)
+        (w - 14 - 6).max(1)
     }
 
     /// Pixel height one widget renders at: the pango-measured wrapped text

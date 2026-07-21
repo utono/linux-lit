@@ -1445,7 +1445,12 @@ pub fn generate_css(
             `chat_first_line_top_margin`). Bottom keeps its 16px breathing room. */ \
          .chat-transcript {{ font-family: {font}; font-size: {size}pt; \
            padding-right: 14px; padding-top: 0px; padding-bottom: 16px; }} \
-         .chat-transcript label {{ padding-bottom: 3px; }} \
+         /* padding-right keeps the row text clear of the cursor accent bar \
+            (.chat-cursor-row's inset -3px box-shadow paints at the label's \
+            right edge): 6px pad − 3px bar = a 3px gap. Applied to EVERY row \
+            (not just the cursor row) so a cursor move never rewraps text. \
+            MIRRORED by chat_panel::transcript_wrap_width — keep in sync. */ \
+         .chat-transcript label {{ padding-bottom: 3px; padding-right: 6px; }} \
          .chat-transcript-scroll {{ background-color: transparent; \
            border-radius: 8px; \
            transition: background-color 320ms ease-out; }} \
