@@ -1550,19 +1550,21 @@ pub fn generate_css(
             then reads as clearly distinct from the upright gloss. Play/verse \
             source (.chat-a-verse) keeps its upright weight (it has a speaker \
             + deep indent already). \
-            Flush rows sit at the panel's OWN text margin (padding-left 0, \
-            not the old speaker indent) and render at 0.9em, so a source \
-            line as wrapped by the MAIN CARD fits on one panel row — the \
-            user's rule: the panel must fully accommodate a card-rendered \
-            source line. (Pagination measures at full size/width, so the \
-            smaller render only over-counts — clip-safe.) */ \
+            Flush rows share the GLOSS COMMENTARY's indent ({q_body}px, \
+            .chat-a-gloss) — the user wants source and its glossing on one \
+            left edge, wrapping accepted — and render at 0.9em so a source \
+            line as wrapped by the MAIN CARD still (mostly) fits one panel \
+            row. Clip-safe: pagination measures at full size and full wrap \
+            width; at 0.9em the real line fits MORE characters than the \
+            measured one whenever the indent is under 10% of the panel \
+            width, so measurement only over-counts. */ \
          .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
            font-size: 0.9em; \
-           padding-left: 0px; padding-top: 0px; }} \
+           padding-left: {q_body}px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 0px; }} \
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
            font-size: 0.9em; \
-           padding-left: 0px; padding-top: 8px; }} \
+           padding-left: {q_body}px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
          .chat-a-gloss {{ color: {chat_ink}; padding-top: 26px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {fg}; }} \
