@@ -825,7 +825,7 @@ fn handle_picker_key(
                         // Shared open path (also used by the cursor open) — from
                         // the picker, so Escape uses the picker return path.
                         crate::input::actions::gloss::open_gloss_overlay(
-                            &mut s, passages, idx, passage, all_glosses, true, None,
+                            &mut s, passages, idx, passage, all_glosses, true, None, false,
                         );
                     }
                     true

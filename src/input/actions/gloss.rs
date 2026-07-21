@@ -167,6 +167,7 @@ pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) 
         all_glosses,
         from_picker,
         Some(&cur_type),
+        false,
     );
 }
 
@@ -2926,6 +2927,7 @@ pub(crate) fn open_gloss_overlay(
     all_glosses: Vec<crate::db::queries::SavedGloss>,
     from_picker: bool,
     desired_type: Option<&str>,
+    entry_open: bool,
 ) {
     let types: Vec<&str> = all_glosses.iter().map(|g| g.gloss_type.as_str()).collect();
     let idx = start_gloss_idx(&types, desired_type);
@@ -2964,6 +2966,14 @@ pub(crate) fn open_gloss_overlay(
     // ctx (glosses sharing a start_citation may span to different end_citations).
     s.gloss_overlay
         .set_citation(&all_glosses[idx].start_citation, &all_glosses[idx].end_citation);
+
+    // Original opens from the reader stamp the entry passage so the Escape
+    // close can tell a peek (restore the saved page) from a traversal (jump
+    // to the shown passage's source). Traversal re-opens leave the stamp
+    // untouched, so stepping away and back counts as the entry passage again.
+    if entry_open {
+        s.gloss_entry_citation = Some(ctx.start_citation.clone());
+    }
 
     let shown_type = all_glosses[idx].gloss_type.clone();
     s.gloss_passages = passages;
@@ -3022,7 +3032,20 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     s.gloss_search = None;
     s.gloss_last_pattern = None;
     crate::app::return_to_reader_mode(&mut s);
-    let jumped = jump_to_gloss_source_start(&mut s);
+    // Still showing the passage the overlay opened on from the reader? Then
+    // this is a peek-and-Escape: restore the exact saved reading position —
+    // closing must not re-frame the page the reader left (the "Escape
+    // repaginates" bug). Jump to the source start only after in-overlay
+    // passage traversal moved to a DIFFERENT passage. Mirrors the journal
+    // overlay's entry_page_id check in journal::toggle_overlay.
+    let entry = s.gloss_entry_citation.take();
+    let on_entry_passage = entry.is_some()
+        && s.gloss_context.as_ref().map(|c| c.start_citation.as_str()) == entry.as_deref();
+    let jumped = if on_entry_passage {
+        false
+    } else {
+        jump_to_gloss_source_start(&mut s)
+    };
     let saved = s.gloss_return_pos.take();
     if !jumped {
         crate::app::restore_saved_position_resnap(&mut s, saved);
@@ -3127,7 +3150,7 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
     // Opened from the reader cursor, not the picker (from_picker = false): Escape
     // uses the saved reader page, not the picker return path.
-    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None);
+    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
 }
 
 /// Reopen whichever toggleable overlay (gloss/journal) was last open
@@ -3231,6 +3254,7 @@ pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
         all_glosses,
         false,
         Some(&desired_type),
+        true,
     );
 }
 
