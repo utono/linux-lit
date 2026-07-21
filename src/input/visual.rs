@@ -695,6 +695,17 @@ pub(crate) fn action_reader_gloss_chat(state_rc: &std::rc::Rc<std::cell::RefCell
     };
     let Some((ctx, model)) = prepared else { return };
 
+    // Prose: `-` never opens the chat panel (same routing as reader-mode `-`,
+    // over the selection instead of the cursor paragraph). Cached gloss opens
+    // the gloss overlay; otherwise background-gloss the selection and open
+    // the overlay when it lands. Exit visual mode first — the reader keeps
+    // reading while the request runs.
+    if state_rc.borrow().is_prose() {
+        exit_visual_mode(&mut state_rc.borrow_mut());
+        crate::input::actions::gloss::prose_gloss_selection(state_rc, ctx, model);
+        return;
+    }
+
     // Pins the passage, exits visual mode, opens and places the panel. Bails
     // with its own toast (returning false) when the selection has no
     // passage, or when a single-column layout has no room for the panel.

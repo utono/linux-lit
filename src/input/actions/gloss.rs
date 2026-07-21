@@ -3173,10 +3173,6 @@ pub(crate) fn prose_gloss_overlay_at_cursor(state: &Rc<RefCell<AppState>>) {
 fn background_gloss_cursor_segment(state_rc: &Rc<RefCell<AppState>>) {
     let prepared = {
         let s = state_rc.borrow();
-        if s.prose_gloss_pending.get() {
-            crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 2);
-            return;
-        }
         let block = crate::input::visual::cursor_block_bounds(&s);
         let ctx = block.and_then(|(start, end)| {
             let work = s.current_work.as_ref()?;
@@ -3197,9 +3193,52 @@ fn background_gloss_cursor_segment(state_rc: &Rc<RefCell<AppState>>) {
         show_tts_toast(state_rc, "Nothing to gloss here");
         return;
     };
+    background_gloss_request(state_rc, ctx, model);
+}
 
+/// Prose V-mode `-` (`visual::action_reader_gloss_chat`'s prose branch): the
+/// selection's reader-gloss ctx, already built and visual mode already exited.
+/// Cache hit opens the overlay on the stored gloss (no API spend, mirroring
+/// the chat path's `-` cache check); miss goes to the background request.
+pub(crate) fn prose_gloss_selection(
+    state_rc: &Rc<RefCell<AppState>>,
+    ctx: crate::gloss::GlossContext,
+    model: String,
+) {
+    let cached = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::queries::find_glosses_by_start(
+                &conn,
+                &ctx.work_abbrev,
+                &ctx.start_citation,
+                &["reader-gloss"],
+            )
+            .ok()
+        })
+        .map(|g| !g.is_empty())
+        .unwrap_or(false);
+    if cached {
+        open_gloss_overlay_by_start(state_rc, &ctx.work_abbrev, &ctx.start_citation);
+        return;
+    }
+    background_gloss_request(state_rc, ctx, model);
+}
+
+/// Fire the reader-gloss request for `ctx` with no surface open — "Glossing…"
+/// toast, background call, overlay opened on the saved gloss by the completion
+/// handler. Shared by the prose cursor-paragraph and selection paths.
+fn background_gloss_request(
+    state_rc: &Rc<RefCell<AppState>>,
+    ctx: crate::gloss::GlossContext,
+    model: String,
+) {
     {
         let s = state_rc.borrow();
+        if s.prose_gloss_pending.get() {
+            crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 2);
+            return;
+        }
         s.prose_gloss_pending.set(true);
         crate::input::navigation::show_chapter_toast_secs(&s, "Glossing\u{2026}", 4);
     }

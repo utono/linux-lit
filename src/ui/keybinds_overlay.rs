@@ -295,8 +295,10 @@ background (\"Glossing\u{2026}\" toast, reading continues) and opens the \
 overlay when the gloss lands. On verse/play works it OPENS the panel on the \
 reader-gloss covering the cursor line and shows the stored gloss — focus \
 lands in the transcript; no-op (toasts \"No gloss on this line\") if the \
-line has no reader-gloss. In visual (`V`) mode, `-` instead glosses the \
-selection (action_reader_gloss_chat). — src/input/actions/gloss.rs",
+line has no reader-gloss. In visual (`V`) mode, `-` glosses the selection: \
+prose routes to the gloss overlay (cached gloss opens it; otherwise \
+background-glossed like reader `-`); verse/play opens the chat panel \
+(action_reader_gloss_chat). — src/input/actions/gloss.rs",
         "focus chat" => "Tab (reader mode) — toggles focus between the main \
 card and an OPEN chat panel. No-op when the panel is closed (the panel opens \
 via `-`, not Tab). From inside the panel, Tab focuses the reader again; in the \
