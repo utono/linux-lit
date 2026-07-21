@@ -568,6 +568,7 @@ pub struct GlossContext {
     pub source_line_numbers: Vec<i64>,
     pub hash: String,
     pub gloss_type: String,
+    pub work_type: String,
 }
 
 impl GlossContext {
@@ -651,6 +652,7 @@ pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
         source_line_numbers,
         hash,
         gloss_type: "teacher-generic".to_string(),
+        work_type: work.work_type.clone(),
     })
 }
 
@@ -696,6 +698,7 @@ pub fn build_context_for_type(work: &Work, lines: &[Line], gloss_type: &str) -> 
         source_line_numbers,
         hash,
         gloss_type: gloss_type.to_string(),
+        work_type: work.work_type.clone(),
     })
 }
 
@@ -774,10 +777,17 @@ pub fn build_user_message(
     existing_gloss: Option<&str>,
     neighbors: &[crate::db::queries::NeighborGloss],
 ) -> String {
-    let mut msg = format!(
-        "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n{}",
-        ctx.work_title, ctx.act, ctx.scene, ctx.speaker, ctx.source_text
-    );
+    let mut msg = if crate::db::line_types::is_prose_work(&ctx.work_type) {
+        format!(
+            "Work: \"{}\"\nChapter: {}\n\n{}",
+            ctx.work_title, ctx.act, ctx.source_text
+        )
+    } else {
+        format!(
+            "Play: \"{}\"\nAct: {}, Scene: {}\nSpeaker: {}\n\n{}",
+            ctx.work_title, ctx.act, ctx.scene, ctx.speaker, ctx.source_text
+        )
+    };
 
     if let Some(prompt) = user_prompt {
         msg.push_str(&format!("\n\n---\nUser question: {}", prompt));
@@ -1099,6 +1109,7 @@ mod tests {
             source_line_numbers: vec![],
             hash: String::new(),
             gloss_type: "teacher-generic".into(),
+            work_type: "play".into(),
         }
     }
 
@@ -1153,6 +1164,7 @@ mod tests {
             source_line_numbers: vec![],
             hash: String::new(),
             gloss_type: "reader-gloss".into(),
+            work_type: "play".into(),
         };
         // Both citations parse, so the derived range is (9, 12). Assert the
         // helper the fallback relies on returns those bounds (the full
@@ -1175,6 +1187,30 @@ mod tests {
         assert!(block.contains("TGV.1.2.1-TGV.1.2.3"));
         assert!(block.contains("Julia fishes for advice."));
         assert!(neighbor_block(&[]).is_none());
+    }
+
+    fn test_ctx(work_type: &str) -> GlossContext {
+        GlossContext {
+            work_abbrev: "BH".into(), work_title: "Bleak House".into(),
+            start_citation: "10.0.1".into(), end_citation: "10.0.1".into(),
+            act: 10, scene: 0, speaker: "UNKNOWN".into(),
+            source_text: "Mr. Snagsby appears.".into(),
+            source_line_numbers: vec![1], hash: "h".into(),
+            gloss_type: "reader-gloss".into(), work_type: work_type.into(),
+        }
+    }
+
+    #[test]
+    fn prose_user_message_uses_work_chapter_header() {
+        let msg = build_user_message(&test_ctx("prose"), None, None, &[]);
+        assert!(msg.starts_with("Work: \"Bleak House\"\nChapter: 10\n\n"));
+        assert!(!msg.contains("Speaker:") && !msg.contains("Scene:"));
+    }
+
+    #[test]
+    fn verse_user_message_keeps_play_header() {
+        let msg = build_user_message(&test_ctx("play"), None, None, &[]);
+        assert!(msg.starts_with("Play: \"Bleak House\"\nAct: 10, Scene: 0\nSpeaker: UNKNOWN\n\n"));
     }
 
     #[test]
@@ -1465,6 +1501,7 @@ mod scene_budget_tests {
             source_line_numbers: vec![],
             hash: String::new(),
             gloss_type: "inner-monologue".into(),
+            work_type: "play".into(),
         }
     }
 

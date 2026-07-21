@@ -466,6 +466,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
 
     let mut s = state_rc.borrow_mut();
     let work_title = s.current_work.as_ref().map(|w| w.title.clone()).unwrap_or_default();
+    let work_type = s.current_work.as_ref().map(|w| w.work_type.clone()).unwrap_or_default();
     let gloss_type = all_glosses[0].gloss_type.clone();
     let ctx = crate::gloss::GlossContext {
         work_abbrev: first.work_abbrev.clone(),
@@ -479,6 +480,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
         source_line_numbers: Vec::new(),
         hash: String::new(),
         gloss_type,
+        work_type,
     };
 
     let cw = s.content_hbox.width();

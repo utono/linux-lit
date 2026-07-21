@@ -2943,6 +2943,11 @@ pub(crate) fn open_gloss_overlay(
         .as_ref()
         .map(|w| w.title.clone())
         .unwrap_or_default();
+    let work_type = s
+        .current_work
+        .as_ref()
+        .map(|w| w.work_type.clone())
+        .unwrap_or_default();
     let ctx = crate::gloss::GlossContext {
         work_abbrev: passage.work_abbrev,
         work_title,
@@ -2955,6 +2960,7 @@ pub(crate) fn open_gloss_overlay(
         source_line_numbers: Vec::new(),
         hash: String::new(),
         gloss_type: all_glosses[idx].gloss_type.clone(),
+        work_type,
     };
 
     let (cw, h) = crate::app::layout::overlay_card_size(&s);

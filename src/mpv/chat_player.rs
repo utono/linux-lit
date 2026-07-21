@@ -340,6 +340,7 @@ mod tests {
             source_line_numbers: vec![41, 42, 43],
             hash: String::new(),
             gloss_type: String::new(),
+            work_type: "play".into(),
         };
         // gloss_ctx wins even when current_work says otherwise — the entry's
         // own identity, the cross-work `f` finder's contract.
