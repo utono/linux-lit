@@ -173,6 +173,7 @@ fn open_gloss_hit(state: &Rc<RefCell<AppState>>, gloss_id: i64, pattern: &str) {
         all_glosses,
         true,
         Some("reader-gloss"),
+        false,
     );
     // open_gloss_overlay lands on its default gloss for the passage (the
     // reader-gloss); if the searched gloss is a different row in this passage,

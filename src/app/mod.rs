@@ -409,6 +409,13 @@ pub struct AppState {
     /// restores the page the user was on instead of jumping to the glossed
     /// passage.
     pub gloss_return_pos: Option<(usize, usize, i32)>,
+    /// The `start_citation` of the passage the gloss overlay OPENED on (set
+    /// only by original opens from the reader — cursor open, Ctrl+Tab reopen —
+    /// never by in-overlay traversal). At the Escape close, still showing this
+    /// passage means a peek-and-Escape: restore `gloss_return_pos` instead of
+    /// jumping to the source start, so closing never re-frames the page the
+    /// reader left. Mirrors the journal overlay's `entry_page_id`.
+    pub gloss_entry_citation: Option<String>,
     /// Which reader overlay (gloss/journal) was most recently open, so
     /// `ToggleLastOverlay` (Ctrl+Tab) can reopen it from the reader. Set at the
     /// close chokepoint `return_to_reader_mode`.
@@ -2049,6 +2056,7 @@ pub fn build_window(
         search_backward: false,
         search_return_pos: None,
         gloss_return_pos: None,
+        gloss_entry_citation: None,
         last_overlay: None,
         search_tag,
         search_current_tag,

@@ -50,7 +50,9 @@ pub(crate) fn cycle_from_gloss(state: &Rc<RefCell<AppState>>) {
         s.gloss_overlay.hide();
         s.gloss_opened_from_picker = false;
         crate::app::return_to_reader_mode(&mut s);
-        // Restore, never jump_to_gloss_source_start — see module doc.
+        // Restore, never jump_to_gloss_source_start — see module doc. Take the
+        // entry stamp too so it can't leak into a later non-entry open.
+        s.gloss_entry_citation.take();
         let pos = s.gloss_return_pos.take();
         crate::app::restore_saved_position_resnap(&mut s, pos);
     }
