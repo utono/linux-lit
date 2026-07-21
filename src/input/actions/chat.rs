@@ -2763,17 +2763,64 @@ fn inline_vocab_slot(
     // with margins zeroed (place at y=0 first), THEN place at the final y,
     // or the carved slot inflates by the stale margin.
     s.vocab_popup.popup.place_chat(panel_x + CHAT_TEXT_INSET_L, 0, pop_w);
-    let (_min_h, nat_h, _, _) = s
-        .vocab_popup
-        .popup
-        .widget()
-        .measure(gtk4::Orientation::Vertical, pop_w);
+    // FIXED slot height: in Definition view, size the slot for the LONGEST
+    // definition among the popup's word list (render each word once at this
+    // width, take the max, re-render the current word) so stepping n/p never
+    // moves the panel bottom edge. Other views (gloss/journal) measure their
+    // current content as before — journal caps its own body height.
+    let nat_h = {
+        use crate::ui::vocab_popup::VocabView;
+        let total = s.vocab_popup.data.len();
+        if s.vocab_popup.view == VocabView::Definition && total > 0 {
+            let abbrev = s
+                .current_work
+                .as_ref()
+                .map(|w| w.abbrev.clone())
+                .unwrap_or_default();
+            let mut max_h = 0;
+            let mut heights = Vec::new();
+            for (i, d) in s.vocab_popup.data.iter().enumerate() {
+                s.vocab_popup.popup.update(d, i, total, VocabView::Definition, &abbrev);
+                let (_min_h, h, _, _) = s
+                    .vocab_popup
+                    .popup
+                    .widget()
+                    .measure(gtk4::Orientation::Vertical, pop_w);
+                heights.push(h);
+                max_h = max_h.max(h);
+            }
+            crate::logging::log(&format!(
+                "VOCAB SLOT: per-word heights {:?} max {}", heights, max_h
+            ));
+            let idx = s.vocab_popup.index.min(total - 1);
+            s.vocab_popup.popup.update(
+                &s.vocab_popup.data[idx],
+                idx,
+                total,
+                VocabView::Definition,
+                &abbrev,
+            );
+            max_h
+        } else {
+            let (_min_h, h, _, _) = s
+                .vocab_popup
+                .popup
+                .widget()
+                .measure(gtk4::Orientation::Vertical, pop_w);
+            h
+        }
+    };
     let new_h = (panel_h - nat_h - VOCAB_SLOT_GAP).max(0);
     s.vocab_popup.popup.place_chat(
         panel_x + CHAT_TEXT_INSET_L,
         panel_top + new_h + VOCAB_SLOT_GAP,
         pop_w,
     );
+    // Pin the CARD itself to the slot height too, so its bottom border sits
+    // still while n/p steps shorter words. Applied after place_chat (which
+    // resets height_request to natural) and re-derived from a fresh natural
+    // measure on every pass, so the request can never ratchet.
+    s.vocab_popup.popup.widget().set_height_request(nat_h);
     new_h
 }
 
