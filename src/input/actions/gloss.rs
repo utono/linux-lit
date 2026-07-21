@@ -717,7 +717,10 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     let title_text = if is_fix_ipa {
         "FIX IPA — word /IPA/  OR  word <hint>"
     } else if is_edit {
-        "Edit gloss"
+        // Mirrors the journal overlay's rewrite card: the input is an
+        // INSTRUCTION for the rewrite (often posed as questions the rewrite
+        // should answer), not replacement text.
+        "Rewrite instruction — questions welcome"
     } else if is_inner_monologue {
         "Inner monologue passage"
     } else if is_reader_gloss {

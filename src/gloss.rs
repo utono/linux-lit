@@ -399,9 +399,10 @@ pub static EDIT_GLOSS_PROMPT: LazyLock<String> = LazyLock::new(|| {
 You are a literary scholar revising an existing gloss about a passage \
 from a literary text.
 
-The reader is viewing an existing gloss and has provided additional \
-lines or context to improve it. Rewrite the gloss incorporating the \
-new material the reader has provided.
+The reader is viewing an existing gloss and has provided an instruction \
+for how to rewrite it — sometimes phrased as one or more questions to be \
+answered. Rewrite the gloss following the instruction; answer any \
+questions it poses within the rewritten gloss's <gloss> paragraphs.
 
 Use the same output format as the original gloss — use these XML tags:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS)
@@ -415,7 +416,7 @@ Rules:
 - {}
 - Each <segment> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
-- Incorporate the reader's provided lines as evidence or context
+- Follow the reader's rewrite instruction; answer any questions it poses inside the relevant <gloss> paragraphs, never as a separate reply
 - ALWAYS place a <speaker> tag before EVERY group of <segment> lines
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.edit", FALLBACK);
@@ -481,7 +482,7 @@ pub static READER_GLOSS_VERSE_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
 You are revising an existing READER gloss of a passage from a verse play, in the terse reader-focused voice.
 
-The reader has provided additional lines or context. Rewrite the gloss incorporating the new material.
+The reader has provided a rewrite instruction — sometimes phrased as one or more questions to be answered. Rewrite the gloss following the instruction; answer any questions it poses within the rewritten gloss's <gloss> paragraphs, never as a separate reply to the reader.
 
 Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS)
@@ -933,16 +934,36 @@ pub fn build_edit_gloss_message(
             ctx.work_title, ctx.act, ctx.scene, ctx.speaker
         )
     };
-    format!(
-        "{}\
-         --- ORIGINAL PASSAGE ---\n{}\n\n\
-         --- EXISTING GLOSS ---\n{}\n\n\
-         --- USER-PROVIDED LINES (use as subtext/context) ---\n{}",
-        header,
-        ctx.source_text,
-        existing_gloss,
-        pasted_lines,
-    )
+    // Inner-monologue edits really do take pasted LINES (replacement echo
+    // material); every other edit takes a rewrite INSTRUCTION — often posed
+    // as questions the reader wants answered in the rewrite.
+    if ctx.gloss_type == "inner-monologue" {
+        format!(
+            "{}\
+             --- ORIGINAL PASSAGE ---\n{}\n\n\
+             --- EXISTING GLOSS ---\n{}\n\n\
+             --- USER-PROVIDED LINES (use as subtext/context) ---\n{}",
+            header,
+            ctx.source_text,
+            existing_gloss,
+            pasted_lines,
+        )
+    } else {
+        format!(
+            "{}\
+             --- ORIGINAL PASSAGE ---\n{}\n\n\
+             --- EXISTING GLOSS ---\n{}\n\n\
+             --- REWRITE INSTRUCTION (from the reader) ---\n{}\n\n\
+             Rewrite the gloss per this instruction. If the instruction poses \
+             questions, answer them within the rewritten gloss's <gloss> \
+             paragraphs — never address the reader directly and never add a \
+             separate answer section.",
+            header,
+            ctx.source_text,
+            existing_gloss,
+            pasted_lines,
+        )
+    }
 }
 
 pub async fn call_claude(
