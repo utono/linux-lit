@@ -796,7 +796,7 @@ fn overtall_forward_step(state: &mut AppState) -> Option<i32> {
         return None;
     }
     let descender_guard = crate::input::viewport::descender_guard_px(&state.text_view, top);
-    let usable = widget_height - descender_guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let usable = widget_height - descender_guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
     let cur_off = state.page_top_offset;
     // Pure decision: is there a viewport's worth of rows still below the fold?
     let raw = crate::input::viewport::overtall_next_offset(cur_off, para_h, usable)?;
@@ -829,7 +829,7 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
         return None;
     }
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, top);
-    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let usable = widget_height - guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
     let line_count = state.effective_line_count();
     let y0 = top_y + state.page_top_offset;
     // Bounded forward walk from `top` (a validated point close to the current

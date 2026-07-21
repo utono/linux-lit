@@ -17,7 +17,7 @@ pub struct ProseValidateCtx<'a> {
     pub line_count: usize,
     /// Per-buffer-line pixel heights (line_yrange), at generation layout.
     pub heights: &'a [i32],
-    /// widget_height - descender_guard - BASE_BOTTOM_MARGIN at that layout.
+    /// widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN at that layout.
     pub usable_height: i32,
     /// Ink-free overshoot the fit invariant tolerates (see `prose_fit_slack`).
     /// A boundary advanced past a row whose INK fits the budget may land up
@@ -165,7 +165,7 @@ pub fn prose_page_for_line(pages: &[ProsePage], line: usize) -> Option<usize> {
 
 /// Prose-specific layout fingerprint. Extends the play `layout_fingerprint`
 /// with the LIVE usable height (`text_view.height() - descender_guard -
-/// BASE_BOTTOM_MARGIN`). That derived value can settle ±1px across runs at the
+/// SINGLE_COLUMN_BOTTOM_MARGIN`). That derived value can settle ±1px across runs at the
 /// SAME window size — the play fingerprint (window geometry + font metrics)
 /// would not notice, but a 1px shift in `usable` moves a prose visual-row
 /// boundary. Encoding it keeps a stored prose grid from being loaded against a
@@ -177,7 +177,7 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     let base = crate::input::page_table::layout_fingerprint(state);
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
-    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let usable = widget_height - guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
     // `pv3`: prose-boundary normalization version. Bumped when the meaning of a
     // stored boundary changes so every previously-stored prose table misses and
     // regenerates lazily. pv2 = leading-gap page ends normalized to (L, 0) (a
@@ -195,7 +195,11 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // pv4: row-fit boundary correction (a row whose ink fits the budget stays
     // on its page even when the raw boundary lands in the following gap) —
     // pv3 tables have one-row-short pages at such boundaries.
-    format!("{base}|uh{usable}|cw{cw}|pv4")
+    // pv5: single-column fill reserve reduced to SINGLE_COLUMN_BOTTOM_MARGIN
+    // (was BASE_BOTTOM_MARGIN — every pv4 page is ~one line short). The `uh`
+    // component already shifts with the reserve; the bump makes the miss
+    // explicit and independent of geometry coincidences.
+    format!("{base}|uh{usable}|cw{cw}|pv5")
 }
 
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
@@ -322,7 +326,7 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
         .collect();
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
-    let usable = widget_height - guard - crate::input::scroll::BASE_BOTTOM_MARGIN;
+    let usable = widget_height - guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
     let ctx = ProseValidateCtx {
         line_count,
         heights: &heights,
