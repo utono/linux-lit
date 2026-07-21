@@ -562,6 +562,13 @@ impl ChatPanel {
         } else {
             gtk4::pango::WrapMode::WordChar
         });
+        // Without this, a wrapped label's NATURAL width is Pango's "balanced"
+        // guess, so a two-line row breaks near its midpoint ("…as the crow
+        // came—not quite so / straight…") instead of at the panel edge. None =
+        // request the unwrapped width and wrap only at the actual allocation;
+        // panel width stays safe because the transcript scroll already stops
+        // propagating natural width (see `set_propagate_natural_width(false)`).
+        label.set_natural_wrap_mode(gtk4::NaturalWrapMode::None);
         label.set_halign(gtk4::Align::Start);
         label.set_xalign(0.0);
         label.set_selectable(false);

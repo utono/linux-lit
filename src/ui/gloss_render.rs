@@ -205,6 +205,34 @@ pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
     rows
 }
 
+/// Re-flow every `<verse>` body in a gloss markup into ONE line (breaks →
+/// single spaces) so PROSE source passages wrap at the panel width instead of
+/// keeping the txt's own ~74-column breaks. Verse works must never pass
+/// through here — their line breaks are the text. Everything outside
+/// `<verse>…</verse>` (gloss commentary, `<stage>`, `<speaker>`) is untouched,
+/// and a dangling unclosed `<verse>` is left as-is rather than eaten.
+pub(crate) fn reflow_verse_markup(markup: &str) -> String {
+    const OPEN: &str = "<verse>";
+    const CLOSE: &str = "</verse>";
+    let mut out = String::with_capacity(markup.len());
+    let mut rest = markup;
+    while let Some(start) = rest.find(OPEN) {
+        let body_start = start + OPEN.len();
+        let Some(body_len) = rest[body_start..].find(CLOSE) else { break };
+        out.push_str(&rest[..body_start]);
+        let joined: Vec<&str> = rest[body_start..body_start + body_len]
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        out.push_str(&joined.join(" "));
+        out.push_str(CLOSE);
+        rest = &rest[body_start + body_len + CLOSE.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub(crate) fn apply_bracket_styling(
     buffer: &gtk4::TextBuffer,
     base_offset: i32,
@@ -742,6 +770,40 @@ mod rendered_text_tests {
         let light = rebuilt_render.find("what light").unwrap();
         let echo = rebuilt_render.find("echo").unwrap();
         assert!(soft < light && light < echo, "echo must trail both verses in the rebuilt basis: {rebuilt_render:?}");
+    }
+}
+
+#[cfg(test)]
+mod reflow_verse_markup_tests {
+    use super::reflow_verse_markup;
+
+    #[test]
+    fn joins_lines_within_each_verse_body() {
+        let m = "<verse>It is somewhere about five or six o'clock,\n\
+                 and a balmy fragrance of warm tea\nhovers in Cook's Court.</verse>\n\
+                 <gloss>keeps\nits own\nbreaks</gloss>\n\
+                 <verse>second\nsegment</verse>";
+        assert_eq!(
+            reflow_verse_markup(m),
+            "<verse>It is somewhere about five or six o'clock, \
+             and a balmy fragrance of warm tea hovers in Cook's Court.</verse>\n\
+             <gloss>keeps\nits own\nbreaks</gloss>\n\
+             <verse>second segment</verse>"
+        );
+    }
+
+    #[test]
+    fn trims_and_drops_blank_interior_lines() {
+        assert_eq!(
+            reflow_verse_markup("<verse>  a \n\n  b  </verse>"),
+            "<verse>a b</verse>"
+        );
+    }
+
+    #[test]
+    fn untagged_and_dangling_markup_pass_through() {
+        assert_eq!(reflow_verse_markup("no tags\nhere"), "no tags\nhere");
+        assert_eq!(reflow_verse_markup("<verse>open\nnever closed"), "<verse>open\nnever closed");
     }
 }
 

@@ -165,6 +165,14 @@ pub(crate) struct ChatState {
     /// and the `-` path in `visual.rs`, which re-populates all three
     /// immediately after a successful pin.
     pub pinned_passage: Option<crate::input::segments::SegmentContext>,
+    /// True when the pinned passage's work is PROSE: its stored source lines
+    /// are txt-wrapped fragments, not verse, so `<verse>` rows in every
+    /// `GlossAnswer` markup are re-flowed to the panel width
+    /// (`gloss_render::reflow_verse_markup`) instead of keeping the txt's own
+    /// breaks. Set at pin time from the pinned work (same reset point as
+    /// `pinned_passage` — the work-switch wipe keeps it honest); the future
+    /// cross-work finder must set it from ITS entry's work.
+    pub source_is_prose: bool,
     /// Stored reader-glosses for the pinned passage, newest first, as
     /// `find_glosses_by_start` orders them. A DIFFERENT axis from `exchanges`:
     /// these are lit.db rows (including earlier sessions'), where `exchanges`
@@ -558,6 +566,10 @@ pub(crate) fn open_chat_pinned_to_selection(state_rc: &Rc<RefCell<AppState>>) ->
         s.chat.revision_of = None;
         s.chat.visual_anchor = None;
         s.chat.pinned_passage = Some(pinned);
+        s.chat.source_is_prose = s
+            .current_work
+            .as_ref()
+            .is_some_and(|w| crate::db::line_types::is_prose_work(&w.work_type));
         // Re-place from the SELECTION, overriding toggle_chat_layout's
         // cursor-derived side. Only floats: a Pinned panel (single-column) has
         // no other side to choose.
@@ -998,7 +1010,7 @@ struct ChatMsgCtx {
 fn transcript_rows(
     s: &AppState,
 ) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize, Vec<usize>) {
-    build_transcript_rows(&s.chat.exchanges, s.chat.cursor)
+    build_transcript_rows(&s.chat.exchanges, s.chat.cursor, s.chat.source_is_prose)
 }
 
 /// Render the transcript at the CURRENT `s.chat.row_cursor` (clamped to the
@@ -1120,7 +1132,7 @@ pub(crate) fn render_current_question(s: &mut AppState) {
         s.chat_panel.render_rows(&[], &fam, sz);
         return;
     };
-    let rows = build_single_exchange_rows(e);
+    let rows = build_single_exchange_rows(e, s.chat.source_is_prose);
     let cursor = Some(s.chat.row_cursor);
     render_paginated(s, &rows, cursor, None);
 }
@@ -1880,7 +1892,13 @@ fn render_transcript_thinking_gloss(s: &AppState, ctx: &crate::gloss::GlossConte
     // left the CURRENT gloss stacked above the one being regenerated (same wall
     // -of-text problem the question path had). The passage doc is the context
     // being reglossed; the new gloss replaces it when it lands.
-    let rows = vec![R::GlossAnswer(ctx.passage_doc()), R::Thinking];
+    let rows = vec![
+        R::GlossAnswer(super::chat_rows::gloss_answer_markup(
+            &ctx.passage_doc(),
+            s.chat.source_is_prose,
+        )),
+        R::Thinking,
+    ];
     let (fam, sz) = transcript_font(s);
     sync_panel_vocab_highlight(s);
     s.chat_panel.render_rows(&rows, &fam, sz);
@@ -2029,7 +2047,7 @@ pub(crate) fn transcript_cursor_move(s: &mut AppState, delta: i32) {
         // exchange's rows (Q: row + one widget per answer paragraph).
         // s.chat.pages/page_idx are authoritative — the last Question render
         // (render_paginated) computed them for exactly these rows.
-        let rows = build_single_exchange_rows(e);
+        let rows = build_single_exchange_rows(e, s.chat.source_is_prose);
         let landable = landable_mask(&rows);
         if !landable.iter().any(|&l| l) {
             s.chat_panel.scroll_transcript_step(delta as f64);
@@ -2115,7 +2133,7 @@ pub(crate) fn transcript_cursor_first(s: &mut AppState) {
             s.chat_panel.scroll_transcript_to_edge(false);
             return;
         };
-        let rows = build_single_exchange_rows(e);
+        let rows = build_single_exchange_rows(e, s.chat.source_is_prose);
         let landable = landable_mask(&rows);
         let Some(first) = landable.iter().position(|&l| l) else {
             s.chat_panel.scroll_transcript_to_edge(false);
@@ -2179,7 +2197,7 @@ pub(crate) fn transcript_cursor_last(s: &mut AppState) {
             s.chat_panel.scroll_transcript_to_edge(true);
             return;
         };
-        let rows = build_single_exchange_rows(e);
+        let rows = build_single_exchange_rows(e, s.chat.source_is_prose);
         let landable = landable_mask(&rows);
         let Some(last) = landable.iter().rposition(|&l| l) else {
             s.chat_panel.scroll_transcript_to_edge(true);
@@ -2313,7 +2331,7 @@ pub(crate) fn selected_exchange_texts(s: &AppState) -> Vec<String> {
         journal_or_exchange_rows(s)
     } else {
         match s.chat.exchanges.get(s.chat.cursor) {
-            Some(e) => build_single_exchange_rows(e),
+            Some(e) => build_single_exchange_rows(e, s.chat.source_is_prose),
             None => Vec::new(),
         }
     };
@@ -2336,7 +2354,7 @@ pub(crate) fn cursor_segment_texts(s: &AppState) -> Vec<String> {
     let rows = match s.chat.view {
         PanelView::Journal => return selected_exchange_texts(s),
         PanelView::Question => match s.chat.exchanges.get(s.chat.cursor) {
-            Some(e) => build_single_exchange_rows(e),
+            Some(e) => build_single_exchange_rows(e, s.chat.source_is_prose),
             None => Vec::new(),
         },
         PanelView::Gloss => transcript_rows(s).0,
@@ -2678,7 +2696,10 @@ pub(crate) fn render_saved_entry(s: &AppState, question: &str, answer: &str) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = vec![R::SavedMark, question_row(question)];
     if question.is_empty() {
-        rows.push(R::GlossAnswer(answer.to_string()));
+        rows.push(R::GlossAnswer(super::chat_rows::gloss_answer_markup(
+            answer,
+            s.chat.source_is_prose,
+        )));
     } else {
         rows.extend(split_answer_paragraphs(answer).into_iter().map(R::Answer));
     }

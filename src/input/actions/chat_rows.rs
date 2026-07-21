@@ -18,12 +18,28 @@ use super::chat::{Exchange, PanelView};
 /// `<speaker>`/`<verse>`/`<gloss>` markup and must render through
 /// `GlossAnswer` (typed rows, styled) rather than `Answer` (one plain label,
 /// which would show the literal tags).
-pub(crate) fn answer_row(e: &Exchange) -> crate::ui::chat_panel::TranscriptRow {
+/// `reflow` (= `ChatState.source_is_prose`) re-flows `<verse>` bodies to one
+/// line so prose source passages wrap at the panel width — see
+/// `gloss_render::reflow_verse_markup`. It must be applied HERE, before
+/// `widget_row_count` counts the row, so render, pagination, yank, and the
+/// row cursor all see the same widget count.
+pub(crate) fn answer_row(e: &Exchange, reflow: bool) -> crate::ui::chat_panel::TranscriptRow {
     use crate::ui::chat_panel::TranscriptRow as R;
     if e.question.is_empty() {
-        R::GlossAnswer(e.answer.clone())
+        R::GlossAnswer(gloss_answer_markup(&e.answer, reflow))
     } else {
         R::Answer(e.answer.clone())
+    }
+}
+
+/// The markup a gloss-answer row renders from: verbatim for verse works,
+/// `<verse>`-reflowed for prose. The single seam every `GlossAnswer`
+/// constructor routes through.
+pub(crate) fn gloss_answer_markup(answer: &str, reflow: bool) -> String {
+    if reflow {
+        crate::ui::gloss_render::reflow_verse_markup(answer)
+    } else {
+        answer.to_string()
     }
 }
 
@@ -83,6 +99,7 @@ pub(crate) fn is_first_question_exchange(exchanges: &[Exchange]) -> bool {
 pub(crate) fn build_transcript_rows(
     exchanges: &[Exchange],
     cursor: usize,
+    reflow: bool,
 ) -> (Vec<crate::ui::chat_panel::TranscriptRow>, usize, Vec<usize>) {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
@@ -113,7 +130,7 @@ pub(crate) fn build_transcript_rows(
             row_owner.push(i);
             widget_row += 1;
         }
-        let ans = answer_row(e);
+        let ans = answer_row(e, reflow);
         let ans_widgets = widget_row_count(&ans);
         rows.push(ans);
         for _ in 0..ans_widgets {
@@ -143,7 +160,10 @@ pub(crate) fn build_transcript_rows(
 /// existing "question names its own subject" reasoning) — a Question-view
 /// render never shows the source-preview label the full Gloss transcript
 /// does. A trailing `SavedMark` is appended if the exchange has been saved.
-pub(crate) fn build_single_exchange_rows(e: &Exchange) -> Vec<crate::ui::chat_panel::TranscriptRow> {
+pub(crate) fn build_single_exchange_rows(
+    e: &Exchange,
+    reflow: bool,
+) -> Vec<crate::ui::chat_panel::TranscriptRow> {
     use crate::ui::chat_panel::TranscriptRow as R;
     let mut rows = Vec::new();
     if has_question_row(e) {
@@ -153,7 +173,7 @@ pub(crate) fn build_single_exchange_rows(e: &Exchange) -> Vec<crate::ui::chat_pa
         // Reader-gloss exchange: raw <speaker>/<verse> markup renders as ONE
         // GlossAnswer row (see answer_row's doc comment) — splitting it would
         // break the markup parse.
-        rows.push(R::GlossAnswer(e.answer.clone()));
+        rows.push(R::GlossAnswer(gloss_answer_markup(&e.answer, reflow)));
     } else {
         // One Answer row per paragraph (same split journal_view_rows uses) so
         // the row cursor traverses the answer and no single widget outgrows a
@@ -833,7 +853,7 @@ mod row_cursor_widget_tests {
                        <verse>Stand by my side</verse>\n\
                        <gloss>Cymbeline honors him.</gloss>";
         let exchanges = vec![gloss_ex("chipA", markup)];
-        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0);
+        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0, false);
         // Chip + exploded gloss (3 widgets) = 4 widget rows, all owned by
         // exchange 0. (This exchange carries an explicit chip; a real lone
         // gloss has an empty one and renders no chip row at all — see
@@ -855,7 +875,7 @@ mod row_cursor_widget_tests {
                        <verse>Stand by my side</verse>\n\
                        <gloss>Cymbeline honors him.</gloss>";
         let exchanges = vec![gloss_ex("", markup)];
-        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0);
+        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0, false);
         assert_eq!(rows.len(), 1); // GlossAnswer only — no Chip
         assert_eq!(row_owner, vec![0, 0, 0]); // the 3 exploded gloss widgets
         assert_eq!(cursor_row, 0);
@@ -867,7 +887,7 @@ mod row_cursor_widget_tests {
             plain_ex("chipA", "Q1?", "A1"),
             plain_ex("chipB", "Q2?", "A2"),
         ];
-        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 1);
+        let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 1, false);
         // Each exchange: Chip, Question, Answer = 3 widgets.
         assert_eq!(row_owner, vec![0, 0, 0, 1, 1, 1]);
         assert_eq!(rows.len(), 6);
@@ -879,7 +899,7 @@ mod row_cursor_widget_tests {
     fn row_owner_covers_saved_mark_widget() {
         let mut e = plain_ex("chipA", "Q1?", "A1");
         e.saved_id = Some(42);
-        let (rows, _cursor_row, row_owner) = build_transcript_rows(&[e], 0);
+        let (rows, _cursor_row, row_owner) = build_transcript_rows(&[e], 0, false);
         // Chip, Question, Answer, SavedMark = 4 widgets, all exchange 0.
         assert_eq!(row_owner, vec![0, 0, 0, 0]);
         assert_eq!(rows.len(), 4);
@@ -977,7 +997,7 @@ mod visual_selection_tests {
             source_markup: String::new(),
             saved_id: None,
         }];
-        let (rows, _cursor_row, _row_owner) = build_transcript_rows(&exchanges, 0);
+        let (rows, _cursor_row, _row_owner) = build_transcript_rows(&exchanges, 0, false);
         // Widget space: [Speaker(false), Verse(true), Speaker(false), Verse(true)].
         let landable = landable_mask(&rows);
         assert_eq!(landable, vec![false, true, false, true]);
@@ -1205,7 +1225,7 @@ mod question_view_rows_tests {
 
     #[test]
     fn qa_answer_splits_into_paragraph_rows() {
-        let rows = build_single_exchange_rows(&ex("Why?", "one\n\ntwo\n\nthree", false));
+        let rows = build_single_exchange_rows(&ex("Why?", "one\n\ntwo\n\nthree", false), false);
         assert_eq!(rows.len(), 4);
         assert!(matches!(&rows[0], R::Question(q) if q == "Q: Why?"));
         assert!(matches!(&rows[1], R::Answer(a) if a == "one"));
@@ -1215,18 +1235,17 @@ mod question_view_rows_tests {
 
     #[test]
     fn saved_mark_trails_the_paragraphs() {
-        let rows = build_single_exchange_rows(&ex("Why?", "one\n\ntwo", true));
+        let rows = build_single_exchange_rows(&ex("Why?", "one\n\ntwo", true), false);
         assert_eq!(rows.len(), 4); // Q + 2 paragraphs + SavedMark
         assert!(matches!(rows.last(), Some(R::SavedMark)));
     }
 
     #[test]
     fn gloss_exchange_keeps_single_gloss_answer_row() {
-        let rows = build_single_exchange_rows(&ex(
-            "",
-            "<speaker>A</speaker>\n\n<verse>b</verse>",
+        let rows = build_single_exchange_rows(
+            &ex("", "<speaker>A</speaker>\n\n<verse>b</verse>", false),
             false,
-        ));
+        );
         assert_eq!(rows.len(), 1);
         assert!(matches!(&rows[0], R::GlossAnswer(_)));
     }
@@ -1261,7 +1280,7 @@ mod question_view_tests {
     #[test]
     fn follow_up_exchange_renders_question_then_plain_answer_no_chip() {
         let e = qa_exchange("What does York mean?", "He is plotting.", None);
-        let rows = build_single_exchange_rows(&e);
+        let rows = build_single_exchange_rows(&e, false);
         // Exactly 2 rows: Q + A. No Chip row, unlike the full transcript's
         // build_transcript_rows — a Question-view render never shows the
         // source-preview label (see the function's doc comment).
@@ -1285,7 +1304,7 @@ mod question_view_tests {
     #[test]
     fn gloss_shaped_exchange_omits_question_row_and_uses_gloss_answer() {
         let e = qa_exchange("", "<speaker>YORK</speaker><verse>Speak.</verse>", None);
-        let rows = build_single_exchange_rows(&e);
+        let rows = build_single_exchange_rows(&e, false);
         assert_eq!(rows.len(), 1);
         match &rows[0] {
             R::GlossAnswer(markup) => assert!(markup.contains("YORK")),
@@ -1296,7 +1315,7 @@ mod question_view_tests {
     #[test]
     fn saved_exchange_appends_saved_mark() {
         let e = qa_exchange("Q?", "A.", Some(42));
-        let rows = build_single_exchange_rows(&e);
+        let rows = build_single_exchange_rows(&e, false);
         assert_eq!(rows.len(), 3);
         assert!(matches!(rows[0], R::Question(_)));
         assert!(matches!(rows[1], R::Answer(_)));
