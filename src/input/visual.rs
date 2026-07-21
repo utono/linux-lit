@@ -534,7 +534,7 @@ pub(crate) fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppSta
             None => return,
         };
 
-        // <speaker>/<verse> markup for the passage.
+        // <speaker>/<segment> markup for the passage.
         let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
 
         (ctx.act, ctx.scene, ctx.start_citation, ctx.end_citation, passage_doc)
@@ -578,7 +578,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
             Err(_) => Vec::new(),
         };
 
-        // `<speaker>`/`<verse>` markup for the passage being glossed, shared with
+        // `<speaker>`/`<segment>` markup for the passage being glossed, shared with
         // the echoes source header so the "Glossing…" loading card formats it the
         // same single-column way as the original passage in the gloss result.
         let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
@@ -612,7 +612,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         // Show the passage being glossed on the loading card, formatted the same
-        // way (single-column `<speaker>`/`<verse>`) as the original passage in
+        // way (single-column `<speaker>`/`<segment>`) as the original passage in
         // the gloss result, so it looks identical before and after the gloss.
         let cw = s.content_hbox.width();
         let h = crate::app::layout::overlay_card_height(&s);
@@ -835,7 +835,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
             Err(_) => Vec::new(),
         };
 
-        // `<speaker>`/`<verse>` markup for the passage being glossed, shared with
+        // `<speaker>`/`<segment>` markup for the passage being glossed, shared with
         // the echoes source header so the "Glossing…" loading card formats it the
         // same single-column way as the original passage in the gloss result.
         let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
@@ -869,7 +869,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
         // Show the passage being glossed on the loading card, formatted the same
-        // way (single-column `<speaker>`/`<verse>`) as the original passage in
+        // way (single-column `<speaker>`/`<segment>`) as the original passage in
         // the gloss result, so it looks identical before and after the gloss.
         let cw = s.content_hbox.width();
         let h = crate::app::layout::overlay_card_height(&s);
@@ -949,7 +949,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             Err(_) => Vec::new(),
         };
 
-        // `<speaker>`/`<verse>` markup for the passage being glossed, shared with
+        // `<speaker>`/`<segment>` markup for the passage being glossed, shared with
         // the echoes source header so the "Glossing…" loading card formats it the
         // same single-column way as the reader-gloss loading card + gloss result.
         let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);

@@ -43,7 +43,7 @@ pub fn journal_detail(row: &JournalRow) -> String {
 }
 
 /// Primary label: the gloss's own prose, first line, with the leading
-/// `<speaker>…</speaker>` / `<verse>` block markup stripped so the row reads as
+/// `<speaker>…</speaker>` / `<segment>` block markup stripped so the row reads as
 /// plain text (gloss bodies are stored as markup).
 pub fn gloss_label(row: &GlossRow) -> String {
     let clean = strip_gloss_markup(&row.gloss_text);
@@ -68,7 +68,7 @@ pub fn gloss_detail(row: &GlossRow) -> String {
 /// Strip gloss body markup so a row label reads as prose. Drops any
 /// `<speaker>…</speaker>` element WHOLE (tag and its inner name — the speaker is
 /// shown in the detail column, so it would be redundant noise in the primary
-/// text), then removes all remaining `<…>` tags (`<verse>`, etc.), keeping their
+/// text), then removes all remaining `<…>` tags (`<segment>`, etc.), keeping their
 /// inner text.
 fn strip_gloss_markup(s: &str) -> String {
     let without_speaker = remove_element(s, "speaker");
@@ -234,7 +234,7 @@ mod tests {
         // Gloss bodies are markup; the primary label must read as prose, not
         // "<speaker>BELARIUS</speaker>...".
         let rows = vec![grow(1, "Cym.5.5.1", "BELARIUS",
-            "<speaker>BELARIUS</speaker>\n<verse>a note on nobility</verse>")];
+            "<speaker>BELARIUS</speaker>\n<segment>a note on nobility</segment>")];
         let hits = filter_gloss(&rows, &build_matcher("nobility"));
         assert_eq!(hits[0].label, "a note on nobility");
         assert!(!hits[0].label.contains('<'));

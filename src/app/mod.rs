@@ -617,7 +617,7 @@ pub struct AppState {
     pub echo_turns_picker: crate::ui::echo_turns_picker::EchoTurnsPicker,
     pub pending_echo_context: Option<crate::gloss::GlossContext>,
     pub pending_echo_scene_lines: Vec<crate::db::models::Line>,
-    /// `<speaker>`/`<verse>` markup for the passage being glossed, stashed with
+    /// `<speaker>`/`<segment>` markup for the passage being glossed, stashed with
     /// the pending inner-monologue call so the post-picker "Glossing…" loading
     /// card can render the passage (like reader-gloss) instead of a bare label.
     pub pending_echo_passage_doc: String,

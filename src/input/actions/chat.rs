@@ -166,7 +166,7 @@ pub(crate) struct ChatState {
     /// immediately after a successful pin.
     pub pinned_passage: Option<crate::input::segments::SegmentContext>,
     /// True when the pinned passage's work is PROSE: its stored source lines
-    /// are txt-wrapped fragments, not verse, so `<verse>` rows in every
+    /// are txt-wrapped fragments, not verse, so `<segment>` rows in every
     /// `GlossAnswer` markup are re-flowed to the panel width
     /// (`gloss_render::reflow_verse_markup`) instead of keeping the txt's own
     /// breaks. Set at pin time from the pinned work (same reset point as
@@ -1867,7 +1867,7 @@ pub(crate) fn regloss_pinned(state_rc: &Rc<RefCell<AppState>>) {
 /// whole API round-trip.
 ///
 /// The seam: `ctx.passage_doc()` (`src/gloss.rs`) reconstructs the SAME
-/// `<speaker>`/`<verse>`/`<stage>` markup `echoes::build_source_header`
+/// `<speaker>`/`<segment>`/`<stage>` markup `echoes::build_source_header`
 /// builds from `selected_lines` — it already exists for exactly this
 /// purpose (the gloss OVERLAY's `show_glossing` loading card uses it the same
 /// way, see its doc comment). `request_reader_gloss` takes `ctx:
@@ -1881,7 +1881,7 @@ pub(crate) fn regloss_pinned(state_rc: &Rc<RefCell<AppState>>) {
 ///
 /// Pushing `R::GlossAnswer(ctx.passage_doc())` (not a plain label) matters:
 /// `chat_gloss_rows` renders that markup exactly as it will render the
-/// FINISHED gloss's leading source rows (same `<speaker>`/`<verse>` tags),
+/// FINISHED gloss's leading source rows (same `<speaker>`/`<segment>` tags),
 /// so the panel does not jump/reflow when the answer lands — the source rows
 /// are already on screen, just followed by "thinking…" instead of the
 /// explication.

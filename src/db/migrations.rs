@@ -333,7 +333,7 @@ const PURGE_PASSAGE_JOURNAL_AUDIO_KEY: &str = "purge-passage-journal-audio-2026-
 
 /// One-time cleanup for changes that re-shape a passage Q&A's paragraph list
 /// (see the key's bump log above — first the verse-source regrouping, commit
-/// 9ac15c5e, which collapsed the quoted `<verse>`/`<stage>` source lines from
+/// 9ac15c5e, which collapsed the quoted `<segment>`/`<stage>` source lines from
 /// one-paragraph-per-line into a single multi-line paragraph; then the
 /// dropped `———` separator), shifting every `paragraph_index` at and after
 /// the source block for that entry. `journal_audio` has no stored text/hash to validate a
@@ -419,7 +419,7 @@ mod tests {
         let conn = make_test_db();
 
         // Entry 1: passage scope with quoted verse source — affected.
-        insert_entry(&conn, 1, "passage", Some("<verse>a</verse>\n<verse>b</verse>"));
+        insert_entry(&conn, 1, "passage", Some("<segment>a</segment>\n<segment>b</segment>"));
         insert_audio(&conn, 1, 0);
         insert_audio(&conn, 1, 1);
 
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn purge_is_marker_guarded_and_spares_fresh_rows_after_first_run() {
         let conn = make_test_db();
-        insert_entry(&conn, 1, "passage", Some("<verse>a</verse>"));
+        insert_entry(&conn, 1, "passage", Some("<segment>a</segment>"));
         insert_audio(&conn, 1, 0);
 
         assert_eq!(purge_stale_passage_journal_audio(&conn).unwrap(), 1);
@@ -461,7 +461,7 @@ mod tests {
         // A fresh passage Q&A is answered (and its audio synthesized) AFTER
         // the first run — entry 2 matches the exact same WHERE clause as
         // entry 1 did (passage scope, non-null source_text).
-        insert_entry(&conn, 2, "passage", Some("<verse>c</verse>"));
+        insert_entry(&conn, 2, "passage", Some("<segment>c</segment>"));
         insert_audio(&conn, 2, 0);
 
         // Second run must short-circuit on the marker (0 deleted), NOT

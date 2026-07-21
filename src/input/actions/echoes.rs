@@ -650,13 +650,13 @@ fn first_sentence(passage: &str) -> String {
         .join(" ")
 }
 
-/// Build the `<speaker>`/`<verse>` header for the source turn. Emits a
+/// Build the `<speaker>`/`<segment>` header for the source turn. Emits a
 /// `<speaker>` tag at the start and again whenever the speaker changes, so a
 /// multi-speaker selection attributes each run to its own speaker. Lines
 /// without their own speaker fall back to `speaker` and do not start a new run.
 ///
 /// Shared with the gloss "Glossing…" loading card so the passage shown while a
-/// gloss is being generated uses the same `<speaker>`/`<verse>` markup (and thus
+/// gloss is being generated uses the same `<speaker>`/`<segment>` markup (and thus
 /// the same single-column formatting) as the original passage in the result.
 pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
     let mut doc = String::new();
@@ -678,7 +678,7 @@ pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
             doc.push_str(&format!("<speaker>{}</speaker>\n", label));
             current = Some(label);
         }
-        doc.push_str(&format!("<verse>{}</verse>\n", line.text));
+        doc.push_str(&format!("<segment>{}</segment>\n", line.text));
     }
     doc
 }
@@ -1747,8 +1747,8 @@ mod tests {
         assert_eq!(
             doc,
             "<speaker>HAMLET</speaker>\n\
-             <verse>To be, or not to be</verse>\n\
-             <verse>that is the question</verse>\n"
+             <segment>To be, or not to be</segment>\n\
+             <segment>that is the question</segment>\n"
         );
     }
 
@@ -1766,12 +1766,12 @@ mod tests {
         assert_eq!(
             doc,
             "<speaker>HAMLET</speaker>\n\
-             <verse>that is the question</verse>\n\
+             <segment>that is the question</segment>\n\
              <speaker>OPHELIA</speaker>\n\
-             <verse>Good my lord</verse>\n\
-             <verse>How does your honour</verse>\n\
+             <segment>Good my lord</segment>\n\
+             <segment>How does your honour</segment>\n\
              <speaker>HAMLET</speaker>\n\
-             <verse>I humbly thank you</verse>\n"
+             <segment>I humbly thank you</segment>\n"
         );
     }
 
@@ -1787,8 +1787,8 @@ mod tests {
         assert_eq!(
             doc,
             "<speaker>HAMLET</speaker>\n\
-             <verse>A stage direction perhaps</verse>\n\
-             <verse>still no speaker</verse>\n"
+             <segment>A stage direction perhaps</segment>\n\
+             <segment>still no speaker</segment>\n"
         );
     }
 
@@ -1800,16 +1800,16 @@ mod tests {
             line(22, Some("YORK"), 1, 4, 45, "Beldam, I think we watched you at an"),
         ];
         let doc = build_source_header(&turn, "YORK");
-        // The stage direction is a <stage> tag, not a <verse> tag.
+        // The stage direction is a <stage> tag, not a <segment> tag.
         assert!(doc.contains("<stage>[To Jourdain.]</stage>"),
             "stage line must be tagged <stage>, got:\n{doc}");
-        assert!(!doc.contains("<verse>[To Jourdain.]</verse>"),
-            "stage line must NOT be a <verse>, got:\n{doc}");
+        assert!(!doc.contains("<segment>[To Jourdain.]</segment>"),
+            "stage line must NOT be a <segment>, got:\n{doc}");
         // The speaker is emitted once for the whole same-speaker turn; the stage
         // line does not re-trigger a <speaker>.
         assert_eq!(doc.matches("<speaker>YORK</speaker>").count(), 1,
             "stage line must not re-emit the speaker, got:\n{doc}");
-        // Real verse lines remain <verse>.
-        assert!(doc.contains("<verse>Beldam, I think we watched you at an</verse>"));
+        // Real verse lines remain <segment>.
+        assert!(doc.contains("<segment>Beldam, I think we watched you at an</segment>"));
     }
 }

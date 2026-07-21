@@ -1,7 +1,7 @@
 //! Pure `<hi>` highlight tag toggling over the editor's raw text buffer.
 //!
 //! The vim editors for the gloss/synopsis/journal store highlights as an inline
-//! `<hi>…</hi>` tag in the RAW text (the same grammar as `<verse>`/`<gloss>`).
+//! `<hi>…</hi>` tag in the RAW text (the same grammar as `<segment>`/`<gloss>`).
 //! Visual-mode `H` toggles a highlight over the selected char range:
 //!
 //! - If the selection overlaps or lies inside an existing `<hi>…</hi>` run, that
@@ -209,14 +209,14 @@ mod tests {
 
     #[test]
     fn refuses_to_split_a_verse_tag() {
-        // Selection spans from inside a <verse> open tag across into the text.
-        let s = "<verse>To be</verse>";
-        // start INSIDE "<verse>" (between 'v' and 'e'), end after "To"
-        let start = 2; // inside the "<verse>" delimiter
+        // Selection spans from inside a <segment> open tag across into the text.
+        let s = "<segment>To be</segment>";
+        // start INSIDE "<segment>" (between 'v' and 'e'), end after "To"
+        let start = 2; // inside the "<segment>" delimiter
         let end = ci(s, "To") + "To".chars().count();
         let out = toggle(s, start, end);
-        // The "<verse>" tag must remain intact — no "<hi>" inside the delimiter.
-        assert!(out.contains("<verse>"), "verse open tag intact: {out}");
+        // The "<segment>" tag must remain intact — no "<hi>" inside the delimiter.
+        assert!(out.contains("<segment>"), "verse open tag intact: {out}");
         assert!(!out.contains("<v<hi>"), "did not split the tag: {out}");
     }
 

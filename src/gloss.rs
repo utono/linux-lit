@@ -13,7 +13,7 @@ fn template_or(key: &str, fallback: &str) -> String {
     crate::db::prompts::active_prompt(key).unwrap_or_else(|| fallback.to_string())
 }
 
-/// Master switch for inline OP-IPA tagging on `<verse>` source lines.
+/// Master switch for inline OP-IPA tagging on `<segment>` source lines.
 ///
 /// `false` (current) — every gloss prompt (and `FIX_IPA_PROMPT`) is built with
 /// its IPA-tagging instructions replaced by a one-line directive telling the
@@ -83,7 +83,7 @@ and -ion syllabicity to the metre."
 static IPA_VERSE_RULES: LazyLock<String> = LazyLock::new(|| {
     if APPEND_IPA {
         concat!(
-            "On each <verse> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.\n- ",
+            "On each <segment> line, APPEND inline Original-Pronunciation IPA in forward slashes IMMEDIATELY AFTER the operative / accent-bearing / metrically stressed words (e.g. take /tɛːk/), leaving the original words unchanged; per word never per phrase; let line structure govern syllable count.\n- ",
             op_ipa_conventions!()
         )
         .to_string()
@@ -101,7 +101,7 @@ static IPA_VERSE_RULES: LazyLock<String> = LazyLock::new(|| {
 static IPA_VERSE_RULES_SPARSE: LazyLock<String> = LazyLock::new(|| {
     if APPEND_IPA {
         concat!(
-            "On each <verse> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. A 40-word line should have far fewer than 40 tags. /IPA/ appears ONLY inside <verse> lines (hidden from the reader, used only to generate audio). Append the pronunciation as IPA in forward slashes IMMEDIATELY AFTER the operative word, leaving the original word unchanged, e.g. take /tɛːk/, suffer /ˈsʊfər/. \n",
+            "On each <segment> line, tag for Original Pronunciation ONLY the few words you have already identified as operative / accent-bearing / metrically stressed — per word, never per phrase. Tagging every word destabilizes synthesis and muddies the teaching. A 40-word line should have far fewer than 40 tags. /IPA/ appears ONLY inside <segment> lines (hidden from the reader, used only to generate audio). Append the pronunciation as IPA in forward slashes IMMEDIATELY AFTER the operative word, leaving the original word unchanged, e.g. take /tɛːk/, suffer /ˈsʊfər/. \n",
             op_ipa_conventions!()
         )
         .to_string()
@@ -145,18 +145,18 @@ Use your knowledge of the text, its historical context, performance tradition, a
 
 Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> for each speaker attribution when quoting verse (ALL CAPS, no period)
-- <verse>one line of quoted text</verse> for each quoted line (one tag per line, verbatim, preserving exact words and spelling)
+- <segment>one line of quoted text</segment> for each quoted line (one tag per line, verbatim, preserving exact words and spelling)
 - <gloss>paragraph of answer</gloss> for each paragraph of your response
 
 Rules:
 - Focus on answering the reader's question directly
 - Support your answer with evidence from the passage and the wider work
-- When quoting verse from the text, use <speaker> and <verse> tags — never embed verse lines inside <gloss> tags
+- When quoting verse from the text, use <speaker> and <segment> tags — never embed verse lines inside <gloss> tags
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source
 - Never use / to join verse lines
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - {}
-- Each <verse> tag contains exactly one line of the original
+- Each <segment> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.user-question", FALLBACK);
@@ -253,14 +253,14 @@ the dramatic action, not the surface vocabulary.
 
 Output format — use these XML tags exactly, in this order for each line:
 - <speaker>NAME</speaker> before each new speaker (ALL CAPS)
-- <verse>one line of quoted text</verse> (verbatim, one per line)
+- <segment>one line of quoted text</segment> (verbatim, one per line)
 - <gloss>[\"echo line\" — Source Work act.scene]</gloss>
 
 Example — Paris CLAIMS Juliet (courtly love / antecedent: the greeting \
 is a claim on her body dressed as courtesy — the echo strips the veil \
 off the transaction):
 <speaker>PARIS</speaker>
-<verse>Happily met, my lady and my wife.</verse>
+<segment>Happily met, my lady and my wife.</segment>
 <gloss>[\"Are you meditating on virginity?\" — All's Well That Ends \
 Well 1.1]</gloss>
 
@@ -268,7 +268,7 @@ Example — Juliet DEFLECTS Paris (courtly love / concealment: she spins \
 a key word from the line back at him to buy time — the echo does the \
 same thing with the same word):
 <speaker>JULIET</speaker>
-<verse>That may be, sir, when I may be a wife.</verse>
+<segment>That may be, sir, when I may be a wife.</segment>
 <gloss>[\"What may she not? She may, ay, marry, may she—\" — Richard \
 III 1.3]</gloss>
 
@@ -278,7 +278,7 @@ Rules:
 - Do NOT add a <pron> note. The <gloss> remains EXACTLY the single \
 bracketed echo.
 - Never use / to join verse lines
-- Each <verse> tag contains exactly one line of the original
+- Each <segment> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
 any actable-subtext sentence or any prose after the echo.
 - The bracketed echo contains EXACTLY ONE quoted line and ONE source \
@@ -299,7 +299,7 @@ where another character does the same thing with the same word
 a secret (Viola concealing identity, Hal concealing intention, etc.)
 - For READING lines, find echoes where a character responds to what \
 they see in the other (Iago reading Othello, Portia reading Bassanio)
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.inner-monologue", FALLBACK);
     let rules: &str = &IPA_VERSE_RULES;
@@ -328,20 +328,20 @@ performs the same action. Cite the source work.
 
 Output format — use these XML tags exactly, in this order for each line:
 - <speaker>NAME</speaker> before each new speaker (ALL CAPS)
-- <verse>one line of quoted text</verse> (verbatim, one per line)
+- <segment>one line of quoted text</segment> (verbatim, one per line)
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks.
 - {}
 - Never use / to join verse lines
-- Each <verse> tag contains exactly one line of the original
+- Each <segment> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
 any actable-subtext sentence or any prose after the echo.
 - The bracketed echo contains EXACTLY ONE quoted line and ONE source \
 citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.inner-monologue-add", FALLBACK);
     let rules: &str = &IPA_VERSE_RULES;
@@ -370,20 +370,20 @@ performs the same action. Cite the source work.
 
 Output format — use these XML tags exactly, in this order for each line:
 - <speaker>NAME</speaker> before each new speaker (ALL CAPS)
-- <verse>one line of quoted text</verse> (verbatim, one per line)
+- <segment>one line of quoted text</segment> (verbatim, one per line)
 - <gloss>[\"echo from the provided lines\" — Source Work act.scene]</gloss>
 
 Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks.
 - {}
 - Never use / to join verse lines
-- Each <verse> tag contains exactly one line of the original
+- Each <segment> tag contains exactly one line of the original
 - ONE <gloss> tag per verse line: the bracketed echo only. Do NOT add \
 any actable-subtext sentence or any prose after the echo.
 - The bracketed echo contains EXACTLY ONE quoted line and ONE source \
 citation — never list alternatives or show your deliberation
 - Draw the echoes FROM THE PROVIDED LINES, not your own knowledge
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.inner-monologue-edit", FALLBACK);
     let rules: &str = &IPA_VERSE_RULES;
@@ -405,7 +405,7 @@ new material the reader has provided.
 
 Use the same output format as the original gloss — use these XML tags:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS)
-- <verse>one line of quoted text</verse> for quoted lines (verbatim)
+- <segment>one line of quoted text</segment> for quoted lines (verbatim)
 - <gloss>paragraph of analysis</gloss> for each analysis paragraph
 
 Rules:
@@ -413,10 +413,10 @@ Rules:
 - Never use / to join verse lines
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - {}
-- Each <verse> tag contains exactly one line of the original
+- Each <segment> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-6 sentences)
 - Incorporate the reader's provided lines as evidence or context
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.edit", FALLBACK);
     let rules: &str = &IPA_VERSE_RULES;
@@ -434,12 +434,12 @@ You are a scholar helping a READER (not an actor) understand a passage from a ve
 Your job: explicate the characters' motives and any Elizabethan vocabulary, allusions, metaphors, idioms, or social/political concepts a modern reader would miss. Be terse. This is NOT acting direction.
 
 Output format — use these XML tags exactly:
-- <speaker>NAME</speaker> for each speaker attribution (ALL CAPS, no period), before every group of <verse> lines
-- <verse>one line of quoted text</verse> for each quoted line (one tag per line, verbatim from source, exact words and spelling)
+- <speaker>NAME</speaker> for each speaker attribution (ALL CAPS, no period), before every group of <segment> lines
+- <segment>one line of quoted text</segment> for each quoted line (one tag per line, verbatim from source, exact words and spelling)
 - <gloss>paragraph</gloss> for each prose paragraph
 
 Rules:
-- EACH speaker gets their OWN one-sentence motivation lede, placed immediately AFTER that speaker's FIRST quoted <verse> block (the speaker's opening lines come first, then their lede <gloss>). A lede must never come before any verse. A speaker who appears more than once gets a lede only after their first appearance, not on later turns.
+- EACH speaker gets their OWN one-sentence motivation lede, placed immediately AFTER that speaker's FIRST quoted <segment> block (the speaker's opening lines come first, then their lede <gloss>). A lede must never come before any verse. A speaker who appears more than once gets a lede only after their first appearance, not on later turns.
 - Each motivation lede is exactly one sentence stating what THAT speaker is doing in this moment. Lead it with a PRECISE ACTIVE VERB that names the rhetorical or dramatic move itself (e.g. insinuates, feigns, goads, needles, deflects, flatters, threatens, pleads, taunts, dissembles, parries). Do NOT use weak periphrastic wind-ups — never 'wants to', 'tries to', 'attempts to', 'is trying to', 'seeks to'; the verb must carry the meaning directly (write 'Margaret slyly insinuates…', not 'Margaret wants to flatter…').
 - After the lede, each <gloss> is terse (1-3 sentences) explicating further motive shifts and Elizabethan words, allusions, metaphors, idioms, or concepts a reader would miss.
 - Do NOT give acting direction: no operative words, no breath, no verse-delivery notes, no Barton/Berry/Hall/Rodenburg/Linklater references.
@@ -447,8 +447,8 @@ Rules:
 - Quote verbatim — exact words, exact spelling, exact line breaks from the source.
 - Never use / to join verse lines. Never truncate with ...
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
-- Each <verse> tag contains exactly one line of the original.
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed.
+- Each <segment> tag contains exactly one line of the original.
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines, even when the speaker has not changed.
 - No markdown, no bullets, no numbered lists, no headers.
 - If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
     template_or("gloss.reader-gloss", FALLBACK)
@@ -462,12 +462,12 @@ The reader has asked a specific question. Answer it directly and concisely, draw
 
 Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> when quoting verse (ALL CAPS, no period)
-- <verse>one line of quoted text</verse> for each quoted line (verbatim)
+- <segment>one line of quoted text</segment> for each quoted line (verbatim)
 - <gloss>paragraph of answer</gloss> for each paragraph
 
 Rules:
 - Answer the reader's question directly; do NOT restate or duplicate the motivation lede.
-- When quoting verse, use <speaker>/<verse> tags — never embed verse inside <gloss>.
+- When quoting verse, use <speaker>/<segment> tags — never embed verse inside <gloss>.
 - Quote verbatim. Never use / to join verse lines.
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
 - No acting direction, no IPA, no phonetic symbols.
@@ -485,15 +485,15 @@ The reader has provided additional lines or context. Rewrite the gloss incorpora
 
 Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS)
-- <verse>one line of quoted text</verse> for quoted lines (verbatim)
+- <segment>one line of quoted text</segment> for quoted lines (verbatim)
 - <gloss>paragraph</gloss> for each paragraph
 
 Rules:
-- PRESERVE each speaker's one-sentence motivation lede: every distinct speaker has exactly one, placed immediately AFTER that speaker's first <verse> block (the speaker's opening lines come first, then their lede <gloss>), never before any verse. Rewrite a lede if the new context warrants, but NEVER drop it. Each lede leads with a precise active verb naming the rhetorical move (insinuates, feigns, goads, deflects, flatters…) — never weak wind-ups like 'wants to'/'tries to'.
+- PRESERVE each speaker's one-sentence motivation lede: every distinct speaker has exactly one, placed immediately AFTER that speaker's first <segment> block (the speaker's opening lines come first, then their lede <gloss>), never before any verse. Rewrite a lede if the new context warrants, but NEVER drop it. Each lede leads with a precise active verb naming the rhetorical move (insinuates, feigns, goads, deflects, flatters…) — never weak wind-ups like 'wants to'/'tries to'.
 - After each speaker's lede, the remaining <gloss> blocks are terse (1-3 sentences): character motive and Elizabethan concepts a reader would miss. No acting direction. No IPA.
 - Quote verbatim. Never use / to join verse lines.
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines.
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines.
 - No markdown, no bullets, no numbered lists, no headers.
 - If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
     template_or("gloss.reader-gloss-edit", FALLBACK)
@@ -532,7 +532,7 @@ Given a passage with speaker names and dialogue, provide an actor's explication 
 
 Output format — use these XML tags exactly:
 - <speaker>NAME</speaker> for each speaker attribution (ALL CAPS, no period)
-- <verse>one line of quoted text</verse> for each quoted line (one tag per line, verbatim from source, preserving exact words and spelling)
+- <segment>one line of quoted text</segment> for each quoted line (one tag per line, verbatim from source, preserving exact words and spelling)
 - <gloss>paragraph of analysis</gloss> for each analysis paragraph
 
 Rules:
@@ -541,10 +541,10 @@ Rules:
 - Never use / to join verse lines
 - Never truncate with ...
 - Never use the = sign. Write paraphrases as prose (write 'X means Y' or 'X, i.e. Y', not 'X = Y').
-- Each <verse> tag contains exactly one line of the original
+- Each <segment> tag contains exactly one line of the original
 - Each <gloss> tag contains one flowing prose paragraph (3-4 sentences preferred, never exceed 6)
 - For long speeches (over 8 lines), break into 4-8 line chunks with analysis between each chunk
-- ALWAYS place a <speaker> tag before EVERY group of <verse> lines, even when the speaker has not changed — every quoted block must be preceded by its speaker name
+- ALWAYS place a <speaker> tag before EVERY group of <segment> lines, even when the speaker has not changed — every quoted block must be preceded by its speaker name
 - No markdown, no bullets, no numbered lists, no headers";
     let template = template_or("gloss.teacher-generic", FALLBACK);
     let rules: &str = &IPA_VERSE_RULES_SPARSE;
@@ -579,7 +579,7 @@ impl GlossContext {
             .collect()
     }
 
-    /// `<speaker>`/`<verse>` markup for the passage this context glosses, so the
+    /// `<speaker>`/`<segment>` markup for the passage this context glosses, so the
     /// "Glossing…" loading card (`GlossOverlay::show_glossing`) renders the source
     /// being reglossed instead of a bare centered label. Mirrors
     /// `echoes::build_source_header`, but reconstructs from the joined
@@ -600,7 +600,7 @@ impl GlossContext {
                 doc.push_str(&format!("<speaker>{}</speaker>\n", self.speaker.to_uppercase()));
                 speaker_emitted = true;
             }
-            doc.push_str(&format!("<verse>{}</verse>\n", line));
+            doc.push_str(&format!("<segment>{}</segment>\n", line));
         }
         doc
     }
@@ -1108,18 +1108,18 @@ mod tests {
         assert_eq!(
             doc,
             "<speaker>MERCUTIO</speaker>\n\
-             <verse>Thou wilt quarrel</verse>\n\
-             <verse>for cracking nuts</verse>\n"
+             <segment>Thou wilt quarrel</segment>\n\
+             <segment>for cracking nuts</segment>\n"
         );
     }
 
     #[test]
     fn passage_doc_omits_speaker_for_prose_unknown() {
         let doc = ctx_with("UNKNOWN", "It was the best of times").passage_doc();
-        assert_eq!(doc, "<verse>It was the best of times</verse>\n");
+        assert_eq!(doc, "<segment>It was the best of times</segment>\n");
         // Empty speaker (prose) also emits no <speaker> tag.
         let doc = ctx_with("", "plain prose line").passage_doc();
-        assert_eq!(doc, "<verse>plain prose line</verse>\n");
+        assert_eq!(doc, "<segment>plain prose line</segment>\n");
     }
 
     #[test]

@@ -230,15 +230,15 @@ pub(crate) fn improve_question(
     );
 }
 
-/// The first spoken/stage line of a passage's `<speaker>/<verse>/<stage>` source
+/// The first spoken/stage line of a passage's `<speaker>/<segment>/<stage>` source
 /// markup (as built by `build_source_header`), for the Q&A picker to show
-/// instead of the question. Returns the inner text of the first `<verse>` or
+/// instead of the question. Returns the inner text of the first `<segment>` or
 /// `<stage>` element (speaker labels are chrome, skipped), or `None` if the
 /// markup has no such line. Pure — unit-tested.
 fn first_passage_line(source_markup: &str) -> Option<String> {
     for line in source_markup.lines() {
         let line = line.trim();
-        for tag in ["verse", "stage"] {
+        for tag in ["segment", "stage"] {
             let open = format!("<{tag}>");
             let close = format!("</{tag}>");
             if let Some(rest) = line.strip_prefix(&open) {
@@ -409,7 +409,7 @@ fn tag_inner<'a>(line: &'a str, tags: &[&str]) -> Option<&'a str> {
 
 /// Build the ordered source paragraphs to prepend above a passage Q&A:
 /// `[speaker?, verse/stage block, citation?]`. The speaker paragraph is
-/// dropped when empty or `UNKNOWN` (prose works). All `<verse>`/`<stage>` lines
+/// dropped when empty or `UNKNOWN` (prose works). All `<segment>`/`<stage>` lines
 /// collapse into ONE `\n`-joined paragraph so the overlay renders them at pure
 /// line-height (consecutive lines, no blank line between) — matching the main
 /// card — while the blank-line gaps between paragraphs still separate the
@@ -428,7 +428,7 @@ fn source_paragraphs(source_text: &str, citation: Option<&str>) -> JournalSource
                 out.push(sp.to_string());
                 has_speaker = true;
             }
-        } else if let Some(body) = tag_inner(raw, &["verse", "stage"]) {
+        } else if let Some(body) = tag_inner(raw, &["segment", "stage"]) {
             for seg in body.split('\n') {
                 let seg = seg.trim();
                 if !seg.is_empty() {
@@ -1007,8 +1007,8 @@ pub(crate) fn clear_overlay_search(state: &Rc<RefCell<AppState>>) -> bool {
     true
 }
 
-/// From the journal source_text markup (`<speaker>…</speaker>\n<verse>text…`),
-/// return the first bare CONTENT line (inside a `<verse>`/`<stage>` tag), tags
+/// From the journal source_text markup (`<speaker>…</speaker>\n<segment>text…`),
+/// return the first bare CONTENT line (inside a `<segment>`/`<stage>` tag), tags
 /// stripped and trimmed. Empty if there is no content line. Used only by the
 /// citationless text-match fallback in `jump_to_journal_source_start` — citation
 /// match is primary, so this is a rare `.txt`-only path.
@@ -1019,11 +1019,11 @@ fn first_plain_source_line(source_text: &str) -> String {
         if line.is_empty() || line.starts_with("<speaker>") {
             continue;
         }
-        // Strip a single leading/trailing tag pair (<verse>…</verse>, <stage>…).
+        // Strip a single leading/trailing tag pair (<segment>…</segment>, <stage>…).
         let stripped = line
-            .trim_start_matches("<verse>")
+            .trim_start_matches("<segment>")
             .trim_start_matches("<stage>")
-            .trim_end_matches("</verse>")
+            .trim_end_matches("</segment>")
             .trim_end_matches("</stage>")
             .trim();
         if !stripped.is_empty() {
@@ -1036,7 +1036,7 @@ fn first_plain_source_line(source_text: &str) -> String {
 /// Buffer index of the first dialogue line of the passage at `start_citation`
 /// within `work`. Primary match is the citation tuple `(div1,div2,line_in_div)`;
 /// the fallback matches the first plain source line of `source_text` (which
-/// carries `<speaker>/<verse>` markup) against line text. Advances to the first
+/// carries `<speaker>/<segment>` markup) against line text. Advances to the first
 /// `is_dialogue` line, then maps through `line_map.work_to_buffer`. `None` when
 /// the citation/text doesn't resolve.
 pub(crate) fn source_first_buffer_line(
@@ -1050,7 +1050,7 @@ pub(crate) fn source_first_buffer_line(
     let target = crate::app::parse_citation(start_citation);
 
     // Citation tuple is unique → primary match; citationless text match is the
-    // .txt-only fallback (source_text carries <speaker>/<verse> markup, so strip
+    // .txt-only fallback (source_text carries <speaker>/<segment> markup, so strip
     // to the first bare content line before comparing).
     let by_citation = target
         .and_then(|t| work.lines.iter().position(|l| (l.div1, l.div2, l.line_in_div) == t));
@@ -1505,7 +1505,7 @@ pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
 /// has already exited visual mode / closed any conflicting overlay and set
 /// `return_pos`.
 ///
-/// - Sets `journal.pending_passage` with the `<speaker>/<verse>` markup.
+/// - Sets `journal.pending_passage` with the `<speaker>/<segment>` markup.
 /// - Sets `journal_band` to `Passage { div1, div2, start, end }`.
 /// - Sets `input_mode` to `JournalOverlay` and renders the current page list.
 /// - Opens the ask card titled "Ask a question about this passage".
@@ -2942,9 +2942,9 @@ mod tests {
     #[test]
     fn source_paragraphs_speaker_verse_citation() {
         let src = "<speaker>FIRST GENTLEMAN</speaker>\n\
-                   <verse>You do not meet a man but frowns. Our bloods</verse>\n\
-                   <verse>No more obey the heavens than our courtiers\u{2019}</verse>\n\
-                   <verse>Still seem as does the King\u{2019}s.</verse>";
+                   <segment>You do not meet a man but frowns. Our bloods</segment>\n\
+                   <segment>No more obey the heavens than our courtiers\u{2019}</segment>\n\
+                   <segment>Still seem as does the King\u{2019}s.</segment>";
         let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"));
         assert_eq!(
             got.paras,
@@ -2963,7 +2963,7 @@ mod tests {
 
     #[test]
     fn source_paragraphs_no_citation_omits_citation_para() {
-        let src = "<speaker>KING</speaker>\n<verse>Now is the winter</verse>";
+        let src = "<speaker>KING</speaker>\n<segment>Now is the winter</segment>";
         let got = source_paragraphs(src, None);
         assert_eq!(
             got.paras,
@@ -2975,7 +2975,7 @@ mod tests {
 
     #[test]
     fn source_paragraphs_speakerless_prose_drops_speaker() {
-        let src = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
+        let src = "<speaker>UNKNOWN</speaker>\n<segment>a prose line</segment>";
         let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"));
         assert_eq!(
             got.paras,
@@ -3078,7 +3078,7 @@ mod tests {
             &band,
             "play", "Cymbeline", "William Shakespeare",
             "Scene", "Act 3, Scene 4",
-            "FULL SCENE TEXT", "<speaker>IMOGEN</speaker>\n<verse>the passage</verse>",
+            "FULL SCENE TEXT", "<speaker>IMOGEN</speaker>\n<segment>the passage</segment>",
             "What does she mean?",
         );
         assert_eq!(
@@ -3086,7 +3086,7 @@ mod tests {
             "Work type: play\nWork: \"Cymbeline\" by William Shakespeare\n\
              Scene: Act 3, Scene 4\n\n\
              Scene text:\nFULL SCENE TEXT\n\n\
-             Passage:\n<speaker>IMOGEN</speaker>\n<verse>the passage</verse>\n\n\
+             Passage:\n<speaker>IMOGEN</speaker>\n<segment>the passage</segment>\n\n\
              Reader's question:\nWhat does she mean?",
         );
     }
@@ -3114,7 +3114,7 @@ mod tests {
         // that shared output: both surfaces call build_qa_answer_message with the
         // Passage band, so this string is what BOTH now send on the wire.
         let scene_text = "First line of the scene.\nSecond line of the scene.";
-        let passage = "<speaker>POSTHUMUS</speaker>\n<verse>Is there no way for men to be, but women</verse>";
+        let passage = "<speaker>POSTHUMUS</speaker>\n<segment>Is there no way for men to be, but women</segment>";
         let question = "Is he being fair to women here?";
         let band = JournalBand::Passage {
             div1: 2,
@@ -3142,8 +3142,8 @@ mod tests {
     #[test]
     fn first_passage_line_reads_first_verse() {
         let markup = "<speaker>FIRST GENTLEMAN</speaker>\n\
-                      <verse>You do not meet a man but frowns. Our bloods</verse>\n\
-                      <verse>No more obey the heavens than our courtiers'</verse>\n";
+                      <segment>You do not meet a man but frowns. Our bloods</segment>\n\
+                      <segment>No more obey the heavens than our courtiers'</segment>\n";
         assert_eq!(
             super::first_passage_line(markup).as_deref(),
             Some("You do not meet a man but frowns. Our bloods"),
@@ -3155,7 +3155,7 @@ mod tests {
         // A passage that opens on a stage direction shows that line.
         let markup = "<stage>[Enter two Gentlemen.]</stage>\n\
                       <speaker>FIRST GENTLEMAN</speaker>\n\
-                      <verse>You do not meet a man but frowns.</verse>\n";
+                      <segment>You do not meet a man but frowns.</segment>\n";
         assert_eq!(
             super::first_passage_line(markup).as_deref(),
             Some("[Enter two Gentlemen.]"),

@@ -1599,7 +1599,7 @@ mod tests {
     #[test]
     fn raw_text_round_trips_unchanged() {
         // A representative gloss markup blob.
-        let gloss = "<speaker>HAMLET</speaker>\n<verse>To be, or not to be</verse>\n\n<gloss>The question of existence.</gloss>";
+        let gloss = "<speaker>HAMLET</speaker>\n<segment>To be, or not to be</segment>\n\n<gloss>The question of existence.</gloss>";
         let engine = VimEngine::new(gloss.to_string());
         assert_eq!(engine.buffer(), gloss, "gloss markup must round-trip");
 

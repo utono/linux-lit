@@ -27,7 +27,7 @@ struct BlockRange {
 /// Which block-bearing render the pagination state currently holds, so
 /// `render_current_page` dispatches to the right page renderer. Synopsis pages
 /// render via `render_synopsis_with_labels`/`set_text`; gloss-result pages render
-/// via `populate_gloss_buffer` over the page's `<speaker>`/`<verse>`/`<gloss>`
+/// via `populate_gloss_buffer` over the page's `<speaker>`/`<segment>`/`<gloss>`
 /// markup slice (the speaker tags `gloss_blocks` drops cannot be reconstructed
 /// from `GlossBlock.display`). Irrelevant when `paginated` is false.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1519,9 +1519,9 @@ impl GlossOverlay {
     }
 
     /// "Glossing…" loading card that shows the passage being glossed, rendered
-    /// single-column with the SAME `<speaker>`/`<verse>` formatting the gloss
+    /// single-column with the SAME `<speaker>`/`<segment>` formatting the gloss
     /// result uses for the original passage. `passage_doc` is the
-    /// `<speaker>`/`<verse>` markup (see `build_source_header`). The "Glossing…"
+    /// `<speaker>`/`<segment>` markup (see `build_source_header`). The "Glossing…"
     /// status sits as a header above the passage; the result simply replaces this
     /// view in place when it arrives, so the passage looks identical before/after.
     /// Shared prose-geometry prefix of the gloss show paths (audit #64 rider):
@@ -1626,7 +1626,7 @@ impl GlossOverlay {
     }
 
     /// Render the echoes overlay: a fixed source-turn header + rule, above the
-    /// scrolling echo list. `source_doc` is the <speaker>/<verse> turn; `echo_doc`
+    /// scrolling echo list. `source_doc` is the <speaker>/<segment> turn; `echo_doc`
     /// is only the <gloss> lines.
     pub fn show_echoes(
         &self,
@@ -3284,9 +3284,9 @@ mod apply_font_priority_tests {
         let overlay = GlossOverlay::new(1050, 80);
         // A source turn with a stage direction (build_source_header form).
         let doc = "<speaker>YORK</speaker>\n\
-                   <verse>Lay hands upon these traitors and their trash.</verse>\n\
+                   <segment>Lay hands upon these traitors and their trash.</segment>\n\
                    <stage>[To Jourdain.]</stage>\n\
-                   <verse>Beldam, I think we watched you at an</verse>";
+                   <segment>Beldam, I think we watched you at an</segment>";
         overlay.show_glossing(doc, 1660, 1000, Some("#88aabb"));
 
         let table = overlay.gloss_view.buffer().tag_table();

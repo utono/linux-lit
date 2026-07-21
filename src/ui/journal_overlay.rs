@@ -855,7 +855,7 @@ impl JournalOverlay {
     }
 
     /// Render a PENDING passage ask: the visually selected source text
-    /// (`<speaker>/<verse>` markup) shown through the shared gloss source
+    /// (`<speaker>/<segment>` markup) shown through the shared gloss source
     /// renderer (speaker small-caps + verse hang-indent, full ink), in place of
     /// the empty band's "No pages yet — press r to ask." placeholder — so the
     /// reader sees the passage they are asking about while the ask card is open

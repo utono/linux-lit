@@ -877,7 +877,7 @@ mod tests {
         let conn = mem();
         let id = save_passage_page(
             &conn, "2H6", 1, 4, "2H6.1.4.43", "2H6.1.4.50",
-            "<speaker>YORK</speaker>\n<verse>Lay hands…</verse>\n<stage>[To Jourdain.]</stage>",
+            "<speaker>YORK</speaker>\n<segment>Lay hands…</segment>\n<stage>[To Jourdain.]</stage>",
             "What is York doing?", "He arrests the conjurers.", "claude-opus-4-8",
         ).unwrap();
         assert!(id > 0);
@@ -910,20 +910,20 @@ mod tests {
         // it under.
         let id_wide = save_passage_page(
             &conn, "2H6", 1, 4, "2H6.1.4.43", "2H6.1.4.50",
-            "<verse>wide…</verse>", "Wide Q?", "Wide A.", "m",
+            "<segment>wide…</segment>", "Wide Q?", "Wide A.", "m",
         ).unwrap();
         // A NARROWER, later passage 46..=48 nested inside the wide one. For a line
         // in [46,48], both contain it; the nearest-start rule (largest start_line
         // <= line) prefers the narrow entry.
         let id_narrow = save_passage_page(
             &conn, "2H6", 1, 4, "2H6.1.4.46", "2H6.1.4.48",
-            "<verse>narrow…</verse>", "Narrow Q?", "Narrow A.", "m",
+            "<segment>narrow…</segment>", "Narrow Q?", "Narrow A.", "m",
         ).unwrap();
         // A single-line passage in a DIFFERENT scene band (2,1) — never a match
         // for scene (1,4).
         save_passage_page(
             &conn, "2H6", 2, 1, "2H6.2.1.5", "2H6.2.1.5",
-            "<verse>other…</verse>", "Other Q?", "Other A.", "m",
+            "<segment>other…</segment>", "Other Q?", "Other A.", "m",
         ).unwrap();
         // A scene-scope (no-citation) entry in the same band must be ignored.
         save_journal_page(&conn, "2H6", 1, 4, "SceneQ?", "SceneA.", "m", "scene", "qa").unwrap();
@@ -956,11 +956,11 @@ mod tests {
         // rule can't decide; the tie-break prefers the newest id.
         let _older = save_passage_page(
             &conn, "Ham", 1, 2, "Ham.1.2.10", "Ham.1.2.12",
-            "<verse>a</verse>", "Older Q?", "Older A.", "m",
+            "<segment>a</segment>", "Older Q?", "Older A.", "m",
         ).unwrap();
         let newer = save_passage_page(
             &conn, "Ham", 1, 2, "Ham.1.2.10", "Ham.1.2.12",
-            "<verse>b</verse>", "Newer Q?", "Newer A.", "m",
+            "<segment>b</segment>", "Newer Q?", "Newer A.", "m",
         ).unwrap();
         let (_d1, _d2, id) = find_journal_page_for_line(&conn, "Ham", 1, 2, 11).unwrap().unwrap();
         assert_eq!(id, newer);

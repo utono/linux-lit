@@ -11,7 +11,7 @@ pub(crate) struct SegmentContext {
     /// Index of the cursor's segment within `segments`.
     pub cursor_index: usize,
     /// The work lines of the CURSOR block only — used at save time for
-    /// citations (`build_context_for_type`) and `<speaker>/<verse>` markup
+    /// citations (`build_context_for_type`) and `<speaker>/<segment>` markup
     /// (`build_source_header`).
     pub cursor_lines: Vec<crate::db::models::Line>,
     pub div1: i64,

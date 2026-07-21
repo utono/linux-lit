@@ -15,10 +15,10 @@ use super::chat::{Exchange, PanelView};
 /// Wrap an exchange's answer as the right `TranscriptRow` variant: a
 /// reader-gloss exchange (`push_gloss_exchange` always stores an empty
 /// `question` — "the user asked nothing", see its doc comment) carries RAW
-/// `<speaker>`/`<verse>`/`<gloss>` markup and must render through
+/// `<speaker>`/`<segment>`/`<gloss>` markup and must render through
 /// `GlossAnswer` (typed rows, styled) rather than `Answer` (one plain label,
 /// which would show the literal tags).
-/// `reflow` (= `ChatState.source_is_prose`) re-flows `<verse>` bodies to one
+/// `reflow` (= `ChatState.source_is_prose`) re-flows `<segment>` bodies to one
 /// line so prose source passages wrap at the panel width — see
 /// `gloss_render::reflow_verse_markup`. It must be applied HERE, before
 /// `widget_row_count` counts the row, so render, pagination, yank, and the
@@ -33,7 +33,7 @@ pub(crate) fn answer_row(e: &Exchange, reflow: bool) -> crate::ui::chat_panel::T
 }
 
 /// The markup a gloss-answer row renders from: verbatim for verse works,
-/// `<verse>`-reflowed for prose. The single seam every `GlossAnswer`
+/// `<segment>`-reflowed for prose. The single seam every `GlossAnswer`
 /// constructor routes through.
 pub(crate) fn gloss_answer_markup(answer: &str, reflow: bool) -> String {
     if reflow {
@@ -170,7 +170,7 @@ pub(crate) fn build_single_exchange_rows(
         rows.push(question_row(&e.question));
     }
     if e.question.is_empty() {
-        // Reader-gloss exchange: raw <speaker>/<verse> markup renders as ONE
+        // Reader-gloss exchange: raw <speaker>/<segment> markup renders as ONE
         // GlossAnswer row (see answer_row's doc comment) — splitting it would
         // break the markup parse.
         rows.push(R::GlossAnswer(gloss_answer_markup(&e.answer, reflow)));
@@ -230,7 +230,7 @@ pub(crate) fn split_answer_paragraphs(answer: &str) -> Vec<String> {
 /// Build the `Journal` view's transcript rows from a passage's saved journal
 /// pages: each entry as a `Q:` row + one plain-prose `Answer` row per
 /// paragraph of the answer (split on blank lines by `split_answer_paragraphs`,
-/// never `GlossAnswer` — journal answers are prose, not `<speaker>`/`<verse>`
+/// never `GlossAnswer` — journal answers are prose, not `<speaker>`/`<segment>`
 /// markup, even for entries saved from a gloss's follow-up question). Returns
 /// the rows AND a parallel `row_owner` (widget index -> journal entry index),
 /// mirroring the Gloss view's `build_transcript_rows`, so the accent bar can
@@ -590,7 +590,7 @@ mod history_tests {
         // user turn must be non-empty (the bug: it was ""), and grounded in
         // the source it carries.
         let exchanges = [
-            gloss_ex("chipA", "<verse>Stand by my side</verse>", "gloss answer"),
+            gloss_ex("chipA", "<segment>Stand by my side</segment>", "gloss answer"),
             ex("chipA", "What does it mean?", "What does it mean?", "a2"),
         ];
         let (turns, _last) = build_history_turns(&exchanges);
@@ -832,7 +832,7 @@ mod row_cursor_widget_tests {
     #[test]
     fn gloss_answer_explodes_into_one_widget_per_typed_row() {
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>Stand by my side</verse>\n\
+                       <segment>Stand by my side</segment>\n\
                        <gloss>Cymbeline honors him.</gloss>";
         // 3 rows: Speaker, Verse, Gloss (chat_gloss_rows_tests pins the same
         // split in gloss_render.rs).
@@ -850,7 +850,7 @@ mod row_cursor_widget_tests {
     #[test]
     fn row_owner_maps_every_widget_of_a_gloss_exchange_to_its_index() {
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>Stand by my side</verse>\n\
+                       <segment>Stand by my side</segment>\n\
                        <gloss>Cymbeline honors him.</gloss>";
         let exchanges = vec![gloss_ex("chipA", markup)];
         let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0, false);
@@ -872,7 +872,7 @@ mod row_cursor_widget_tests {
     #[test]
     fn lone_gloss_renders_no_chip_row() {
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>Stand by my side</verse>\n\
+                       <segment>Stand by my side</segment>\n\
                        <gloss>Cymbeline honors him.</gloss>";
         let exchanges = vec![gloss_ex("", markup)];
         let (rows, cursor_row, row_owner) = build_transcript_rows(&exchanges, 0, false);
@@ -982,9 +982,9 @@ mod visual_selection_tests {
         use crate::ui::chat_panel::row_widget_texts;
 
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>Stand by my side</verse>\n\
+                       <segment>Stand by my side</segment>\n\
                        <speaker>BELARIUS</speaker>\n\
-                       <verse>I will, my liege</verse>";
+                       <segment>I will, my liege</segment>";
         let exchanges = vec![Exchange {
             question: String::new(), // routes to GlossAnswer, see answer_row
             answer: markup.to_string(),
@@ -1122,7 +1122,7 @@ mod panel_view_toggle_tests {
             _ => panic!("row 0 must be a Question row"),
         }
         // Journal answers are prose: must render as a plain Answer row, never
-        // GlossAnswer (which would try to parse <speaker>/<verse> markup out
+        // GlossAnswer (which would try to parse <speaker>/<segment> markup out
         // of ordinary prose text).
         match &rows[1] {
             R::Answer(t) => assert_eq!(t, "He is plotting."),
@@ -1243,7 +1243,7 @@ mod question_view_rows_tests {
     #[test]
     fn gloss_exchange_keeps_single_gloss_answer_row() {
         let rows = build_single_exchange_rows(
-            &ex("", "<speaker>A</speaker>\n\n<verse>b</verse>", false),
+            &ex("", "<speaker>A</speaker>\n\n<segment>b</segment>", false),
             false,
         );
         assert_eq!(rows.len(), 1);
@@ -1303,7 +1303,7 @@ mod question_view_tests {
     /// a plain Answer label.
     #[test]
     fn gloss_shaped_exchange_omits_question_row_and_uses_gloss_answer() {
-        let e = qa_exchange("", "<speaker>YORK</speaker><verse>Speak.</verse>", None);
+        let e = qa_exchange("", "<speaker>YORK</speaker><segment>Speak.</segment>", None);
         let rows = build_single_exchange_rows(&e, false);
         assert_eq!(rows.len(), 1);
         match &rows[0] {

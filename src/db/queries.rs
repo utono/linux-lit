@@ -2211,6 +2211,13 @@ pub fn list_all_gloss_rows(
     Ok(rows)
 }
 
+/// Legacy-tag safety net: the corpus and all prompts use <segment>, but a
+/// model regression may still emit <verse>. Normalize before persisting so
+/// the parser (which knows only <segment>) can always render stored glosses.
+pub fn normalize_segment_tags(text: &str) -> String {
+    text.replace("<verse>", "<segment>").replace("</verse>", "</segment>")
+}
+
 pub fn save_gloss(
     conn: &Connection,
     hash: &str,
@@ -2238,6 +2245,7 @@ pub fn save_gloss(
         |row| row.get(0),
     )?;
 
+    let gloss_text = normalize_segment_tags(gloss_text);
     conn.execute(
         "INSERT INTO glosses (passage_id, gloss_type, gloss_text, claude_model) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![passage_id, gloss_type, gloss_text, claude_model],
@@ -2253,6 +2261,7 @@ pub fn update_gloss(
     gloss_text: &str,
     claude_model: &str,
 ) -> Result<(), rusqlite::Error> {
+    let gloss_text = normalize_segment_tags(gloss_text);
     conn.execute(
         "UPDATE glosses SET gloss_text = ?1, claude_model = ?2, timestamp = CURRENT_TIMESTAMP WHERE id = ?3",
         rusqlite::params![gloss_text, claude_model, gloss_id],
@@ -2376,6 +2385,17 @@ pub fn next_start_after(conn: &Connection, media_id: i64, t: f64) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_segment_tags_rewrites_legacy_verse() {
+        let raw = "<speaker>NARRATOR</speaker>\n<verse>A line.</verse>\n<gloss>G.</gloss>";
+        assert_eq!(
+            normalize_segment_tags(raw),
+            "<speaker>NARRATOR</speaker>\n<segment>A line.</segment>\n<gloss>G.</gloss>"
+        );
+        let clean = "<segment>Already fine.</segment>";
+        assert_eq!(normalize_segment_tags(clean), clean);
+    }
 
     #[test]
     fn vocab_highlight_migration_and_writer() {

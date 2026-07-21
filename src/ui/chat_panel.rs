@@ -52,7 +52,7 @@ pub enum TranscriptRow {
     /// Plain-prose answer (journal Q&A, revision, consolidation): rendered as
     /// a single `chat-a` label, no markup parsing.
     Answer(String),
-    /// A reader-gloss answer, carrying the RAW `<speaker>`/`<verse>`/`<gloss>`
+    /// A reader-gloss answer, carrying the RAW `<speaker>`/`<segment>`/`<gloss>`
     /// markup exactly as stored in lit.db. Rendered as several typed rows
     /// (`gloss_render::chat_gloss_rows`) so the quoted source and the model's
     /// commentary read distinctly instead of showing literal tags. Falls back
@@ -650,7 +650,7 @@ impl ChatPanel {
 /// `gloss_render::chat_gloss_rows` split for `GlossAnswer`.
 ///
 /// Deliberately mirrors `row_widget_specs`'s text, NOT the raw markup: a
-/// `GlossAnswer` row's `<speaker>`/`<verse>`/`<gloss>` tags are stripped by
+/// `GlossAnswer` row's `<speaker>`/`<segment>`/`<gloss>` tags are stripped by
 /// `chat_gloss_rows` exactly as they are for display, so `y` copies
 /// "CYMBELINE" / "Stand by my side..." — never a literal `<speaker>` tag.
 /// `Thinking` yields the same placeholder text the label shows ("thinking…")
@@ -806,7 +806,7 @@ fn plain_row_spec(row: &TranscriptRow) -> (&str, &'static str) {
     }
 }
 
-/// Flatten a `GlossAnswer`'s raw `<speaker>`/`<verse>`/`<gloss>` markup into
+/// Flatten a `GlossAnswer`'s raw `<speaker>`/`<segment>`/`<gloss>` markup into
 /// `(text, class, extra_class, group_start)` per widget — the SINGLE source of
 /// the (text, class) + `chat-a-src-lead` decision, so `row_widget_specs`,
 /// `rebuild_from_specs`, and the pagination height model share ONE expansion.
@@ -885,7 +885,7 @@ mod row_widget_specs_tests {
     fn row_widget_specs_explodes_gloss_and_marks_groups() {
         let rows = vec![
             R::Question("q".into()),
-            R::GlossAnswer("<speaker>X</speaker>\n<verse>v1</verse>\n<gloss>g</gloss>".into()),
+            R::GlossAnswer("<speaker>X</speaker>\n<segment>v1</segment>\n<gloss>g</gloss>".into()),
         ];
         let specs = row_widget_specs(&rows);
         // Question → 1 widget (group start). GlossAnswer → 3 widgets: first is a
@@ -911,7 +911,7 @@ mod row_widget_specs_tests {
             R::Thinking,
             R::SavedMark,
             R::GlossAnswer(
-                "<speaker>CYMBELINE</speaker>\n<verse>v1</verse>\n<gloss>g1</gloss>\n\
+                "<speaker>CYMBELINE</speaker>\n<segment>v1</segment>\n<gloss>g1</gloss>\n\
                  <speaker>BELARIUS</speaker>\n<stage>enters</stage>\n<gloss>g2</gloss>"
                     .into(),
             ),
@@ -941,13 +941,13 @@ mod row_widget_texts_tests {
 
     /// The load-bearing case: a GlossAnswer must yield the RENDERED source
     /// text ("CYMBELINE", "Stand by my side..."), never the raw
-    /// `<speaker>`/`<verse>`/`<gloss>` markup — proving `y` copies what the
+    /// `<speaker>`/`<segment>`/`<gloss>` markup — proving `y` copies what the
     /// user sees, matching `chat_gloss_rows_tests::speaker_verse_gloss_become_typed_rows`
     /// in gloss_render.rs.
     #[test]
     fn gloss_answer_yields_rendered_text_not_raw_markup() {
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>Stand by my side, you whom the gods have made</verse>\n\
+                       <segment>Stand by my side, you whom the gods have made</segment>\n\
                        <gloss>Cymbeline honors the disguised Belarius.</gloss>";
         let texts = row_widget_texts(&R::GlossAnswer(markup.to_string()));
         assert_eq!(
@@ -989,7 +989,7 @@ mod row_widget_landable_tests {
     #[test]
     fn gloss_answer_marks_only_speaker_unlandable() {
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>Stand by my side, you whom the gods have made</verse>\n\
+                       <segment>Stand by my side, you whom the gods have made</segment>\n\
                        <gloss>Cymbeline honors the disguised Belarius.</gloss>";
         let landable = row_widget_landable(&R::GlossAnswer(markup.to_string()));
         assert_eq!(landable, vec![false, true, true]);
@@ -1000,9 +1000,9 @@ mod row_widget_landable_tests {
     #[test]
     fn multiple_speakers_are_all_unlandable() {
         let markup = "<speaker>CYMBELINE</speaker>\n\
-                       <verse>line one</verse>\n\
+                       <segment>line one</segment>\n\
                        <speaker>BELARIUS</speaker>\n\
-                       <verse>line two</verse>";
+                       <segment>line two</segment>";
         let landable = row_widget_landable(&R::GlossAnswer(markup.to_string()));
         assert_eq!(landable, vec![false, true, false, true]);
     }

@@ -97,7 +97,7 @@ pub(crate) fn rendered_verse_text(markup: &str) -> String {
         first = false;
         match el {
             GlossElement::Speaker(name) => out.push_str(name),
-            GlossElement::Verse(text) => {
+            GlossElement::Segment(text) => {
                 out.push_str(&crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text)).0);
             }
             GlossElement::Gloss(text) => {
@@ -136,7 +136,7 @@ pub(crate) enum ChatGlossRowKind {
     Gloss,
 }
 
-/// Split raw gloss markup (`<speaker>`/`<verse>`/`<stage>`/`<gloss>`/`<pron>`
+/// Split raw gloss markup (`<speaker>`/`<segment>`/`<stage>`/`<gloss>`/`<pron>`
 /// tags, as stored in lit.db) into typed display rows, so a caller with only
 /// plain-label widgets (no `TextTag` styling) can still visually distinguish
 /// the quoted source from the model's own commentary.
@@ -145,7 +145,7 @@ pub(crate) enum ChatGlossRowKind {
 /// speakers, drops `<pron>` notes — TTS-only, no display text) and
 /// `rendered_verse_text`'s per-element cleanup (`strip_ipa`, `strip_hi_spans`,
 /// echo-bracket quote/citation split). Returns one row per source LINE (each
-/// `<verse>` may itself carry embedded `\n`-joined lines from
+/// `<segment>` may itself carry embedded `\n`-joined lines from
 /// `gloss_block_markups`, so those are split too) rather than joining verse
 /// lines into one paragraph — the chat panel wraps each row as its own
 /// label, so a joined multi-line block would lose its line breaks.
@@ -164,8 +164,8 @@ pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
                     rows.push((ChatGlossRowKind::Speaker, name.clone()));
                 }
             }
-            GlossElement::Verse(text) => {
-                // Two consecutive <verse> ELEMENTS are two source SEGMENTS
+            GlossElement::Segment(text) => {
+                // Two consecutive <segment> ELEMENTS are two source SEGMENTS
                 // (prose paragraphs): render a blank line between them so the
                 // segments read separately (the user's rule). Lines WITHIN one
                 // element stay contiguous.
@@ -200,20 +200,20 @@ pub(crate) fn chat_gloss_rows(markup: &str) -> Vec<(ChatGlossRowKind, String)> {
             // display row.
             GlossElement::Pron(_) => {}
         }
-        prev_was_verse_el = matches!(el, GlossElement::Verse(_));
+        prev_was_verse_el = matches!(el, GlossElement::Segment(_));
     }
     rows
 }
 
-/// Re-flow every `<verse>` body in a gloss markup into ONE line (breaks →
+/// Re-flow every `<segment>` body in a gloss markup into ONE line (breaks →
 /// single spaces) so PROSE source passages wrap at the panel width instead of
 /// keeping the txt's own ~74-column breaks. Verse works must never pass
 /// through here — their line breaks are the text. Everything outside
-/// `<verse>…</verse>` (gloss commentary, `<stage>`, `<speaker>`) is untouched,
-/// and a dangling unclosed `<verse>` is left as-is rather than eaten.
+/// `<segment>…</segment>` (gloss commentary, `<stage>`, `<speaker>`) is untouched,
+/// and a dangling unclosed `<segment>` is left as-is rather than eaten.
 pub(crate) fn reflow_verse_markup(markup: &str) -> String {
-    const OPEN: &str = "<verse>";
-    const CLOSE: &str = "</verse>";
+    const OPEN: &str = "<segment>";
+    const CLOSE: &str = "</segment>";
     let mut out = String::with_capacity(markup.len());
     let mut rest = markup;
     while let Some(start) = rest.find(OPEN) {
@@ -304,7 +304,7 @@ pub(crate) fn populate_gloss_buffer(
 
 /// Populate `view`'s buffer with a stage-aware verse rendering of `doc`.
 ///
-/// Supports `<speaker>`, `<verse>`, `<stage>`, `<gloss>`, `<pron>` markup.
+/// Supports `<speaker>`, `<segment>`, `<stage>`, `<gloss>`, `<pron>` markup.
 /// Returns `(bar_ranges, line_numbers, echo_lines)`.
 ///
 /// - `bar_ranges`: accent bar spans for the selected echo (if any).
@@ -578,7 +578,7 @@ pub(crate) fn populate_verse_buffer(
                 };
                 buffer.apply_tag(tag, &start, &buffer.end_iter());
             }
-            GlossElement::Verse(text) => {
+            GlossElement::Segment(text) => {
                 only_speakers_so_far = false;
                 let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text));
                 let mut end = buffer.end_iter();
@@ -694,9 +694,9 @@ mod rendered_text_tests {
     // vanish entirely, matching populate_verse_buffer's filter.
     #[test]
     fn speaker_and_verse() {
-        let m = "<speaker>HAMLET</speaker><verse>To be or not to be</verse>";
+        let m = "<speaker>HAMLET</speaker><segment>To be or not to be</segment>";
         assert_eq!(rendered_verse_text(m), "HAMLET\nTo be or not to be");
-        let m2 = "<speaker>UNKNOWN</speaker><verse>a prose line</verse>";
+        let m2 = "<speaker>UNKNOWN</speaker><segment>a prose line</segment>";
         assert_eq!(rendered_verse_text(m2), "a prose line");
     }
 
@@ -705,7 +705,7 @@ mod rendered_text_tests {
     // index the SHOWN characters. Matches populate_verse_buffer's strip_ipa call.
     #[test]
     fn strips_ipa() {
-        let m = "<verse>Dread /drɛːd/ sovereign</verse>";
+        let m = "<segment>Dread /drɛːd/ sovereign</segment>";
         assert_eq!(rendered_verse_text(m), "Dread sovereign");
     }
 
@@ -723,7 +723,7 @@ mod rendered_text_tests {
     // and land on the same offsets the paginated buffer uses.
     #[test]
     fn join_distributes_over_render() {
-        let a = "<speaker>KING</speaker><verse>Now is the winter</verse>";
+        let a = "<speaker>KING</speaker><segment>Now is the winter</segment>";
         let b = "<gloss>An explication paragraph.</gloss>";
         let joined = format!("{a}\n{b}");
         let per_block = format!("{}\n{}", rendered_verse_text(a), rendered_verse_text(b));
@@ -734,7 +734,7 @@ mod rendered_text_tests {
     // is not the first element — the whole-gloss render leaves that "\n" in place.
     #[test]
     fn pron_inserts_no_body_but_separator_runs() {
-        let m = "<verse>line one</verse><pron>the note</pron><verse>line two</verse>";
+        let m = "<segment>line one</segment><pron>the note</pron><segment>line two</segment>";
         // verse, then "\n" before the (empty) pron, then "\n" before verse two.
         assert_eq!(rendered_verse_text(m), "line one\n\nline two");
     }
@@ -754,9 +754,9 @@ mod rendered_text_tests {
         // indexes via `full_rendered_gloss_text` (same rebuilt basis). Rendering
         // the RAW markup instead would mis-tint, because `gloss_block_markups`
         // defers the echo `<gloss>[…]` bracket to the source-run tail.
-        let raw = "<speaker>ROMEO</speaker><verse>But soft</verse>\
+        let raw = "<speaker>ROMEO</speaker><segment>But soft</segment>\
                    <gloss>[echo — a resonance]</gloss>\
-                   <verse>what light</verse>\
+                   <segment>what light</segment>\
                    <gloss>An explication.</gloss>";
         let rebuilt = crate::ui::gloss_block::gloss_block_markups(raw).join("\n");
         let raw_render = rendered_verse_text(raw);
@@ -780,31 +780,31 @@ mod reflow_verse_markup_tests {
 
     #[test]
     fn joins_lines_within_each_verse_body() {
-        let m = "<verse>It is somewhere about five or six o'clock,\n\
-                 and a balmy fragrance of warm tea\nhovers in Cook's Court.</verse>\n\
+        let m = "<segment>It is somewhere about five or six o'clock,\n\
+                 and a balmy fragrance of warm tea\nhovers in Cook's Court.</segment>\n\
                  <gloss>keeps\nits own\nbreaks</gloss>\n\
-                 <verse>second\nsegment</verse>";
+                 <segment>second\nsegment</segment>";
         assert_eq!(
             reflow_verse_markup(m),
-            "<verse>It is somewhere about five or six o'clock, \
-             and a balmy fragrance of warm tea hovers in Cook's Court.</verse>\n\
+            "<segment>It is somewhere about five or six o'clock, \
+             and a balmy fragrance of warm tea hovers in Cook's Court.</segment>\n\
              <gloss>keeps\nits own\nbreaks</gloss>\n\
-             <verse>second segment</verse>"
+             <segment>second segment</segment>"
         );
     }
 
     #[test]
     fn trims_and_drops_blank_interior_lines() {
         assert_eq!(
-            reflow_verse_markup("<verse>  a \n\n  b  </verse>"),
-            "<verse>a b</verse>"
+            reflow_verse_markup("<segment>  a \n\n  b  </segment>"),
+            "<segment>a b</segment>"
         );
     }
 
     #[test]
     fn untagged_and_dangling_markup_pass_through() {
         assert_eq!(reflow_verse_markup("no tags\nhere"), "no tags\nhere");
-        assert_eq!(reflow_verse_markup("<verse>open\nnever closed"), "<verse>open\nnever closed");
+        assert_eq!(reflow_verse_markup("<segment>open\nnever closed"), "<segment>open\nnever closed");
     }
 }
 
@@ -815,7 +815,7 @@ mod chat_gloss_rows_tests {
     #[test]
     fn speaker_verse_gloss_become_typed_rows() {
         let m = "<speaker>CYMBELINE</speaker>\n\
-                 <verse>Stand by my side, you whom the gods have made</verse>\n\
+                 <segment>Stand by my side, you whom the gods have made</segment>\n\
                  <gloss>Cymbeline honors the disguised Belarius.</gloss>";
         let rows = chat_gloss_rows(m);
         assert_eq!(
@@ -832,19 +832,19 @@ mod chat_gloss_rows_tests {
     // populate_verse_buffer's filter — no blank Speaker row.
     #[test]
     fn unknown_speaker_is_dropped() {
-        let m = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
+        let m = "<speaker>UNKNOWN</speaker>\n<segment>a prose line</segment>";
         let rows = chat_gloss_rows(m);
         assert_eq!(rows, vec![(K::Verse, "a prose line".to_string())]);
     }
 
-    // TWO consecutive <verse> ELEMENTS are two source SEGMENTS (prose
+    // TWO consecutive <segment> ELEMENTS are two source SEGMENTS (prose
     // paragraphs): a blank Verse row separates them so the panel renders a
     // blank line between segments. Lines WITHIN one element stay contiguous,
     // and a verse element after a gloss gets no separator.
     #[test]
     fn blank_row_between_consecutive_verse_elements() {
-        let m = "<verse>segment one</verse>\n<verse>segment two</verse>\n\
-                 <gloss>commentary</gloss>\n<verse>segment three</verse>";
+        let m = "<segment>segment one</segment>\n<segment>segment two</segment>\n\
+                 <gloss>commentary</gloss>\n<segment>segment three</segment>";
         let rows = chat_gloss_rows(m);
         assert_eq!(
             rows,
@@ -858,12 +858,12 @@ mod chat_gloss_rows_tests {
         );
     }
 
-    // A multi-line <verse> body (as gloss_block_markups joins verse lines with
+    // A multi-line <segment> body (as gloss_block_markups joins verse lines with
     // "\n") splits into one row per non-blank line, so the panel doesn't lose
     // line breaks by cramming them into one label.
     #[test]
     fn multiline_verse_splits_into_one_row_per_line() {
-        let m = "<verse>line one\nline two</verse>";
+        let m = "<segment>line one\nline two</segment>";
         let rows = chat_gloss_rows(m);
         assert_eq!(
             rows,
@@ -876,9 +876,9 @@ mod chat_gloss_rows_tests {
 
     #[test]
     fn stage_direction_is_its_own_row() {
-        let m = "<verse>Lay hands upon these traitors</verse>\n\
+        let m = "<segment>Lay hands upon these traitors</segment>\n\
                  <stage>[To Jourdain.]</stage>\n\
-                 <verse>Beldam, I think we watched you</verse>";
+                 <segment>Beldam, I think we watched you</segment>";
         let rows = chat_gloss_rows(m);
         assert_eq!(
             rows,
@@ -893,7 +893,7 @@ mod chat_gloss_rows_tests {
     // IPA and <hi> are stripped for display, same as rendered_verse_text.
     #[test]
     fn strips_ipa_and_hi() {
-        let m = "<verse>Dread /drɛːd/ <hi>sovereign</hi></verse>";
+        let m = "<segment>Dread /drɛːd/ <hi>sovereign</hi></segment>";
         let rows = chat_gloss_rows(m);
         assert_eq!(rows, vec![(K::Verse, "Dread sovereign".to_string())]);
     }
@@ -915,7 +915,7 @@ mod chat_gloss_rows_tests {
     // A <pron> note is TTS-only and produces no display row.
     #[test]
     fn pron_produces_no_row() {
-        let m = "<verse>To be</verse>\n<pron>BEE: /bi\u{720}/</pron>";
+        let m = "<segment>To be</segment>\n<pron>BEE: /bi\u{720}/</pron>";
         let rows = chat_gloss_rows(m);
         assert_eq!(rows, vec![(K::Verse, "To be".to_string())]);
     }

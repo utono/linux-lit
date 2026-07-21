@@ -7,7 +7,7 @@ use crate::ui::gloss_util::split_echo;
 #[derive(Debug)]
 pub(crate) enum GlossElement {
     Speaker(String),
-    Verse(String),
+    Segment(String),
     Gloss(String),
     Pron(String),
     Stage(String),
@@ -217,7 +217,7 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
 }
 
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
-/// `<speaker>`/`<verse>` run is one Source block; each non-echo `<gloss>` is one
+/// `<speaker>`/`<segment>` run is one Source block; each non-echo `<gloss>` is one
 /// Explication block. Echo `<gloss>` brackets are excluded. Source and
 /// explication indices increment independently.
 pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
@@ -246,7 +246,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
     for el in parse_gloss_tags(gloss) {
         match el {
             GlossElement::Speaker(_) => { /* drop speaker labels from source text */ }
-            GlossElement::Verse(text) => pending_verses.push(text.trim().to_string()),
+            GlossElement::Segment(text) => pending_verses.push(text.trim().to_string()),
             GlossElement::Stage(text) => pending_verses.push(text.trim().to_string()),
             GlossElement::Gloss(text) => {
                 if split_echo(&text).is_some() {
@@ -278,7 +278,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
 /// order and count as [`gloss_blocks`]. Where `gloss_blocks` returns clean
 /// `display`/`text` (speaker labels dropped, `/IPA/` stripped), this returns the
 /// markup needed to RE-RENDER that block through `populate_gloss_buffer` — a
-/// Source block's `<speaker>`/`<verse>`/`<stage>` tags, an Explication block's
+/// Source block's `<speaker>`/`<segment>`/`<stage>` tags, an Explication block's
 /// `<gloss>` tag.
 ///
 /// Paginating the gloss-result overlay renders a page by concatenating its
@@ -288,7 +288,7 @@ pub fn gloss_blocks(gloss: &str) -> Vec<GlossBlock> {
 ///
 /// The split rule mirrors `gloss_blocks` exactly so the two `Vec`s line up index
 /// for index:
-/// - A contiguous `<speaker>`/`<verse>`/`<stage>` run flushes to ONE Source
+/// - A contiguous `<speaker>`/`<segment>`/`<stage>` run flushes to ONE Source
 ///   markup, but ONLY when it carried at least one verse/stage (a lone
 ///   speaker with no body is not a cursor stop — same as `flush_source`'s
 ///   non-empty `pending` guard).
@@ -328,8 +328,8 @@ pub fn gloss_block_markups(gloss: &str) -> Vec<String> {
             GlossElement::Speaker(name) => {
                 pending.push(format!("<speaker>{}</speaker>", name));
             }
-            GlossElement::Verse(text) => {
-                pending.push(format!("<verse>{}</verse>", text));
+            GlossElement::Segment(text) => {
+                pending.push(format!("<segment>{}</segment>", text));
                 pending_has_body = true;
             }
             GlossElement::Stage(text) => {
@@ -396,8 +396,8 @@ pub(crate) fn parse_gloss_tags(gloss: &str) -> Vec<GlossElement> {
             if let Some(el) = try_extract(after_open, "speaker") {
                 elements.push(GlossElement::Speaker(el.0.to_string()));
                 remaining = el.1;
-            } else if let Some(el) = try_extract(after_open, "verse") {
-                elements.push(GlossElement::Verse(el.0.to_string()));
+            } else if let Some(el) = try_extract(after_open, "segment") {
+                elements.push(GlossElement::Segment(el.0.to_string()));
                 remaining = el.1;
             } else if let Some(el) = try_extract(after_open, "stage") {
                 elements.push(GlossElement::Stage(el.0.to_string()));
@@ -440,7 +440,7 @@ fn carry_forward_block_speakers(elements: Vec<GlossElement>) -> Vec<GlossElement
                 last_speaker = Some(name.clone());
                 prev_was_gloss = false;
             }
-            GlossElement::Verse(_) => {
+            GlossElement::Segment(_) => {
                 // A verse opening a new block (right after prose) with no speaker
                 // of its own: re-insert the carried speaker so the block keeps
                 // its label and top spacing.
@@ -481,7 +481,7 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
 /// each highlighted span. Callers insert the clean text into a `TextBuffer` and
 /// apply a background `TextTag` over each returned range (offset by where the
 /// clean text landed). Shared by the gloss, synopsis, and journal render paths so
-/// `<hi>` works uniformly — the tag may appear inside a `<verse>`/`<gloss>` body
+/// `<hi>` works uniformly — the tag may appear inside a `<segment>`/`<gloss>` body
 /// or in otherwise-plain synopsis/journal prose. Unbalanced/stray tags are
 /// dropped without recording a range.
 pub(crate) fn strip_hi_spans(text: &str) -> (String, Vec<(usize, usize)>) {
@@ -534,11 +534,11 @@ pub(crate) fn strip_hi_spans(text: &str) -> (String, Vec<(usize, usize)>) {
 
 /// Rewrite the `/IPA/` after `word` (whole-word, all occurrences) within ONLY
 /// the source block at `source_index`, operating on the TAGGED `gloss_text`
-/// (each verse line is wrapped in `<verse>…</verse>`). Returns the full updated
+/// (each verse line is wrapped in `<segment>…</segment>`). Returns the full updated
 /// gloss_text, or None if that block has no `word /IPA/` pair. Other blocks are
 /// untouched even if they contain the same word.
 ///
-/// Scoped by POSITION, not text: each `<verse>` is identified by its
+/// Scoped by POSITION, not text: each `<segment>` is identified by its
 /// document-order ordinal, and only verses belonging to the target source run
 /// (per `gloss_blocks`' exact flush rule) are rewritten. This distinguishes
 /// byte-identical verse lines that appear in different source blocks (e.g. a
@@ -560,7 +560,7 @@ pub(crate) fn replace_word_ipa_in_source_block(
         let mut pending_ords: Vec<usize> = Vec::new();
         for el in parse_gloss_tags(gloss_text) {
             match el {
-                GlossElement::Verse(_) => {
+                GlossElement::Segment(_) => {
                     pending_ords.push(verse_ord);
                     verse_ord += 1;
                 }
@@ -589,18 +589,18 @@ pub(crate) fn replace_word_ipa_in_source_block(
         return None; // no such source block / no verses
     }
 
-    // Phase 2: walk raw <verse>…</verse> spans by ordinal (same document order
+    // Phase 2: walk raw <segment>…</segment> spans by ordinal (same document order
     // as Phase 1, since parse_gloss_tags emits one Verse per tag in order);
     // rewrite only target ones, copy everything else verbatim.
     let mut out = String::with_capacity(gloss_text.len());
     let mut rest = gloss_text;
     let mut ord = 0usize;
     let mut any = false;
-    while let Some(open) = rest.find("<verse>") {
-        let after_open = open + "<verse>".len();
+    while let Some(open) = rest.find("<segment>") {
+        let after_open = open + "<segment>".len();
         out.push_str(&rest[..after_open]);
         let tail = &rest[after_open..];
-        if let Some(close_rel) = tail.find("</verse>") {
+        if let Some(close_rel) = tail.find("</segment>") {
             let inner = &tail[..close_rel];
             if target_ordinals.contains(&ord) {
                 if let Some(fixed) = replace_word_ipa(inner, word, new_ipa) {
@@ -612,8 +612,8 @@ pub(crate) fn replace_word_ipa_in_source_block(
             } else {
                 out.push_str(inner);
             }
-            out.push_str("</verse>");
-            rest = &tail[close_rel + "</verse>".len()..];
+            out.push_str("</segment>");
+            rest = &tail[close_rel + "</segment>".len()..];
             ord += 1;
         } else {
             // malformed: no closing tag — copy the remainder and stop
@@ -658,11 +658,11 @@ mod hi_tests {
 
     #[test]
     fn highlight_inside_a_verse_body_keeps_outer_tag() {
-        // strip_hi only touches <hi>; the <verse> tag passes through untouched.
-        let (clean, ranges) = strip_hi_spans("<verse>To <hi>be</hi></verse>");
-        assert_eq!(clean, "<verse>To be</verse>");
-        // "be" is at char offsets 10..12 in the clean string
-        assert_eq!(ranges, vec![(10, 12)]);
+        // strip_hi only touches <hi>; the <segment> tag passes through untouched.
+        let (clean, ranges) = strip_hi_spans("<segment>To <hi>be</hi></segment>");
+        assert_eq!(clean, "<segment>To be</segment>");
+        // "be" is at char offsets 12..14 in the clean string (9-char <segment> prefix)
+        assert_eq!(ranges, vec![(12, 14)]);
     }
 
     #[test]
@@ -694,7 +694,7 @@ mod block_tests {
 
     #[test]
     fn blocks_default_to_no_attachments() {
-        let g = "<speaker>X</speaker>\n<verse>a line</verse>\n<gloss>note</gloss>";
+        let g = "<speaker>X</speaker>\n<segment>a line</segment>\n<gloss>note</gloss>";
         for b in gloss_blocks(g) {
             assert!(b.attached.is_empty(), "fresh block must have no attachments");
         }
@@ -705,9 +705,9 @@ mod block_tests {
 
     #[test]
     fn parse_extracts_pron_element() {
-        let g = "<verse>To /biː/</verse>\n<pron>BEE: be /biː/ keeps the long vowel.</pron>";
+        let g = "<segment>To /biː/</segment>\n<pron>BEE: be /biː/ keeps the long vowel.</pron>";
         let els = parse_gloss_tags(g);
-        assert!(matches!(els[0], GlossElement::Verse(_)));
+        assert!(matches!(els[0], GlossElement::Segment(_)));
         assert!(
             matches!(&els[1], GlossElement::Pron(t) if t.contains("long vowel")),
             "expected a Pron element carrying the note, got {:?}", els.get(1)
@@ -720,12 +720,12 @@ mod block_tests {
         // its <speaker>, so it rendered with neither label nor top spacing.
         // parse_gloss_tags must splice the carried speaker back in.
         let gloss = "<speaker>KING</speaker>\n\
-                     <verse>You were ever good at sudden commendations,</verse>\n\
+                     <segment>You were ever good at sudden commendations,</segment>\n\
                      <gloss>The King opens with a rebuke.</gloss>\n\
-                     <verse>To me you cannot reach. You play the spaniel,</verse>\n\
+                     <segment>To me you cannot reach. You play the spaniel,</segment>\n\
                      <gloss>Blunt and final.</gloss>\n\
                      <speaker>KING</speaker>\n\
-                     <verse>Good man, sit down.</verse>";
+                     <segment>Good man, sit down.</segment>";
         let els = parse_gloss_tags(gloss);
         // The speaker-less middle block must now open with a carried KING.
         assert!(
@@ -734,7 +734,7 @@ mod block_tests {
              block, got {:?}",
             els.get(3)
         );
-        assert!(matches!(&els[4], GlossElement::Verse(t) if t.starts_with("To me")));
+        assert!(matches!(&els[4], GlossElement::Segment(t) if t.starts_with("To me")));
         // The original two real speakers plus one synthetic = three speakers.
         let speakers = els
             .iter()
@@ -751,11 +751,11 @@ mod block_tests {
     #[test]
     fn blocks_in_document_order_with_kinds() {
         let gloss = "<speaker>CRANMER</speaker>\n\
-                     <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
-                     <verse>You are always my good friend.</verse>\n\
+                     <segment>Ah, my good Lord of Winchester, I thank you.</segment>\n\
+                     <segment>You are always my good friend.</segment>\n\
                      <gloss>Cranmer opens with cutting irony.</gloss>\n\
                      <speaker>CRANMER</speaker>\n\
-                     <verse>'Tis my undoing. Love and meekness, lord,</verse>\n\
+                     <segment>'Tis my undoing. Love and meekness, lord,</segment>\n\
                      <gloss>The tone shifts from irony to sincere counsel.</gloss>\n\
                      <gloss>[\"a quote\" — Macbeth 1.1]</gloss>";
         let blocks = gloss_blocks(gloss);
@@ -784,7 +784,7 @@ mod block_tests {
     #[test]
     fn all_echo_gloss_has_only_source_block() {
         let gloss = "<speaker>HAMLET</speaker>\n\
-                     <verse>To be, or not to be</verse>\n\
+                     <segment>To be, or not to be</segment>\n\
                      <gloss>[\"q\" — Lr 1.1]</gloss>";
         let blocks = gloss_blocks(gloss);
         assert_eq!(blocks.len(), 1);
@@ -794,7 +794,7 @@ mod block_tests {
 
     #[test]
     fn source_block_keeps_raw_ipa_and_derives_clean_display() {
-        let g = "<speaker>HAMLET</speaker>\n<verse>To /biː/ or not to /biː/</verse>";
+        let g = "<speaker>HAMLET</speaker>\n<segment>To /biː/ or not to /biː/</segment>";
         let blocks = gloss_blocks(g);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].kind, BlockKind::Source);
@@ -818,7 +818,7 @@ mod block_tests {
         // play_block_tts (gloss.rs) clones `.text` for synthesis; the reader
         // path uses `.display`. This locks that the two diverge as intended:
         // raw keeps /IPA/, display strips it.
-        let g = "<verse>/biː/ or not</verse>";
+        let g = "<segment>/biː/ or not</segment>";
         let b = &gloss_blocks(g)[0];
         assert!(b.text.contains('/'), "TTS text must keep raw /IPA/");
         assert!(!b.display.contains('/'), "display text must be stripped");
@@ -838,16 +838,16 @@ mod block_tests {
 
     #[test]
     fn parse_extracts_stage_element() {
-        let g = "<verse>Lay hands upon these traitors and their trash.</verse>\n\
+        let g = "<segment>Lay hands upon these traitors and their trash.</segment>\n\
                  <stage>[To Jourdain.]</stage>\n\
-                 <verse>Beldam, I think we watched you at an</verse>";
+                 <segment>Beldam, I think we watched you at an</segment>";
         let els = parse_gloss_tags(g);
-        assert!(matches!(&els[0], GlossElement::Verse(_)));
+        assert!(matches!(&els[0], GlossElement::Segment(_)));
         assert!(
             matches!(&els[1], GlossElement::Stage(t) if t == "[To Jourdain.]"),
             "expected a Stage element carrying the direction, got {:?}", els.get(1)
         );
-        assert!(matches!(&els[2], GlossElement::Verse(_)));
+        assert!(matches!(&els[2], GlossElement::Segment(_)));
     }
 
     #[test]
@@ -856,11 +856,11 @@ mod block_tests {
         // SAME order and count as gloss_blocks, so a page's block slice maps 1:1
         // to its markup slice.
         let gloss = "<speaker>CRANMER</speaker>\n\
-                     <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
-                     <verse>You are always my good friend.</verse>\n\
+                     <segment>Ah, my good Lord of Winchester, I thank you.</segment>\n\
+                     <segment>You are always my good friend.</segment>\n\
                      <gloss>Cranmer opens with cutting irony.</gloss>\n\
                      <speaker>CRANMER</speaker>\n\
-                     <verse>'Tis my undoing. Love and meekness, lord,</verse>\n\
+                     <segment>'Tis my undoing. Love and meekness, lord,</segment>\n\
                      <gloss>The tone shifts from irony to sincere counsel.</gloss>\n\
                      <gloss>[\"a quote\" — Macbeth 1.1]</gloss>";
         let blocks = gloss_blocks(gloss);
@@ -881,7 +881,7 @@ mod block_tests {
             markups[0]
         );
         assert!(
-            markups[0].contains("<verse>Ah, my good Lord of Winchester, I thank you.</verse>"),
+            markups[0].contains("<segment>Ah, my good Lord of Winchester, I thank you.</segment>"),
             "source markup must carry its verse, got {:?}",
             markups[0]
         );
@@ -898,16 +898,16 @@ mod block_tests {
     fn block_markups_carry_stage_in_source_run() {
         // A stage direction inside a source run stays in that block's markup.
         let gloss = "<speaker>YORK</speaker>\n\
-                     <verse>Lay hands upon these traitors and their trash.</verse>\n\
+                     <segment>Lay hands upon these traitors and their trash.</segment>\n\
                      <stage>[To Jourdain.]</stage>\n\
-                     <verse>Beldam, I think we watched you at an</verse>\n\
+                     <segment>Beldam, I think we watched you at an</segment>\n\
                      <gloss>York gloatingly arrests the conjurers.</gloss>";
         let blocks = gloss_blocks(gloss);
         let markups = gloss_block_markups(gloss);
         assert_eq!(markups.len(), blocks.len());
         assert!(markups[0].contains("<speaker>YORK</speaker>"));
         assert!(markups[0].contains("<stage>[To Jourdain.]</stage>"));
-        assert!(markups[0].contains("<verse>Beldam, I think we watched you at an</verse>"));
+        assert!(markups[0].contains("<segment>Beldam, I think we watched you at an</segment>"));
     }
 
     #[test]
@@ -922,7 +922,7 @@ mod block_tests {
     #[test]
     fn echo_attaches_to_preceding_block_markup() {
         let gloss = "<speaker>CRANMER</speaker>\n\
-                     <verse>Ah, my good Lord of Winchester, I thank you.</verse>\n\
+                     <segment>Ah, my good Lord of Winchester, I thank you.</segment>\n\
                      <gloss>Cranmer opens with cutting irony.</gloss>\n\
                      <gloss>[\"a quote\" — Macbeth 1.1]</gloss>";
         let blocks = gloss_blocks(gloss);
@@ -943,9 +943,9 @@ mod block_tests {
         // Two speaker/verse pairs separated only by echoes (no non-echo gloss between
         // them) form ONE source block in gloss_blocks (echoes don't flush the run).
         // gloss_block_markups must stay 1:1 with that — both echoes ride in m[0].
-        let g = "<speaker>PARIS</speaker>\n<verse>Come you to make confession?</verse>\n\
+        let g = "<speaker>PARIS</speaker>\n<segment>Come you to make confession?</segment>\n\
                  <gloss>[\"q1\" — Ado 4.1]</gloss>\n\
-                 <speaker>JULIET</speaker>\n<verse>To answer that.</verse>\n\
+                 <speaker>JULIET</speaker>\n<segment>To answer that.</segment>\n\
                  <gloss>[\"q2\" — Oth 1.1]</gloss>";
         let blocks = gloss_blocks(g);
         let m = gloss_block_markups(g);
@@ -960,9 +960,9 @@ mod block_tests {
         // A stage direction between two verses by the same speaker must not split
         // the source block or create an extra cursor stop.
         let gloss = "<speaker>YORK</speaker>\n\
-                     <verse>Lay hands upon these traitors and their trash.</verse>\n\
+                     <segment>Lay hands upon these traitors and their trash.</segment>\n\
                      <stage>[To Jourdain.]</stage>\n\
-                     <verse>Beldam, I think we watched you at an</verse>\n\
+                     <segment>Beldam, I think we watched you at an</segment>\n\
                      <gloss>York gloatingly arrests the conjurers.</gloss>";
         let blocks = gloss_blocks(gloss);
         // Exactly one Source block + one Explication block.
@@ -1144,24 +1144,24 @@ mod replace_in_source_block_tests {
 
     #[test]
     fn replace_in_source_block_rewrites_multiline_verse() {
-        let g = "<speaker>GARDINER</speaker>\n<verse>In daily /ˈdɛːli/ thanks</verse>\n<verse>that gave /gɛːv/ us</verse>\n<gloss>note</gloss>";
+        let g = "<speaker>GARDINER</speaker>\n<segment>In daily /ˈdɛːli/ thanks</segment>\n<segment>that gave /gɛːv/ us</segment>\n<gloss>note</gloss>";
         let out = replace_word_ipa_in_source_block(g, 0, "daily", "/ˈdeɪli/").unwrap();
         assert!(out.contains("daily /ˈdeɪli/"));
         assert!(out.contains("gave /gɛːv/")); // other word untouched
         assert!(out.contains("<gloss>note</gloss>")); // tags intact
-        assert!(out.contains("<verse>"));
+        assert!(out.contains("<segment>"));
     }
 
     #[test]
     fn replace_in_source_block_none_when_word_absent() {
-        let g = "<verse>In daily /ˈdɛːli/ thanks</verse>";
+        let g = "<segment>In daily /ˈdɛːli/ thanks</segment>";
         assert!(replace_word_ipa_in_source_block(g, 0, "missing", "/x/").is_none());
     }
 
     #[test]
     fn replace_in_source_block_scopes_to_the_block() {
         // 'good' appears in TWO source blocks; fixing block 1 must not touch block 0.
-        let g = "<verse>good /gʊd/ first</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ second</verse>\n<gloss>b</gloss>";
+        let g = "<segment>good /gʊd/ first</segment>\n<gloss>a</gloss>\n<segment>good /gʊd/ second</segment>\n<gloss>b</gloss>";
         let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
         // block 0 (index 0) keeps old IPA; block 1 (index 1) gets new.
         let first = out.find("first").unwrap();
@@ -1174,7 +1174,7 @@ mod replace_in_source_block_tests {
     fn replace_in_source_block_distinguishes_identical_lines_across_blocks() {
         // Same verse line text in TWO source blocks; fixing block 1 must leave
         // block 0's identical line untouched (position-scoped, not text-scoped).
-        let g = "<verse>good /gʊd/ same</verse>\n<gloss>a</gloss>\n<verse>good /gʊd/ same</verse>\n<gloss>b</gloss>";
+        let g = "<segment>good /gʊd/ same</segment>\n<gloss>a</gloss>\n<segment>good /gʊd/ same</segment>\n<gloss>b</gloss>";
         let out = replace_word_ipa_in_source_block(g, 1, "good", "/guːd/").unwrap();
         // exactly ONE rewrite: block 1's. Block 0 keeps /gʊd/.
         assert_eq!(out.matches("good /guːd/ same").count(), 1);

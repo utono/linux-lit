@@ -834,9 +834,9 @@ fn apply_ipa_fix(
     new_ipa: &str,
 ) {
     // Splice the rewritten IPA into the TAGGED gloss_text, scoped to this source
-    // block's `<verse>` span. Operating on block.text directly was a no-op for
+    // block's `<segment>` span. Operating on block.text directly was a no-op for
     // multi-line verse: block.text joins verse lines with '\n' (tags stripped),
-    // but gloss_text separates them with `</verse>\n<verse>`, so block.text is
+    // but gloss_text separates them with `</segment>\n<segment>`, so block.text is
     // not a substring of gloss_text for any 2+ line block.
     let new_gloss_text = match crate::ui::gloss_block::replace_word_ipa_in_source_block(
         gloss_text,
@@ -1453,7 +1453,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
     };
 
     // Show the passage being reglossed on the loading card (same single-column
-    // `<speaker>`/`<verse>` formatting as the gloss result), not a bare
+    // `<speaker>`/`<segment>` formatting as the gloss result), not a bare
     // "Glossing…" label.
     {
         let s = state_rc.borrow();
@@ -1539,7 +1539,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
         crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&existing_gloss_text);
 
     // Show the passage being reglossed on the loading card (same single-column
-    // `<speaker>`/`<verse>` formatting as the gloss result), not a bare
+    // `<speaker>`/`<segment>` formatting as the gloss result), not a bare
     // "Glossing…" label.
     {
         let s = state_rc.borrow();
