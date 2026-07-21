@@ -3152,12 +3152,14 @@ fn line_is_speaker(buffer: &gtk4::TextBuffer, line: i32) -> bool {
 // Block height helpers for gloss overlay pagination
 // ---------------------------------------------------------------------------
 
-/// Conservative overhead for a Source (verse) block: the speaker heading's 36px
+/// Conservative overhead for a Source (verse) block: the speaker heading's
 /// `pixels_above_lines` + its label + 10px `pixels_below_lines`, plus slack.
 /// OVER-estimate so a multi-line speech never clips its speaker label at a
-/// page top. Tied to gloss_render.rs `gloss-speaker` (pixels_above_lines 36,
-/// scale 0.75, pixels_below_lines 10); 72 was sized for a scale-0.9 label, so
-/// with the label back at 0.75 it only grew MORE conservative.
+/// page top. Tied to gloss_render.rs `gloss-speaker` (pixels_above_lines 14
+/// since the even-rhythm change — was 36 — scale 0.75, pixels_below_lines 10);
+/// 72 was sized for a scale-0.9 label at the old 36, so it is now doubly
+/// conservative. Kept as-is: too-tall only gives a block its own page,
+/// too-small clips the speaker label.
 const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 
 /// Conservative per-block height overhead. For Source (verse) blocks WITH a
