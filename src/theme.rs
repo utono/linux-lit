@@ -1348,6 +1348,9 @@ pub fn generate_css(
          .vocab-popup.vocab-popup-float {{ background-color: {root}; \
            border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
            padding: 14px 18px; }} \
+         /* Overlay strip: frameless like the reader strip — the scrim \
+            behind the popup shows through instead of a boxed root card. */ \
+         .vocab-popup.vocab-popup-overlay {{ background-color: transparent; }} \
          /* Add-vocab card renders on the MAIN CARD's background (not root): \
             its children (gloss-header title, ask-input text, ask-hint mode \
             line) all carry card-ink colors ({fg}/{dim}) that were illegible \

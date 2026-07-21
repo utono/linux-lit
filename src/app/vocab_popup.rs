@@ -49,7 +49,9 @@ pub enum VocabScope {
 pub enum VocabAnchor {
     /// The reader placements (`position_vocab_popup`): side strip / column float.
     Reader,
-    /// Compact card in the window's lower-right corner (gloss/journal overlays).
+    /// Gloss/journal overlays: the same frameless strip as the reader
+    /// (transparent over the scrim), corner card only when the strip is too
+    /// narrow to wrap text.
     Corner,
     /// Below the chat panel: `chat::size_panel` raises the panel bottom and
     /// places the card in the freed strip, aligned with the transcript text.
@@ -126,7 +128,7 @@ pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, anchor: 
 
     match anchor {
         VocabAnchor::Reader => position_vocab_popup(state),
-        VocabAnchor::Corner => state.vocab_popup.popup.place_corner(),
+        VocabAnchor::Corner => position_overlay_vocab_popup(state),
         // ChatPanel: geometry is computed by chat::size_panel (called from
         // show_vocab_popup once the content is rendered and measurable).
         VocabAnchor::ChatPanel => {}
@@ -145,7 +147,6 @@ pub fn open_vocab_popup(state: &mut AppState) {
 /// the chat panel's float geometry (see `chat::size_panel`). Called at every
 /// (re)show so the float side follows the cursor across the column split.
 pub(crate) fn position_vocab_popup(state: &AppState) {
-    use gtk4::prelude::WidgetExt;
     if state.column_count() == 2 {
         let over_right = !crate::input::actions::chat::cursor_in_right_column(state);
         let (_, card_h) = crate::app::layout::main_card_rect(state);
@@ -156,19 +157,35 @@ pub(crate) fn position_vocab_popup(state: &AppState) {
         ));
         return;
     }
+    if let Some(margin) = strip_margin_start(state) {
+        state.vocab_popup.popup.place_strip(margin);
+    }
+}
+
+/// Left margin of the strip right of the text card, in window coords (the
+/// `place_strip` geometry). None when the card is not yet rooted.
+fn strip_margin_start(state: &AppState) -> Option<i32> {
     let window = state.text_view.root()
-        .and_then(|r| r.downcast::<gtk4::Window>().ok());
-    let window = match window {
-        Some(w) => w,
-        None => return,
-    };
+        .and_then(|r| r.downcast::<gtk4::Window>().ok())?;
     let sw_right = gtk4::graphene::Point::new(
         state.scrolled_window.width() as f32,
         0.0,
     );
-    if let Some(pt) = state.scrolled_window.compute_point(&window, &sw_right) {
-        let margin = (pt.x() as i32 + 12).max(0);
-        state.vocab_popup.popup.place_strip(margin);
+    let pt = state.scrolled_window.compute_point(&window, &sw_right)?;
+    Some((pt.x() as i32 + 12).max(0))
+}
+
+/// Place the popup for the gloss/journal overlays: the reader's strip
+/// geometry with the scrim showing through (frameless, like the main card).
+/// Falls back to the boxed corner card when the strip right of the card is
+/// too narrow for wrapped text (e.g. a wide two-column play card).
+fn position_overlay_vocab_popup(state: &AppState) {
+    let win_w = state.text_view.root().map(|r| r.width()).unwrap_or(0);
+    match strip_margin_start(state) {
+        Some(margin) if win_w - margin >= 240 => {
+            state.vocab_popup.popup.place_overlay_strip(margin);
+        }
+        _ => state.vocab_popup.popup.place_corner(),
     }
 }
 
