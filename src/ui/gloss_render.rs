@@ -441,10 +441,11 @@ pub(crate) fn populate_verse_buffer(
     // own 36px top gap separates units, so the explication carries 24 above /
     // 10 below. SPEAKERLESS (prose) has no speaker tag, so with the same values
     // the big gap fell INSIDE a unit (source → its gloss: 24) and the small one
-    // BETWEEN units (gloss → next source: 10) — backwards. Invert for prose:
-    // the source reads as its gloss's heading (tight 10 above the gloss), and
-    // the unit break gets the wide gap (32 below the gloss).
-    let (para_above, para_below) = if has_speaker { (24, 10) } else { (10, 32) };
+    // BETWEEN units (gloss → next source: 10) — backwards. For prose the reader
+    // wants an EVEN rhythm: source → gloss and gloss → next source get the SAME
+    // gap (20/20; the earlier 10-above/32-below heading-style grouping read as
+    // unequal spacing on the overlay).
+    let (para_above, para_below) = if has_speaker { (24, 10) } else { (20, 20) };
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
         .left_margin(quote_body)
