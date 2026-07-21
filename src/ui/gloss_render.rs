@@ -35,15 +35,17 @@ pub(crate) const QUOTE_VERSE_INDENT: i32 = QUOTE_SPEAKER_INDENT + crate::app::DI
 /// Apply italic styling to any `[bracket]` spans found after `base_offset` in
 /// the buffer, using `bracket_tag`.
 /// Core of the header tag style shared by the speaker/verse header tags
-/// (audit #55): bold 700 at 0.9 scale, indented to `left_margin`. Each caller
-/// adds its own small-caps variant, pixels_above/below, and (via the
-/// `header_dim` closure) the optional echoes-view dim color. A future tweak to
-/// the header look (e.g. scale) lands here once instead of per-site.
+/// (audit #55): bold 700 at the card's FULL body size, indented to
+/// `left_margin`. All overlay text renders at the main card's font size (the
+/// user's rule); the header reads as a header through weight + indent alone.
+/// Speaker callers override with `.scale(0.75)` — the one sanctioned shrink,
+/// matching the main card's own speaker-name scale. Each caller adds its own
+/// small-caps variant, pixels_above/below, and (via the `header_dim` closure)
+/// the optional echoes-view dim color.
 fn header_tag_base(name: &str, left_margin: i32) -> gtk4::builders::TextTagBuilder {
     gtk4::TextTag::builder()
         .name(name)
         .weight(700)
-        .scale(0.9)
         .left_margin(left_margin)
 }
 
@@ -349,8 +351,8 @@ pub(crate) fn populate_verse_buffer(
             QUOTE_SPEAKER_INDENT
         };
 
-    // Speaker + verse "header" styling: bold 700, 0.9 scale, space below, the
-    // speaker in small-caps (it's a name label). The header renders in the
+    // Speaker + verse "header" styling: bold 700 at full body size, space
+    // below, the speaker in small-caps (it's a name label). The header renders in the
     // FULL body foreground on the gloss surfaces (no color threaded — the
     // dimmed source read as too recessed); only the ECHOES view passes
     // `dim_color`, so its fixed source-turn header still recedes behind the
@@ -366,8 +368,8 @@ pub(crate) fn populate_verse_buffer(
         header_tag_base("gloss-speaker", quote_speaker)
             .variant(pango::Variant::SmallCaps)
             // Match the main reading card's speaker-name size: the card uses
-            // scale 0.75 (see formatting.rs `speaker-name`), so override the
-            // 0.9 header scale here — the verse tag keeps the 0.9 header size.
+            // scale 0.75 (see formatting.rs `speaker-name`) — the one
+            // sanctioned shrink; the verse tag renders at full body size.
             .scale(0.75)
             .pixels_above_lines(36)
             .pixels_below_lines(10),
@@ -395,8 +397,8 @@ pub(crate) fn populate_verse_buffer(
 
     // Prose gloss is the FOCUS ("hero"): full size (scale 1.0), generous 10px
     // leading like the journal answer body, so the reader's eye lands on the
-    // explication. The speaker + verse above are the header (bold/scale-0.9,
-    // full ink; set off by the hang-indent).
+    // explication. The speaker + verse above are the header (bold, full ink;
+    // set off by the hang-indent).
     //
     // Spacing groups a unit visually. WITH a speaker (plays) the speaker tag's
     // own 36px top gap separates units, so the explication carries 24 above /
@@ -421,7 +423,7 @@ pub(crate) fn populate_verse_buffer(
         header_tag_base("gloss-speaker-first", quote_speaker)
             .variant(pango::Variant::SmallCaps)
             // Match the main reading card's speaker-name size (scale 0.75), like
-            // `gloss-speaker` above; the 0.9 header scale is for the verse tag.
+            // `gloss-speaker` above.
             .scale(0.75)
             .pixels_below_lines(10),
     )
@@ -440,10 +442,11 @@ pub(crate) fn populate_verse_buffer(
     )
     .build();
 
+    // [Bracket] spans inside verse: italic only, full body size — like stage
+    // directions on the main reading card.
     let bracket_tag = gtk4::TextTag::builder()
         .name("gloss-bracket")
         .style(pango::Style::Italic)
-        .scale(0.9)
         .build();
 
     // Echo quote line: same indent as the paragraph, italic.
@@ -461,27 +464,25 @@ pub(crate) fn populate_verse_buffer(
         .style(pango::Style::Italic)
         .build();
 
-    // Citation line: same indent as its echo quote, smaller and dimmer. Use the
-    // theme's dim foreground when provided so the source citations recede behind
-    // the echo quotes. (NOT quote_verse — the deep verse hang-indent belongs to
-    // the quoted source turn only.)
+    // Citation line: same indent as its echo quote, full body size, dimmer.
+    // Use the theme's dim foreground when provided so the source citations
+    // recede behind the echo quotes through ink alone. (NOT quote_verse — the
+    // deep verse hang-indent belongs to the quoted source turn only.)
     let citation_builder = gtk4::TextTag::builder()
         .name("gloss-citation")
-        .left_margin(quote_speaker)
-        .scale(0.85);
+        .left_margin(quote_speaker);
     let citation_tag = match dim_color {
         Some(c) => citation_builder.foreground(c).build(),
         None => citation_builder.build(),
     };
 
-    // Pronunciation teaching note beneath its verse block: italic and slightly
-    // smaller (like the bracket tag), dimmed with the theme's dim foreground
-    // (like the citation/para tags) so it reads as a recessed teaching aside.
+    // Pronunciation teaching note beneath its verse block: italic at full body
+    // size, dimmed with the theme's dim foreground (like the citation/para
+    // tags) so it reads as a recessed teaching aside.
     let pron_builder = gtk4::TextTag::builder()
         .name("gloss-pron")
         .left_margin(quote_speaker)
-        .style(pango::Style::Italic)
-        .scale(0.92);
+        .style(pango::Style::Italic);
     let pron_tag = match dim_color {
         Some(c) => pron_builder.foreground(c).build(),
         None => pron_builder.build(),

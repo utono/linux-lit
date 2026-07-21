@@ -4460,14 +4460,13 @@ fn dispatch_action(
 }
 
 /// Playback-speed cycle for TogglePlaybackSpeed (keyboard and gamepad):
-/// 1.0 → 1.3 → 0.9 → 0.8 → 1.0. Any off-cycle value snaps back to 1.0.
+/// 1.0 → 1.3 → 0.9 → 1.0 (no 0.8x — the user dropped it). Any off-cycle
+/// value snaps back to 1.0.
 pub(crate) fn next_playback_speed(current: f64) -> f64 {
     if current == 1.0 {
         1.3
     } else if current == 1.3 {
         0.9
-    } else if current == 0.9 {
-        0.8
     } else {
         1.0
     }

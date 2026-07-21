@@ -1,5 +1,6 @@
 use crate::app::{AppState, InputMode, JournalBand, JournalPromptMode};
 use crate::ui::journal_move_picker::MoveTargetRow;
+use crate::ui::journal_overlay::JournalSource;
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -407,20 +408,25 @@ fn tag_inner<'a>(line: &'a str, tags: &[&str]) -> Option<&'a str> {
 }
 
 /// Build the ordered source paragraphs to prepend above a passage Q&A:
-/// `[speaker?, verse/stage block, citation?, "———"]`. The speaker paragraph is
+/// `[speaker?, verse/stage block, citation?]`. The speaker paragraph is
 /// dropped when empty or `UNKNOWN` (prose works). All `<verse>`/`<stage>` lines
 /// collapse into ONE `\n`-joined paragraph so the overlay renders them at pure
 /// line-height (consecutive lines, no blank line between) — matching the main
 /// card — while the blank-line gaps between paragraphs still separate the
-/// speaker, quote, citation, and separator. The quoted block steps as a single
-/// navigable block. The trailing `———` separates the quote from the question.
-fn source_paragraphs(source_text: &str, citation: Option<&str>) -> Vec<String> {
+/// speaker, quote, and citation. The quoted block steps as a single navigable
+/// block. (No trailing `———` rule — the user dropped it; the citation plus the
+/// blank-line gap separate the quote from the question on their own.)
+/// The returned `JournalSource` carries `has_speaker`/`has_citation` explicitly
+/// so the overlay never has to sniff paragraph roles from their text.
+fn source_paragraphs(source_text: &str, citation: Option<&str>) -> JournalSource {
     let mut out: Vec<String> = Vec::new();
+    let mut has_speaker = false;
     let mut verse: Vec<String> = Vec::new();
     for raw in source_text.lines() {
         if let Some(sp) = tag_inner(raw, &["speaker"]) {
             if !sp.is_empty() && sp != "UNKNOWN" {
                 out.push(sp.to_string());
+                has_speaker = true;
             }
         } else if let Some(body) = tag_inner(raw, &["verse", "stage"]) {
             for seg in body.split('\n') {
@@ -434,11 +440,11 @@ fn source_paragraphs(source_text: &str, citation: Option<&str>) -> Vec<String> {
     if !verse.is_empty() {
         out.push(verse.join("\n"));
     }
+    let has_citation = citation.is_some();
     if let Some(c) = citation {
         out.push(c.to_string());
     }
-    out.push("\u{2014}\u{2014}\u{2014}".to_string());
-    out
+    JournalSource { paras: out, has_speaker, has_citation }
 }
 
 /// Footer-left text identifying the current page: `<abbrev> <act>.<scene>` for a
@@ -586,8 +592,8 @@ pub(crate) fn render_current(s: &mut AppState) {
     }
 
     // A passage Q&A (source_text present) shows its quoted source — speaker,
-    // verse, citation, ——— separator — as leading navigable paragraphs above
-    // the question. Built here and passed to show_page, which prepends them to
+    // verse, citation — as leading navigable paragraphs above the question.
+    // Built here and passed to show_page, which prepends them to
     // all_paragraphs (page 0 only; apply_source_style styles them). Notes and
     // source-less entries pass None (unchanged plain Q&A).
     let current_page = if count == 0 {
@@ -2931,14 +2937,14 @@ mod tests {
     }
 
     #[test]
-    fn source_paragraphs_speaker_verse_citation_separator() {
+    fn source_paragraphs_speaker_verse_citation() {
         let src = "<speaker>FIRST GENTLEMAN</speaker>\n\
                    <verse>You do not meet a man but frowns. Our bloods</verse>\n\
                    <verse>No more obey the heavens than our courtiers\u{2019}</verse>\n\
                    <verse>Still seem as does the King\u{2019}s.</verse>";
         let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"));
         assert_eq!(
-            got,
+            got.paras,
             vec![
                 "FIRST GENTLEMAN".to_string(),
                 "You do not meet a man but frowns. Our bloods\n\
@@ -2946,9 +2952,10 @@ mod tests {
                  Still seem as does the King\u{2019}s."
                     .to_string(),
                 "\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string(),
-                "\u{2014}\u{2014}\u{2014}".to_string(),
             ]
         );
+        assert!(got.has_speaker);
+        assert!(got.has_citation);
     }
 
     #[test]
@@ -2956,13 +2963,11 @@ mod tests {
         let src = "<speaker>KING</speaker>\n<verse>Now is the winter</verse>";
         let got = source_paragraphs(src, None);
         assert_eq!(
-            got,
-            vec![
-                "KING".to_string(),
-                "Now is the winter".to_string(),
-                "\u{2014}\u{2014}\u{2014}".to_string(),
-            ]
+            got.paras,
+            vec!["KING".to_string(), "Now is the winter".to_string()]
         );
+        assert!(got.has_speaker);
+        assert!(!got.has_citation);
     }
 
     #[test]
@@ -2970,13 +2975,17 @@ mod tests {
         let src = "<speaker>UNKNOWN</speaker>\n<verse>a prose line</verse>";
         let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"));
         assert_eq!(
-            got,
+            got.paras,
             vec![
                 "a prose line".to_string(),
                 "\u{2014} Bleak House, 1.1.1".to_string(),
-                "\u{2014}\u{2014}\u{2014}".to_string(),
             ]
         );
+        // The regression this flag exists for: a speakerless prose quote must
+        // NOT be mistaken for a speaker line (the old em-dash sniff shrank the
+        // whole quote to the speaker tag's reduced scale).
+        assert!(!got.has_speaker);
+        assert!(got.has_citation);
     }
 
     #[test]

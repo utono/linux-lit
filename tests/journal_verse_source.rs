@@ -1,10 +1,10 @@
 //! Journal passage-Q&A verse-source spacing, headless capture.
 //!
 //! A passage Q&A on a VERSE work prepends the quoted source (speaker, verse
-//! block, citation, ———) above the question. The verse lines must render at
+//! block, citation) above the question. The verse lines must render at
 //! pure line-height — consecutive, no blank line between them — matching the
 //! main reading card, while blank-line gaps still separate the speaker, quote,
-//! citation, and separator blocks. Regression guard for the "verse lines double
+//! and citation blocks. Regression guard for the "verse lines double
 //! spaced in the overlay" bug (each `<verse>` line used to be its own paragraph,
 //! joined by "\n\n").
 //!

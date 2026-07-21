@@ -323,14 +323,20 @@ pub fn ensure_one_time_migrations_table(conn: &Connection) -> Result<(), rusqlit
 }
 
 /// Marker key claimed by `purge_stale_passage_journal_audio` so the cleanup
-/// below runs exactly once across the DB's lifetime.
-const PURGE_PASSAGE_JOURNAL_AUDIO_KEY: &str = "purge-passage-journal-audio-2026-07-20";
+/// below runs exactly once across the DB's lifetime. Bump the key (a new date
+/// suffix) whenever a change re-shifts passage-entry paragraph indices — the
+/// new key re-claims and the purge runs once more:
+/// - `-2026-07-20`: verse-source paragraph regrouping (commit 9ac15c5e).
+/// - `-2026-07-20b`: the trailing `———` source separator was dropped, shifting
+///   every Q&A `paragraph_index` after the source block down by one.
+const PURGE_PASSAGE_JOURNAL_AUDIO_KEY: &str = "purge-passage-journal-audio-2026-07-20b";
 
-/// One-time cleanup for the verse-source paragraph-regrouping fix (commit
-/// 9ac15c5e): that change collapsed a passage Q&A's quoted `<verse>`/`<stage>`
-/// source lines from one-paragraph-per-line into a single multi-line
-/// paragraph, shifting every `paragraph_index` at and after the source block
-/// for that entry. `journal_audio` has no stored text/hash to validate a
+/// One-time cleanup for changes that re-shape a passage Q&A's paragraph list
+/// (see the key's bump log above — first the verse-source regrouping, commit
+/// 9ac15c5e, which collapsed the quoted `<verse>`/`<stage>` source lines from
+/// one-paragraph-per-line into a single multi-line paragraph; then the
+/// dropped `———` separator), shifting every `paragraph_index` at and after
+/// the source block for that entry. `journal_audio` has no stored text/hash to validate a
 /// cache hit against (see JOURNAL_AUDIO_COLUMNS) — both playback paths
 /// (`play_journal_block`, `find_cached_journal_block_audio` in
 /// src/input/actions/gloss.rs) serve strictly by (entry_id, paragraph_index,

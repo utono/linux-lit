@@ -489,7 +489,18 @@ fn main() {
                         crate::app::translations::sync_translation_overlay(&state_for_events, ov_scene_before);
                     }
                     MpvEvent::ConnectionStatus(connected) => {
-                        state_for_events.borrow_mut().mpv_connected = connected;
+                        let mut s = state_for_events.borrow_mut();
+                        s.mpv_connected = connected;
+                        // Sync mpv's speed to the app's state on every connect.
+                        // `playback_speed` starts at 1.0, so a REUSED mpv still
+                        // holding a previous session's cycled speed (e.g. 1.3x)
+                        // is reset to 1.0x at app start; a mid-session reconnect
+                        // re-asserts whatever the user cycled to, never a reset.
+                        if connected {
+                            let _ = s
+                                .cmd_tx
+                                .try_send(crate::mpv::MpvCommand::SetSpeed(s.playback_speed));
+                        }
                         crate::logging::log(&format!("MPV connection: {}", connected));
                     }
                     MpvEvent::PlaybackState(playing) => {
