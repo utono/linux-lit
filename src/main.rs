@@ -591,8 +591,17 @@ fn main() {
 
                         // Advance to untimestamped next line when current line's audio ends
                         if s.sync_enabled && !s.loading_work.get() && s.vocab_loop.is_none() {
-                            if let Some((end_time, next_bl, _source_wi)) = s.pending_advance {
-                                if pos >= end_time {
+                            if let Some((end_time, next_bl, source_wi)) = s.pending_advance {
+                                // A jump (bookmark, o/e, concordance, ...) may have
+                                // moved BOTH the cursor and playback since this was
+                                // armed; the first post-seek TimePos then satisfies
+                                // `pos >= end_time` and would yank the cursor back to
+                                // the stale next line (the ']' cursor-snap-back bug).
+                                // The advance is only meaningful while the cursor is
+                                // still on the line it was armed for.
+                                if s.work_line_for_buffer(s.current_line) != Some(source_wi) {
+                                    s.pending_advance = None;
+                                } else if pos >= end_time {
                                     s.pending_advance_ignore_bl = Some(s.current_line);
                                     s.pending_advance = None;
                                     if s.current_line != next_bl {

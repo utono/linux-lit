@@ -49,7 +49,7 @@ background and read the summary at the end.
    discovery+connect under the headless guard (src/mpv/discovery.rs,client.rs).
 3. `x` (next page), `y` (back — cursor lands on the previous page's LAST
    dialogue line; its `SEEK: … start=S_LAST` log line is the time reference),
-   `Tab` (play).
+   `a` (play — TogglePause; Tab moved to chat-panel focus cycling).
 4. PASS iff `PAGE_TURN` logs within 60s AND mpv's time-pos at the turn is
    within [-0.6s, +2.5s] of the next timestamped line's `start_time`
    (`MIN(start_time) > S_LAST` for that media_id). A `NO_TIMESTAMP` landing
