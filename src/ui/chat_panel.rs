@@ -77,6 +77,9 @@ pub struct ChatPanel {
     /// (`AppState::card_focus_rule`); exactly one shows at a time — driven by
     /// `chat::update_focus_rules`.
     focus_rule: gtk4::Box,
+    /// The permanent header slot the rule centers in (see `new`); its height
+    /// is layout-driven via `set_header_band_height`.
+    header_band: gtk4::Box,
     /// Page-marker footer (`⌄` more / `•` last page) under the transcript —
     /// the panel's analogue of the gloss/journal overlays' floating marker.
     /// See `set_page_marker`.
@@ -98,13 +101,24 @@ impl ChatPanel {
         // Focus cue: a short rule (~ three hyphens) centered at the panel
         // top, visible only while the panel (transcript or prompt) has
         // focus. The main card has a twin; exactly one shows at a time.
+        // Header band: a permanent slot at the panel's top that mirrors the
+        // main card's running-head strip (TOP_SPACER_HEIGHT band with the
+        // focus rule centered in it). The BAND is always visible so toggling
+        // the rule never shifts the transcript; only the rule inside toggles.
+        // Height is set per-layout by `chat::size_panel`
+        // (`set_header_band_height`) so the transcript's first line still
+        // lands level with the card's first reading line.
+        let header_band = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        header_band.set_height_request(0);
         let focus_rule = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         focus_rule.add_css_class("focus-rule");
         focus_rule.set_size_request(24, 2);
         focus_rule.set_halign(gtk4::Align::Center);
-        focus_rule.set_margin_bottom(6);
+        focus_rule.set_valign(gtk4::Align::Center);
+        focus_rule.set_hexpand(true);
         focus_rule.set_visible(false);
-        container.append(&focus_rule);
+        header_band.append(&focus_rule);
+        container.append(&header_band);
 
         // Spacing 0: source lines must sit at pure line-height like the main
         // card (which sets pixels_above/below_lines(0)), so every gap is
@@ -166,6 +180,7 @@ impl ChatPanel {
             transcript_scroll,
             input,
             focus_rule,
+            header_band,
             page_marker,
             vocab_words: std::cell::RefCell::new(std::collections::HashSet::new()),
             vocab_color: std::cell::RefCell::new(None),
@@ -177,6 +192,13 @@ impl ChatPanel {
     /// the panel (not the reader) has focus.
     pub fn set_focus_rule_visible(&self, on: bool) {
         self.focus_rule.set_visible(on);
+    }
+
+    /// Fix the header band's height (the panel's running-head strip). Set by
+    /// `chat::size_panel` so the band + the panel's fixed top inset put the
+    /// transcript's first line level with the card's first reading line.
+    pub fn set_header_band_height(&self, h: i32) {
+        self.header_band.set_height_request(h.max(0));
     }
 
     /// Set the page-marker footer for the page just rendered: `⌄` when more
@@ -279,8 +301,13 @@ impl ChatPanel {
             let container_h = self.container.height();
             let input_h = self.input.container().height();
             // - 8: the container Box spacing the always-present marker row
-            // adds between the scroll and the input.
+            // adds between the scroll and the input. The header band (the
+            // panel's running-head strip) is a sibling too — subtract its
+            // requested height (+ its own 8px Box spacing).
+            let band_h = self.header_band.height_request().max(0);
+            let band_slot = if band_h > 0 { band_h + 8 } else { 0 };
             (container_h.max(req) - input_h.max(0)
+                - band_slot
                 - CHAT_PAGE_MARKER_H - 8
                 - CHAT_TRANSCRIPT_PAD_V
                 - CHAT_BUDGET_SAFETY)

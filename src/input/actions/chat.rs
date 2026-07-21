@@ -57,16 +57,6 @@ const TOAST_WAIT_PREVIOUS_REPLY: &str = "Waiting for the previous reply\u{2026}"
 const TOAST_ENTRY_SAVED: &str = "Entry is saved";
 const TOAST_SAVE_FAILED: &str = "Save failed";
 
-/// The panel container's `margin_top` (from the window top) that lands the
-/// transcript's FIRST line level with the main card's first reading-line ink.
-///
-/// The card's first line sits `CARD_VERTICAL_OUTER_MARGIN` (content_hbox's top
-/// outer margin) + `TOP_SPACER_HEIGHT` (the running-head band above the
-/// columns) + `line_spacing` (`pixels_above_lines`, applied above every line
-/// including the first) below the window top. The panel's first label ink sits
-/// `CHAT_PANEL_TOP_INSET` below the panel container's top, so back that out to
-/// align the LINES, not the container edges. Shared by both `size_panel`
-/// placements (Pinned and Float) so their first-line alignment can't drift.
 /// The real transcript font — `(config.font_family, config.font_size)` — the
 /// same source `theme::generate_css` builds the `.chat-transcript` rule from
 /// (app/mod.rs). Threaded into the panel's measure/paginate path so pagination
@@ -76,12 +66,21 @@ fn transcript_font(s: &AppState) -> (String, i32) {
     (s.config.font_family.clone(), s.config.font_size as i32)
 }
 
-fn chat_first_line_top_margin(line_spacing: i32) -> i32 {
-    (crate::app::layout::CARD_VERTICAL_OUTER_MARGIN
-        + crate::app::TOP_SPACER_HEIGHT
-        + line_spacing
-        - CHAT_PANEL_TOP_INSET)
-        .max(0)
+/// Height of the panel's HEADER BAND (the running-head-like strip at the
+/// panel top that hosts the focus rule, mirroring the main card's
+/// `TOP_SPACER_HEIGHT` band).
+///
+/// Sized so that with the panel container's top at
+/// `CARD_VERTICAL_OUTER_MARGIN` (level with the card's own top), the
+/// transcript's FIRST line still lands level with the card's first
+/// reading-line ink: the card's first line sits `TOP_SPACER_HEIGHT` +
+/// `line_spacing` (`pixels_above_lines`, applied above every line including
+/// the first) below the card top, while the panel's first label ink sits
+/// `band + CHAT_PANEL_TOP_INSET + 8` (the band's Box-spacing gap to the
+/// scroll) below the panel top — so the band makes up the difference.
+/// Shared by both `size_panel` placements.
+fn chat_header_band_height(line_spacing: i32) -> i32 {
+    (crate::app::TOP_SPACER_HEIGHT + line_spacing - CHAT_PANEL_TOP_INSET - 8).max(0)
 }
 
 /// Where the open chat panel sits. Pinned = single-column layout (card pinned
@@ -2773,12 +2772,13 @@ pub(crate) fn size_panel(s: &AppState) {
             // Pinned panel is a CARD beside the reading card, so match the reading
             // card's box exactly: top edge at the card's top outer margin, full
             // `card_h` height (bottoms already aligned). This makes the two cards
-            // the same height. (The FLOAT branch instead aligns the panel's first
-            // LINE with the reading column via `chat_first_line_top_margin`,
-            // because it overlays a column and must clear the running-head band;
-            // the pinned panel sits in its own column and has no band to clear.)
+            // the same height. The header band inside the panel mirrors the
+            // card's running-head strip AND lands the transcript's first line
+            // level with the card's first reading line.
             let top_margin = crate::app::layout::CARD_VERTICAL_OUTER_MARGIN;
             let panel_h = card_h.max(0);
+            s.chat_panel
+                .set_header_band_height(chat_header_band_height(s.config.line_spacing as i32));
             s.chat_panel.container.set_valign(gtk4::Align::Start);
             s.chat_panel.container.set_margin_top(top_margin);
             s.chat_panel.container.remove_css_class(CLASS_PANEL_FLOAT);
@@ -2800,30 +2800,23 @@ pub(crate) fn size_panel(s: &AppState) {
             // Float placement leaves the card alone (it overlays a column), so
             // the card keeps all four rounded corners.
             s.page_turn_overlay.remove_css_class(CLASS_CARD_CHAT_SEAM);
-            // Clear the header band: `valign: Center` + full `card_h` used to
-            // put the panel's top edge at the CARD's own top edge (same y as
-            // `content_hbox`), painting over the running-head/act-scene
-            // strip (`TOP_SPACER_HEIGHT` = 74px) that sits above the columns
-            // in `card_vbox`. Switch to `valign: Start` with an explicit top
-            // margin. The reference point is the reading column's first-line
-            // ink: `CARD_VERTICAL_OUTER_MARGIN` (content_hbox's top outer
-            // margin) + `TOP_SPACER_HEIGHT` (the header band's height) +
-            // `line_spacing` (the text view's `pixels_above_lines`, applied
-            // above every line incl. the first). Back out `CHAT_PANEL_TOP_INSET`
-            // (the panel's own .chat-panel padding + .chat-transcript
-            // padding-top) so the transcript's FIRST LINE — not the panel
-            // container's top edge — lands level with that reading line
-            // (`chat_first_line_top_margin`, shared with the Pinned branch).
-            let top_margin = chat_first_line_top_margin(s.config.line_spacing as i32);
+            // The float panel's top now sits at the CARD's own top edge: its
+            // in-panel HEADER BAND occupies the running-head strip (the band
+            // hosts the focus rule, like the card's own band hosts its twin)
+            // and is sized so the transcript's first line still lands level
+            // with the reading column's first-line ink
+            // (`chat_header_band_height`, shared with the Pinned branch).
+            // This paints over the portion of the card's running head above
+            // the overlaid column — the same trade the panel already makes
+            // with the column text itself.
+            let top_margin = crate::app::layout::CARD_VERTICAL_OUTER_MARGIN;
+            s.chat_panel
+                .set_header_band_height(chat_header_band_height(s.config.line_spacing as i32));
             // The two-column DIVIDER stops short of the card's bottom by its own
             // bottom margin (`two_column_divider_bottom_px`), so a panel that
             // fills to the card bottom would drop its left border BELOW the
             // divider's end. Shrink the height by that same inset so the panel's
-            // bottom edge lands on the divider's, not the card's. `top_margin`
-            // (measured from the card's TOP outer margin, since the container
-            // sits in the window-filling outer_overlay at CARD_VERTICAL_OUTER_MARGIN)
-            // consumes the space above the panel; the remaining height is what's
-            // left between it and the divider end.
+            // bottom edge lands on the divider's, not the card's.
             let divider_inset =
                 crate::input::scroll::two_column_divider_bottom_px(&s.text_view);
             let panel_h = (card_h
