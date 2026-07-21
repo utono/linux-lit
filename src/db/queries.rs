@@ -816,6 +816,59 @@ pub fn list_media_for_work(
     rows.collect()
 }
 
+/// Every media row for a BASE work across ALL its editions — rows whose
+/// association abbrev is the base itself (`Cym`, the Shakespeare model) or an
+/// edition of it (`BH-Vance`, the prose model, where the canonical abbrev has
+/// no associations of its own). Returns the OWNING association abbrev with
+/// each item because timestamps must be resolved against the owning edition's
+/// `line_mapping` rows, never the canonical's (edition div numbering can be
+/// offset — the chat-loop lesson).
+pub fn media_for_base_work(
+    conn: &Connection,
+    base_abbrev: &str,
+) -> Result<Vec<(String, crate::db::models::MediaItem)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT wma.work_abbrev, mf.id, mf.path, wma.display_name, wma.priority \
+         FROM media_files mf \
+         JOIN work_media_associations wma ON wma.media_id = mf.id \
+         WHERE wma.work_abbrev = ?1 OR wma.work_abbrev LIKE ?1 || '-%' \
+         ORDER BY wma.priority DESC",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![base_abbrev], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            crate::db::models::MediaItem {
+                media_id: row.get(1)?,
+                path: row.get(2)?,
+                display_name: row.get(3)?,
+                priority: row.get(4)?,
+            },
+        ))
+    })?;
+    rows.collect()
+}
+
+/// Locate a line by its exact TEXT within one work's mapping, disambiguating
+/// repeats (short lines like “Master at home?” recur) by proximity to
+/// `near_line_in_div`. The text route survives cross-edition division skew
+/// where a (div1, div2, line_in_div) recorded against one edition misses in
+/// another (`BH` ch. 11 is `BH-Vance` ch. 10).
+pub fn line_id_near_text(
+    conn: &Connection,
+    work_abbrev: &str,
+    text: &str,
+    near_line_in_div: i64,
+) -> Option<i64> {
+    conn.query_row(
+        "SELECT id FROM line_mapping \
+         WHERE work_abbrev = ?1 AND TRIM(canonical_text) = TRIM(?2) \
+         ORDER BY ABS(line_in_div - ?3) LIMIT 1",
+        rusqlite::params![work_abbrev, text, near_line_in_div],
+        |row| row.get::<_, i64>(0),
+    )
+    .ok()
+}
+
 /// True when `media_id` is a multi-work bundle — a media file that contains
 /// more than one work, i.e. associated (via work_media_associations) with more
 /// than one distinct BASE work (base = abbrev before the first '-', so Rom and
