@@ -1840,24 +1840,27 @@ pub(crate) fn cycle_active_voice(state_rc: &Rc<RefCell<AppState>>) {
 /// `source-<index>` (source).
 /// Resolve the (voice_id, model_id) a gloss block plays in: the active per-gloss
 /// override voice if the gloss has associated voices (clamped to
-/// `active_voice`), else the age-aware default by kind (verse->OP, prose->plain).
+/// `active_voice`), else the fixed overlay narrator
+/// (`OVERLAY_NARRATOR_VOICE_ID` — one voice for all gloss/synopsis TTS).
 /// Shared by `play_block_tts` and the cached-audio recolor check so both look at
 /// the same mp3. Mirrors the inline logic at the former call site.
 pub(crate) fn gloss_block_voice(
     conn: &rusqlite::Connection,
     gloss_id: i64,
-    work_abbrev: &str,
-    speaker: &str,
-    kind: BlockKind,
+    _work_abbrev: &str,
+    _speaker: &str,
+    _kind: BlockKind,
     active_voice: usize,
 ) -> (String, String) {
-    let is_verse = kind == BlockKind::Source;
     let voices = crate::db::queries::get_gloss_voices(conn, gloss_id);
     if !voices.is_empty() {
         let i = active_voice.min(voices.len() - 1);
         (voices[i].0.clone(), voices[i].1.clone())
     } else {
-        crate::db::queries::resolve_default_voice(conn, work_abbrev, speaker, is_verse)
+        (
+            crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID.to_string(),
+            crate::elevenlabs::OP_MODEL_ID.to_string(),
+        )
     }
 }
 
@@ -1935,9 +1938,7 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         Some(w) => w.canonical_abbrev.clone(),
         None => return,
     };
-    let (voice_id, _mid) =
-        crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
-    let voice_id = voice_id.to_string();
+    let voice_id = crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID.to_string();
     let accent = CACHED_BLOCK_ACCENT.to_string();
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
@@ -2035,17 +2036,16 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
         };
         let is_verse = kind == BlockKind::Source;
         // Per-gloss voice override: if the gloss has associated voices, play the
-        // active one (gloss_active_voice index, clamped). Else fall back to the
-        // age-aware character default (verse->OP, prose->plain).
+        // active one (gloss_active_voice index, clamped). Else the fixed overlay
+        // narrator.
         let (vid, mid): (String, String) = match crate::db::queries::open_db() {
             Ok(conn) => gloss_block_voice(
                 &conn, gloss_id, &work_abbrev, &speaker, kind, s.gloss_active_voice,
             ),
-            Err(_) => {
-                let (v, m) =
-                    crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, is_verse);
-                (v.to_string(), m.to_string())
-            }
+            Err(_) => (
+                crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID.to_string(),
+                crate::elevenlabs::OP_MODEL_ID.to_string(),
+            ),
         };
         crate::log_fmt!(
             "TTS: voice -> {} (gloss {}, {})",
@@ -2199,14 +2199,14 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
         if prose.is_empty() {
             return;
         }
-        // Explication prose is always read by Eleanor (see resolve_default_voice:
-        // "All prose is read by Eleanor"). Single-block synth resolves the same
-        // voice via gloss_block_voice, and the cached-audio recolor check looks
-        // under Eleanor — so the batch MUST cache under Eleanor too, or its
-        // mp3s land under a different voice id and neither playback-cache-hit nor
-        // the recolor existence check will find them.
+        // Explication prose is read by the fixed overlay narrator. Single-block
+        // synth resolves the same voice via gloss_block_voice, and the
+        // cached-audio recolor check looks under that narrator — so the batch
+        // MUST cache under it too, or its mp3s land under a different voice id
+        // and neither playback-cache-hit nor the recolor existence check will
+        // find them.
         let (vid, mid) = (
-            crate::elevenlabs::DEFAULT_FEMALE_VOICE_ID,
+            crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID,
             crate::elevenlabs::OP_MODEL_ID,
         );
         (gloss_id, work_abbrev, prose, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
@@ -2267,9 +2267,12 @@ pub(crate) fn synth_all_prose_blocks(state_rc: &Rc<RefCell<AppState>>) {
     });
 }
 
-/// Shift+Space (synopsis overlay): synthesize ALL synopsis paragraphs of the
-/// open scene to cached MP3s in the fixed plain-prose voice. Cache-only.
-/// Persistent toast; stop on first error. Re-entrant-safe via tts_batch_running.
+/// Shift+Space (synopsis overlay): synthesize the tiered gist/précis/account
+/// paragraphs of the open scene to cached MP3s in the overlay narrator voice —
+/// the metadata front matter (Location:, Characters:, ...) is skipped
+/// (`synopsis_tier_blocks`); an untiered synopsis synthesizes all paragraphs.
+/// Cache-only. Persistent toast; stop on first error. Re-entrant-safe via
+/// tts_batch_running.
 pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
     if state_rc.borrow().tts_batch_running.get() {
         return;
@@ -2285,14 +2288,17 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
             Some(w) => w.canonical_abbrev.clone(),
             None => return,
         };
-        let prose: Vec<(i32, String)> = crate::ui::gloss_block::synopsis_blocks(&synopsis)
+        let prose: Vec<(i32, String)> = crate::ui::gloss_block::synopsis_tier_blocks(&synopsis)
             .into_iter()
             .map(|b| (b.index, b.text))
             .collect();
         if prose.is_empty() {
             return;
         }
-        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        let (vid, mid) = (
+            crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID,
+            crate::elevenlabs::OP_MODEL_ID,
+        );
         (work_abbrev, div1, div2, prose, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
     };
 
@@ -2376,7 +2382,10 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
             Some(b) => b.text,
             None => return,
         };
-        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        let (vid, mid) = (
+            crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID,
+            crate::elevenlabs::OP_MODEL_ID,
+        );
         (
             work_abbrev,
             div1,

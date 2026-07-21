@@ -2881,6 +2881,9 @@ fn handle_synopsis_overlay_key(
     // reopens the synopsis where it was.
     if key_name == "Escape" {
         let mut s = state.borrow_mut();
+        // Leaving the overlay silences any playing paragraph TTS (harmless
+        // no-op when nothing is playing) — matches the gloss overlay's close.
+        s.tts.stop();
         let scene = s.synopsis_overlay_scene;
         let cursor = s.gloss_overlay.full_cursor();
         s.synopsis_cursor_memory.insert(scene, cursor);
@@ -2926,11 +2929,10 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::overlay_cycle::cycle_from_synopsis(state);
             true
         }
-        // `a`: always (re)start the cursor paragraph's TTS from the start,
-        // mirroring the gloss-overlay `a` (`begin_current_block`). Plain
-        // Space/Tab below is the play/pause toggle.
+        // `a`: play/stop the cursor paragraph's TTS (swapped with space by
+        // request — space below is the always-restart).
         "a" => {
-            crate::input::actions::gloss::begin_current_synopsis_block(state);
+            crate::input::actions::gloss::read_current_synopsis_block(state);
             true
         }
         // r: dropped (cross-create: scene ask card; asking happens from the
@@ -3060,12 +3062,13 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             true
         }
-        // Plain Space: play/stop the cursor paragraph's TTS (Shift+Space, the
-        // batch-synth, is handled by the guard above before this match).
-        // Tab/ISO_Left_Tab no longer synthesize — dropped by request (the
-        // Tab consumed-no-op guard near the top already swallows them).
+        // Plain Space: always (re)start the cursor paragraph's TTS from the
+        // start (swapped with `a` by request; Shift+Space, the batch-synth, is
+        // handled by the guard above before this match). Tab/ISO_Left_Tab no
+        // longer synthesize — dropped by request (the Tab consumed-no-op guard
+        // near the top already swallows them).
         "space" => {
-            crate::input::actions::gloss::read_current_synopsis_block(state);
+            crate::input::actions::gloss::begin_current_synopsis_block(state);
             true
         }
         // `;` mirrors the reading card: show the chapter/scene toast for the

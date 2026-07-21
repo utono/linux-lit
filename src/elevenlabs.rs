@@ -24,6 +24,13 @@ pub const DEFAULT_MALE_VOICE_ID: &str = "ucMnuQhzouQI2nuPOYUw"; // Benedick — 
 pub const DEFAULT_FEMALE_VOICE_ID: &str = "D4LX5VBnEN6zrrsnTMO8"; // Eleanor — British female, 20–30 (also all-prose narrator)
 pub const OP_MODEL_ID: &str = "eleven_v3";
 
+/// The single narrator for ALL gloss- and synopsis-overlay TTS (Space /
+/// Shift+Space). Replaces the per-character `voice_catalog` resolution and the
+/// Eleanor prose default in those overlays; a per-gloss associated voice still
+/// wins. Renders on `eleven_v3` so verse source blocks keep their OP /IPA/.
+/// Journal TTS is unaffected.
+pub const OVERLAY_NARRATOR_VOICE_ID: &str = "jv41DhCf464zw0TI7I1w";
+
 /// The user's four custom Voice-Design narration voices — the only voices the
 /// voice picker should offer (the ElevenLabs account also returns dozens of
 /// generic premade voices, which are not wanted here). Source of truth for the

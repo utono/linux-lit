@@ -216,6 +216,34 @@ pub fn synopsis_blocks(synopsis: &str) -> Vec<GlossBlock> {
     blocks
 }
 
+/// True if a LeadLabel's text names one of the tiered-synopsis sections
+/// ("Gist:", "Précis:", "Account:"); accent-optional on Précis.
+fn is_tier_label(label: &str) -> bool {
+    let t = label.trim().trim_end_matches(':').to_lowercase();
+    matches!(t.as_str(), "gist" | "précis" | "precis" | "account")
+}
+
+/// The synopsis blocks the Shift+Space batch synthesizes: only the tiered
+/// gist/précis/account paragraphs — every cursor-stop block from the first
+/// tier-labeled block onward — skipping the metadata front matter (Location:,
+/// Characters:, Time:, Motifs:, ...). A synopsis with no tier labels (legacy,
+/// untiered) returns ALL blocks. Block indices are the original
+/// `synopsis_blocks` indices, so cache keys stay aligned with single-block
+/// Space playback and the recolor check.
+pub fn synopsis_tier_blocks(synopsis: &str) -> Vec<GlossBlock> {
+    let blocks = synopsis_blocks(synopsis);
+    let start = blocks.iter().position(|b| {
+        b.attached.iter().any(|a| {
+            let Attachment::LeadLabel(t) = a;
+            is_tier_label(t)
+        })
+    });
+    match start {
+        Some(i) => blocks.into_iter().skip(i).collect(),
+        None => blocks,
+    }
+}
+
 /// Parse a gloss into ordered cursor-stop blocks: each contiguous
 /// `<speaker>`/`<segment>` run is one Source block; each non-echo `<gloss>` is one
 /// Explication block. Echo `<gloss>` brackets are excluded. Source and
@@ -1051,6 +1079,43 @@ mod synopsis_blocks_tests {
     #[test]
     fn empty_yields_no_blocks() {
         assert_eq!(synopsis_blocks("").len(), 0);
+    }
+
+    #[test]
+    fn tier_blocks_skip_metadata_front_matter() {
+        let syn = "<p>Location: London.</p>\
+                   <p>Characters: A · B</p>\
+                   <p>Length: ~4,189 words</p>\
+                   <p>Gist:</p>\
+                   <p>The gist paragraph.</p>\
+                   <p>Précis:</p>\
+                   <p>The précis paragraph.</p>\
+                   <p>Account:</p>\
+                   <p>Account one.</p>\
+                   <p>Account two.</p>";
+        let blocks = super::synopsis_tier_blocks(syn);
+        let texts: Vec<&str> = blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "The gist paragraph.",
+                "The précis paragraph.",
+                "Account one.",
+                "Account two."
+            ]
+        );
+        // Indices are the ORIGINAL cursor-stop indices (metadata blocks 0..=2
+        // kept their numbering), so cache keys match single-block playback.
+        assert_eq!(blocks[0].index, 3);
+        assert_eq!(blocks[3].index, 6);
+    }
+
+    #[test]
+    fn tier_blocks_without_tier_labels_return_all() {
+        let syn = "<p>Plot.</p><p>Shakespearean parallels:</p><p>The parallel.</p>";
+        let blocks = super::synopsis_tier_blocks(syn);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "Plot.");
     }
 }
 

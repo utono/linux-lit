@@ -1393,6 +1393,10 @@ fn resolve_prose_voice(conn: &Connection, work_abbrev: &str) -> String {
 /// voice_catalog: the narrowest band CONTAINING the age, else the NEAREST
 /// same-gender band, else the legacy `voice_for` constants. `is_verse` selects
 /// the verse/prose role. Unknown/neutral gender → male; missing age → DEFAULT_AGE.
+/// Retained (with the catalog machinery) though gloss/synopsis TTS now plays the
+/// fixed `OVERLAY_NARRATOR_VOICE_ID` — unit tests still exercise it, and it is
+/// the path to restore if per-character voices come back.
+#[allow(dead_code)]
 pub fn resolve_default_voice(
     conn: &Connection,
     work_abbrev: &str,
