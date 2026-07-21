@@ -592,7 +592,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
     let widget_height = state.text_view.height();
     if widget_height > 0 {
         let descender_guard = descender_guard_px(&state.text_view, effective_top);
-        let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
+        let usable_height = widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN;
         let line_count = state.effective_line_count();
         let range = visible_range(&state.text_view, &state.buffer, effective_top, line_count, usable_height);
         state.last_visible_range.set(Some(range));
@@ -732,9 +732,21 @@ fn scroll_right_view_to_split(
 /// below. We only increase, never decrease, to avoid fighting GTK's layout.
 pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 
+/// Bottom reserve for the SINGLE-COLUMN paged FILL decision (and the matching
+/// clip/visibility computations): `usable = widget_height - descender_guard -
+/// SINGLE_COLUMN_BOTTOM_MARGIN`. Historically this was `BASE_BOTTOM_MARGIN`
+/// (46, the scroll-headroom constant above), which reserved a near-line-height
+/// band at the card bottom and left almost every single-column page one line
+/// short of the two-column layout. Same empirical criterion as
+/// `TWO_COLUMN_BOTTOM_MARGIN` below: the smallest reserve whose last line
+/// keeps a clean descender at production geometry. Every single-column fill,
+/// clip, and last-visible-line site must use this constant — a mismatch makes
+/// the clip disagree with the fill (or the prose validator reject the grid).
+pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 22;
+
 /// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
 /// single-column path (whose clip covers the full descender_guard +
-/// BASE_BOTTOM_MARGIN band, see the single-col reserve in `update_bottom_clip`),
+/// SINGLE_COLUMN_BOTTOM_MARGIN band, see the single-col reserve in `update_bottom_clip`),
 /// the two-column `exact_end` clip sums the actual line heights and reserves
 /// only a descender allowance below the last line — so the fill only needs to
 /// reserve that much. Reserving the full 40px `BASE_BOTTOM_MARGIN` wastes ~1
@@ -824,7 +836,7 @@ fn boundary_blank_budget(
 /// Final bottom-clip height for the over-tall single-paragraph case in
 /// `update_bottom_clip`: the per-visual-row clip from `bottom_clip_height`
 /// (computed against a `usable_height`-tall viewport) plus the reserved bottom
-/// band `widget_height - usable_height` (= `descender_guard + BASE_BOTTOM_MARGIN`)
+/// band `widget_height - usable_height` (= `descender_guard + SINGLE_COLUMN_BOTTOM_MARGIN`)
 /// that the rest of the pagination keeps off a full page. Clamped to
 /// `[0, widget_height]` so the clip never goes negative or taller than the card.
 /// Pure so the arithmetic is unit-tested without GTK geometry.
@@ -918,7 +930,7 @@ fn update_bottom_clip(
         if probe.last_fit + 1 >= line_count {
             widget_height
         } else {
-            widget_height - descender_guard - BASE_BOTTOM_MARGIN
+            widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN
         }
     };
 
@@ -1020,7 +1032,7 @@ fn update_bottom_clip(
         // anchored at the scroll value, returning the gap from the last full row's
         // bottom up to `scroll_val + usable_height`. The REAL viewport is
         // `widget_height`, so add the reserved bottom band
-        // (`widget_height - usable_height` = descender_guard + BASE_BOTTOM_MARGIN)
+        // (`widget_height - usable_height` = descender_guard + SINGLE_COLUMN_BOTTOM_MARGIN)
         // the clip must also cover, giving the same bottom gap a normal full page
         // keeps.
         // Rows are seeked around the LIVE viewport (not walked from the

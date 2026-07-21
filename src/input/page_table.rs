@@ -17,7 +17,7 @@ pub struct ValidateCtx<'a> {
     /// Per-buffer-line pixel heights (line_yrange), measured at the layout
     /// the table is generated for.
     pub heights: &'a [i32],
-    /// widget_height - descender_guard - BASE_BOTTOM_MARGIN at that layout.
+    /// widget_height - descender_guard - TWO_COLUMN_BOTTOM_MARGIN at that layout.
     pub usable_height: i32,
 }
 

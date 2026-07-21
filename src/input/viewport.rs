@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 
 use crate::app::AppState;
-use super::scroll::BASE_BOTTOM_MARGIN;
+use super::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
 
 // ---------------------------------------------------------------------------
 // VisibleRange — canonical "what's on screen" measurement
@@ -1135,7 +1135,7 @@ pub(crate) fn last_raw_visible_line(state: &AppState, top: usize) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, top);
-    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
+    let usable_height = widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     range.last_fit
 }
@@ -1171,7 +1171,7 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     }
     let line_count = state.effective_line_count();
     let descender_guard = descender_guard_px(&state.text_view, top);
-    let mut usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
+    let mut usable_height = widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let is_prose = state.is_prose();
     // Single-column prose row-fill: a page may start mid-paragraph
     // (`page_top_offset > 0`) on ANY line — over-tall or normal-height. When
@@ -1721,7 +1721,7 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
         return true;
     }
     let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
-    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
+    let usable_height = widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let line_count = state.effective_line_count();
     let range = visible_range(
         &state.text_view,
@@ -1772,7 +1772,7 @@ pub(crate) fn is_line_start_visible(state: &AppState, line: usize) -> bool {
         return true;
     }
     let guard = descender_guard_px(&state.text_view, state.page_top_line);
-    let usable = widget_height - guard - BASE_BOTTOM_MARGIN;
+    let usable = widget_height - guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let line_count = state.effective_line_count();
     // Walk from page_top exactly like `visible_range`'s own break condition
     // (`total + h > usable` => stop, this line and everything after is
@@ -1821,7 +1821,7 @@ pub(crate) fn lines_per_page(state: &AppState) -> usize {
     }
 
     let descender_guard = descender_guard_px(&state.text_view, start);
-    let usable_height = widget_height - descender_guard - BASE_BOTTOM_MARGIN;
+    let usable_height = widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let range = visible_range(
         &state.text_view,
         &state.buffer,
