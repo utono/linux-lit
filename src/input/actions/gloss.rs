@@ -1476,7 +1476,7 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
                 neighbors.len(), ctx.start_citation, ctx.end_citation
             ));
             let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None, &neighbors);
-            (crate::gloss::READER_GLOSS_QUESTION_PROMPT.as_str(), msg, "reader-gloss")
+            (crate::gloss::reader_gloss_question_prompt(&ctx.work_type), msg, "reader-gloss")
         }
         _ => {
             let msg = crate::gloss::build_user_message(&ctx, Some(&prompt_owned), None, &[]);
@@ -1566,7 +1566,7 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
                 msg.push_str("\n\n");
                 msg.push_str(&block);
             }
-            (crate::gloss::READER_GLOSS_EDIT_PROMPT.as_str(), msg, "reader-gloss")
+            (crate::gloss::reader_gloss_edit_prompt(&ctx.work_type), msg, "reader-gloss")
         }
         _ => {
             let msg = crate::gloss::build_edit_gloss_message(&ctx, &existing_gloss_text, &pasted_owned);
@@ -3305,7 +3305,7 @@ fn background_gloss_request(
 
     crate::input::actions::claude_bridge::run_claude_request(
         state_rc,
-        (*crate::gloss::READER_GLOSS_PROMPT).clone(),
+        crate::gloss::reader_gloss_prompt(&ctx.work_type).to_string(),
         user_msg,
         model,
         on_success,

@@ -626,6 +626,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         neighbors.len(), ctx.start_citation, ctx.end_citation
     ));
     let user_msg = crate::gloss::build_user_message(&ctx, None, None, &neighbors);
+    let ctx_work_type = ctx.work_type.clone();
     let state_for_result = std::rc::Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {
@@ -633,7 +634,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         let model_for_db = model.clone();
         let result = tokio_handle
             .spawn(async move {
-                crate::gloss::call_claude_with_prompt(&crate::gloss::READER_GLOSS_PROMPT, &user_msg, &model).await
+                crate::gloss::call_claude_with_prompt(crate::gloss::reader_gloss_prompt(&ctx_work_type), &user_msg, &model).await
             })
             .await;
 

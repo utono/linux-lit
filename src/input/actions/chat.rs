@@ -1772,7 +1772,8 @@ pub(crate) fn save_reader_gloss(
     new_id
 }
 
-/// Fire READER_GLOSS_PROMPT for a passage and install the answer: save it to
+/// Fire the reader-gloss prompt (verse/prose selected by work_type) for a
+/// passage and install the answer: save it to
 /// lit.db and put it in transcript slot #1. Shared by `-` (cache miss) and
 /// `r`/`R` (regloss).
 ///
@@ -1826,11 +1827,11 @@ pub(crate) fn request_reader_gloss(
         crate::logging::log(&format!("CHAT-GLOSS: API error: {}", e));
     };
 
-    // READER_GLOSS_PROMPT is a LazyLock<String> (gloss.rs:430), and
-    // run_claude_request wants an owned String — deref the lock, then clone.
+    // reader_gloss_prompt selects the verse/prose family by work_type and
+    // returns &'static str; run_claude_request wants an owned String.
     crate::input::actions::claude_bridge::run_claude_request(
         state_rc,
-        (*crate::gloss::READER_GLOSS_PROMPT).clone(),
+        crate::gloss::reader_gloss_prompt(&ctx.work_type).to_string(),
         user_msg,
         model,
         on_success,

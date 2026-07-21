@@ -427,7 +427,7 @@ Rules:
     }
 });
 
-pub static READER_GLOSS_PROMPT: LazyLock<String> = LazyLock::new(|| {
+pub static READER_GLOSS_VERSE_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
 You are a scholar helping a READER (not an actor) understand a passage from a verse play as it functions within its scene.
 
@@ -451,10 +451,10 @@ Rules:
 - ALWAYS place a <speaker> tag before EVERY group of <segment> lines, even when the speaker has not changed.
 - No markdown, no bullets, no numbered lists, no headers.
 - If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
-    template_or("gloss.reader-gloss", FALLBACK)
+    template_or("gloss.reader-gloss-verse", FALLBACK)
 });
 
-pub static READER_GLOSS_QUESTION_PROMPT: LazyLock<String> = LazyLock::new(|| {
+pub static READER_GLOSS_VERSE_QUESTION_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
 You are a scholar answering a READER's question about a passage from a verse play, in the terse reader-focused voice (character motive + Elizabethan concepts a reader would miss, NOT acting direction).
 
@@ -474,10 +474,10 @@ Rules:
 - Each <gloss> is terse (1-3 sentences).
 - No markdown, no bullets, no numbered lists, no headers.
 - If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
-    template_or("gloss.reader-gloss-question", FALLBACK)
+    template_or("gloss.reader-gloss-verse-question", FALLBACK)
 });
 
-pub static READER_GLOSS_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| {
+pub static READER_GLOSS_VERSE_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| {
     const FALLBACK: &str = "\
 You are revising an existing READER gloss of a passage from a verse play, in the terse reader-focused voice.
 
@@ -496,8 +496,49 @@ Rules:
 - ALWAYS place a <speaker> tag before EVERY group of <segment> lines.
 - No markdown, no bullets, no numbered lists, no headers.
 - If the user message contains a \"Neighboring glosses\" block, NEVER reuse their characterizing verbs, governing metaphors, images, or other rhetorical devices; say something new.";
-    template_or("gloss.reader-gloss-edit", FALLBACK)
+    template_or("gloss.reader-gloss-verse-edit", FALLBACK)
 });
+
+fn prose_prompt_or_verse(key: &str, verse: &'static LazyLock<String>) -> String {
+    crate::db::prompts::active_prompt(key).unwrap_or_else(|| {
+        crate::logging::log(&format!(
+            "GLOSS PROMPT: {key} missing from api_prompts; falling back to verse prompt"
+        ));
+        (**verse).clone()
+    })
+}
+
+pub static READER_GLOSS_PROSE_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    prose_prompt_or_verse("gloss.reader-gloss-prose", &READER_GLOSS_VERSE_PROMPT)
+});
+pub static READER_GLOSS_PROSE_QUESTION_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    prose_prompt_or_verse("gloss.reader-gloss-prose-question", &READER_GLOSS_VERSE_QUESTION_PROMPT)
+});
+pub static READER_GLOSS_PROSE_EDIT_PROMPT: LazyLock<String> = LazyLock::new(|| {
+    prose_prompt_or_verse("gloss.reader-gloss-prose-edit", &READER_GLOSS_VERSE_EDIT_PROMPT)
+});
+
+pub fn reader_gloss_prompt(work_type: &str) -> &'static str {
+    if crate::db::line_types::is_prose_work(work_type) {
+        &READER_GLOSS_PROSE_PROMPT
+    } else {
+        &READER_GLOSS_VERSE_PROMPT
+    }
+}
+pub fn reader_gloss_question_prompt(work_type: &str) -> &'static str {
+    if crate::db::line_types::is_prose_work(work_type) {
+        &READER_GLOSS_PROSE_QUESTION_PROMPT
+    } else {
+        &READER_GLOSS_VERSE_QUESTION_PROMPT
+    }
+}
+pub fn reader_gloss_edit_prompt(work_type: &str) -> &'static str {
+    if crate::db::line_types::is_prose_work(work_type) {
+        &READER_GLOSS_PROSE_EDIT_PROMPT
+    } else {
+        &READER_GLOSS_VERSE_EDIT_PROMPT
+    }
+}
 
 pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
     if APPEND_IPA {
@@ -1247,14 +1288,27 @@ mod tests {
     #[test]
     fn reader_gloss_prompts_non_empty_and_no_ipa_slot() {
         for (name, p) in [
-            ("reader-gloss", &*READER_GLOSS_PROMPT),
-            ("reader-gloss-question", &*READER_GLOSS_QUESTION_PROMPT),
-            ("reader-gloss-edit", &*READER_GLOSS_EDIT_PROMPT),
+            ("reader-gloss-verse", &*READER_GLOSS_VERSE_PROMPT),
+            ("reader-gloss-verse-question", &*READER_GLOSS_VERSE_QUESTION_PROMPT),
+            ("reader-gloss-verse-edit", &*READER_GLOSS_VERSE_EDIT_PROMPT),
+            ("reader-gloss-prose", &*READER_GLOSS_PROSE_PROMPT),
+            ("reader-gloss-prose-question", &*READER_GLOSS_PROSE_QUESTION_PROMPT),
+            ("reader-gloss-prose-edit", &*READER_GLOSS_PROSE_EDIT_PROMPT),
         ] {
             assert!(!p.is_empty(), "{name}: assembled prompt is empty");
             assert!(!p.contains("{ipa_rules}"), "{name}: must not contain ipa slot");
             assert!(!p.contains("{}"), "{name}: must not contain positional slot");
         }
+    }
+
+    #[test]
+    fn reader_gloss_prompt_selects_family() {
+        // Prose selector must return a non-empty prompt distinct source from panic;
+        // with no -prose DB row it falls back to the verse prompt text.
+        let prose = reader_gloss_prompt("prose");
+        let verse = reader_gloss_prompt("play");
+        assert!(!prose.is_empty() && !verse.is_empty());
+        assert_eq!(reader_gloss_prompt("prose_book"), prose);
     }
 
     // ---- lookup_citation hardening ----
