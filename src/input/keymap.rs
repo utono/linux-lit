@@ -477,6 +477,32 @@ fn chat_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
     out.into_iter().map(|sp| sp.word).collect()
 }
 
+/// After a chat-transcript cursor move (j/k, h/t), retarget the chat-anchored
+/// vocab popup to the NEW cursor segment's words — the popup tracks the cursor
+/// the way the main card's line-scoped popup does. No-op unless the popup is
+/// up and chat-anchored; when the new segment has NO vocab words, keep showing
+/// the previous segment's words rather than closing or blanking the popup
+/// (open_vocab_popup_scoped's empty-scope early-return would do that too, but
+/// the guard here skips its DB open entirely).
+fn refresh_chat_vocab_scope(state: &Rc<RefCell<crate::app::AppState>>) {
+    {
+        let s = state.borrow();
+        if !s.vocab_popup.chat_inline || !s.vocab_popup.popup.is_visible() {
+            return;
+        }
+    }
+    let words = chat_scope_words(state);
+    if words.is_empty() {
+        return;
+    }
+    let mut s = state.borrow_mut();
+    crate::app::vocab_popup::open_vocab_popup_scoped(
+        &mut s,
+        crate::app::vocab_popup::VocabScope::Words(words),
+        crate::app::vocab_popup::VocabAnchor::ChatPanel,
+    );
+}
+
 /// Handle a key RELEASE. Only used for the Shift-tap timestamp delete/undo:
 /// a lone `Shift_L`/`Shift_R` release, still armed (no other key pressed during
 /// the hold), fires in **Reader mode only**. First tap on a line with a
@@ -1633,10 +1659,12 @@ fn handle_chat_transcript_key(
         // RPD) drive the transcript the same direction.
         "j" | "h" => {
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), 1);
+            refresh_chat_vocab_scope(state);
             true
         }
         "k" | "t" => {
             crate::input::actions::chat::transcript_cursor_move(&mut state.borrow_mut(), -1);
+            refresh_chat_vocab_scope(state);
             true
         }
         // `gg`/`G`: jump the row cursor to the first/last LANDABLE row (Gloss
