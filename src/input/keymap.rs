@@ -2468,11 +2468,11 @@ fn handle_gloss_key(
                 open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Gloss);
                 return true;
             }
-            // Ctrl+Up/Ctrl+Down adjust MPV volume, mirroring the reader's
-            // VolumeUp/VolumeDown (and the echoes overlay); with Shift the
-            // step goes to the TTS clip player instead.
+            // Ctrl+Up/Ctrl+Down adjust MPV+TTS volume together, mirroring the
+            // reader's VolumeUp/VolumeDown (and the echoes overlay); with Alt
+            // the step goes to the TTS clip player alone (persisted offset).
             "Up" => {
-                if is_shift {
+                if is_alt {
                     adjust_tts_volume(state, 5.0);
                 } else {
                     adjust_volume(state, 5.0);
@@ -2480,7 +2480,7 @@ fn handle_gloss_key(
                 return true;
             }
             "Down" => {
-                if is_shift {
+                if is_alt {
                     adjust_tts_volume(state, -5.0);
                 } else {
                     adjust_volume(state, -5.0);
@@ -3026,11 +3026,11 @@ fn handle_synopsis_overlay_key(
             open_overlay_legend(&mut state.borrow_mut(), OverlayLegend::Synopsis);
             true
         }
-        // Ctrl+Up/Ctrl+Down adjust MPV volume, mirroring the reader's
-        // VolumeUp/VolumeDown (and the echoes overlay); Ctrl+Shift steps the
-        // TTS clip player instead.
+        // Ctrl+Up/Ctrl+Down adjust MPV+TTS volume together, mirroring the
+        // reader's VolumeUp/VolumeDown (and the echoes overlay); Ctrl+Alt
+        // steps the TTS clip player alone (persisted offset).
         "Up" if is_ctrl => {
-            if is_shift {
+            if is_alt {
                 adjust_tts_volume(state, 5.0);
             } else {
                 adjust_volume(state, 5.0);
@@ -3038,7 +3038,7 @@ fn handle_synopsis_overlay_key(
             true
         }
         "Down" if is_ctrl => {
-            if is_shift {
+            if is_alt {
                 adjust_tts_volume(state, -5.0);
             } else {
                 adjust_volume(state, -5.0);
@@ -4610,20 +4610,28 @@ pub(crate) fn next_playback_speed(current: f64) -> f64 {
 }
 
 /// Ctrl+Up/Down (and VolumeUp/VolumeDown): the relative `add volume` IPC to
-/// MPV only. The in-process TTS player has its own Ctrl+Shift step
-/// (`adjust_tts_volume`).
+/// MPV plus the SAME ±step on the in-process TTS player, so both channels
+/// move together (their startup offset is preserved). Ctrl+Alt+Up/Down
+/// (`adjust_tts_volume`) steps — and persists — the TTS player alone.
 fn adjust_volume(state: &Rc<RefCell<AppState>>, delta: f64) {
-    let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(delta));
+    let s = state.borrow();
+    let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::VolumeAdjust(delta));
+    s.tts.adjust_volume_percent(delta);
 }
 
-/// Ctrl+Shift+Up/Down in the TTS overlays: ±step ONLY the in-process rodio
-/// TTS player (MPV untouched), live on a playing clip; toasts the new level.
+/// Ctrl+Alt+Up/Down in the TTS overlays: ±step ONLY the in-process rodio
+/// TTS player (MPV untouched), live on a playing clip; toasts the new level
+/// and PERSISTS the tuned offset below `system_volume` to config
+/// (`tts_volume_offset`), so the next launch seeds at this level.
 fn adjust_tts_volume(state: &Rc<RefCell<AppState>>, delta: f64) {
-    let s = state.borrow();
+    let mut s = state.borrow_mut();
     s.tts.adjust_volume_percent(delta);
+    let level = s.tts.volume_percent();
+    s.config.tts_volume_offset = s.config.system_volume.saturating_sub(level);
+    crate::config::save(&s.config);
     crate::input::navigation::show_chapter_toast_secs(
         &s,
-        &format!("TTS volume: {}%", s.tts.volume_percent()),
+        &format!("TTS volume: {}%", level),
         2,
     );
 }

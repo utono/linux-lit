@@ -1993,11 +1993,12 @@ pub fn build_window(
         .map(|n| n.clamp(1, 2))
         .or(config.last_column_count);
 
-    // The in-process TTS clip player (synopsis/gloss overlays) starts 40
-    // points BELOW the SYSTEM startup volume (the ElevenLabs clips run hotter
-    // than the audiobook masters). Ctrl+Shift+Up/Down nudges it from there.
+    // The in-process TTS clip player (synopsis/gloss overlays) starts
+    // `tts_volume_offset` points BELOW the SYSTEM startup volume (the
+    // ElevenLabs clips run hotter than the audiobook masters). Both values
+    // live in config; Ctrl+Alt+Up/Down nudges the level and re-saves the offset.
     let tts = crate::tts::TtsPlayer::new();
-    tts.set_volume_percent(config.system_volume.saturating_sub(40));
+    tts.set_volume_percent(config.system_volume.saturating_sub(config.tts_volume_offset));
 
     let state = Rc::new(RefCell::new(AppState {
         text_view,

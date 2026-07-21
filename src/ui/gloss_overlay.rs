@@ -41,6 +41,9 @@ pub struct GlossOverlay {
     scrim: gtk4::Box,
     container: gtk4::Box,
     title: Label,
+    /// Right half of the synopsis running head ("Chapter 10"); hidden in every
+    /// other overlay mode, where `title` alone spans the row.
+    title_scene: Label,
     orig_header: Label,
     original_label: Label,
     corr_header: Label,
@@ -255,12 +258,25 @@ impl GlossOverlay {
         container.set_width_request(column_width as i32);
         container.add_css_class("gloss-overlay");
 
+        // The title sits in a horizontal row so the synopsis view can show a
+        // main-card-style running head: `title` = work abbrev (left),
+        // `title_scene` = position (right). Every other mode hides
+        // `title_scene`; `title` hexpands so its halign behaves as before.
+        let title_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         let title = Label::new(Some("Gloss"));
         title.add_css_class("gloss-title");
+        title.set_hexpand(true);
         title.set_margin_start(text_margins as i32);
         title.set_margin_end(text_margins as i32);
         title.set_margin_top(24);
-        container.append(&title);
+        title_row.append(&title);
+        let title_scene = Label::new(None);
+        title_scene.add_css_class("running-head-scene");
+        title_scene.set_halign(Align::End);
+        title_scene.set_valign(Align::Center);
+        title_scene.set_visible(false);
+        title_row.append(&title_scene);
+        container.append(&title_row);
 
         // Left margin for these diff/error labels is set per-display in `show()`
         // (card_width/4), so the error/diff card lines up with the loading and
@@ -597,6 +613,7 @@ impl GlossOverlay {
             scrim,
             container,
             title,
+            title_scene,
             orig_header,
             original_label,
             corr_header,
@@ -1403,10 +1420,11 @@ impl GlossOverlay {
     /// synopsis view swaps it to the quiet `synopsis-header`). Idempotent.
     fn set_gloss_title_style(&self) {
         self.title.remove_css_class("synopsis-header");
+        self.title.remove_css_class("running-head-work");
         self.title.add_css_class("gloss-title");
-        // Drop the synopsis view's body-size Pango attribute so the gloss title
-        // renders at gloss-title's own CSS size again.
-        self.title.set_attributes(None);
+        self.title.set_margin_bottom(0);
+        // The synopsis running head's right half never shows in gloss mode.
+        self.title_scene.set_visible(false);
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
@@ -1748,7 +1766,8 @@ impl GlossOverlay {
 
     pub fn show_synopsis(
         &self,
-        title: &str,
+        work: &str,
+        position: &str,
         synopsis: &str,
         root_color: Option<&str>,
         card_width: i32,
@@ -1782,33 +1801,30 @@ impl GlossOverlay {
             .map(|p| p.left_margin)
             .unwrap_or(inset + crate::ui::gloss_render::QUOTE_BODY_INDENT);
         let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
-        let title_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset);
-        self.title.set_text(title);
-        // The synopsis title uses its own quiet `synopsis-header` style (dim,
-        // normal weight, underlined) rather than the body-sized bold gloss-title.
-        // Scoped separately from `.gloss-header` (the gloss card's ORIGINAL/GLOSS
-        // section headers + ask-card title) so bumping this size never touches
-        // those. The gloss-result paths restore gloss-title.
+        // The synopsis header is the main card's RUNNING HEAD, not a chapter
+        // heading: work abbrev at the start, position ("Chapter 10" /
+        // "Act N, Scene M") at the end, in the same small-caps
+        // `running-head-work`/`running-head-scene` styles the reading card
+        // uses. The gloss-result paths restore gloss-title and hide the
+        // right label (`set_gloss_title_style`).
+        self.title.set_text(work);
         self.title.remove_css_class("gloss-title");
-        self.title.add_css_class("synopsis-header");
-        // The heading renders at the SAME size as the synopsis body (the main
-        // card's font size for prose, the overlay reading size otherwise) — a
-        // Pango size attribute layered over the class, which keeps the quiet
-        // dim/underline look but overrides its fixed 16px font-size.
-        // `set_gloss_title_style` clears it when the widget returns to gloss use.
-        let body_pt = prose_card.as_ref().map(|p| p.font_size).unwrap_or(self.font_size.get());
-        let attrs = gtk4::pango::AttrList::new();
-        attrs.insert(gtk4::pango::AttrSize::new(body_pt * gtk4::pango::SCALE));
-        self.title.set_attributes(Some(&attrs));
+        self.title.remove_css_class("synopsis-header");
+        self.title.add_css_class("running-head-work");
+        self.title.set_attributes(None);
         self.title.set_visible(true);
         self.title.set_vexpand(false);
-        self.title.set_valign(Align::Start);
+        self.title.set_valign(Align::Center);
         self.title.set_halign(Align::Start);
-        self.title.set_margin_start(title_left);
-        // Reset the top margin in case `show_glossing` widened it (it shares this
-        // title widget). The synopsis card gives the "Act N, Scene N" header
-        // extra breathing room above it.
-        self.title.set_margin_top(56);
+        // Mirror the card strip's `.running-head` 40px side padding.
+        self.title.set_margin_start(40);
+        self.title.set_margin_top(24);
+        self.title.set_margin_bottom(12);
+        self.title_scene.set_text(position);
+        self.title_scene.set_margin_end(40);
+        self.title_scene.set_margin_top(24);
+        self.title_scene.set_margin_bottom(12);
+        self.title_scene.set_visible(true);
         self.hide_diff_labels();
         self.position_label.set_visible(false);
         self.echo_header_view.set_visible(false);

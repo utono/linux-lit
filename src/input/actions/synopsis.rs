@@ -108,7 +108,7 @@ fn run_synopsis_revision(
 ) {
     let (div1, div2) = state_rc.borrow().synopsis_amend_scene;
 
-    let (work_title, work_abbrev, original, model, label) = {
+    let (work_title, work_abbrev, head_work, original, model, label) = {
         let s = state_rc.borrow();
         let work = match s.current_work.as_ref() {
             Some(w) => w,
@@ -123,6 +123,7 @@ fn run_synopsis_revision(
         (
             work.title.clone(),
             abbrev,
+            work.abbrev.clone(),
             original,
             s.config.claude_model.clone(),
             label,
@@ -140,6 +141,7 @@ fn run_synopsis_revision(
 
     let model_for_db = model.clone();
     let label_err = label.clone();
+    let head_work_err = head_work.clone();
     crate::input::actions::claude_bridge::run_claude_request(
         state_rc,
         system_prompt,
@@ -163,7 +165,7 @@ fn run_synopsis_revision(
             let h = crate::app::layout::overlay_card_height(&s);
             let root_color = s.theme.root_color.clone();
             let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
-            s.gloss_overlay.show_synopsis(&label, &revised, Some(&root_color), cw, h, prose_card);
+            s.gloss_overlay.show_synopsis(&head_work, &label, &revised, Some(&root_color), cw, h, prose_card);
             s.synopsis_overlay_scene = (div1, div2);
             crate::input::actions::gloss::recolor_cached_blocks(&s);
             s.input_mode = crate::app::InputMode::SynopsisOverlay;
@@ -178,7 +180,7 @@ fn run_synopsis_revision(
             let h = crate::app::layout::overlay_card_height(&s);
             let root_color = s.theme.root_color.clone();
             let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
-            s.gloss_overlay.show_synopsis(&label_err, msg, Some(&root_color), cw, h, prose_card);
+            s.gloss_overlay.show_synopsis(&head_work_err, &label_err, msg, Some(&root_color), cw, h, prose_card);
             s.synopsis_overlay_scene = (div1, div2);
             crate::input::actions::gloss::recolor_cached_blocks(&s);
             s.input_mode = crate::app::InputMode::SynopsisOverlay;
@@ -245,10 +247,10 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     s.synopsis_undo = None;
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
-    let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
+    let (head_work, head_pos) = crate::app::scene_synopsis::synopsis_head(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
     let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
-    s.gloss_overlay.show_synopsis(&label, &original, Some(&root_color), cw, h, prose_card);
+    s.gloss_overlay.show_synopsis(&head_work, &head_pos, &original, Some(&root_color), cw, h, prose_card);
     s.synopsis_overlay_scene = (div1, div2);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
@@ -354,13 +356,13 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
 /// callback. Caller holds no borrow.
 fn render_synopsis(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64, text: &str) {
     let s = state.borrow_mut();
-    let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
+    let (head_work, head_pos) = crate::app::scene_synopsis::synopsis_head(&s, div1, div2);
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
     let root_color = s.theme.root_color.clone();
     let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
     s.gloss_overlay
-        .show_synopsis(&label, text, Some(&root_color), cw, h, prose_card);
+        .show_synopsis(&head_work, &head_pos, text, Some(&root_color), cw, h, prose_card);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
 }
 

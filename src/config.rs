@@ -210,6 +210,12 @@ pub struct Config {
     /// `set-startup-volume` skill.
     #[serde(default = "default_mpv_volume")]
     pub mpv_volume: u32,
+    /// How many percent points BELOW `system_volume` the in-process TTS clip
+    /// player (rodio; synopsis/gloss overlays) seeds at on startup — the
+    /// ElevenLabs clips run hotter than the audiobook masters. Ctrl+Alt+
+    /// Up/Down nudges the level AND rewrites this offset in config.
+    #[serde(default = "default_tts_volume_offset")]
+    pub tts_volume_offset: u32,
     /// Per-app theme (independent of the system-wide theme). None means
     /// DEFAULT_THEME. Set by the settings overlay and Alt+t / Alt+Shift+T.
     #[serde(default)]
@@ -351,6 +357,10 @@ pub fn default_mpv_volume() -> u32 {
     100
 }
 
+pub fn default_tts_volume_offset() -> u32 {
+    50
+}
+
 fn default_auto_tag_journal() -> bool {
     true
 }
@@ -392,6 +402,7 @@ impl Default for Config {
             echo_affect_weight: default_echo_affect_weight(),
             system_volume: default_system_volume(),
             mpv_volume: default_mpv_volume(),
+            tts_volume_offset: default_tts_volume_offset(),
             theme: None,
             theme_cycle: None,
             root_variants: HashMap::new(),

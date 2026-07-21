@@ -45,7 +45,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         (";", "show chapter"),
         ("Ctrl+,", "settings"),
         ("Ctrl+↑ / Ctrl+↓", "mpv volume"),
-        ("Ctrl+Shift+↑ / ↓", "TTS volume"),
+        ("Ctrl+Alt+↑ / ↓", "TTS volume (saved)"),
         ("\\", "cycle: → synopsis (same segment)"),
         ("Ctrl+f", "search all Q&As / glosses"),
         ("Esc", "close vocab popup / close (jump to source)"),

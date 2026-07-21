@@ -96,6 +96,19 @@ pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
     }
 }
 
+/// The synopsis overlay's running-head pair `(work, position)`: the work's
+/// DISPLAY abbrev (left, e.g. "BH-Barrett" — same as the main card's strip,
+/// which shows `w.abbrev`, not the canonical base) and the terse
+/// scene/chapter label (right, "Chapter 10" / "Act N, Scene M").
+pub fn synopsis_head(state: &AppState, div1: i64, div2: i64) -> (String, String) {
+    let work = state
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone())
+        .unwrap_or_default();
+    (work, synopsis_label(state, div1, div2))
+}
+
 /// Get the (div1, div2) of the scene at the current line.
 /// When current_line is on an unmapped buffer line (scene header, separator,
 /// stage direction), walks forward then backward to find the nearest mapped line.
@@ -410,10 +423,10 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     };
 
     let (card_width, card_height) = overlay_card_size(&s);
-    let label = synopsis_label(&s, div1, div2);
+    let (head_work, head_pos) = synopsis_head(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
     let prose_card = prose_synopsis_card(&s, card_width);
-    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height, prose_card);
+    s.gloss_overlay.show_synopsis(&head_work, &head_pos, &synopsis, Some(&root_color), card_width, card_height, prose_card);
     drop(s);
     let mut s = state.borrow_mut();
     s.synopsis_overlay_scene = (div1, div2);
@@ -576,11 +589,11 @@ pub fn cycle_synopsis(state: &std::rc::Rc<std::cell::RefCell<AppState>>, delta: 
         Some(t) => t.clone(),
         None => return,
     };
-    let label = synopsis_label(&s, div1, div2);
+    let (head_work, head_pos) = synopsis_head(&s, div1, div2);
     let (card_width, card_height) = overlay_card_size(&s);
     let root_color = s.theme.root_color.clone();
     let prose_card = prose_synopsis_card(&s, card_width);
-    s.gloss_overlay.show_synopsis(&label, &synopsis, Some(&root_color), card_width, card_height, prose_card);
+    s.gloss_overlay.show_synopsis(&head_work, &head_pos, &synopsis, Some(&root_color), card_width, card_height, prose_card);
     s.synopsis_overlay_scene = (div1, div2);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
 }
