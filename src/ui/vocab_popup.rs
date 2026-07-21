@@ -110,6 +110,7 @@ impl VocabPopup {
         self.container.set_valign(gtk4::Align::End);
         self.container.set_margin_start(margin_start);
         self.container.set_margin_end(5);
+        self.container.set_margin_top(0);
         self.container.set_margin_bottom(24);
         self.container.set_width_request(-1);
         self.container.set_height_request(-1);
@@ -129,6 +130,7 @@ impl VocabPopup {
         self.container.set_valign(gtk4::Align::Center);
         self.container.set_margin_start(centered_x.max(0));
         self.container.set_margin_end(0);
+        self.container.set_margin_top(0);
         self.container.set_margin_bottom(0);
         self.container.set_width_request(width);
         self.container.set_height_request(-1);
@@ -145,8 +147,29 @@ impl VocabPopup {
         self.container.set_valign(gtk4::Align::End);
         self.container.set_margin_start(0);
         self.container.set_margin_end(24);
+        self.container.set_margin_top(0);
         self.container.set_margin_bottom(24);
         self.container.set_width_request(-1);
+        self.container.set_height_request(-1);
+    }
+
+    /// Chat placement: the compact card in the strip `chat::size_panel` frees
+    /// BELOW the raised chat-panel bottom. `x`/`y` are window coords (the
+    /// popup lives in the window-filling outer overlay, like the panel);
+    /// `w` pins the card to the panel's transcript text width so its left and
+    /// right borders land on the text margins.
+    pub fn place_chat(&self, x: i32, y: i32, w: i32) {
+        // Keep the float-card skin (border + radius): the chat slot sits on
+        // the bare root, where the plain .vocab-popup (bg == root, no border)
+        // would render as loose text with no card edge.
+        self.container.add_css_class("vocab-popup-float");
+        self.container.set_halign(gtk4::Align::Start);
+        self.container.set_valign(gtk4::Align::Start);
+        self.container.set_margin_start(x.max(0));
+        self.container.set_margin_end(0);
+        self.container.set_margin_top(y.max(0));
+        self.container.set_margin_bottom(0);
+        self.container.set_width_request(w.max(0));
         self.container.set_height_request(-1);
     }
 

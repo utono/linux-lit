@@ -188,7 +188,7 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                 model: page.claude_model.clone(),
             });
             s.vocab_popup.view = crate::ui::vocab_popup::VocabView::Journal;
-            crate::app::vocab_popup::show_vocab_popup(&s);
+            crate::app::vocab_popup::show_vocab_popup(&mut s);
             crate::logging::log(&format!("VOCAB QA: stored answer for '{word}'"));
             return;
         }
@@ -221,7 +221,7 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
             question: question.clone(),
         });
         s.vocab_popup.view = crate::ui::vocab_popup::VocabView::Journal;
-        crate::app::vocab_popup::show_vocab_popup(&s);
+        crate::app::vocab_popup::show_vocab_popup(&mut s);
     }
     crate::logging::log(&format!("VOCAB QA: asking about '{word}' in {canonical} {div1}.{div2}"));
 
@@ -256,7 +256,7 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                     answer,
                     model: model_for_db.clone(),
                 });
-                crate::app::vocab_popup::show_vocab_popup(&s);
+                crate::app::vocab_popup::show_vocab_popup(&mut s);
             }
         },
         move |st, msg| {
@@ -267,7 +267,7 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                     question: question_err.clone(),
                     message: msg.to_string(),
                 });
-                crate::app::vocab_popup::show_vocab_popup(&s);
+                crate::app::vocab_popup::show_vocab_popup(&mut s);
             }
         },
     );

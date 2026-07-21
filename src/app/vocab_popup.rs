@@ -17,6 +17,11 @@ pub struct VocabPopupState {
     pub line: Option<usize>,
     pub fade_gen: std::rc::Rc<std::cell::Cell<u64>>,
     pub journal: Option<JournalDisplay>,
+    /// True while the popup is anchored to the CHAT PANEL: `chat::size_panel`
+    /// carves the popup's slot out of the panel height (popup renders BELOW a
+    /// raised panel bottom, borders on the transcript text margins) instead of
+    /// the corner float. Cleared on close.
+    pub chat_inline: bool,
 }
 
 /// What the popup's Journal view is showing. Carries the word so the async
@@ -39,10 +44,21 @@ pub enum VocabScope {
     Words(Vec<String>),
 }
 
+/// Where an opened popup anchors.
+#[derive(PartialEq)]
+pub enum VocabAnchor {
+    /// The reader placements (`position_vocab_popup`): side strip / column float.
+    Reader,
+    /// Compact card in the window's lower-right corner (gloss/journal overlays).
+    Corner,
+    /// Below the chat panel: `chat::size_panel` raises the panel bottom and
+    /// places the card in the freed strip, aligned with the transcript text.
+    ChatPanel,
+}
+
 /// Load vocab data for the words in `scope` into state and show the popup with
-/// the first word. `corner=true` anchors the compact card to the window's
-/// lower right (overlay/chat surfaces) instead of the reader placement.
-pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, corner: bool) {
+/// the first word, anchored per `anchor`.
+pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, anchor: VocabAnchor) {
     use crate::ui::vocab_popup::{VocabWordData, VocabView};
 
     let conn = match crate::db::queries::open_db() {
@@ -106,18 +122,21 @@ pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, corner: 
     state.vocab_popup.view = VocabView::Definition;
     state.vocab_popup.journal = None;
     state.vocab_popup.line = Some(state.current_line);
+    state.vocab_popup.chat_inline = anchor == VocabAnchor::ChatPanel;
 
-    if corner {
-        state.vocab_popup.popup.place_corner();
-    } else {
-        position_vocab_popup(state);
+    match anchor {
+        VocabAnchor::Reader => position_vocab_popup(state),
+        VocabAnchor::Corner => state.vocab_popup.popup.place_corner(),
+        // ChatPanel: geometry is computed by chat::size_panel (called from
+        // show_vocab_popup once the content is rendered and measurable).
+        VocabAnchor::ChatPanel => {}
     }
     show_vocab_popup(state);
 }
 
 /// Load vocab data for all words on the current line into state, show popup with first word.
 pub fn open_vocab_popup(state: &mut AppState) {
-    open_vocab_popup_scoped(state, VocabScope::CursorLine, false);
+    open_vocab_popup_scoped(state, VocabScope::CursorLine, VocabAnchor::Reader);
 }
 
 /// Place the vocab popup for the current layout. Single-column: the strip
@@ -153,13 +172,23 @@ pub(crate) fn position_vocab_popup(state: &AppState) {
     }
 }
 
-/// Hide the vocab popup.
+/// Hide the vocab popup. A chat-anchored popup also hands its carved slot
+/// back to the panel (size_panel restores the full height once the popup is
+/// hidden and `chat_inline` cleared), and the transcript repaginates for the
+/// regrown height.
 pub fn close_vocab_popup(state: &mut AppState) {
     state.vocab_popup.popup.hide();
+    if state.vocab_popup.chat_inline {
+        state.vocab_popup.chat_inline = false;
+        if state.chat_layout_open {
+            crate::input::actions::chat::size_panel(state);
+            crate::input::actions::chat::rerender_current_view(state);
+        }
+    }
 }
 
 /// Render the current vocab popup entry.
-pub fn show_vocab_popup(state: &AppState) {
+pub fn show_vocab_popup(state: &mut AppState) {
     if state.vocab_popup.data.is_empty() {
         state.vocab_popup.popup.hide();
         return;
@@ -196,6 +225,7 @@ pub fn show_vocab_popup(state: &AppState) {
                 journal_body_max_height(state),
             );
             state.vocab_popup.popup.show();
+            resize_chat_slot(state);
             return;
         }
     }
@@ -210,6 +240,19 @@ pub fn show_vocab_popup(state: &AppState) {
         work_abbrev,
     );
     state.vocab_popup.popup.show();
+    resize_chat_slot(state);
+}
+
+/// Re-carve the chat panel's popup slot after a content change (word step,
+/// view toggle, journal answer arriving) — the popup's natural height moved,
+/// so the panel's raised bottom must move with it, and the transcript
+/// repaginates for the new height. No-op unless the popup is chat-anchored
+/// and the chat layout is open.
+fn resize_chat_slot(state: &mut AppState) {
+    if state.vocab_popup.chat_inline && state.chat_layout_open {
+        crate::input::actions::chat::size_panel(state);
+        crate::input::actions::chat::rerender_current_view(state);
+    }
 }
 
 /// Height cap for the Journal answer body: half the window, floor 200px —

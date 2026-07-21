@@ -1348,7 +1348,11 @@ pub fn generate_css(
          .vocab-popup.vocab-popup-float {{ background-color: {root}; \
            border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
            padding: 14px 18px; }} \
-         .vocab-add-card {{ background-color: {root}; \
+         /* Add-vocab card renders on the MAIN CARD's background (not root): \
+            its children (gloss-header title, ask-input text, ask-hint mode \
+            line) all carry card-ink colors ({fg}/{dim}) that were illegible \
+            over the teal root. */ \
+         .vocab-add-card {{ background-color: {bg}; \
            border: 1px solid alpha({fg}, 0.35); border-radius: 12px; \
            padding: 6px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
@@ -1540,12 +1544,20 @@ pub fn generate_css(
             apart from the model's commentary, so italicize it — quoted prose \
             then reads as clearly distinct from the upright gloss. Play/verse \
             source (.chat-a-verse) keeps its upright weight (it has a speaker \
-            + deep indent already). */ \
+            + deep indent already). \
+            Flush rows sit at the panel's OWN text margin (padding-left 0, \
+            not the old speaker indent) and render at 0.9em, so a source \
+            line as wrapped by the MAIN CARD fits on one panel row — the \
+            user's rule: the panel must fully accommodate a card-rendered \
+            source line. (Pagination measures at full size/width, so the \
+            smaller render only over-counts — clip-safe.) */ \
          .chat-a-verse-flush {{ color: {chat_ink}; font-style: italic; \
-           padding-left: {q_speaker}px; padding-top: 0px; }} \
+           font-size: 0.9em; \
+           padding-left: 0px; padding-top: 0px; }} \
          .chat-transcript label.chat-a-verse-flush {{ padding-bottom: 0px; }} \
          .chat-a-stage-flush {{ color: alpha({chat_ink}, 0.55); font-style: italic; \
-           padding-left: {q_speaker}px; padding-top: 8px; }} \
+           font-size: 0.9em; \
+           padding-left: 0px; padding-top: 8px; }} \
          .chat-transcript label.chat-a-stage-flush {{ padding-bottom: 0px; }} \
          .chat-a-gloss {{ color: {chat_ink}; padding-top: 26px; padding-left: {q_body}px; }} \
          .chat-panel-float .chat-q {{ color: {fg}; }} \
@@ -1579,8 +1591,11 @@ pub fn generate_css(
             thin rule. */ \
          /* Cursor row: the inset accent bar alone marks it — NO background \
             wash (it read as a distracting highlight over the cursor segment; \
-            the bar suffices, matching the reading card's own cursor cue). */ \
-         .chat-cursor-row {{ box-shadow: inset 3px 0 0 {cursor_bg}; }} \
+            the bar suffices, matching the reading card's own cursor cue). \
+            The bar insets from the RIGHT edge (negative x offset) — the \
+            user wants it beside the segment's right side, clear of the \
+            panel's left border. */ \
+         .chat-cursor-row {{ box-shadow: inset -3px 0 0 {cursor_bg}; }} \
          /* V panel-local visual selection (chat panel's own y yank -
             distinct from the reader's AppState.visual_selection, a
             different space entirely). Reuses selection_bg, the SAME blue
