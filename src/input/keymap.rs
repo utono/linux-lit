@@ -2962,6 +2962,19 @@ fn handle_synopsis_overlay_key(
             }
             true
         }
+        // Ctrl+u / Ctrl+d: prev / next render page, same whole-page jump as
+        // y/x below (vim half-page keys repurposed — the synopsis paginates,
+        // it doesn't scroll). Must precede the plain-`u` undo arm.
+        "u" if is_ctrl => {
+            state.borrow().gloss_overlay.page_turn(-1);
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+            true
+        }
+        "d" if is_ctrl => {
+            state.borrow().gloss_overlay.page_turn(1);
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+            true
+        }
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
         // (Was `U`; now lowercased + gated by the confirm like gloss/journal.)
         "u" => {
@@ -3021,6 +3034,19 @@ fn handle_synopsis_overlay_key(
         "k" => {
             state.borrow().gloss_overlay.cursor_prev_block();
             // A page turn re-rendered the buffer; recolor cached blocks.
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+            true
+        }
+        // x/y: turn to the next/prev render page, landing the cursor on the
+        // first block of that page — a whole-page jump, unlike j/k which step
+        // one block. No-op at the first/last page. Mirrors gloss/journal x/y.
+        "x" => {
+            state.borrow().gloss_overlay.page_turn(1);
+            crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+            true
+        }
+        "y" => {
+            state.borrow().gloss_overlay.page_turn(-1);
             crate::input::actions::gloss::recolor_cached_blocks_rc(state);
             true
         }

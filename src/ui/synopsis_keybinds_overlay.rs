@@ -9,6 +9,8 @@ pub const TITLE: &str = "Synopsis keybinds";
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("j / k", "next / prev block"),
+        ("x / y", "next / prev page"),
+        ("Ctrl+d / Ctrl+u", "next / prev page"),
         ("g g / G", "first / last block"),
         ("Ctrl+n / Ctrl+p", "cycle synopsis fwd / back"),
         ("Shift+V", "visual select (y yank → clipboard)"),
