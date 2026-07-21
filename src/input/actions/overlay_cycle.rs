@@ -27,6 +27,7 @@ pub(crate) fn cycle_from_journal(state: &Rc<RefCell<AppState>>) {
         // Every `\` advance silences TTS (a journal block read with s/Space
         // must not keep speaking into the gloss stop).
         s.tts.stop();
+        crate::input::actions::chat::chat_loop_teardown(&mut s);
         s.journal_overlay.hide();
         // Recolor BEFORE restore's update_highlight, matching
         // journal::toggle_overlay's close half.
@@ -47,6 +48,7 @@ pub(crate) fn cycle_from_gloss(state: &Rc<RefCell<AppState>>) {
     {
         let mut s = state.borrow_mut();
         s.tts.stop();
+        crate::input::actions::chat::chat_loop_teardown(&mut s);
         s.gloss_overlay.hide();
         s.gloss_opened_from_picker = false;
         crate::app::return_to_reader_mode(&mut s);
@@ -67,6 +69,7 @@ pub(crate) fn cycle_from_synopsis(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         // Every `\` advance silences TTS (matching the other two advances).
         s.tts.stop();
+        crate::input::actions::chat::chat_loop_teardown(&mut s);
         s.gloss_overlay.hide();
         crate::app::return_to_reader_mode(&mut s);
     }

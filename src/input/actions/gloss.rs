@@ -79,6 +79,9 @@ pub(crate) fn jump_to_gloss_source_start(s: &mut AppState) -> bool {
 
 pub(crate) fn navigate_gloss_passage(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
+    // Space source loop: nav-stop (keep the loop mpv for a quick re-space on
+    // the new passage; the main player stays paused).
+    crate::input::actions::chat::chat_loop_stop(&mut s);
     // Moving to a different passage invalidates any diff-highlight from a
     // custom-prompt rewrite on the passage we're leaving (Task 7).
     s.gloss_overlay.clear_rewrite_diff();
@@ -1612,8 +1615,11 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
 /// off a playing block silences it before the user starts the next one. Both
 /// calls are harmless no-ops when nothing is playing.
 pub(crate) fn stop_all_gloss_audio(state_rc: &Rc<RefCell<AppState>>) {
-    let s = state_rc.borrow();
+    let mut s = state_rc.borrow_mut();
     s.tts.stop();
+    // Space source loop counts as gloss audio too — nav-stop it so a block
+    // TTS never plays over the looping source passage.
+    crate::input::actions::chat::chat_loop_stop(&mut s);
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
 }
 
@@ -3022,6 +3028,9 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     s.gloss_overlay.clear_rewrite_diff();
     s.rewrite_browse = None;
     s.tts.stop();
+    // Space source loop: full teardown (quit the loop mpv, restore the main
+    // player) — leaving the overlay ends the loop.
+    crate::input::actions::chat::chat_loop_teardown(&mut s);
     s.gloss_overlay.hide();
     s.gloss_opened_from_picker = false;
     // Drop any overlay search + MRU so neither leaks into the next gloss overlay

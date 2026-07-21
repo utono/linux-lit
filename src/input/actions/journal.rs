@@ -1106,6 +1106,9 @@ pub(crate) fn jump_to_journal_source_start(s: &mut AppState) -> bool {
 pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
     if state.borrow().input_mode == InputMode::JournalOverlay {
         let mut s = state.borrow_mut();
+        // Space source loop: full teardown (quit the loop mpv, restore the
+        // main player) — leaving the overlay ends the loop.
+        crate::input::actions::chat::chat_loop_teardown(&mut s);
         s.journal_overlay.hide();
         // Recolor the main card BEFORE update_highlight (which re-applies the tint
         // for reader_gloss_lines), so a reader-gloss created/edited in the overlay

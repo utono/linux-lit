@@ -2194,6 +2194,15 @@ fn handle_journal_key(
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
             true
         }
+        // Space: loop the displayed entry's source passage on the dedicated
+        // loop mpv (playing → pause; paused/idle → restart from the source's
+        // start time, the main card's Space semantics). Scene/corpus notes
+        // have no source citation → toast. The term-filter gate above wins
+        // while a filter is active.
+        "space" if !is_ctrl && !is_shift => {
+            crate::input::actions::chat::toggle_overlay_source_loop(state);
+            true
+        }
         // `A` (Shift+a): (re)start the cursor block's TTS from the beginning —
         // cache hit plays the stored MP3, miss synthesizes via ElevenLabs.
         // Mirrors the gloss overlay's `A` (both call their begin_current_block).
@@ -2476,6 +2485,14 @@ fn handle_gloss_key(
         // `a`: global MPV play/pause, same as the main card's `a` (TogglePause).
         "a" => {
             let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            true
+        }
+        // Space: loop the glossed passage's source audio on the dedicated
+        // loop mpv (playing → pause; paused/idle → restart from the source's
+        // start time, the main card's Space semantics). Shift+Space (batch
+        // synth) and Ctrl+Space (block TTS) are consumed by the guards above.
+        "space" if !is_ctrl && !is_shift => {
+            crate::input::actions::chat::toggle_overlay_source_loop(state);
             true
         }
         // `A` (Shift+a): (re)start the cursor block's TTS. Was plain `a`.

@@ -3040,7 +3040,101 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
         crate::input::navigation::show_chapter_toast_secs(&s, "No source passage to play", 2);
         return;
     };
+    arm_source_loop(state, src, current_abbrev);
+}
 
+/// `space` in the gloss/journal overlays: loop the DISPLAYED passage's source
+/// audio on the same dedicated loop mpv the transcript uses. Unlike the
+/// transcript toggle (pause/RESUME), toggling back on always RESTARTS from
+/// the source's start time — the main card's Space semantics (each press
+/// plays from the start). Playing → pause; paused or idle → (re)arm.
+pub(crate) fn toggle_overlay_source_loop(state: &Rc<RefCell<AppState>>) {
+    {
+        let mut s = state.borrow_mut();
+        if s.chat_loop.armed && !s.chat_loop.paused {
+            if let Some(p) = &s.chat_player {
+                p.toggle_pause();
+            }
+            s.chat_loop.paused = true;
+            return;
+        }
+        // Arming replaces any paused loop below; stop TTS so the loop and a
+        // block reading never speak over each other.
+        s.tts.stop();
+    }
+    let (src, current_abbrev) = {
+        let s = state.borrow();
+        (overlay_loop_source(&s), s.current_work.as_ref().map(|w| w.abbrev.clone()))
+    };
+    let Some(src) = src else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(&s, "No source passage to play", 2);
+        return;
+    };
+    arm_source_loop(state, src, current_abbrev);
+}
+
+/// The displayed passage of whichever overlay is up, as a `LoopSource`.
+/// Gloss: `gloss_context` (its `source_line_numbers` are unset on the overlay
+/// open path, so the line range comes from the start/end citation tails).
+/// Journal: the displayed page's citations — scene/corpus notes carry none
+/// (None → "No source passage" toast), and the cross-work term filter is
+/// gated (the origin pages under it point at the wrong entry).
+fn overlay_loop_source(s: &AppState) -> Option<crate::mpv::chat_player::LoopSource> {
+    match s.input_mode {
+        crate::app::InputMode::GlossOverlay => {
+            let ctx = s.gloss_context.as_ref()?;
+            let (_, _, first) = crate::app::parse_citation(&ctx.start_citation)?;
+            let last = crate::app::parse_citation(&ctx.end_citation)
+                .map(|(_, _, l)| l)
+                .unwrap_or(first);
+            Some(crate::mpv::chat_player::LoopSource {
+                work_abbrev: ctx.work_abbrev.clone(),
+                div1: ctx.act,
+                div2: ctx.scene,
+                first_line_in_div: first,
+                last_line_in_div: last,
+                first_text: ctx.source_text.lines().next().unwrap_or("").to_string(),
+                last_text: ctx.source_text.lines().last().unwrap_or("").to_string(),
+            })
+        }
+        crate::app::InputMode::JournalOverlay => {
+            if s.journal.filter.is_some() {
+                return None;
+            }
+            let page = s.journal.pages.get(s.journal.page_index)?;
+            let start = page.start_citation.as_deref()?;
+            let (d1, d2, first) = crate::app::parse_citation(start)?;
+            let last = page
+                .end_citation
+                .as_deref()
+                .and_then(crate::app::parse_citation)
+                .map(|(_, _, l)| l)
+                .unwrap_or(first);
+            let source = page.source_text.clone().unwrap_or_default();
+            Some(crate::mpv::chat_player::LoopSource {
+                // The journal is per-work; the loaded edition owns both the
+                // media association and the citation numbering here.
+                work_abbrev: s.current_work.as_ref()?.abbrev.clone(),
+                div1: d1,
+                div2: d2,
+                first_line_in_div: first,
+                last_line_in_div: last,
+                first_text: source.lines().next().unwrap_or("").to_string(),
+                last_text: source.lines().last().unwrap_or("").to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Resolve media + timestamps for `src` and arm the dedicated loop mpv.
+/// Shared tail of the transcript and overlay space toggles.
+fn arm_source_loop(
+    state: &Rc<RefCell<AppState>>,
+    src: crate::mpv::chat_player::LoopSource,
+    current_abbrev: Option<String>,
+) {
     // Default media + loop points, all standalone DB reads (the work need
     // not be loaded in the main card).
     let Ok(conn) = crate::db::queries::open_db() else {
