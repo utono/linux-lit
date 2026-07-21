@@ -5,7 +5,7 @@
 # private socket, run the reader in an isolated cage against a DB COPY whose
 # media path is rewritten to a symlink (so the derived socket can only be the
 # test's own), then per boundary: x (next page), y (back — cursor lands on the
-# previous page's last dialogue line), Tab (play), and assert the page turns
+# previous page's last dialogue line), a (play), and assert the page turns
 # when mpv crosses the start_time of the next page's first timestamped line.
 #
 #   PASS: PAGE_TURN logged and |time-pos(at turn) - next start_time| <= TOL
@@ -23,7 +23,7 @@
 set -uo pipefail
 
 BOUNDARIES=2
-TURN_TIMEOUT=60   # s to wait for the sync page turn after Tab
+TURN_TIMEOUT=60   # s to wait for the sync page turn after play starts
 TOL_EARLY=1.8     # SYNC_GAP_PREROLL (1.5s deliberate early advance across an
                   # audio gap, see mpv/client.rs) + event jitter
 TOL_LATE=2.5      # detection latency + line-poll cadence
@@ -202,9 +202,9 @@ for W in "${WORKS[@]}"; do
     S_LAST=""
     if [[ "$seekline" =~ start=([0-9.]+) ]]; then S_LAST="${BASH_REMATCH[1]}"; fi
 
-    off=$(stat -c%s "$LOG"); key -k Tab
+    off=$(stat -c%s "$LOG"); key "a"
     if ! wait_log "$LOG" "$off" "MPV playback: playing" 5 >/dev/null; then
-      RESULTS+=("FAIL  $W b$b (Tab did not start playback)"); ((wfail++)); ((FAILS++)); continue
+      RESULTS+=("FAIL  $W b$b (play toggle did not start playback)"); ((wfail++)); ((FAILS++)); continue
     fi
     # A sync-driven page move logs PAGE_TURN (advance path), SYNC_SCENE_SCROLL
     # (scene-transition snap, which does NOT emit PAGE_TURN), or SYNC_PARA_TURN.
@@ -225,10 +225,10 @@ for W in "${WORKS[@]}"; do
         RESULTS+=("FAIL  $W b$b (no page turn within ${TURN_TIMEOUT}s — sync stall)")
         ((wfail++)); ((FAILS++))
       fi
-      key -k Tab; continue
+      key "a"; continue
     fi
     T=$(mpv_time_pos "$SOCKET")
-    key -k Tab  # pause again
+    key "a"  # pause again
     if [[ -n "$S_LAST" && -n "$T" ]]; then
       S_NEXT=$(sqlite3 "$DB" "SELECT MIN(start_time) FROM line_timestamps
                WHERE media_id=$MID AND start_time > $S_LAST + 0.05;")

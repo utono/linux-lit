@@ -530,6 +530,20 @@ pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
                 crate::input::highlight::update_highlight(s);
             }
         }
+    } else if let Some(tb) = s.buffer_line_for_work(target_wi) {
+        // Same-line step: on row-fill prose a page top like (L, 110) starts
+        // MID-line, so the target phrase's wrapped row can sit on a different
+        // stored page even though the line didn't change — `o` at the first
+        // phrase of a straddling top line lands on the previous page's rows
+        // and the page never turned. Land on the stored page holding the
+        // phrase's display row.
+        if let Some(ch) = spans
+            .iter()
+            .find(|sp| sp.start_time == target_time)
+            .map(|sp| sp.start_char)
+        {
+            turn_to_phrase_page(s, tb, ch);
+        }
     }
     if paint_pending_phrase(s, target_time) {
         s.phrase_paint_hold = s.suppress_sync_until;
@@ -542,6 +556,55 @@ pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
         pos
     );
     true
+}
+
+/// In single-column prose TABLE mode, make sure the display row holding
+/// `char_off` of buffer line `bl` is on the current page: when the line
+/// straddles stored pages, land on the page containing that row. No-op in
+/// every other mode (play tables are line-granular, so a same-line phrase
+/// step can never leave the page there).
+fn turn_to_phrase_page(s: &mut AppState, bl: usize, char_off: usize) {
+    let Some(table) = crate::input::prose_pages::active_prose_page_table(s) else {
+        return;
+    };
+    let Some(cur) = crate::input::prose_pages::prose_page_for_position(
+        &table,
+        s.page_top_line,
+        s.page_top_offset,
+    ) else {
+        return;
+    };
+    let Some(line_start) = s.buffer.iter_at_line(bl as i32) else {
+        return;
+    };
+    // Top pixel (relative to the line's top) of the display row containing
+    // `char_off`: walk the view's real row layout, keeping the last row whose
+    // start char is at or before the target (display_row_char_at's inverse).
+    let line_top = s.text_view.line_yrange(&line_start).0;
+    let mut it = line_start;
+    let row_top = loop {
+        let y = s.text_view.iter_location(&it).y() - line_top;
+        let mut next = it;
+        if !s.text_view.forward_display_line(&mut next) || next.line() != line_start.line() {
+            break y;
+        }
+        if next.line_offset().max(0) as usize > char_off {
+            break y;
+        }
+        it = next;
+    };
+    let Some(target) = crate::input::prose_pages::prose_page_for_position(&table, bl, row_top)
+    else {
+        return;
+    };
+    if target != cur {
+        let p = table[target];
+        crate::logging::log_always(&format!(
+            "PAGES_PROSE: phrase-step turn bl={} char={} row_px={} ({},{})->({},{})",
+            bl, char_off, row_top, s.page_top_line, s.page_top_offset, p.start_line, p.start_off
+        ));
+        crate::input::scroll::set_page_instant_offset(s, p.start_line, p.start_off);
+    }
 }
 
 /// Remove the phrase tint everywhere. Cheap no-op when nothing is applied.
