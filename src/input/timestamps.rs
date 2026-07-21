@@ -230,6 +230,26 @@ pub fn set_start_time(state: &mut AppState) -> bool {
     // audio is, not jump playback to the newly-selected line's start.
     crate::input::navigation::cursor_next_dialogue_no_seek(state);
 
+    // Mark the new cursor segment. The advance above is no-seek
+    // (PageChangeReason::Cursor), so the karaoke cue nav binds get from
+    // seek_to_current_line never fires — and the stamping flow typically runs
+    // under the indefinite sync suppression (an untimestamped landing arms
+    // it), where every TimePos tick clears an UNHELD tint. On a timestamped
+    // landing prose also skips the persistent cursor tint (prose_no_tint:
+    // "the karaoke tint is the only marking"), so without this the cursor
+    // went invisible after every `b`. Paint the pending phrase at the new
+    // line's start and hold it through the suppression window, mirroring
+    // seek_to_current_line's karaoke block. An untimestamped landing needs
+    // nothing here — update_highlight's persistent-tint fallback marks it.
+    if let Some(start) = state
+        .work_line_for_buffer(state.current_line)
+        .and_then(|wi| state.current_work.as_ref()?.lines.get(wi)?.timestamp.as_ref().map(|t| t.start))
+    {
+        if crate::input::phrase_highlight::paint_pending_phrase(state, start) {
+            state.phrase_paint_hold = state.suppress_sync_until;
+        }
+    }
+
     true
 }
 
