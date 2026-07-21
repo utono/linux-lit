@@ -408,7 +408,13 @@ pub(crate) fn populate_verse_buffer(
             // scale 0.75 (see formatting.rs `speaker-name`) — the one
             // sanctioned shrink; the verse tag renders at full body size.
             .scale(0.75)
-            .pixels_above_lines(36)
+            // EVEN RHYTHM with the source→gloss gap: gloss → next speaker is
+            // the explication's pixels_below_lines(10) + this 14 = 24, equal
+            // to the explication's own pixels_above_lines(24). The former 36
+            // made the between-unit gap (10+36=46) read almost double the
+            // within-unit gap — the same unevenness the speakerless overlay's
+            // 20/20 fix removed.
+            .pixels_above_lines(14)
             .pixels_below_lines(10),
     )
     .build();
@@ -437,14 +443,13 @@ pub(crate) fn populate_verse_buffer(
     // explication. The speaker + verse above are the header (bold, full ink;
     // set off by the hang-indent).
     //
-    // Spacing groups a unit visually. WITH a speaker (plays) the speaker tag's
-    // own 36px top gap separates units, so the explication carries 24 above /
-    // 10 below. SPEAKERLESS (prose) has no speaker tag, so with the same values
-    // the big gap fell INSIDE a unit (source → its gloss: 24) and the small one
-    // BETWEEN units (gloss → next source: 10) — backwards. For prose the reader
-    // wants an EVEN rhythm: source → gloss and gloss → next source get the SAME
-    // gap (20/20; the earlier 10-above/32-below heading-style grouping read as
-    // unequal spacing on the overlay).
+    // Spacing is an EVEN rhythm on both layouts: source → gloss and gloss →
+    // next unit get the SAME gap. WITH a speaker the explication carries 24
+    // above / 10 below, and the speaker tag's 14 top gap completes the
+    // between-unit side (10+14=24 == 24). SPEAKERLESS (prose) has no speaker
+    // tag, so both sides live on this tag directly (20/20; the earlier
+    // 10-above/32-below heading-style grouping read as unequal spacing on
+    // the overlay).
     let (para_above, para_below) = if has_speaker { (24, 10) } else { (20, 20) };
     let para_builder = gtk4::TextTag::builder()
         .name("gloss-para")
