@@ -367,6 +367,12 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
 /// hybrid: far into the phrase = replay it; near its start = go back one).
 const PHRASE_RESTART_GRACE: f64 = 1.0;
 
+/// Two spans whose start times differ by less than this are the SAME moment:
+/// a spoken run crossing a verse line break stamps its whole window on every
+/// covered span (both lines), so a "step" onto such a tied span is zero
+/// motion. Step targets must beat the current start by at least this margin.
+const PHRASE_TIE_EPS: f64 = 0.05;
+
 /// Where an o/e phrase step should land, given the current line's spans.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum PhraseStep {
@@ -387,21 +393,48 @@ pub(crate) fn phrase_step_target(
     pos: f64,
     forward: bool,
 ) -> PhraseStep {
+    let cur = spans[idx].start_time;
     if forward {
-        if idx + 1 < spans.len() {
-            PhraseStep::Within(spans[idx + 1].start_time)
-        } else {
-            PhraseStep::CrossLine(true)
+        match (idx + 1..spans.len()).find(|&j| spans[j].start_time > cur + PHRASE_TIE_EPS) {
+            Some(j) => PhraseStep::Within(spans[j].start_time),
+            None => PhraseStep::CrossLine(true),
         }
+    } else if pos > cur + PHRASE_RESTART_GRACE {
+        PhraseStep::Within(cur)
     } else {
-        let cur = spans[idx].start_time;
-        if pos > cur + PHRASE_RESTART_GRACE {
-            PhraseStep::Within(cur)
-        } else if idx > 0 {
-            PhraseStep::Within(spans[idx - 1].start_time)
-        } else {
-            PhraseStep::CrossLine(false)
+        match (0..idx).rev().find(|&j| spans[j].start_time < cur - PHRASE_TIE_EPS) {
+            Some(j) => PhraseStep::Within(spans[j].start_time),
+            None => PhraseStep::CrossLine(false),
         }
+    }
+}
+
+/// Step target on a NEIGHBOR line's spans: forward the first span starting
+/// strictly after `cur_ref` (the current span's start), backward the last
+/// span starting strictly before it; a spanless line falls back to its
+/// line-timestamp start under the same strict rule. None = this line cannot
+/// move playback (its spans share the current run's window) — the caller
+/// tries the next candidate line.
+pub(crate) fn cross_line_pick(
+    nspans: &[PhraseSpan],
+    line_start: Option<f64>,
+    cur_ref: f64,
+    fwd: bool,
+) -> Option<f64> {
+    let qualifies = |t: f64| {
+        if fwd {
+            t > cur_ref + PHRASE_TIE_EPS
+        } else {
+            t < cur_ref - PHRASE_TIE_EPS
+        }
+    };
+    if nspans.is_empty() {
+        return line_start.filter(|&t| qualifies(t));
+    }
+    if fwd {
+        nspans.iter().map(|sp| sp.start_time).find(|&t| qualifies(t))
+    } else {
+        nspans.iter().rev().map(|sp| sp.start_time).find(|&t| qualifies(t))
     }
 }
 
@@ -470,13 +503,39 @@ pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
         PhraseStep::Within(t) => (t, spoken_wi),
         PhraseStep::CrossLine(fwd) => {
             let Some(work) = s.current_work.as_ref() else { return false };
-            let neighbor = if fwd {
-                (spoken_wi + 1..work.lines.len())
-                    .find(|&i| work.lines[i].timestamp.is_some())
+            // The step must actually MOVE playback. A spoken run crossing a
+            // verse line break stamps its whole window on both lines, so the
+            // immediate neighbor's spans can share the current span's start —
+            // stepping there seeks backward-in-place (MM-Arkangel 2026-07-22,
+            // e pinned at 897.95s). Scan neighbors until one yields a span
+            // strictly past the current span's start (cross_line_pick).
+            let cur_ref = phrase_at_time(&spans, pos)
+                .map(|i| spans[i].start_time)
+                .unwrap_or(spans[0].start_time);
+            let candidates: Box<dyn Iterator<Item = usize>> = if fwd {
+                Box::new(spoken_wi + 1..work.lines.len())
             } else {
-                (0..spoken_wi).rev().find(|&i| work.lines[i].timestamp.is_some())
+                Box::new((0..spoken_wi).rev())
             };
-            match neighbor {
+            let mut picked = None;
+            for nwi in candidates {
+                let line = &work.lines[nwi];
+                if line.timestamp.is_none() {
+                    continue;
+                }
+                let line_start = line.timestamp.as_ref().map(|t| t.start);
+                let nspans = crate::db::queries::open_db()
+                    .map(|conn| {
+                        crate::db::queries::phrase_spans_for_line(&conn, line.id, media)
+                    })
+                    .unwrap_or_default();
+                if let Some(t) = cross_line_pick(&nspans, line_start, cur_ref, fwd) {
+                    picked = Some((t, nwi));
+                    break;
+                }
+            }
+            match picked {
+                Some(x) => x,
                 // Document edge, forward: no next phrase to step to — return
                 // false so the caller falls through to the raw +3.5s seek —
                 // Action semantics win over the step no-op.
@@ -488,24 +547,6 @@ pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
                     Some(i) => (spans[i].start_time, spoken_wi),
                     None => return true,
                 },
-                Some(nwi) => {
-                    let line = &work.lines[nwi];
-                    let line_start = line.timestamp.as_ref().map(|t| t.start);
-                    let nspans = crate::db::queries::open_db()
-                        .map(|conn| {
-                            crate::db::queries::phrase_spans_for_line(&conn, line.id, media)
-                        })
-                        .unwrap_or_default();
-                    let t = if fwd {
-                        nspans.first().map(|sp| sp.start_time).or(line_start)
-                    } else {
-                        nspans.last().map(|sp| sp.start_time).or(line_start)
-                    };
-                    match t {
-                        Some(t) => (t, nwi),
-                        None => return false,
-                    }
-                }
             }
         }
     };
@@ -789,5 +830,50 @@ mod tests {
         assert_eq!(phrase_step_target(&spans, 0, 10.2, false), PhraseStep::CrossLine(false));
         // Deep into span 0: restart it, no cross.
         assert_eq!(phrase_step_target(&spans, 0, 11.5, false), PhraseStep::Within(10.0));
+    }
+
+    #[test]
+    fn phrase_step_skips_spans_tied_to_the_current_window() {
+        // A spoken run crossing a line break duplicates its time window on
+        // every covered span (verse). Stepping onto a tied span is zero
+        // motion — it must be skipped.
+        let spans = [
+            span(10.0, 15.0, 0, 10),
+            span(10.0, 15.0, 11, 20),
+            span(15.0, 18.0, 21, 30),
+        ];
+        // Forward from a tied pair: land on the first strictly-later span.
+        assert_eq!(phrase_step_target(&spans, 0, 11.0, true), PhraseStep::Within(15.0));
+        assert_eq!(phrase_step_target(&spans, 1, 11.0, true), PhraseStep::Within(15.0));
+        // Backward near span 1's start: span 0 is tied — cross the line.
+        assert_eq!(phrase_step_target(&spans, 1, 10.2, false), PhraseStep::CrossLine(false));
+        // Forward when every remaining span is tied: cross the line.
+        let all_tied = [span(10.0, 15.0, 0, 10), span(10.0, 15.0, 11, 20)];
+        assert_eq!(phrase_step_target(&all_tied, 0, 11.0, true), PhraseStep::CrossLine(true));
+    }
+
+    #[test]
+    fn cross_line_pick_requires_strict_motion() {
+        // MM-Arkangel regression (2026-07-22): consecutive verse lines share
+        // one window (897.945–902.347); the forward cross-line target took
+        // the neighbor's first span and seeked BACKWARD to the current
+        // phrase's start. The pick must be strictly later (earlier) than the
+        // current span's start.
+        let tied = [span(897.945, 902.347, 0, 39)];
+        assert_eq!(cross_line_pick(&tied, Some(897.945), 897.945, true), None);
+        let later = [span(902.688, 906.27, 0, 42)];
+        assert_eq!(cross_line_pick(&later, Some(902.688), 897.945, true), Some(902.688));
+        // A tied first span with a later second span: skip to the later one.
+        let mixed = [span(897.945, 902.347, 0, 5), span(902.688, 906.27, 6, 20)];
+        assert_eq!(cross_line_pick(&mixed, Some(897.945), 897.945, true), Some(902.688));
+        // Backward: the neighbor's LAST strictly-earlier span.
+        let prev = [span(893.0, 896.0, 0, 10), span(896.003, 897.104, 11, 27)];
+        assert_eq!(cross_line_pick(&prev, Some(893.0), 897.945, false), Some(896.003));
+        // Backward against a tied window: no pick.
+        assert_eq!(cross_line_pick(&tied, Some(897.945), 897.945, false), None);
+        // No spans on the neighbor line: fall back to its line start, same
+        // strict rule.
+        assert_eq!(cross_line_pick(&[], Some(902.0), 897.945, true), Some(902.0));
+        assert_eq!(cross_line_pick(&[], Some(897.945), 897.945, true), None);
     }
 }
