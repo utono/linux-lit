@@ -198,11 +198,78 @@ fn active_mode(s: &AppState) -> PhraseHighlightMode {
     if s.vocab_loop.is_some() {
         return PhraseHighlightMode::Off;
     }
+    // Session axis: cursor-line display suppresses the karaoke sweep (and
+    // the o/e phrase steps, which fall back to raw seeks).
+    if s.cursor_line_mode {
+        return PhraseHighlightMode::Off;
+    }
     if s.is_prose() {
         s.config.phrase_highlight_prose
     } else {
         s.config.phrase_highlight_verse
     }
+}
+
+/// Pure core of `karaoke_marks_cursor` — see that fn for the semantics.
+pub(crate) fn karaoke_marks_cursor_for(
+    cursor_line_mode: bool,
+    class_mode_on: bool,
+    media_present: bool,
+    media_has_phrases: bool,
+    cursor_has_timestamp: bool,
+) -> bool {
+    !cursor_line_mode
+        && class_mode_on
+        && media_present
+        && media_has_phrases
+        && cursor_has_timestamp
+}
+
+/// Karaoke can paint AT ALL for the current media: axis in karaoke mode is
+/// NOT part of this — it is the media/class capability half (used by the
+/// Alt+p toast). Memoized per media id; DB failure counts as incapable so
+/// the cursor line falls back in (never indicator-less).
+pub fn media_karaoke_capable(s: &mut AppState) -> bool {
+    let class_mode_on = if s.is_prose() {
+        s.config.phrase_highlight_prose.is_on()
+    } else {
+        s.config.phrase_highlight_verse.is_on()
+    };
+    if !class_mode_on {
+        return false;
+    }
+    let Some(media) = s.media_id else { return false };
+    let has = match s.phrase_capable_memo {
+        Some((id, v)) if id == media => v,
+        _ => {
+            let v = crate::db::queries::open_db()
+                .map(|conn| crate::db::queries::media_has_phrase_data(&conn, media))
+                .unwrap_or(false);
+            s.phrase_capable_memo = Some((media, v));
+            v
+        }
+    };
+    has
+}
+
+/// Karaoke is actually marking the CURSOR line right now, so the persistent
+/// cursor-line tint must stay off (the sweep is the position indicator).
+/// Generalizes the prose `prose_no_tint` rule to both classes. Reads the
+/// CLASS CONFIG mode, not `active_mode`: during the vocab drill the sweep is
+/// suppressed but the drill's sentence tint marks position — the cursor tint
+/// must not reappear there.
+pub fn karaoke_marks_cursor(s: &mut AppState) -> bool {
+    if s.cursor_line_mode {
+        return false;
+    }
+    // media_karaoke_capable folds the class-mode and media checks; the pure
+    // karaoke_marks_cursor_for spells out the full five-way rule for tests.
+    let capable = media_karaoke_capable(s);
+    let cursor_has_timestamp = s
+        .work_line_for_buffer(s.current_line)
+        .and_then(|wi| s.current_work.as_ref()?.lines.get(wi))
+        .is_some_and(|l| l.timestamp.is_some());
+    capable && cursor_has_timestamp
 }
 
 /// Per-TimePos driver. Gates: class flag (prose vs verse), sync on,
@@ -875,5 +942,22 @@ mod tests {
         // strict rule.
         assert_eq!(cross_line_pick(&[], Some(902.0), 897.945, true), Some(902.0));
         assert_eq!(cross_line_pick(&[], Some(897.945), 897.945, true), None);
+    }
+
+    #[test]
+    fn karaoke_marks_cursor_truth_table() {
+        // Marks only when: axis karaoke + class mode on + media present with
+        // phrase rows + cursor line timestamped.
+        assert!(karaoke_marks_cursor_for(false, true, true, true, true));
+        // Axis swapped to cursor-line mode: never marks.
+        assert!(!karaoke_marks_cursor_for(true, true, true, true, true));
+        // Class mode Off (manual config edit): cursor line is the indicator.
+        assert!(!karaoke_marks_cursor_for(false, false, true, true, true));
+        // No connected media: fallback to cursor line.
+        assert!(!karaoke_marks_cursor_for(false, true, false, false, true));
+        // Media without phrase rows (un-backfilled edition): fallback.
+        assert!(!karaoke_marks_cursor_for(false, true, true, false, true));
+        // Untimestamped cursor line (front matter): fallback per line.
+        assert!(!karaoke_marks_cursor_for(false, true, true, true, false));
     }
 }

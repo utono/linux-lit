@@ -307,6 +307,12 @@ pub struct AppState {
     /// Keep a pending-phrase paint (seek keybind target) through sync
     /// suppression: TimePos ticks inside this window must not clear the tint.
     pub phrase_paint_hold: Option<std::time::Instant>,
+    /// Session-only display axis: false = karaoke (default every launch),
+    /// true = classic cursor-line display. Alt+p flips it; never persisted.
+    pub cursor_line_mode: bool,
+    /// Memo for "does this media have ANY phrase_timestamps rows" keyed by
+    /// media id; cleared on MPV connection changes. None = not yet checked.
+    pub phrase_capable_memo: Option<(i64, bool)>,
     pub page_turn_overlay: gtk4::Overlay,
     /// Focus cue: the main card's twin of the chat panel's focus rule. See
     /// `card_focus_rule` construction (build_window) and
@@ -2028,6 +2034,8 @@ pub fn build_window(
         phrase_cache: None,
         active_phrase: None,
         phrase_paint_hold: None,
+        cursor_line_mode: false,
+        phrase_capable_memo: None,
         page_turn_overlay: page_turn_overlay.clone(),
         card_focus_rule: card_focus_rule.clone(),
         bottom_clip,
