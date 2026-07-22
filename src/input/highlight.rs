@@ -312,28 +312,14 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     //    + flushes in one call; it never routes through here).
     // Plays/verse instead tint the current line's background persistently.
     // Computed before the buffer borrow below.
-    let prose_dim = PROSE_DIM_OTHER_PARAGRAPHS
-        && state.is_prose()
-        && state.config.show_cursor_line;
-    // In non-dim prose the cursor line carries NO persistent bg tint (the
-    // karaoke tint is the marking); verse keeps the persistent cursor tint.
-    //
-    // EXCEPT on an UNTIMESTAMPED line: there is no phrase to paint, so the
-    // karaoke tint can't mark anything and the cursor would be INVISIBLE. Prose
-    // front matter is routinely untimestamped (TT's title line "TO THE RIGHT
-    // HONOURABLE JOHN LORD SOMERS." has no line_timestamps row), and that line
-    // is exactly where the reader steps with `k` to ADD a start time via `u` —
-    // with no marking it looked like `k` couldn't reach it at all (it could;
-    // the landing was just unmarked). Fall back to the persistent tint there so
-    // the cursor is always visible. Timestamped prose lines are unchanged.
-    let cursor_has_timestamp = state
-        .work_line_for_buffer(state.current_line)
-        .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
-        .is_some_and(|l| l.timestamp.is_some());
-    let prose_no_tint = !PROSE_DIM_OTHER_PARAGRAPHS
-        && state.is_prose()
-        && state.config.show_cursor_line
-        && cursor_has_timestamp;
+    let prose_dim = PROSE_DIM_OTHER_PARAGRAPHS && state.is_prose();
+    // BOTH classes: no persistent cursor tint while karaoke marks the cursor
+    // line (the sweep is the marking) — the prose-only rule generalized now
+    // that verse karaoke is on by default. karaoke_marks_cursor folds in the
+    // untimestamped-line fallback described above, plus media capability and
+    // the Alt+p axis.
+    let karaoke_no_tint =
+        !PROSE_DIM_OTHER_PARAGRAPHS && crate::input::phrase_highlight::karaoke_marks_cursor(state);
     // Consume any leftover flash/hold flags unconditionally so a flag set by
     // the page-set paths (prose_flash_hold) or a raced overlay-close arm can't
     // linger and leak into a later overlay-close flash.
@@ -368,7 +354,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
 
         // Apply fade-out to the old cursor line (if it changed). Prose has no
         // persistent bg tint (dim or flash mode), so there is no fade for it.
-        if state.config.show_cursor_line && !prose_dim && !prose_no_tint {
+        if !prose_dim && !karaoke_no_tint {
         if let Some(old_line) = state.prev_highlight_line.get() {
             if old_line != state.current_line {
                 // Cancel any in-flight cursor fade
@@ -418,7 +404,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 state.cursor_fade_anim = Some(anim);
             }
         }
-        } // show_cursor_line
+        } // cursor fade (skipped while karaoke marks the cursor line)
 
         // Mark the current paragraph. PROSE: dim every OTHER visible paragraph
         // (apply `dim_tag` across the visible range, then undim the current
@@ -429,7 +415,7 @@ pub(crate) fn update_highlight(state: &mut AppState) {
             // dim the whole visible range, then clear it from the current line.
             buffer.apply_tag(tag, &vis_start_iter, &vis_end_iter);
         }
-        if state.config.show_cursor_line {
+        {
             if let Some(line_start) = buffer.iter_at_line(state.current_line as i32) {
                 let mut line_end = line_start;
                 if !line_end.ends_line() {
@@ -437,9 +423,9 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                 }
                 if prose_dim {
                     buffer.remove_tag(tag, &line_start, &line_end);
-                } else if !prose_no_tint {
-                    // Non-dim prose has no persistent cursor tint — the
-                    // karaoke tint is the only marking.
+                } else if !karaoke_no_tint {
+                    // No persistent cursor tint while karaoke marks the
+                    // cursor line — the sweep is the only marking.
                     buffer.apply_tag(cl_tag, &line_start, &line_end);
                 }
                 // Intentional observability hook (NOT stale per-keystroke trace):
@@ -515,7 +501,13 @@ pub(crate) fn flush_pending_prose_flash(state: &mut AppState) {
     if !state.pending_prose_flash.replace(false) {
         return;
     }
-    if PROSE_DIM_OTHER_PARAGRAPHS || !state.is_prose() || !state.config.show_cursor_line {
+    // Flash only where karaoke is the marking (no persistent tint to look
+    // at); with the axis on cursor-line mode — or any karaoke fallback — the
+    // persistent tint already re-orients the eye.
+    if PROSE_DIM_OTHER_PARAGRAPHS
+        || !state.is_prose()
+        || !crate::input::phrase_highlight::karaoke_marks_cursor(state)
+    {
         return;
     }
     let hold = state.prose_flash_hold.replace(false);

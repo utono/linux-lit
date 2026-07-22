@@ -491,6 +491,11 @@ fn main() {
                     MpvEvent::ConnectionStatus(connected) => {
                         let mut s = state_for_events.borrow_mut();
                         s.mpv_connected = connected;
+                        // Axis fallback: capability may have just changed
+                        // (connect/disconnect), so re-evaluate the cursor
+                        // tint now, not on the next nav key.
+                        s.phrase_capable_memo = None;
+                        crate::input::navigation::update_highlight_only(&mut s);
                         // Sync mpv's speed to the app's state on every connect.
                         // `playback_speed` starts at 1.0, so a REUSED mpv still
                         // holding a previous session's cycled speed (e.g. 1.3x)
