@@ -46,6 +46,10 @@ pub struct AskCard {
     /// so `open` insets the card to the same column. Set by the journal
     /// overlay's `set_prose_reading`; gloss/synopsis leave the default false.
     prose_reading: Cell<bool>,
+    /// Fixed container width for the right-floated ask card (gloss 2-column
+    /// layout). 0 = unset (the card uses the overlay's prose-column insets in
+    /// `open_in_mode`). Set by `AskCardHost` in float mode.
+    float_width: Cell<i32>,
 }
 
 impl AskCard {
@@ -138,6 +142,7 @@ impl AskCard {
             vim: std::cell::RefCell::new(None),
             blink: std::cell::RefCell::new(None),
             prose_reading: Cell::new(false),
+            float_width: Cell::new(0),
         }
     }
 
@@ -165,6 +170,22 @@ impl AskCard {
             self.scrolled.set_min_content_height(160);
             self.scrolled.set_max_content_height(320);
         }
+    }
+
+    /// Pin the ask-card container to a FIXED width (the right-floated gloss
+    /// layout). `width <= 0` clears the pin (`width_request = -1`), restoring
+    /// the default full-width-column behavior. Also skips the prose-column
+    /// margin insetting in `open_in_mode` (a fixed-width float panel is inset by
+    /// its overlay margin, not by card_width/5).
+    pub fn set_float_width(&self, width: i32) {
+        self.float_width.set(width.max(0));
+        self.container.set_width_request(if width > 0 { width } else { -1 });
+    }
+
+    /// The last float width set (0 if unset). The host uses it to size the
+    /// gloss-card margin reservation.
+    pub fn float_width(&self) -> i32 {
+        self.float_width.get()
     }
 
     /// Reveal with heading + hint, clear the field, re-align margins to the
@@ -217,7 +238,13 @@ impl AskCard {
         // hides it on INSERT. An empty legend string opts out entirely.
         self.legend.set_text(legend);
         self.legend.set_visible(!legend.is_empty());
-        if card_width > 0 {
+        if self.float_width.get() > 0 {
+            // Float mode: fixed-width right panel. Keep the container's pinned
+            // width; use a uniform inner inset (the panel border is the card
+            // edge, not a card/5 column margin).
+            self.container.set_margin_start(16);
+            self.container.set_margin_end(16);
+        } else if card_width > 0 {
             // Match the host overlay's text column: card/8 when the journal is
             // showing a prose work at the main reading card's margin, card/5
             // otherwise (see `prose_reading`).
