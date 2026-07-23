@@ -1892,13 +1892,6 @@ fn handle_journal_key(
     }
 
     // Ctrl+Alt+\: open the dedicated add-vocab card OVER the journal overlay.
-    // Checked BEFORE the plain Ctrl+\ picker below so the three-modifier chord
-    // wins. It floats above the whole overlay chain and restores this mode.
-    if is_ctrl && is_alt && key_name == "backslash" {
-        crate::input::actions::vocab_add::open(state);
-        return true;
-    }
-
     // Ctrl+\: open the work-wide Q&A picker. Checked BEFORE the plain Alt/Ctrl
     // blocks so the chord wins over any single-modifier meaning of `\`.
     // Lists every page in the work; confirm lands on the chosen page's band,
@@ -2002,9 +1995,12 @@ fn handle_journal_key(
                 crate::input::actions::journal::begin_ask(state);
                 return true;
             }
-            // Ctrl+r: moved to Ctrl+a. Consumed no-op so the chord can't fall
-            // through to the term-filter intercept or the plain-r vocab arm.
-            "r" => return true,
+            // Ctrl+r: add a vocab word (uniform with the reader + every overlay
+            // — 2026-07-23 consolidation). Ask-a-new-Q&A is on Ctrl+a above.
+            "r" => {
+                crate::input::actions::vocab_add::open(state);
+                return true;
+            }
             // Ctrl+w: open the rewrite TARGET chooser (q question / a answer / b
             // both) for the displayed Q&A (moved off plain `R`). Ctrl+w is free
             // in this handler.
