@@ -1631,12 +1631,18 @@ impl JournalOverlay {
         legend: &str,
         block_fill: &str,
         block_fg: &str,
+        fill_fraction: f32,
     ) {
         // The host reveals the ask card (a vim editor, NORMAL by default), hides
         // the nav footer, shrinks the scroll viewport (occlusion fix), recomputes
         // the clip. apply_font re-fonts the now-visible input. block_fill/fg are
         // the NORMAL-mode block-cursor colors. `legend` is centered how-to text
         // over the empty box, cleared on INSERT.
+        //
+        // `fill_fraction` is the per-work-type ask-card proportion (from
+        // `Config::ask_fill_fraction_for`); pinning it here revives the host's
+        // input-fill read block (journal asks are the pinned non-float path).
+        self.ask_host.set_input_fill_fraction(fill_fraction);
         self.ask_host.open(title, hint, legend, block_fill, block_fg);
         self.apply_font();
 
