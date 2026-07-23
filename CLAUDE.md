@@ -111,6 +111,21 @@ Spec: `docs/superpowers/specs/2026-07-22-superpowers-workflow-integration-design
   `superpowers:subagent-driven-development`, one worktree per task;
   (3) merge serially from the main checkout; (4) run the e2e suite
   once at the end, not per branch.
+- **Effort-level retrospective.** After finishing a plan (branch merged
+  or ready), append a short **effort-level trade-off** note: (1) what
+  effort/model tiers this run actually used (which tasks got
+  opus/sonnet/haiku, how many review + fix round-trips, whether a
+  root-cause investigation was needed); (2) a ROUGH, explicitly-labeled
+  estimate of the time/token savings a lower effort level would have
+  given (e.g. "skipping the adversarial review + the two headless
+  re-verifications ≈ 30–40% fewer subagent turns"); (3) what that lower
+  level would have RISKED here — tie it to concrete outcomes from this
+  run (a bug the review/headless pass actually caught, e.g. the
+  blank-journal-body regression, is evidence the higher level paid off;
+  a clean pass with zero findings is evidence a lower level would have
+  sufficed). Estimates are directional, not measured — say so. Keep it
+  to a few sentences; the goal is to help calibrate effort on the NEXT
+  similar task, not to instrument this one precisely.
 
 ## Parallel Claude Code Sessions (git worktrees)
 
