@@ -11,6 +11,7 @@ pub const TITLE: &str = "Gloss keybinds";
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+f", "corpus_search: all Q&As / glosses"),
     ("Ctrl+a", "passage Q&A: floats here → answer in journal"),
+    ("Ctrl+Tab", "toggle focus: ask card ↔ gloss card (2-col)"),
     ("Ctrl+r", "vocab_add_card: add a vocab word"),
     ("Ctrl+w", "begin_rewrite: Claude rewrite of this gloss"),
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
