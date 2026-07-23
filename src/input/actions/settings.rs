@@ -59,7 +59,7 @@ pub(crate) fn apply_settings_change(
             s.config.transition_style = style;
         }
         SettingsChange::CursorLine(val) => {
-            s.cursor_line_mode = val;
+            s.set_cursor_line_mode(val);
             if val {
                 crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
             }
@@ -408,7 +408,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.text_margins = snap_tm;
     s.config.navigation_mode = snap_nm;
     s.config.transition_style = snap_ts;
-    s.cursor_line_mode = snap_cl;
+    s.set_cursor_line_mode(snap_cl);
     if snap_cl {
         crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
     }
@@ -445,7 +445,7 @@ pub(crate) fn open_settings(state: &Rc<RefCell<crate::app::AppState>>) {
         let tm = s.config.text_margins;
         let nm = s.config.navigation_mode;
         let ts = s.config.transition_style;
-        let cl = s.cursor_line_mode;
+        let cl = s.cursor_line_mode();
         let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
         drop(s);
         let mut s = state.borrow_mut();
@@ -477,7 +477,7 @@ pub(crate) fn open_settings_from_overlay(
     let tm = s.config.text_margins;
     let nm = s.config.navigation_mode;
     let ts = s.config.transition_style;
-    let cl = s.cursor_line_mode;
+    let cl = s.cursor_line_mode();
     let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
     drop(s);
     let mut s = state.borrow_mut();
@@ -535,14 +535,16 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.text_margins = tm;
     s.config.navigation_mode = nm;
     s.config.transition_style = ts;
-    s.cursor_line_mode = false;
+    // Reset restores the CLASS default: prose = karaoke, verse = cursor line.
+    let cl_default = s.cursor_line_mode_default();
+    s.set_cursor_line_mode(cl_default);
     if s.dialogue_formatting_active {
         crate::app::formatting::apply_dialogue_formatting(&mut s);
     }
     crate::input::navigation::update_highlight_only(&mut s);
     // Reset does not touch the preferred voice; keep the row showing it.
     let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
-    s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, false, &voice);
+    s.settings_overlay.update_displayed_values(ls, cw, tm, nm, ts, cl_default, &voice);
 }
 
 /// Index of the next theme in a cycle list of length `len`.

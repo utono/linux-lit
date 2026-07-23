@@ -307,9 +307,13 @@ pub struct AppState {
     /// Keep a pending-phrase paint (seek keybind target) through sync
     /// suppression: TimePos ticks inside this window must not clear the tint.
     pub phrase_paint_hold: Option<std::time::Instant>,
-    /// Session-only display axis: false = karaoke (default every launch),
-    /// true = classic cursor-line display. Alt+p flips it; never persisted.
-    pub cursor_line_mode: bool,
+    /// Session-only display axis, per work class: false = karaoke, true =
+    /// classic cursor-line display. Launch defaults differ — prose opens in
+    /// karaoke, verse opens in cursor-line (sweep stopped until Alt+p opts
+    /// in). Alt+p flips the CURRENT class's flag; never persisted. Read via
+    /// `cursor_line_mode()` / write via `set_cursor_line_mode()`.
+    pub cursor_line_mode_prose: bool,
+    pub cursor_line_mode_verse: bool,
     /// Memo for "does this media have ANY phrase_timestamps rows" keyed by
     /// media id; cleared on MPV connection changes. None = not yet checked.
     pub phrase_capable_memo: Option<(i64, bool)>,
@@ -844,6 +848,31 @@ impl AppState {
         self.current_work.as_ref()
             .map(|w| crate::db::line_types::is_prose_work(&w.work_type))
             .unwrap_or(true)
+    }
+
+    /// The display-axis flag for the CURRENT work's class: true = cursor-line
+    /// display (karaoke sweep suppressed). Prose defaults to karaoke, verse
+    /// to cursor line; Alt+p flips per class via `set_cursor_line_mode`.
+    pub fn cursor_line_mode(&self) -> bool {
+        if self.is_prose() {
+            self.cursor_line_mode_prose
+        } else {
+            self.cursor_line_mode_verse
+        }
+    }
+
+    pub fn set_cursor_line_mode(&mut self, v: bool) {
+        if self.is_prose() {
+            self.cursor_line_mode_prose = v;
+        } else {
+            self.cursor_line_mode_verse = v;
+        }
+    }
+
+    /// The launch default for the current class (settings "reset" target):
+    /// prose = karaoke (false), verse = cursor line (true).
+    pub fn cursor_line_mode_default(&self) -> bool {
+        !self.is_prose()
     }
 
     /// True when the work paginates one `(div1,div2)` section per page rather
@@ -2034,7 +2063,8 @@ pub fn build_window(
         phrase_cache: None,
         active_phrase: None,
         phrase_paint_hold: None,
-        cursor_line_mode: false,
+        cursor_line_mode_prose: false,
+        cursor_line_mode_verse: true,
         phrase_capable_memo: None,
         page_turn_overlay: page_turn_overlay.clone(),
         card_focus_rule: card_focus_rule.clone(),

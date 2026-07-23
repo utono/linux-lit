@@ -199,8 +199,9 @@ fn active_mode(s: &AppState) -> PhraseHighlightMode {
         return PhraseHighlightMode::Off;
     }
     // Session axis: cursor-line display suppresses the karaoke sweep (and
-    // the o/e phrase steps, which fall back to raw seeks).
-    if s.cursor_line_mode {
+    // the o/e phrase steps, which fall back to raw seeks). Per class —
+    // verse launches with the sweep off, prose with it on.
+    if s.cursor_line_mode() {
         return PhraseHighlightMode::Off;
     }
     if s.is_prose() {
@@ -259,7 +260,7 @@ pub fn media_karaoke_capable(s: &mut AppState) -> bool {
 /// suppressed but the drill's sentence tint marks position — the cursor tint
 /// must not reappear there.
 pub fn karaoke_marks_cursor(s: &mut AppState) -> bool {
-    if s.cursor_line_mode {
+    if s.cursor_line_mode() {
         return false;
     }
     // media_karaoke_capable folds the class-mode and media checks; the pure

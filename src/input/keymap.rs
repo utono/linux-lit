@@ -930,7 +930,7 @@ fn handle_settings_key(
                 "h" | "Left" => {
                     let (ls, cw, tm, nm, ts, cl) = {
                         let s = state.borrow();
-                        (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.cursor_line_mode)
+                        (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.cursor_line_mode())
                     };
                     let change = state.borrow_mut().settings_overlay.adjust_value(-1, ls, cw, tm, nm, ts, cl);
                     crate::input::actions::settings::apply_settings_change(state, change);
@@ -939,7 +939,7 @@ fn handle_settings_key(
                 "l" | "Right" => {
                     let (ls, cw, tm, nm, ts, cl) = {
                         let s = state.borrow();
-                        (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.cursor_line_mode)
+                        (s.config.line_spacing, s.config.column_width, s.config.text_margins, s.config.navigation_mode, s.config.transition_style, s.cursor_line_mode())
                     };
                     let change = state.borrow_mut().settings_overlay.adjust_value(1, ls, cw, tm, nm, ts, cl);
                     crate::input::actions::settings::apply_settings_change(state, change);
@@ -4201,13 +4201,14 @@ fn dispatch_action(
         ConcordanceNext => crate::input::actions::concordance::concordance_next(state, tokio_handle),
         ConcordancePrev => crate::input::actions::concordance::concordance_prev(state, tokio_handle),
         TogglePhraseHighlight => {
-            // Two-state axis swap: karaoke display <-> cursor-line display.
-            // Session-only (never saved); every launch starts in karaoke.
-            // The per-class phrase/line WIDTH stays config-only.
+            // Two-state axis swap: karaoke display <-> cursor-line display,
+            // per work class (prose launches karaoke, verse cursor-line).
+            // Session-only (never saved). Phrase/line WIDTH stays config-only.
             let mut s = state.borrow_mut();
-            s.cursor_line_mode = !s.cursor_line_mode;
+            let flipped = !s.cursor_line_mode();
+            s.set_cursor_line_mode(flipped);
             crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
-            let text = if s.cursor_line_mode {
+            let text = if flipped {
                 "Cursor line"
             } else if !crate::input::phrase_highlight::media_karaoke_capable(&mut s) {
                 "Karaoke (no phrase audio — cursor line kept)"
