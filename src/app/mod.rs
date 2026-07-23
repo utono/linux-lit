@@ -1555,12 +1555,21 @@ pub fn build_window(
     running_head_work.set_valign(gtk4::Align::Center);
     running_head_work.set_hexpand(true);
     running_head_work.add_css_class("running-head-work");
+    // Keep a visible gap between the abbrev and the position even when the
+    // running-head strip renders at collapsed width — i.e. during the ~0.5s
+    // cached-snapshot launch splash, before the card is laid out to full width
+    // and hexpand spreads the two labels apart. Without this the two labels
+    // butt together and the splash pill reads "TTChapter 6". In the laid-out
+    // card the labels are ~900px apart, so the 16px is absorbed by hexpand slack
+    // and invisible. (The symmetric margin_start on the scene label balances it.)
+    running_head_work.set_margin_end(16);
 
     let running_head_scene = gtk4::Label::new(None);
     running_head_scene.set_halign(gtk4::Align::End);
     running_head_scene.set_valign(gtk4::Align::Center);
     running_head_scene.set_hexpand(true);
     running_head_scene.add_css_class("running-head-scene");
+    running_head_scene.set_margin_start(16);
 
     top_spacer.append(&running_head_work);
     top_spacer.append(&running_head_scene);
