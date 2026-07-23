@@ -790,6 +790,11 @@ pub struct AppState {
     /// text, not the pill's. `Some` only while borrowed; `None` when free or the
     /// pill is not persistent.
     pub chapter_toast_saved: Rc<RefCell<Option<String>>>,
+    /// Ask-card focus in 2-col float layout: `true` = the ask card (vim editor)
+    /// has input; `false` = the gloss/journal card underneath has input for
+    /// read-nav. Toggled by Ctrl+Tab; only meaningful while an ask card is open
+    /// in float mode. Reset to `true` on every ask open and close.
+    pub ask_card_focus: bool,
     pub speed_toast: gtk4::Label,
     /// Centered bottom toast for search boundaries ("no earlier/later
     /// occurrence"). Placed like chapter_toast (centered, 32px from the bottom)
@@ -2337,6 +2342,7 @@ pub fn build_window(
         last_corpus: crate::input::corpus_search::Corpus::Journal,
         corpus_search_return_mode: InputMode::Reader,
         input_mode: InputMode::Reader,
+        ask_card_focus: true,
         tts_batch_running: std::cell::Cell::new(false),
     }));
 
