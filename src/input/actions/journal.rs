@@ -435,6 +435,14 @@ fn source_paragraphs(source_text: &str, citation: Option<&str>) -> JournalSource
                     verse.push(seg.to_string());
                 }
             }
+        } else {
+            // Untagged line: vocab Q&As store the cursor segment as PLAIN text
+            // (no <speaker>/<segment> markup), so treat bare lines as quote
+            // lines — otherwise a vocab entry renders only its citation.
+            let seg = raw.trim();
+            if !seg.is_empty() {
+                verse.push(seg.to_string());
+            }
         }
     }
     if !verse.is_empty() {
@@ -512,15 +520,15 @@ fn move_target_rows(s: &AppState, current: &JournalBand) -> Vec<MoveTargetRow> {
         .collect()
 }
 
-/// Load the current band's pages from the DB into `journal.pages`, clamp the
-/// index, and render the current page (or the empty-band card).
-pub(crate) fn render_current(s: &mut AppState) {
+/// Query the current band's page list from the DB (no rendering, no state
+/// writes). Shared by `render_current` and `land_on_page` — the latter needs
+/// the list to locate a target id BEFORE the single render.
+fn load_band_pages(s: &AppState) -> Vec<crate::db::journal::JournalPage> {
     let work_abbrev = current_work_abbrev(s);
-
     let conn = crate::db::queries::open_db().ok();
     // The overlay has no title header anymore (the footer identifies the work +
     // chapter), so each band only needs its page list.
-    let pages = match s.journal_band.clone() {
+    match s.journal_band.clone() {
         JournalBand::Work => conn
             .and_then(|c| crate::db::journal::find_work_pages(&c, &work_abbrev).ok())
             .unwrap_or_default(),
@@ -538,7 +546,19 @@ pub(crate) fn render_current(s: &mut AppState) {
         JournalBand::Author(author_name) => conn
             .and_then(|c| crate::db::journal::find_author_pages(&c, &author_name).ok())
             .unwrap_or_default(),
-    };
+    }
+}
+
+/// Load the current band's pages from the DB into `journal.pages`, clamp the
+/// index, and render the current page (or the empty-band card).
+pub(crate) fn render_current(s: &mut AppState) {
+    let t_total = std::time::Instant::now();
+    let work_abbrev = current_work_abbrev(s);
+
+    let t_query = std::time::Instant::now();
+    let pages = load_band_pages(s);
+
+    let band_query_ms = t_query.elapsed().as_millis();
 
     let count = pages.len();
     if count == 0 {
@@ -622,6 +642,7 @@ pub(crate) fn render_current(s: &mut AppState) {
 
     let head = crate::app::scene_synopsis::cursor_head(s);
     s.journal_overlay.set_running_head(&head.0, &head.1);
+    let t_show = std::time::Instant::now();
     s.journal_overlay.show_page(
         &footer_left,
         s.journal.page_index,
@@ -634,11 +655,15 @@ pub(crate) fn render_current(s: &mut AppState) {
         h,
     );
 
+    let show_page_ms = t_show.elapsed().as_millis();
+
     s.journal.pages = pages;
     // Color any paragraphs whose TTS MP3 is already cached, like the gloss
     // overlay (must run after the page renders + s.journal.pages is set so the
     // entry id resolves).
+    let t_recolor = std::time::Instant::now();
     crate::input::actions::gloss::recolor_journal_cached_blocks(s);
+    let recolor_ms = t_recolor.elapsed().as_millis();
     // Re-apply any active overlay search so a `/`-typed pattern keeps
     // highlighting across Ctrl+n/p band navigation. Re-collect against the NEW
     // entry's WHOLE-entry text (not the rendered buffer), so matches on later
@@ -646,7 +671,16 @@ pub(crate) fn render_current(s: &mut AppState) {
     reapply_overlay_search_whole_entry(s);
     // Show the diff vs the entry's last stored revision (or clear if none), so
     // landing on an entry always highlights what its last rewrite changed.
+    let t_diff = std::time::Instant::now();
     refresh_entry_diff_highlight(s);
+    crate::log_fmt!(
+        "JOURNAL-TIMING: band_query={}ms show_page={}ms recolor={}ms diff={}ms total={}ms",
+        band_query_ms,
+        show_page_ms,
+        recolor_ms,
+        t_diff.elapsed().as_millis(),
+        t_total.elapsed().as_millis()
+    );
 }
 
 /// Re-collect the active overlay search's pattern against the CURRENT entry's
@@ -1296,12 +1330,31 @@ fn flat_step(pos: usize, delta: i32, len: usize) -> Option<usize> {
 /// the same way.
 fn land_on_page(s: &mut AppState, band: JournalBand, target_id: i64) {
     s.journal_band = band;
-    s.journal.page_index = 0;
-    render_current(s); // loads the band's pages into s.journal.pages
-    if let Some(pos) = s.journal.pages.iter().position(|p| p.id == target_id) {
-        s.journal.page_index = pos;
-        render_current(s);
-    }
+    // Locate the target BEFORE rendering. The old flow fully rendered page 0
+    // (pagination + TTS recolor + landing rewrite-diff) just to load the page
+    // list, then re-rendered at the target — twice the work and a visible
+    // flash of the wrong entry on every Ctrl+j entry-hit open.
+    s.journal.page_index = load_band_pages(s)
+        .iter()
+        .position(|p| p.id == target_id)
+        .unwrap_or(0);
+    render_current(s);
+}
+
+/// Open the journal overlay from the reader landed on entry `entry_id` in its
+/// `(div1, div2)` scene band — the same sequence as the reader's Ctrl+j
+/// entry-hit path (prior-session cleanup, return_pos, entry_page_id peek
+/// semantics). Used by the vocab Q&A flow to reveal a stored or freshly saved
+/// entry.
+pub(crate) fn open_overlay_at_entry(s: &mut AppState, div1: i64, div2: i64, entry_id: i64) {
+    s.journal.filter = None;
+    s.journal_overlay.clear_search_tags();
+    s.journal.search = None;
+    s.journal.last_pattern = None;
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.input_mode = InputMode::JournalOverlay;
+    land_on_page(s, JournalBand::Scene(div1, div2), entry_id);
+    s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
 }
 
 /// Within the CURRENT band (already loaded by a preceding `render_current`),
@@ -1454,6 +1507,10 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
     s.journal_band = JournalBand::Work;
     s.journal.page_index = 0;
     render_current(&mut s);
+    // Band jumps (Alt+s/w/a) browse Q&As fresh: drop the landed entry's
+    // last-rewrite diff tint render_current just painted — that highlight is
+    // for rewrite/restore landings, not band browsing.
+    s.journal_overlay.clear_rewrite_diff();
 }
 
 /// Switch to the Scene band for the main card's current cursor line and render
@@ -1477,6 +1534,9 @@ pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
     s.journal_band = JournalBand::Scene(d1, d2);
     s.journal.page_index = 0;
     render_current(&mut s);
+    // Band jumps browse fresh — no landed-entry rewrite-diff tint (see
+    // nav_to_work_band).
+    s.journal_overlay.clear_rewrite_diff();
 }
 
 /// Switch to the Author band (corpus-scope pages for the current work's author)
@@ -1503,6 +1563,9 @@ pub(crate) fn nav_to_author_band(state: &Rc<RefCell<AppState>>) {
     s.journal_band = JournalBand::Author(author);
     s.journal.page_index = 0;
     render_current(&mut s);
+    // Band jumps browse fresh — no landed-entry rewrite-diff tint (see
+    // nav_to_work_band).
+    s.journal_overlay.clear_rewrite_diff();
 }
 
 /// Set up the journal overlay for a passage Q&A and open the ask card.
@@ -2648,7 +2711,7 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
         .unwrap_or_default();
 
     if pages.is_empty() {
-        crate::input::navigation::show_chapter_toast_secs(&s, "No journal pages yet — press r to ask", 3);
+        crate::input::navigation::show_chapter_toast_secs(&s, "No journal pages yet — press Ctrl+a to ask", 3);
         return false;
     }
 

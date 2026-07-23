@@ -127,14 +127,12 @@ pub enum Action {
     VocabPopupPrev,
     HideVocabPopup,
     /// Ask Claude about the vocab popup's current word in the cursor
-    /// segment and across the author's corpus; stores a kind='vocab'
-    /// journal Q&A and renders it in the popup (R — gated on popup visible
-    /// + a vocab word on the cursor line; silent no-op otherwise).
+    /// segment and across the author's corpus (Ctrl+r — gated on popup
+    /// visible + a vocab word on the cursor line; silent no-op otherwise).
+    /// Stores a kind='vocab' journal Q&A: a stored answer opens the journal
+    /// overlay on it immediately; a fresh ask holds a "Journal Q&A - <word>"
+    /// toast for the API round-trip, then opens the overlay on the entry.
     VocabJournalAsk,
-    /// Page the popup's Journal answer forward / backward (Ctrl+n /
-    /// Ctrl+p; no-op outside the Journal view or when it fits one page).
-    VocabJournalPageNext,
-    VocabJournalPagePrev,
     JumpToNextVocab,
     JumpToPrevVocab,
     ConcordanceNext,
@@ -255,6 +253,7 @@ pub enum Action {
     ToggleNavTest,
     CopyLineMappingId,
     CopyWorkInfo,
+    CopyWorkDivision,
     EscapeReaderMode,
 
     // Multi-key chords (entry — completion handled by KeyState)
@@ -316,8 +315,6 @@ impl Action {
             | Action::VocabPopupPrev
             | Action::HideVocabPopup
             | Action::VocabJournalAsk
-            | Action::VocabJournalPageNext
-            | Action::VocabJournalPagePrev
             | Action::JumpToNextVocab
             | Action::JumpToPrevVocab
             | Action::ToggleVocabHighlight
@@ -401,6 +398,7 @@ impl Action {
             | Action::ToggleNavTest
             | Action::CopyLineMappingId
             | Action::CopyWorkInfo
+            | Action::CopyWorkDivision
             | Action::EscapeReaderMode
             | Action::PendingG
             | Action::SearchNextMatch
@@ -471,8 +469,6 @@ impl Action {
             Action::VocabPopupPrev => "VocabPopupPrev",
             Action::HideVocabPopup => "HideVocabPopup",
             Action::VocabJournalAsk => "VocabJournalAsk",
-            Action::VocabJournalPageNext => "VocabJournalPageNext",
-            Action::VocabJournalPagePrev => "VocabJournalPagePrev",
             Action::JumpToNextVocab => "JumpToNextVocab",
             Action::JumpToPrevVocab => "JumpToPrevVocab",
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
@@ -544,6 +540,7 @@ impl Action {
             Action::ToggleNavTest => "ToggleNavTest",
             Action::CopyLineMappingId => "CopyLineMappingId",
             Action::CopyWorkInfo => "CopyWorkInfo",
+            Action::CopyWorkDivision => "CopyWorkDivision",
             Action::EscapeReaderMode => "EscapeReaderMode",
             Action::PendingG => "PendingG",
             Action::SearchNextMatch => "SearchNextMatch",

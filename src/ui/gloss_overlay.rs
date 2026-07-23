@@ -149,6 +149,11 @@ pub struct GlossOverlay {
     /// single-page full render (echoes/pron intact, exactly as before pagination)
     /// and so a re-show can rebuild blocks. Set by `show_gloss_with_color`.
     current_gloss: RefCell<String>,
+    /// True while the displayed work is prose (`display_work` sets it from
+    /// `is_prose_work`). Gates `join_prose_segments` at the gloss render entry
+    /// points, so a prose passage's per-sentence `<segment>`s wrap as one
+    /// paragraph instead of rendering verse-style one row per segment.
+    prose_source: Cell<bool>,
     /// Source line-number annotations the open gloss was rendered with. Stored so
     /// each page render can re-pass them to `populate_gloss_buffer`. (Glosses then
     /// clear the produced numbers — verse numbers belong only to the main reading
@@ -657,6 +662,7 @@ impl GlossOverlay {
             paginated_mode: Cell::new(PaginatedMode::Synopsis),
             gloss_block_markups: RefCell::new(Vec::new()),
             current_gloss: RefCell::new(String::new()),
+            prose_source: Cell::new(false),
             gloss_source_line_numbers: RefCell::new(Vec::new()),
             current_synopsis: RefCell::new(String::new()),
             ask_host,
@@ -1495,7 +1501,27 @@ impl GlossOverlay {
         self.apply_font();
     }
 
+    /// Set by `display_work` per work: prose works get their adjacent source
+    /// `<segment>`s merged into one wrapping paragraph at the render entry
+    /// points below (`join_prose_segments`); verse works keep per-segment rows.
+    pub fn set_prose_source(&self, prose: bool) {
+        self.prose_source.set(prose);
+    }
+
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)], head: (&str, &str)) {
+        // Prose: merge adjacent source segments BEFORE anything derives from the
+        // markup — `current_gloss`, blocks, pagination measurement, and the
+        // whole-entry text basis all read the stored (joined) string, so every
+        // consumer stays consistent. External diff/search bases computed on the
+        // RAW markup still align: `join_prose_segments` preserves rendered char
+        // offsets 1:1 (see its doc comment).
+        let joined_gloss;
+        let gloss: &str = if self.prose_source.get() {
+            joined_gloss = crate::ui::gloss_render::join_prose_segments(gloss);
+            &joined_gloss
+        } else {
+            gloss
+        };
         // No synopsis label bolding in gloss view.
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.container.set_width_request(card_width);
@@ -1606,6 +1632,15 @@ impl GlossOverlay {
     }
 
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
+        // Same prose segment-merge as `show_gloss_with_color`, so the loading
+        // card's passage reads identically to the result card's source block.
+        let joined_doc;
+        let passage_doc: &str = if self.prose_source.get() {
+            joined_doc = crate::ui::gloss_render::join_prose_segments(passage_doc);
+            &joined_doc
+        } else {
+            passage_doc
+        };
         self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
         self.blocks.borrow_mut().clear();

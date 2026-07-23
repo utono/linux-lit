@@ -3044,11 +3044,16 @@ pub(crate) fn toggle_source_loop(state: &Rc<RefCell<AppState>>) {
     arm_source_loop(state, src, current_abbrev);
 }
 
-/// `space` in the gloss/journal overlays: loop the DISPLAYED passage's source
-/// audio on the same dedicated loop mpv the transcript uses. Unlike the
-/// transcript toggle (pause/RESUME), toggling back on always RESTARTS from
-/// the source's start time — the main card's Space semantics (each press
-/// plays from the start). Playing → pause; paused or idle → (re)arm.
+/// Loop the DISPLAYED passage's source audio on the same dedicated loop mpv
+/// the transcript uses. Unlike the transcript toggle (pause/RESUME), toggling
+/// back on always RESTARTS from the source's start time — the main card's
+/// Space semantics (each press plays from the start). Playing → pause; paused
+/// or idle → (re)arm.
+///
+/// UNBOUND since the shared overlay TTS binds took Space in the gloss/journal
+/// overlays (synopsis is the reference); kept intact as the rebind candidate
+/// if the source loop gets a new key.
+#[allow(dead_code)]
 pub(crate) fn toggle_overlay_source_loop(state: &Rc<RefCell<AppState>>) {
     {
         let mut s = state.borrow_mut();

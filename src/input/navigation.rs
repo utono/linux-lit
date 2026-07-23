@@ -2721,11 +2721,31 @@ pub(crate) fn show_persistent_chapter_toast(state: &AppState, text: &str) {
 /// until the persistent flag is toggled off or a work switch clears it. Bumps
 /// `chapter_toast_gen` so any in-flight transient hide-timer becomes a no-op.
 pub(crate) fn show_chapter_toast_persistent(state: &AppState, text: &str) {
+    // Bump the generation so any pending timed hide from an earlier
+    // `show_chapter_toast_secs` becomes a superseded no-op — without this a
+    // 3s timer armed just before us takes the persistent toast down
+    // mid-flight (the "Synthesizing…" pill vanishing before synth finished).
     let gen = state.chapter_toast_gen.get().wrapping_add(1);
     state.chapter_toast_gen.set(gen);
     log_fmt!("CHAPTER_TOAST: show persistent gen={} text={:?}", gen, text);
+    begin_chapter_toast_borrow(state);
     state.chapter_toast.set_text(text);
     state.chapter_toast.set_visible(true);
+}
+
+/// Dismiss the chapter-toast strip NOW, restoring the act/scene pill the same
+/// way a timed toast's expiry would. Bumps the generation so any in-flight
+/// timed hide stays a superseded no-op. The explicit-dismiss pair of
+/// `show_chapter_toast_persistent`.
+pub(crate) fn hide_chapter_toast(state: &AppState) {
+    let gen = state.chapter_toast_gen.get().wrapping_add(1);
+    state.chapter_toast_gen.set(gen);
+    log_fmt!("CHAPTER_TOAST: hide explicit gen={}", gen);
+    restore_chapter_toast(
+        &state.chapter_toast,
+        &state.chapter_toast_borrowed,
+        &state.chapter_toast_saved,
+    );
 }
 
 /// Keep the persistent chapter toast in sync with the cursor: recompute its

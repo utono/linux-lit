@@ -368,10 +368,8 @@ pub fn show_synopsis(state: &mut AppState) {
         "SYNOPSIS: show current_line={} divs=({},{}) cache_hit={}",
         state.current_line, div1, div2, state.synopsis_cache.contains_key(&(div1, div2))
     ));
-    // Reusing the shared popup for synopsis: clear any journal Q&A state so an
-    // in-flight reply can't clobber the synopsis and R over a synopsis starts
-    // from a clean Definition view.
-    state.vocab_popup.journal = None;
+    // Reusing the shared popup for synopsis: reset the view so R over a
+    // synopsis starts from a clean Definition view.
     state.vocab_popup.view = crate::ui::vocab_popup::VocabView::Definition;
     if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
         let scene_label = synopsis_label(state, div1, div2);

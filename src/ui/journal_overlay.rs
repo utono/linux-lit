@@ -742,7 +742,7 @@ impl JournalOverlay {
             // Empty band: a bare message, no navigable paragraphs.
             self.page_is_note.set(false);
             self.note_blocks.borrow_mut().clear();
-            self.view.buffer().set_text("No pages yet \u{2014} press r to ask.");
+            self.view.buffer().set_text("No pages yet \u{2014} press Ctrl+a to ask.");
             self.apply_font();
             self.clear_blocks();
             *self.all_paragraphs.borrow_mut() = Vec::new();
@@ -896,7 +896,7 @@ impl JournalOverlay {
     /// Render a PENDING passage ask: the visually selected source text
     /// (`<speaker>/<segment>` markup) shown through the shared gloss source
     /// renderer (speaker small-caps + verse hang-indent, full ink), in place of
-    /// the empty band's "No pages yet — press r to ask." placeholder — so the
+    /// the empty band's "No pages yet — press Ctrl+a to ask." placeholder — so the
     /// reader sees the passage they are asking about while the ask card is open
     /// (mirrors the gloss overlay's "Glossing…" card). No navigable blocks and
     /// no accent bar: the render is transient until submit/cancel.
@@ -2036,17 +2036,6 @@ impl JournalOverlay {
         crate::ui::apply_cached_coloring(&buffer, "journal-audio-cached", accent, &spans);
     }
 
-    /// The block cursor's current index (the block j/k/gg/G select), clamped to
-    /// the block list. None when the page has no blocks (the empty/loading card).
-    pub fn current_block_index(&self) -> Option<usize> {
-        let len = self.blocks.borrow().len();
-        if len == 0 {
-            None
-        } else {
-            Some(self.cursor_block.get().min(len - 1))
-        }
-    }
-
     /// The text of the cursor's current block (for TTS). None when no blocks.
     pub fn current_block_text(&self) -> Option<String> {
         let blocks = self.blocks.borrow();
@@ -2056,6 +2045,33 @@ impl JournalOverlay {
         }
         let i = self.cursor_block.get().min(len - 1);
         blocks.get(i).map(|b| b.text.clone())
+    }
+
+    /// Every paragraph of the displayed entry (source + question + answer),
+    /// index-aligned with the FULL block indices the TTS cache keys on
+    /// (`journal_audio.paragraph_index`). For the Shift+Space batch synth.
+    pub fn all_paragraph_texts(&self) -> Vec<String> {
+        self.all_paragraphs.borrow().clone()
+    }
+
+    /// How many leading `all_paragraphs` entries are the prepended passage
+    /// source (speaker/verse/citation). The batch synth skips these — the
+    /// source is the work's own text, not Q&A prose.
+    pub fn source_paragraph_count(&self) -> usize {
+        self.source_para_count.get()
+    }
+
+    /// The block cursor's WHOLE-ENTRY index (`cursor_full`) — the index the
+    /// TTS cache keys on (`current_block_index` is the page-local projection
+    /// and must never key the cache: it repeats across page turns). None when
+    /// the page has no blocks.
+    pub fn current_full_block_index(&self) -> Option<usize> {
+        if self.blocks.borrow().is_empty() {
+            None
+        } else {
+            let last = self.all_paragraphs.borrow().len().saturating_sub(1);
+            Some(self.cursor_full.get().min(last))
+        }
     }
 
     /// `j`/`q`: move the cursor down one paragraph across the WHOLE Q&A, turning

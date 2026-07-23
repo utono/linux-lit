@@ -1378,30 +1378,12 @@ pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
     crate::logging::log("GLOSS: vim edit cancelled, re-rendered stored gloss");
 }
 
-/// `R` in the gloss vim editor: leave the editor and open the existing ask-Claude
-/// rewrite (edit) card so an AI rewrite is reachable without switching surfaces.
-/// Mirrors journal `vim_open_rewrite`. The hand-edits in the buffer are discarded
-/// (the rewrite operates on the stored gloss); `R` is "ask AI", distinct from
-/// `:w` "save my edit".
-pub(crate) fn vim_open_rewrite(
-    state: &Rc<RefCell<AppState>>,
-    _tokio_handle: &tokio::runtime::Handle,
-) {
-    {
-        let mut s = state.borrow_mut();
-        s.gloss_overlay.exit_edit_buffer();
-        s.input_mode = crate::app::InputMode::GlossOverlay;
-    }
-    // Open the existing ask-Claude edit dialog (GlossPromptMode::Edit).
-    begin_rewrite(state);
-}
-
-/// `R` in the gloss overlay (read view OR via the vim editor's `R`): open the
-/// ask-Claude rewrite (edit) prompt for the displayed gloss. Directly reachable
-/// from the read view — entering the `e` editor first is unnecessary (mirrors
-/// journal `begin_rewrite`). Opens in INSERT: a rewrite instruction is always
-/// typed fresh, so skip vim-NORMAL (fed through the engine so the mirror and
-/// `-- INSERT --` hint stay truthful).
+/// Ctrl+r in the gloss overlay read view: open the ask-Claude rewrite (edit)
+/// prompt for the displayed gloss — entering the `e` editor first is unnecessary
+/// (mirrors journal `begin_rewrite`; the vim editor's `R` was dropped
+/// 2026-07-22). Opens in INSERT: a rewrite instruction is always typed fresh,
+/// so skip vim-NORMAL (fed through the engine so the mirror and `-- INSERT --`
+/// hint stay truthful).
 pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     show_edit_dialog(state);
     let _ = state
@@ -1872,11 +1854,25 @@ pub(crate) fn gloss_block_voice(
 }
 
 /// Accent color for cached (already-synthesized) gloss/synopsis blocks:
-/// deep slate blue — deliberately NOT the theme's `cursor_bg` (a love-red that
-/// clashed against the cream paper and read like an error). A flat constant for
-/// now: no theme exposes a dedicated slate accent role, so promote this to a
-/// `Theme` field if/when other palettes need their own cached accent.
-const CACHED_BLOCK_ACCENT: &str = "#2d5570";
+/// Sienna family, picked per card polarity (`Theme.is_light`) — deliberately
+/// NOT the theme's `cursor_bg` (a love-red that clashed against the cream
+/// paper and read like an error). The old single `#2d5570` slate technically
+/// cleared the contrast floors on light cards but sat at only 1.56:1 vs body
+/// ink — synthesized blocks looked uncolored — and failed the 4.5:1 bg floor
+/// outright on dark cards. Both variants clear every floor for their polarity
+/// (colorscheme harness, 2026-07-22). Promote to a `Theme` field if/when
+/// palettes need their own cached accent.
+const CACHED_BLOCK_ACCENT_LIGHT_CARD: &str = "#a0522d";
+const CACHED_BLOCK_ACCENT_DARK_CARD: &str = "#cc8850";
+
+/// The cached-audio accent for the current theme's card polarity.
+fn cached_block_accent(s: &AppState) -> &'static str {
+    if s.theme.is_light {
+        CACHED_BLOCK_ACCENT_LIGHT_CARD
+    } else {
+        CACHED_BLOCK_ACCENT_DARK_CARD
+    }
+}
 
 /// Re-apply accent coloring to every block of the currently-open gloss OR
 /// synopsis overlay whose mp3 is cached. Mode is taken from `s.input_mode`
@@ -1898,7 +1894,7 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         let work_abbrev = ctx.work_abbrev.clone();
         let speaker = ctx.speaker.clone();
         let active = s.gloss_active_voice;
-        let accent = CACHED_BLOCK_ACCENT.to_string();
+        let accent = cached_block_accent(s).to_string();
         let conn = match crate::db::queries::open_db() {
             Ok(c) => c,
             Err(_) => return,
@@ -1946,7 +1942,7 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
         None => return,
     };
     let voice_id = crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID.to_string();
-    let accent = CACHED_BLOCK_ACCENT.to_string();
+    let accent = cached_block_accent(s).to_string();
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
         Err(_) => return,
@@ -1996,7 +1992,7 @@ pub(crate) fn recolor_journal_cached_blocks(s: &AppState) {
     };
     let (voice_id, _mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
     let voice_id = voice_id.to_string();
-    let accent = CACHED_BLOCK_ACCENT.to_string();
+    let accent = cached_block_accent(s).to_string();
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
         Err(_) => return,
@@ -2677,9 +2673,10 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
     });
 }
 
-/// Space/Tab in the journal Q&A overlay: if TTS is playing, stop it; otherwise
+/// `a` in the journal Q&A overlay: if TTS is playing, stop it; otherwise
 /// play the cursor paragraph's TTS (cache hit plays the stored MP3, miss
-/// synthesizes then plays). Mirrors `read_current_synopsis_block`.
+/// synthesizes then plays). Mirrors `read_current_synopsis_block`. The cache
+/// key is the FULL paragraph index (page-local would repeat across pages).
 pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     {
         let s = state_rc.borrow();
@@ -2688,77 +2685,123 @@ pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
             return;
         }
     }
-    let index = match state_rc.borrow().journal_overlay.current_block_index() {
+    let index = match state_rc.borrow().journal_overlay.current_full_block_index() {
         Some(i) => i as i32,
         None => return,
     };
     play_journal_block(state_rc, index);
 }
 
-/// `s` in the journal Q&A overlay: ALWAYS begin playback of the cursor's
+/// Space in the journal Q&A overlay: ALWAYS begin playback of the cursor's
 /// paragraph from its start (no pause-toggle). Stops any current audio first,
 /// then plays the paragraph's TTS. Mirrors `begin_current_synopsis_block`.
 pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     stop_all_gloss_audio(state_rc);
-    let index = match state_rc.borrow().journal_overlay.current_block_index() {
+    let index = match state_rc.borrow().journal_overlay.current_full_block_index() {
         Some(i) => i as i32,
         None => return,
     };
     play_journal_block(state_rc, index);
 }
 
-/// The cursor journal block's CACHED TTS MP3, if one exists on disk (selected
-/// voice first, then the Alice paywall-fallback voice). Never synthesizes.
-fn find_cached_journal_block_audio(
-    state_rc: &Rc<RefCell<AppState>>,
-    index: i32,
-) -> Option<std::path::PathBuf> {
-    let entry_id = {
-        let s = state_rc.borrow();
-        s.journal.pages.get(s.journal.page_index).map(|p| p.id)?
-    };
-    let (vid, _) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
-    let conn = crate::db::queries::open_db().ok()?;
-    for vid_try in [vid, crate::elevenlabs::ALICE_VOICE_ID] {
-        if let Ok(Some(path)) =
-            crate::db::queries::find_journal_audio(&conn, entry_id, index as i64, vid_try)
-        {
-            let p = std::path::PathBuf::from(&path);
-            if p.exists() {
-                return Some(p);
-            }
-        }
+/// Shift+Space in the journal Q&A overlay: batch-synthesize every Q&A
+/// paragraph of the displayed entry that has no cached MP3 yet (cache-only
+/// skip). The leading prepended SOURCE paragraphs are excluded — the source is
+/// the work's own text, not Q&A prose (cursor Space still reads one
+/// explicitly). Mirrors `synth_all_synopsis_blocks`, keyed by `(entry_id, full
+/// paragraph index, voice)` — the SAME cache path/key as `play_journal_block`,
+/// so a Space-synth and a batch reuse the same MP3 files and DB rows. Journal
+/// Q&A is plain English prose, so the fixed plain-prose voice.
+pub(crate) fn synth_all_journal_blocks(state_rc: &Rc<RefCell<AppState>>) {
+    if state_rc.borrow().tts_batch_running.get() {
+        return;
     }
-    None
-}
+    let (entry_id, work_abbrev, blocks, voice_id, model_id, tokio_handle) = {
+        let s = state_rc.borrow();
+        let entry_id = match s.journal.pages.get(s.journal.page_index) {
+            Some(p) => p.id,
+            None => return,
+        };
+        let work_abbrev = match s.current_work.as_ref() {
+            Some(w) => w.canonical_abbrev.clone(),
+            None => return,
+        };
+        let source_count = s.journal_overlay.source_paragraph_count();
+        let blocks: Vec<(i32, String)> = s
+            .journal_overlay
+            .all_paragraph_texts()
+            .into_iter()
+            .enumerate()
+            .filter(|(i, t)| *i >= source_count && !t.trim().is_empty())
+            .map(|(i, t)| (i as i32, t))
+            .collect();
+        if blocks.is_empty() {
+            return;
+        }
+        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        (entry_id, work_abbrev, blocks, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
+    };
 
-/// `a` in the journal Q&A overlay: toggle play/pause of the block's TTS.
-/// A playing clip pauses in place; a paused clip resumes; nothing loaded ->
-/// start the cursor block ONLY if its TTS MP3 is already cached (no
-/// synthesis — Space owns that). Toasts when the block has no cached audio.
-pub(crate) fn toggle_pause_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
-    {
-        let s = state_rc.borrow();
-        if s.tts.is_paused() {
-            s.tts.resume();
-            return;
+    state_rc.borrow().tts_batch_running.set(true);
+    show_persistent_tts_toast(state_rc, "Synthesizing\u{2026}");
+    let state_for_result = Rc::clone(state_rc);
+    glib::spawn_future_local(async move {
+        for (index, raw) in &blocks {
+            if let Ok(conn) = crate::db::queries::open_db() {
+                let mut cached = false;
+                for vid_try in [voice_id.as_str(), crate::elevenlabs::ALICE_VOICE_ID] {
+                    if let Ok(Some(path)) = crate::db::queries::find_journal_audio(
+                        &conn, entry_id, *index as i64, vid_try,
+                    ) {
+                        if std::path::Path::new(&path).exists() {
+                            cached = true;
+                            break;
+                        }
+                    }
+                }
+                if cached {
+                    continue;
+                }
+            }
+            let tts_text = crate::ui::gloss_ipa::ipa_for_tts(raw);
+            let bytes = match synth_via(&tokio_handle, &tts_text, &voice_id, &model_id).await {
+                Ok(b) => b,
+                Err(e) => {
+                    crate::log_fmt!("BATCH: journal synth error at para {}: {}", index, e);
+                    show_tts_toast(&state_for_result, &format!("Synthesis failed: {}", e));
+                    state_for_result.borrow().tts_batch_running.set(false);
+                    return;
+                }
+            };
+            let dir = journal_audio_dir(&work_abbrev, entry_id);
+            let voice_tag: String = voice_id.chars().take(12).collect();
+            let path = dir.join(format!("{}-{}.mp3", index, voice_tag));
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                crate::log_fmt!("BATCH: mkdir {} failed: {}", dir.display(), e);
+                show_tts_toast(&state_for_result, "Could not save audio");
+                state_for_result.borrow().tts_batch_running.set(false);
+                return;
+            }
+            if let Err(e) = std::fs::write(&path, &bytes) {
+                crate::log_fmt!("BATCH: write {} failed: {}", path.display(), e);
+                show_tts_toast(&state_for_result, "Could not save audio");
+                state_for_result.borrow().tts_batch_running.set(false);
+                return;
+            }
+            if let Ok(conn) = crate::db::queries::open_db_rw() {
+                let _ = crate::db::migrations::ensure_journal_audio_table(&conn);
+                let _ = crate::db::queries::save_journal_audio(
+                    &conn, entry_id, *index as i64,
+                    &path.to_string_lossy(), &voice_id, &model_id,
+                );
+            }
+            // This paragraph is now cached — color it in the open overlay now.
+            recolor_journal_cached_blocks_rc(&state_for_result);
         }
-        if s.tts.is_playing() {
-            s.tts.pause();
-            return;
-        }
-    }
-    let index = match state_rc.borrow().journal_overlay.current_block_index() {
-        Some(i) => i as i32,
-        None => return,
-    };
-    match find_cached_journal_block_audio(state_rc, index) {
-        Some(path) => {
-            stop_all_gloss_audio(state_rc);
-            state_rc.borrow().tts.play_file(&path);
-        }
-        None => show_tts_toast(state_rc, "No TTS audio for this block (Space synthesizes)"),
-    }
+        hide_tts_toast(&state_for_result);
+        state_for_result.borrow().tts_batch_running.set(false);
+        crate::log_fmt!("BATCH: synthesized {} journal paragraphs", blocks.len());
+    });
 }
 
 /// Play a Source block's synthesized (ElevenLabs) MP3 in the gloss's active /
@@ -2789,27 +2832,6 @@ fn source_block_index(state_rc: &Rc<RefCell<AppState>>) -> Option<i32> {
             None
         }
     }
-}
-
-/// Gloss-overlay `r`: play/stop the Source block's synthesized MP3 in the
-/// gloss's ACTIVE voice (or the age-aware default voice when the gloss has no
-/// associated voices) — the ElevenLabs/`TtsPlayer` channel, NOT the MPV
-/// recording (`space`/`a`). Toggle: if the TTS sink is playing, stop it (MPV
-/// stays paused; the user resumes the recording with `space`); else pause MPV
-/// and play (cache hit -> play; miss -> synthesize then play). No picker. No-op
-/// (toast) off a Source block.
-pub(crate) fn toggle_source_tts(state_rc: &Rc<RefCell<AppState>>) {
-    // Stop-if-playing FIRST (like `read_current_block`), before the Source gate:
-    // a press while the synthesized audio plays always stops it. MPV stays paused.
-    if state_rc.borrow().tts.is_playing() {
-        state_rc.borrow().tts.stop();
-        return;
-    }
-    let index = match source_block_index(state_rc) {
-        Some(i) => i,
-        None => return,
-    };
-    play_source_tts_pausing_mpv(state_rc, index);
 }
 
 /// Gloss-overlay `R` (shift+r): open the voice picker for the Source block's
@@ -2935,16 +2957,17 @@ fn show_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
 /// `show_tts_toast`, which re-arms the 3s dismiss) or `hide_tts_toast`. Used for
 /// "Synthesizing…", which must persist until playback begins — ElevenLabs often
 /// takes longer than the 3s auto-dismiss, so a timed toast would vanish mid-synth.
+/// Routes through the gen-counted chapter-toast system: the old direct
+/// set_text/set_visible left a previously-armed 3s hide timer live, which took
+/// this pill down mid-synthesis.
 fn show_persistent_tts_toast(state_rc: &Rc<RefCell<AppState>>, msg: &str) {
-    let s = state_rc.borrow();
-    s.chapter_toast.set_text(msg);
-    s.chapter_toast.set_visible(true);
+    crate::input::navigation::show_chapter_toast_persistent(&state_rc.borrow(), msg);
 }
 
 /// Hide the toast pill immediately (used to dismiss the persistent "Synthesizing…"
-/// toast the moment audio starts playing).
+/// toast the moment audio starts playing). Gen-counted + pill-restoring.
 fn hide_tts_toast(state_rc: &Rc<RefCell<AppState>>) {
-    state_rc.borrow().chapter_toast.set_visible(false);
+    crate::input::navigation::hide_chapter_toast(&state_rc.borrow());
 }
 
 /// True when the cursor's `(div1, div2, line_in_div)` triple falls within the
@@ -3179,6 +3202,62 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     if !jumped {
         crate::app::restore_saved_position_resnap(&mut s, saved);
     }
+}
+
+/// Ctrl+a in the gloss overlay: cross-create a journal Q&A for the gloss's
+/// source passage, mirroring the reader's visual-mode Ctrl+a ask. Closes the
+/// overlay through the canonical close (TTS/loop teardown, search cleanup,
+/// reader lands on the source passage) and opens the journal passage ask card
+/// with the `<speaker>/<verse>/<stage>` markup.
+pub(crate) fn ask_journal_for_passage(state: &Rc<RefCell<AppState>>) {
+    // Collect the passage args from gloss_context while holding the borrow.
+    // Prefer the exact start..end citation range; fall back to the whole
+    // scene when either citation fails to parse.
+    let passage_args = {
+        let s = state.borrow();
+        s.gloss_context.as_ref().and_then(|ctx| {
+            let work = s.current_work.as_ref()?;
+            let selected_lines: Vec<crate::db::models::Line> = match (
+                crate::app::parse_citation(&ctx.start_citation),
+                crate::app::parse_citation(&ctx.end_citation),
+            ) {
+                (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
+                    .lines
+                    .iter()
+                    .filter(|l| {
+                        l.div1 == sd1
+                            && l.div2 == sd2
+                            && l.line_in_div >= s_lid
+                            && l.line_in_div <= e_lid
+                    })
+                    .cloned()
+                    .collect(),
+                _ => work
+                    .lines
+                    .iter()
+                    .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
+                    .cloned()
+                    .collect(),
+            };
+            let markup = crate::input::actions::echoes::build_source_header(
+                &selected_lines,
+                &ctx.speaker,
+            );
+            Some((
+                ctx.act,
+                ctx.scene,
+                ctx.start_citation.clone(),
+                ctx.end_citation.clone(),
+                markup,
+            ))
+        })
+    };
+    let Some((div1, div2, start, end, source_text)) = passage_args else {
+        return;
+    };
+    close_gloss_to_reader(state);
+    crate::input::actions::journal::begin_passage_ask(state, div1, div2, start, end, source_text);
+    crate::logging::log("JOURNAL-FROM-GLOSS: opened passage ask from gloss overlay");
 }
 
 /// Open the gloss overlay for the cursor line (reader Ctrl+g /

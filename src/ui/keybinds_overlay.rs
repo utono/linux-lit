@@ -33,15 +33,15 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 
 const NUMBER_ROW: &[KeyDef] = &[
     key("$", "~", "", "", &[("C-$", "root variant"), ("S-C-$", "root variant prev"), ("C-A-$", "root variant prev")]),
-    key("+", "1", "show chapter", "1: copy work info", &[]),
+    key("+", "1", "copy work+div", "1: copy work info", &[]),
     key("[", "2", "prev scene", "", &[("C-[", "set track mark"), ("M-[", "col layout")]),
     key("{", "3", "next scene", "", &[]),
     ub("(", "4"),
     ub("&", "5"),
     ub("=", "6"),
     ub(")", "7"),
-    bare("}", "8", "prev bkmk"),
-    bare("]", "9", "next bkmk"),
+    ub("}", "8"),
+    ub("]", "9"),
     key("*", "0", "", "reset font", &[]),
     key("!", "%", "", "", &[("C-!", "font \u{2212}")]),
     key("|", "`", "", "", &[("C-|", "font +")]),
@@ -52,7 +52,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "cursor \u{2191}", ":: cycle speed", &[]),
     key(",", "<", "prev speaker", "", &[("M-,", "prev dlg"), ("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
-    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "karaoke"), ("C-p", "Q&A page \u{25b2}")]),
+    key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "karaoke")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
     key("f", "F", "term filter", "", &[("M-f", "font info"), ("C-f", "corpus search")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("C-M-g", "annot tint")]),
@@ -66,14 +66,14 @@ const TAB_KEY: KeyDef = bare("Tab", "", "focus chat");
 
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
-    key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[("C-o", "last overlay")]),
+    key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "", "U: undo ts", &[("M-u", "scansion")]),
-    key("i", "I", "2-col translation", "", &[("M-i", "set end time"), ("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
+    key("i", "I", "2-col translation", "", &[("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-M-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "", "dlg fwd", "", &[("C-h", "synopsis")]),
     key("t", "T", "dlg back", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
-    key("n", "N", "next match", "N: prev match", &[("C-n", "Q&A page \u{25bc}"), ("C-M-n", "nav test")]),
+    key("n", "N", "next match", "N: prev match", &[("C-M-n", "nav test")]),
     bare("s", "S", "toggle sync"),
     key("-", "_", "gloss chat", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
@@ -82,10 +82,10 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "cursor \u{2193}"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "next speaker", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
-    key("k", "K", "prev speaker", "K: prev speaker", &[]),
+    key("j", "J", "next bkmk", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
+    key("k", "K", "prev bkmk", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
-    bare("b", "B", "start time"),
+    key("b", "B", "start time", "", &[("M-b", "set end time")]),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "vim copy", "V: visual mode", &[]),
@@ -310,11 +310,8 @@ tint on lines covered by a reader-gloss or journal passage Q&A; persisted in \
 config) — src/input/keymap.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
         "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
-        "last overlay" => "Action::ToggleLastOverlay (reader only: reopens \
-the last-closed gloss/journal overlay; overlays close via Escape) \
-— src/input/actions/gloss.rs",
-        "cycle overlays" => "Action::CycleSegmentOverlays (journal Q&A → gloss \
-→ synopsis, wraps; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
+        "cycle overlays" => "Action::CycleSegmentOverlays (gloss → journal Q&A \
+→ back to reader, no wrap; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
         "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
         "BCP echo turns" => "Action::ShowEchoTurnsBcp — src/input/actions/echoes.rs",
@@ -335,9 +332,8 @@ the last-closed gloss/journal overlay; overlays close via Escape) \
         "vocab tap" => "Action::VocabPopupTap (visible: next word; rr: \
 show/hide via ChordState::PendingR) — src/input/keymap.rs",
         "vocab Q&A" => "Action::VocabJournalAsk (popup visible + vocab word \
-on cursor line: ask/show stored) — src/input/actions/vocab_journal.rs",
-        "Q&A page ▼" => "Action::VocabJournalPageNext — src/input/actions/vocab_journal.rs",
-        "Q&A page ▲" => "Action::VocabJournalPagePrev — src/input/actions/vocab_journal.rs",
+on cursor line: held toast while asking, then the journal overlay opens on \
+the entry; stored answers open immediately) — src/input/actions/vocab_journal.rs",
 
         // ── Word copy / visual ──
         "copy word" => "Action::WordCycleCopy — src/input/actions/word_copy.rs",
@@ -366,8 +362,8 @@ src/input/keymap.rs",
 src/input/keymap.rs",
         "−60" => "Action::SeekLongBackward — src/input/keymap.rs",
         "+60" => "Action::SeekLongForward — src/input/keymap.rs",
-        "volume +" => "Action::VolumeUp — src/input/keymap.rs",
-        "volume −" => "Action::VolumeDown — src/input/keymap.rs",
+        "volume +" => "Action::VolumeUp (mpv + TTS rodio volume, same step) — src/input/keymap.rs",
+        "volume −" => "Action::VolumeDown (mpv + TTS rodio volume, same step) — src/input/keymap.rs",
         "toggle sync" => "Action::TogglePlaybackSync (toggle MPV playback \
 sync) — src/input/keymap.rs",
 
@@ -380,6 +376,7 @@ restoring each work's cursor line + MPV media) — src/input/actions/pickers.rs"
         "toggle ch start" => "Action::ToggleChapterStart — src/input/actions/chapters.rs",
         "show chapter" => "Action::ShowCurrentChapter — src/input/navigation.rs",
         "copy work info" => "Action::CopyWorkInfo — src/input/keymap.rs",
+        "copy work+div" => "Action::CopyWorkDivision (\u{201c}ABBR d1.d2\u{201d} → wl-copy) — src/input/keymap.rs",
         "ts tap" => "Action::DeleteTimestampTap (toast only; 2x deletes via \
 ChordState::PendingBackspace) — src/input/keymap.rs",
         "del ts tap" => "Lone Shift tap (Reader only): deletes the cursor line's \
@@ -498,6 +495,7 @@ fn expand_action(label: &str) -> String {
         "toggle ch start" => "toggle structural chapter",
         "show chapter" => "show current chapter",
         "copy work info" => "copy abbrev + media + whisperX",
+        "copy work+div" => "copy work + division",
         "bookmarks" => "bookmark picker",
         "start time" => "set start time",
         "set end time" => "set end time",
@@ -512,8 +510,6 @@ fn expand_action(label: &str) -> String {
         "reset font" => "reset font size",
         "vocab tap" => "vocab popup (rr toggles)",
         "vocab Q&A" => "vocab word journal Q&A",
-        "Q&A page ▼" => "vocab Q&A next page",
-        "Q&A page ▲" => "vocab Q&A previous page",
         _ => return label.to_string(),
     };
     format!("{prefix}{full}")

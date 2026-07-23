@@ -7,25 +7,22 @@
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Label, Orientation, Separator};
 
-/// One titled group of `(key, action)` rows (e.g. "Navigation", "TTS / voice").
+/// One titled group of `(key, action)` rows. Group titles come from the shared
+/// category vocabulary — MRU, Focus, Navigation, TTS, Playback, Editing,
+/// "Vim edit mode (…)", Misc — so equivalent binds sit under the same heading
+/// in every legend (volume nudges, Esc, and "Ctrl+/ close" always in Misc).
 pub type Group<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
 /// The vim-EDIT-mode group shared verbatim by the gloss and synopsis legends —
 /// both front the ONE shared vim engine, so a new vim bind is one edit here.
 /// The journal legend keeps its own copy: its Ctrl+v hint deliberately reads
 /// "(also in the r ask prompt)" (per-overlay wording, not drift).
+// Standard vim motions/ops (i a o, x dd cw, y p, u/redo, :w, :q, …) are
+// deliberately unlisted (2026-07-22) — they stay live in the editor; the
+// legend keeps only the non-obvious rows.
 pub const VIM_EDIT_GROUP: Group<'static> = ("Vim edit mode (after e)", &[
-    ("h j k l / w b e / 0 ^ $", "motions"),
-    ("g g / G / f t F T / %", "go top/end · find · match"),
-    ("i a o / I A O", "insert / append / open line"),
-    ("x dd D / cw ciw / r J ~", "delete · change · replace · join"),
-    ("y p P / v V", "yank · put · visual"),
-    ("H", "highlight selection (visual; toggles)"),
-    ("u / Ctrl+R / .", "undo · redo · repeat"),
-    ("Ctrl+v", "paste clipboard (also in ask prompts)"),
-    (":w / :wq", "save / save & quit"),
-    ("R", "ask Claude to rewrite"),
-    (":q / Esc / :q!", "quit (warns if unsaved) · force"),
+    ("H", "highlight selection — wraps it in <hi>..</hi> (visual; toggles)"),
+    ("Ctrl+v", "paste clipboard (also in ask_card prompts)"),
 ]);
 
 /// A per-overlay Ctrl+/ keybind legend: the centered card built by `build_legend`
@@ -38,8 +35,8 @@ pub struct KeybindsLegend {
 }
 
 impl KeybindsLegend {
-    pub fn new(title: &str, groups: &[Group]) -> Self {
-        let (container, scrim) = build_legend(title, groups);
+    pub fn new(title: &str, groups: &[Group], mru: Option<Group>) -> Self {
+        let (container, scrim) = build_legend(title, groups, mru);
         Self { container, scrim }
     }
 
@@ -62,9 +59,11 @@ impl KeybindsLegend {
 /// Build a legend `(container, scrim)` with `title` and the given `groups`, laid
 /// out across two columns. Groups are distributed left-to-right by row weight so
 /// the two columns end up roughly balanced; a group is never split across the
-/// gap. Both widgets start hidden; the caller attaches them to an outer overlay
+/// gap. When `mru` is given, it renders as a THIRD, top-aligned column at the
+/// far right — the upper-right quick-reference block — widening the card to
+/// fit. Both widgets start hidden; the caller attaches them to an outer overlay
 /// and toggles `show`/`hide`.
-pub fn build_legend(title: &str, groups: &[Group]) -> (GtkBox, GtkBox) {
+pub fn build_legend(title: &str, groups: &[Group], mru: Option<Group>) -> (GtkBox, GtkBox) {
     // Translucent dim (NOT the opaque gloss-scrim) so the parent overlay shows
     // through, dimmed, behind the legend rather than being fully hidden.
     let scrim = GtkBox::builder().hexpand(true).vexpand(true).build();
@@ -121,6 +120,14 @@ pub fn build_legend(title: &str, groups: &[Group]) -> (GtkBox, GtkBox) {
 
     columns.append(&left);
     columns.append(&right);
+    // MRU quick-reference: its own top-aligned column at the far right, so the
+    // section reads as the card's upper-right block regardless of how tall the
+    // two main columns run.
+    if let Some((name, binds)) = mru {
+        let mru_col = column_box();
+        append_group(&mru_col, name, binds);
+        columns.append(&mru_col);
+    }
     container.append(&columns);
 
     (container, scrim)

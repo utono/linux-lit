@@ -266,6 +266,11 @@ is not enough.
   (`src/ui/{gloss,synopsis,journal}_keybinds_overlay.rs`, `GROUPS` consts);
   their binds live in the overlay modal handlers, not keymap_config. Update
   the legend in the same change as the handler.
+- **When updating keybinds, also update
+  `docs/guides/keybind-surface-guide.md`** — it documents per-surface bind
+  behavior (one `##` section per bind, per the template in its intro). Edit
+  the bind's section if it has one, add a section for newly documented
+  binds, and keep it in the same change as the handler edit.
 
 ## Concordance & vocab
 

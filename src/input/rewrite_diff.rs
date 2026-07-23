@@ -31,24 +31,51 @@ fn word_spans(text: &str) -> Vec<(i32, i32, &str)> {
 /// flagged "reflowed" by the caller if its surrounding paragraph structure
 /// changed.
 fn lcs_pairing(old_words: &[&str], new_words: &[&str]) -> Vec<Option<usize>> {
-    let n = old_words.len();
-    let m = new_words.len();
-    // dp[i][j] = LCS length of old[i..] and new[j..]
+    // Trim the common prefix/suffix before the O(n·m) DP: a rewrite usually
+    // touches one region of a long answer, so the quadratic table only spans
+    // the changed middle. (The untrimmed DP over a whole ~1500-word answer is
+    // a multi-MB allocation per call — the Ctrl+j landing-diff slowness.)
+    let mut pair = vec![None; new_words.len()];
+    let common_prefix = old_words
+        .iter()
+        .zip(new_words.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    for (j, p) in pair.iter_mut().enumerate().take(common_prefix) {
+        *p = Some(j);
+    }
+    let rem_old = old_words.len() - common_prefix;
+    let rem_new = new_words.len() - common_prefix;
+    let common_suffix = old_words[common_prefix..]
+        .iter()
+        .rev()
+        .zip(new_words[common_prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(rem_old.min(rem_new));
+    for k in 0..common_suffix {
+        pair[new_words.len() - 1 - k] = Some(old_words.len() - 1 - k);
+    }
+
+    let old_mid = &old_words[common_prefix..old_words.len() - common_suffix];
+    let new_mid = &new_words[common_prefix..new_words.len() - common_suffix];
+    let n = old_mid.len();
+    let m = new_mid.len();
+    // dp[i][j] = LCS length of old_mid[i..] and new_mid[j..]
     let mut dp = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            dp[i][j] = if old_words[i] == new_words[j] {
+            dp[i][j] = if old_mid[i] == new_mid[j] {
                 dp[i + 1][j + 1] + 1
             } else {
                 dp[i + 1][j].max(dp[i][j + 1])
             };
         }
     }
-    let mut pair = vec![None; m];
     let (mut i, mut j) = (0usize, 0usize);
     while i < n && j < m {
-        if old_words[i] == new_words[j] {
-            pair[j] = Some(i);
+        if old_mid[i] == new_mid[j] {
+            pair[common_prefix + j] = Some(common_prefix + i);
             i += 1;
             j += 1;
         } else if dp[i + 1][j] >= dp[i][j + 1] {
@@ -141,6 +168,22 @@ pub fn changed_ranges(old: &str, new: &str) -> Vec<(i32, i32)> {
     // Paragraphs that survived unchanged (identical text) via the paragraph LCS.
     let para_pair = lcs_pairing(&old_ptext, &new_ptext);
 
+    // Word-level LCS over the WHOLE texts, computed ONCE and shared by every
+    // changed paragraph below. (It previously ran inside sentence_level_changes
+    // per changed paragraph — O(paragraphs × words²), the dominant cost of the
+    // journal landing diff.) Skipped entirely when no paragraph changed.
+    let any_changed = (0..new_paras.len()).any(|i| para_pair[i].is_none());
+    let (new_spans, word_pair) = if any_changed {
+        let old_spans = word_spans(old);
+        let new_spans = word_spans(new);
+        let old_words: Vec<&str> = old_spans.iter().map(|(_, _, w)| *w).collect();
+        let new_words: Vec<&str> = new_spans.iter().map(|(_, _, w)| *w).collect();
+        let word_pair = lcs_pairing(&old_words, &new_words);
+        (new_spans, word_pair)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     let mut ranges: Vec<(i32, i32)> = Vec::new();
     for (i, np) in new_paras.iter().enumerate() {
         if para_pair[i].is_some() {
@@ -150,7 +193,7 @@ pub fn changed_ranges(old: &str, new: &str) -> Vec<(i32, i32)> {
         // reflow — split/merge with no wording change), tint the WHOLE paragraph
         // so the user sees the reshaped block. Otherwise tint the sentences that
         // contain substituted/added words.
-        let sentence_ranges = sentence_level_changes(old, np.start, np.end, new);
+        let sentence_ranges = sentence_level_changes(&new_spans, &word_pair, np.start, np.end);
         if sentence_ranges.is_empty() {
             // Pure reflow: no word changed, but the paragraph boundary did.
             ranges.push((np.start, np.end));
@@ -170,19 +213,20 @@ fn ends_sentence(w: &str) -> bool {
 }
 
 /// Sentence-level changed spans WITHIN the `new` paragraph `[para_start,
-/// para_end)`, diffed against the whole `old` text. Groups the paragraph's words
-/// into sentences (split after a word whose text ends in `.`/`!`/`?`) and emits
-/// one span — first word start to last word end — for each sentence that
-/// contains at least one changed (LCS-unpaired) word. Returns empty when every
-/// word in the paragraph is matched in `old` (a pure reflow — the caller then
-/// tints the whole paragraph).
-fn sentence_level_changes(old: &str, para_start: i32, para_end: i32, new: &str) -> Vec<(i32, i32)> {
-    let old_spans = word_spans(old);
-    let new_spans = word_spans(new);
-    let old_words: Vec<&str> = old_spans.iter().map(|(_, _, w)| *w).collect();
-    let new_words: Vec<&str> = new_spans.iter().map(|(_, _, w)| *w).collect();
-    let pair = lcs_pairing(&old_words, &new_words);
-
+/// para_end)`. `new_spans`/`pair` are the whole-text word spans and word-level
+/// LCS pairing against `old`, computed once by `changed_ranges` and shared
+/// across every changed paragraph. Groups the paragraph's words into sentences
+/// (split after a word whose text ends in `.`/`!`/`?`) and emits one span —
+/// first word start to last word end — for each sentence that contains at
+/// least one changed (LCS-unpaired) word. Returns empty when every word in the
+/// paragraph is matched in `old` (a pure reflow — the caller then tints the
+/// whole paragraph).
+fn sentence_level_changes(
+    new_spans: &[(i32, i32, &str)],
+    pair: &[Option<usize>],
+    para_start: i32,
+    para_end: i32,
+) -> Vec<(i32, i32)> {
     let in_para = |idx: usize| -> bool {
         let (s, _, _) = new_spans[idx];
         s >= para_start && s < para_end

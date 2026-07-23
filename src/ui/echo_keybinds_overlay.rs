@@ -9,28 +9,28 @@ pub const TITLE: &str = "Echo keybinds";
 /// Grouped (key, action) rows. Matches handle_echoes_overlay_key.
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
-        ("n / p", "next / prev echo"),
-        ("g g / G", "first / last echo"),
+        ("n / p", "move_echo_selection: next / prev"),
+        ("g g / G", "select_first_echo / select_last_echo"),
         ("j / k", "scroll list"),
-        ("Enter", "open echo's work"),
+        ("Enter", "jump_to_selected_echo (open its work)"),
     ]),
     ("Playback", &[
-        ("a", "play source turn (AB-loop)"),
-        ("Space", "play selected echo"),
-        ("Ctrl+↑ / Ctrl+↓", "volume"),
+        ("a", "play_source_turn (AB-loop)"),
+        ("Space", "play_selected_echo"),
     ]),
-    ("Curate", &[
-        ("A", "add echo"),
+    ("Editing", &[
+        ("A", "open_add_echo_picker"),
         ("↑ / ↓", "reorder (curate)"),
-        ("s", "toggle curate"),
-        ("c", "copy echo"),
-        ("d", "delete selected echo"),
-        ("D", "delete all echoes for turn"),
-        ("R", "refresh echoes"),
+        ("s", "toggle_curated"),
+        ("c", "copy_selected_echo"),
+        ("d", "delete_selected_echo"),
+        ("D", "delete_all_echoes (this turn)"),
+        ("R", "refresh_echoes"),
     ]),
-    ("View", &[
-        (";", "show chapter"),
-        ("Esc", "close echoes → reader"),
+    ("Misc", &[
+        (";", "show_chapter_toast"),
+        ("Ctrl+↑ / Ctrl+↓", "mpv + TTS (rodio) volume"),
+        ("Esc", "close_echoes_to_reader"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];

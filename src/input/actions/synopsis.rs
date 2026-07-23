@@ -431,26 +431,12 @@ pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
     state.borrow_mut().input_mode = crate::app::InputMode::SynopsisOverlay;
 }
 
-/// `R` in the synopsis vim editor: leave the editor and open the existing
-/// ask-Claude synopsis edit prompt. Mirrors gloss `vim_open_rewrite`.
-pub(crate) fn vim_open_rewrite(
-    state: &Rc<RefCell<AppState>>,
-    _tokio_handle: &tokio::runtime::Handle,
-) {
-    {
-        let mut s = state.borrow_mut();
-        s.gloss_overlay.exit_edit_buffer();
-        s.input_mode = crate::app::InputMode::SynopsisOverlay;
-    }
-    begin_rewrite(state);
-}
-
-/// `R` in the synopsis overlay (read view OR via the vim editor's `R`): open the
-/// ask-Claude synopsis rewrite prompt. Directly reachable from the read view —
-/// entering the `e` editor first is unnecessary (mirrors journal/gloss
-/// `begin_rewrite`). Opens in INSERT: a rewrite instruction is always typed
-/// fresh, so skip vim-NORMAL (fed through the engine so the mirror and
-/// `-- INSERT --` hint stay truthful).
+/// `R` in the synopsis overlay read view: open the ask-Claude synopsis rewrite
+/// prompt — entering the `e` editor first is unnecessary (mirrors journal/gloss
+/// `begin_rewrite`; the vim editor's `R` was dropped 2026-07-22). Opens in
+/// INSERT: a rewrite instruction is always typed fresh, so skip vim-NORMAL
+/// (fed through the engine so the mirror and `-- INSERT --` hint stay
+/// truthful).
 pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
     show_edit_prompt(state);
     let _ = state

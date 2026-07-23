@@ -665,6 +665,11 @@ pub struct AppState {
     /// Reader, either overlay, or the chat transcript).
     pub vocab_add_return_mode: Option<InputMode>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
+    /// Word of the vocab journal Q&A request currently in flight (Ctrl+r).
+    /// Guards duplicate paid asks for the same word — it must survive cursor
+    /// moves and popup closes, unlike vocab_popup state — and is cleared by
+    /// the reply/error closures.
+    pub vocab_qa_inflight: Option<String>,
     pub sidebar_mode: SidebarMode,
     pub synopsis_cache: HashMap<(i64, i64), String>,
     pub synopsis_visible: bool,
@@ -1776,30 +1781,36 @@ pub fn build_window(
     let echo_keybinds_overlay = crate::ui::keybinds_legend::KeybindsLegend::new(
         crate::ui::echo_keybinds_overlay::TITLE,
         crate::ui::echo_keybinds_overlay::GROUPS,
+        None,
     );
     echo_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
 
     // Per-overlay Ctrl+/ keybind legends (gloss, synopsis, journal). add_overlay
-    // panels on a persistent outer overlay, NOT chain links.
+    // panels on a persistent outer overlay, NOT chain links. Each passes its
+    // MRU quick-reference group, rendered as the card's upper-right column.
     use crate::ui::keybinds_legend::KeybindsLegend;
     let gloss_keybinds_overlay = KeybindsLegend::new(
         crate::ui::gloss_keybinds_overlay::TITLE,
         crate::ui::gloss_keybinds_overlay::GROUPS,
+        Some(crate::ui::gloss_keybinds_overlay::MRU),
     );
     gloss_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let synopsis_keybinds_overlay = KeybindsLegend::new(
         crate::ui::synopsis_keybinds_overlay::TITLE,
         crate::ui::synopsis_keybinds_overlay::GROUPS,
+        Some(crate::ui::synopsis_keybinds_overlay::MRU),
     );
     synopsis_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let journal_keybinds_overlay = KeybindsLegend::new(
         crate::ui::journal_keybinds_overlay::TITLE,
         crate::ui::journal_keybinds_overlay::GROUPS,
+        Some(crate::ui::journal_keybinds_overlay::MRU),
     );
     journal_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let chat_keybinds_overlay = KeybindsLegend::new(
         crate::ui::chat_keybinds_overlay::TITLE,
         crate::ui::chat_keybinds_overlay::GROUPS,
+        None,
     );
     // NOT attached to corpus_search_popup.overlay like the other legends: the
     // chat panel floats on the OUTER overlay (added below), which renders above
@@ -2243,9 +2254,9 @@ pub fn build_window(
             auto: false,
             line: None,
             fade_gen: Rc::new(Cell::new(0)),
-            journal: None,
             chat_inline: false,
         },
+        vocab_qa_inflight: None,
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
@@ -3580,6 +3591,9 @@ pub fn display_work_at_with_prepared(
     // masking CSS class for narrow/tiled windows.
     let work_type = state.current_work.as_ref().map(|w| w.work_type.clone()).unwrap_or_default();
     let work_is_prose = crate::db::line_types::is_prose_work(&work_type);
+    // Prose works: the gloss overlay merges adjacent source <segment>s into one
+    // wrapping paragraph (join_prose_segments); verse keeps per-segment rows.
+    state.gloss_overlay.set_prose_source(work_is_prose);
     let vbox = state.vbox.clone();
     let ww = state.window.width();
     // Update the card's width_request for THIS work's column count/layout

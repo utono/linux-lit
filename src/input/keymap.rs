@@ -1343,7 +1343,7 @@ fn handle_journal_edit_key(
 }
 
 /// Route a key to the gloss/synopsis in-place vim editor (`InputMode::GlossEdit`).
-/// Near-clone of `handle_journal_edit_key`; `:w`/`:wq`/`:q`/`:q!`/`R` branch to the
+/// Near-clone of `handle_journal_edit_key`; `:w`/`:wq`/`:q`/`:q!` branch to the
 /// gloss vs synopsis handler by `GlossOverlay::is_showing_synopsis`.
 fn handle_gloss_edit_key(
     state: &Rc<RefCell<AppState>>,
@@ -1351,7 +1351,7 @@ fn handle_gloss_edit_key(
     key_char: Option<char>,
     is_ctrl: bool,
     _is_shift: bool,
-    tokio_handle: &tokio::runtime::Handle,
+    _tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
     use crate::input::vim::{EditorAction, VimKey};
 
@@ -1427,14 +1427,11 @@ fn handle_gloss_edit_key(
             }
             true
         }
-        EditorAction::OpenRewrite => {
-            if synopsis {
-                crate::input::actions::synopsis::vim_open_rewrite(state, tokio_handle);
-            } else {
-                crate::input::actions::gloss::vim_open_rewrite(state, tokio_handle);
-            }
-            true
-        }
+        // `R` (open the ask-Claude rewrite from inside the editor): dropped
+        // 2026-07-22 — the rewrite stays reachable from the read views (gloss
+        // Ctrl+r, synopsis R) without entering `e` first. Consumed no-op; the
+        // journal editor keeps its `R`.
+        EditorAction::OpenRewrite => true,
         // The engine already toggled the `<hi>` tags in its buffer and
         // feed_edit_key re-mirrored; the dirty-check sees the change on :w/:q.
         EditorAction::ToggleHighlight => true,
@@ -1985,16 +1982,15 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
-            // Ctrl+r: ask a new Q&A in the current band (moved off plain `r`,
-            // which is now the vocab surface, mirroring the gloss overlay + main
-            // card). Sits AFTER the Ctrl+Shift+r revision-restore arm above so
-            // Shift still wins. GATED by the term filter exactly like the plain-r
-            // ask below: while a filter shows a cross-work entry there is no clear
-            // home band for a new Q&A, so swallow it with the same clear-filter
-            // toast instead of asking against the wrong band. (This is the is_ctrl
-            // block, which returns before the shared intercept further down, so
-            // the gate must be duplicated here.)
-            "r" => {
+            // Ctrl+a: ask a new Q&A in the current band (moved off Ctrl+r so
+            // every ask surface sits on Ctrl+a — reader visual mode, gloss
+            // overlay, here). GATED by the term filter exactly like the shared
+            // intercept below: while a filter shows a cross-work entry there is
+            // no clear home band for a new Q&A, so swallow it with the same
+            // clear-filter toast instead of asking against the wrong band.
+            // (This is the is_ctrl block, which returns before the shared
+            // intercept further down, so the gate must be duplicated here.)
+            "a" => {
                 if state.borrow().journal.filter.is_some() {
                     crate::input::navigation::show_chapter_toast_secs(
                         &state.borrow(),
@@ -2006,6 +2002,9 @@ fn handle_journal_key(
                 crate::input::actions::journal::begin_ask(state);
                 return true;
             }
+            // Ctrl+r: moved to Ctrl+a. Consumed no-op so the chord can't fall
+            // through to the term-filter intercept or the plain-r vocab arm.
+            "r" => return true,
             // Ctrl+w: open the rewrite TARGET chooser (q question / a answer / b
             // both) for the displayed Q&A (moved off plain `R`). Ctrl+w is free
             // in this handler.
@@ -2031,21 +2030,11 @@ fn handle_journal_key(
             // the only overlay-to-overlay navigation). Consumed so it can't
             // start a gg chord below.
             "g" => return true,
-            // Ctrl+s: always (re)start the cursor paragraph's TTS from the
-            // beginning (cache hit plays the stored MP3, miss synthesizes via
-            // ElevenLabs). Moved off plain `s` so synthesis requires the Ctrl
-            // modifier.
-            "s" => {
-                crate::input::actions::gloss::begin_current_journal_block(state);
-                return true;
-            }
-            // Ctrl+Space: play/stop the cursor paragraph's TTS (cache hit plays
-            // the stored MP3, miss synthesizes via ElevenLabs). Moved off plain
-            // Space so synthesis requires the Ctrl modifier.
-            "space" => {
-                crate::input::actions::gloss::read_current_journal_block(state);
-                return true;
-            }
+            // Ctrl+s / Ctrl+Space: dropped — TTS moved to the shared overlay
+            // binds (plain Space restarts, plain `a` plays/stops; synopsis is
+            // the reference). Consumed no-ops.
+            "s" => return true,
+            "space" => return true,
             // Ctrl+/ opens the JOURNAL-specific keybind legend (its full keybind
             // set), returning to the journal overlay on close.
             "slash" => {
@@ -2081,9 +2070,16 @@ fn handle_journal_key(
         return true;
     }
 
+    // Shift+Space: batch-synthesize this entry's paragraphs (cache-only),
+    // the shared overlay bind (mirrors the synopsis/gloss overlays).
+    if key_name == "space" && is_shift {
+        crate::input::actions::gloss::synth_all_journal_blocks(state);
+        return true;
+    }
+
     match key_name {
-        // `r`: vocab surface (ask-a-question moved to Ctrl+r, mirroring the
-        // gloss overlay + main card). If the popup is already up, `r` cycles to
+        // `r`: vocab surface (ask-a-question moved to Ctrl+a, mirroring the
+        // gloss overlay + reader visual mode). If the popup is already up, `r` cycles to
         // the next word; either way it arms the `rr` chord so a quick second `r`
         // toggles the popup (see the hoisted PendingR block at the top of
         // handle_key, which scopes to this overlay's current-block words).
@@ -2189,32 +2185,35 @@ fn handle_journal_key(
             }
             true
         }
-        // `a`: global MPV play/pause, same as the main card's `a` (TogglePause).
+        // `a`: play/stop the cursor paragraph's TTS (cache hit plays, miss
+        // synthesizes). The synthesis binds are IDENTICAL across the synopsis,
+        // gloss, and journal overlays (synopsis is the reference); the old
+        // MPV play/pause moved off this key.
         "a" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            crate::input::actions::gloss::read_current_journal_block(state);
             true
         }
-        // Space: loop the displayed entry's source passage on the dedicated
-        // loop mpv (playing → pause; paused/idle → restart from the source's
-        // start time, the main card's Space semantics). Scene/corpus notes
-        // have no source citation → toast. The term-filter gate above wins
-        // while a filter is active.
+        // Space: always (re)start the cursor paragraph's TTS from its start
+        // (synthesizes on miss) — the shared overlay TTS bind. The old
+        // source-passage loop was dropped from this key. The term-filter gate
+        // above wins while a filter is active.
         "space" if !is_ctrl && !is_shift => {
-            crate::input::actions::chat::toggle_overlay_source_loop(state);
-            true
-        }
-        // `A` (Shift+a): (re)start the cursor block's TTS from the beginning —
-        // cache hit plays the stored MP3, miss synthesizes via ElevenLabs.
-        // Mirrors the gloss overlay's `A` (both call their begin_current_block).
-        "A" => {
             crate::input::actions::gloss::begin_current_journal_block(state);
             true
         }
-        // `s`: dropped — TTS (re)start moved to Ctrl+s (handled in the is_ctrl
-        // block above) so plain `s` no longer synthesizes. Consumed no-op.
+        // `A`: dropped — the TTS restart lives on plain Space now (shared
+        // overlay binds; the synopsis overlay has no A bind). Consumed no-op.
+        "A" => true,
+        // `s`: dropped — TTS lives on Space/a (shared overlay binds). Consumed.
         "s" => true,
         "c" => {
             crate::input::actions::journal::copy_current_id(state);
+            true
+        }
+        // `+` mirrors the reading card: copy the work + division to the
+        // clipboard (added 2026-07-22 alongside the gloss/synopsis arms).
+        "plus" => {
+            copy_work_division(state);
             true
         }
         // `\`: advance the segment-overlay cycle → gloss for the lap's entry
@@ -2332,11 +2331,10 @@ fn handle_gloss_key(
         return true;
     }
 
-    // Ctrl+Space: read the cursor block aloud (cache hit plays, miss
-    // synthesizes via ElevenLabs). Moved off plain Space so synthesis requires
-    // the Ctrl modifier.
+    // Ctrl+Space: dropped — block TTS moved to the shared overlay binds
+    // (plain Space restarts, plain `a` plays/stops; synopsis is the
+    // reference). Consumed so it can't fall through to the plain Space arm.
     if key_name == "space" && is_ctrl {
-        crate::input::actions::gloss::read_current_block(state);
         return true;
     }
 
@@ -2452,6 +2450,13 @@ fn handle_gloss_key(
                 crate::input::actions::gloss::begin_rewrite(state);
                 return true;
             }
+            // Ctrl+a: cross-create — journal Q&A ask card for the gloss's
+            // source passage, mirroring the reader's visual-mode Ctrl+a ask.
+            // Closes the overlay (canonical close) and opens the passage ask.
+            "a" => {
+                crate::input::actions::gloss::ask_journal_for_passage(state);
+                return true;
+            }
             // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the
             // only overlay-to-overlay navigation). Consumed no-op.
             "j" => return true,
@@ -2491,24 +2496,25 @@ fn handle_gloss_key(
         }
     }
     match key_name {
-        // `a`: global MPV play/pause, same as the main card's `a` (TogglePause).
+        // `a`: play/stop the cursor block's TTS (cache hit plays, miss
+        // synthesizes). The synthesis binds are IDENTICAL across the synopsis,
+        // gloss, and journal overlays (synopsis is the reference); the old
+        // MPV play/pause moved off this key.
         "a" => {
-            let _ = state.borrow().cmd_tx.try_send(crate::mpv::MpvCommand::TogglePause);
+            crate::input::actions::gloss::read_current_block(state);
             true
         }
-        // Space: loop the glossed passage's source audio on the dedicated
-        // loop mpv (playing → pause; paused/idle → restart from the source's
-        // start time, the main card's Space semantics). Shift+Space (batch
-        // synth) and Ctrl+Space (block TTS) are consumed by the guards above.
+        // Space: always (re)start the cursor block's TTS from its start
+        // (synthesizes on miss) — the shared overlay TTS bind. The old
+        // source-passage loop was dropped from this key. Shift+Space (batch
+        // synth) and Ctrl+Space (consumed) are handled by the guards above.
         "space" if !is_ctrl && !is_shift => {
-            crate::input::actions::chat::toggle_overlay_source_loop(state);
-            true
-        }
-        // `A` (Shift+a): (re)start the cursor block's TTS. Was plain `a`.
-        "A" => {
             crate::input::actions::gloss::begin_current_block(state);
             true
         }
+        // `A`: dropped — the TTS restart lives on plain Space now (shared
+        // overlay binds; the synopsis overlay has no A bind). Consumed no-op.
+        "A" => true,
         "c" => {
             crate::input::actions::gloss::copy_gloss_id(state);
             true
@@ -2689,26 +2695,22 @@ fn handle_gloss_key(
             );
             true
         }
-        "l" => {
-            // Source verse only: play/stop the synthesized MP3 in the active /
-            // default voice (pauses MPV first). No picker. (Moved off `r`, which
-            // now opens a journal Q&A for the passage.)
-            crate::input::actions::gloss::toggle_source_tts(state);
-            true
-        }
+        // l: dropped (source-verse TTS play/stop — `L` picks a voice and plays;
+        // `space`/`a` cover block TTS). Consumed no-op.
+        "l" => true,
         "L" => {
             // Source verse only: open the voice picker for the synthesized
             // reading (the only picker key); confirm sets active voice + plays.
-            // (Moved off `R` when `r` was repurposed for the journal Q&A.)
+            // (Moved off `R` when the ask flow displaced `r`; `r`/`R` are now
+            // the vocab surface.)
             crate::input::actions::gloss::pick_source_voice(state);
             true
         }
-        // `;` mirrors the reading card: show the chapter/scene toast for the
-        // source line the overlay was opened from (state.current_line). Use the
-        // non-toggling surface fn — the `+` handler would hide a shown
-        // persistent toast instead of surfacing the scene.
-        "semicolon" => {
-            navigation::surface_current_scene_toast(&mut state.borrow_mut());
+        // `+` mirrors the reading card: copy the work + division to the
+        // clipboard (`;`'s scene toast was dropped from this overlay
+        // 2026-07-22 — the running head already shows the position).
+        "plus" => {
+            copy_work_division(state);
             true
         }
         _ => true,
@@ -2920,6 +2922,14 @@ fn handle_synopsis_overlay_key(
         return true;
     }
 
+    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the synopsis overlay
+    // (same as the reader/gloss/journal/chat arms). It floats above the whole
+    // overlay chain and restores this mode on close.
+    if is_ctrl && is_alt && key_name == "backslash" {
+        crate::input::actions::vocab_add::open(state);
+        return true;
+    }
+
     // Shift+Space: batch-synthesize all synopsis paragraphs (cache-only).
     if key_name == "space" && is_shift {
         crate::input::actions::gloss::synth_all_synopsis_blocks(state);
@@ -2932,12 +2942,9 @@ fn handle_synopsis_overlay_key(
         // h: Escape-only close policy — consumed no-op (was: close; h still
         // OPENS the synopsis from the reader).
         "h" => true,
-        // `\`: advance the segment-overlay cycle → wrap to the journal Q&A
-        // stop for the lap's entry segment.
-        "backslash" if !is_ctrl && !is_alt => {
-            crate::input::actions::overlay_cycle::cycle_from_synopsis(state);
-            true
-        }
+        // `\`: the synopsis is no longer a stop on the segment-overlay cycle
+        // (lap is gloss → journal → reader). Consumed no-op.
+        "backslash" if !is_ctrl && !is_alt => true,
         // `a`: play/stop the cursor paragraph's TTS (swapped with space by
         // request — space below is the always-restart).
         "a" => {
@@ -2952,8 +2959,8 @@ fn handle_synopsis_overlay_key(
             true
         }
         // R: ask-Claude rewrite of the displayed synopsis, straight from the
-        // read view (same prompt the vim editor's `R` opens — no need to enter
-        // `e` first). Opens in INSERT. Mirrors journal/gloss `R`.
+        // read view — no need to enter `e` first (the vim editor's `R` was
+        // dropped 2026-07-22). Opens in INSERT.
         "R" => {
             crate::input::actions::synopsis::begin_rewrite(state);
             true
@@ -3089,12 +3096,11 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::gloss::begin_current_synopsis_block(state);
             true
         }
-        // `;` mirrors the reading card: show the chapter/scene toast for the
-        // source line the overlay was opened from (state.current_line). Use the
-        // non-toggling surface fn — the `+` handler would hide a shown
-        // persistent toast instead of surfacing the scene.
-        "semicolon" => {
-            navigation::surface_current_scene_toast(&mut state.borrow_mut());
+        // `+` mirrors the reading card: copy the work + division to the
+        // clipboard (`;`'s scene toast was dropped from this overlay
+        // 2026-07-22 — the running head already shows the position).
+        "plus" => {
+            copy_work_division(state);
             true
         }
         _ => true,
@@ -4045,6 +4051,42 @@ fn find_large_whisperx_json(media_path: &str) -> Option<String> {
     hits.into_iter().next()
 }
 
+/// `+`: copy "abbrev div1.div2" (the cursor's work + division) to the system
+/// clipboard — e.g. "MM-Amb 4.2"; prose chapters drop the .div2, front matter
+/// (div1 == 0) copies the bare abbrev. Shared by the reader's
+/// `Action::CopyWorkDivision` and the gloss/journal/synopsis overlay `+` arms
+/// (the overlays resolve the same cursor position their source line came from).
+fn copy_work_division(state: &Rc<RefCell<AppState>>) {
+    let s = state.borrow();
+    let Some(work) = s.current_work.as_ref() else { return };
+    let abbrev = work.abbrev.clone();
+    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
+    drop(s);
+    let clip = if d1 == 0 {
+        abbrev
+    } else if d2 == 0 {
+        format!("{} {}", abbrev, d1)
+    } else {
+        format!("{} {}.{}", abbrev, d1, d2)
+    };
+    if let Ok(mut child) = std::process::Command::new("wl-copy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        use std::io::Write;
+        if let Some(ref mut stdin) = child.stdin {
+            let _ = stdin.write_all(clip.as_bytes());
+        }
+        let _ = child.wait();
+    }
+    crate::logging::log(&format!("CLIPBOARD: copied work+division {}", clip));
+    let s = state.borrow();
+    s.speed_toast.set_halign(gtk4::Align::Center);
+    s.speed_toast.set_margin_start(0);
+    s.speed_toast.set_margin_end(0);
+    crate::ui::toast::show_transient(&s.speed_toast, &format!("Copied {}", clip), 3);
+}
+
 /// Execute an Action by calling its corresponding verb. The key is always
 /// consumed when a mapped action is dispatched.
 fn dispatch_action(
@@ -4194,8 +4236,6 @@ fn dispatch_action(
             fade_out_vocab_popup(state);
         }
         VocabJournalAsk => crate::input::actions::vocab_journal::vocab_journal_ask(state),
-        VocabJournalPageNext => crate::input::actions::vocab_journal::vocab_journal_page(state, 1),
-        VocabJournalPagePrev => crate::input::actions::vocab_journal::vocab_journal_page(state, -1),
         JumpToNextVocab => crate::input::actions::concordance::jump_to_next_vocab(state, tokio_handle),
         JumpToPrevVocab => crate::input::actions::concordance::jump_to_prev_vocab(state, tokio_handle),
         ConcordanceNext => crate::input::actions::concordance::concordance_next(state, tokio_handle),
@@ -4533,6 +4573,7 @@ fn dispatch_action(
             s.speed_toast.set_margin_end(0);
             crate::ui::toast::show_transient(&s.speed_toast, &msg, 3);
         }
+        CopyWorkDivision => copy_work_division(state),
 
         // Multi-key chord entry
         PendingG => {

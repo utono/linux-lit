@@ -233,6 +233,43 @@ pub(crate) fn reflow_verse_markup(markup: &str) -> String {
     out
 }
 
+/// Merge each run of ADJACENT `<segment>` elements (whitespace-only gaps
+/// between them) into ONE `<segment>`, one space per boundary, so a prose
+/// passage's per-sentence source lines read as a single wrapping paragraph
+/// instead of verse-style one-row-per-segment. Verse works must never pass
+/// through here — their segment breaks are the text.
+///
+/// OFFSET INVARIANT: the rewrite-diff and search bases may be computed on the
+/// RAW markup (`full_rendered_gloss_text` callers in actions/gloss.rs) while
+/// the overlay displays the joined markup, and those char offsets index the
+/// displayed buffer. `rendered_verse_text` emits exactly one `\n` per element
+/// boundary, so replacing each merged boundary with exactly one space — bodies
+/// untrimmed — keeps the rendered char count and every offset identical.
+/// Any `<speaker>`/`<stage>`/`<gloss>` element breaks the run; a dangling
+/// unclosed `<segment>` passes through untouched.
+pub(crate) fn join_prose_segments(markup: &str) -> String {
+    const OPEN: &str = "<segment>";
+    const CLOSE: &str = "</segment>";
+    let mut out = String::with_capacity(markup.len());
+    let mut rest = markup;
+    while let Some(pos) = rest.find(CLOSE) {
+        let after = pos + CLOSE.len();
+        let tail = &rest[after..];
+        let trimmed = tail.trim_start();
+        if trimmed.starts_with(OPEN) {
+            let gap = tail.len() - trimmed.len();
+            out.push_str(&rest[..pos]);
+            out.push(' ');
+            rest = &tail[gap + OPEN.len()..];
+        } else {
+            out.push_str(&rest[..after]);
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub(crate) fn apply_bracket_styling(
     buffer: &gtk4::TextBuffer,
     base_offset: i32,
@@ -810,6 +847,61 @@ mod reflow_verse_markup_tests {
     fn untagged_and_dangling_markup_pass_through() {
         assert_eq!(reflow_verse_markup("no tags\nhere"), "no tags\nhere");
         assert_eq!(reflow_verse_markup("<segment>open\nnever closed"), "<segment>open\nnever closed");
+    }
+}
+
+#[cfg(test)]
+mod join_prose_segments_tests {
+    use super::{join_prose_segments, rendered_verse_text};
+
+    #[test]
+    fn merges_adjacent_segments_with_single_space() {
+        let m = "<speaker>NARRATOR</speaker>\n\
+                 <segment>It hovers about Snagsby’s door.</segment>\n\
+                 <segment>The hours are early there.</segment>\n\
+                 <gloss>Teatime lays its small domestic peace.</gloss>";
+        assert_eq!(
+            join_prose_segments(m),
+            "<speaker>NARRATOR</speaker>\n\
+             <segment>It hovers about Snagsby’s door. The hours are early there.</segment>\n\
+             <gloss>Teatime lays its small domestic peace.</gloss>"
+        );
+    }
+
+    #[test]
+    fn stage_or_gloss_between_segments_breaks_the_run() {
+        let m = "<segment>a</segment>\n<stage>[Enter]</stage>\n<segment>b</segment>";
+        assert_eq!(join_prose_segments(m), m);
+        let m2 = "<segment>a</segment>\n<gloss>g</gloss>\n<segment>b</segment>";
+        assert_eq!(join_prose_segments(m2), m2);
+    }
+
+    #[test]
+    fn untouched_when_no_adjacent_segments() {
+        assert_eq!(join_prose_segments("no tags\nhere"), "no tags\nhere");
+        assert_eq!(
+            join_prose_segments("<segment>open\nnever closed"),
+            "<segment>open\nnever closed"
+        );
+    }
+
+    #[test]
+    fn rendered_offsets_are_preserved_one_to_one() {
+        // The rewrite-diff / search bases may be computed on the RAW markup while
+        // the overlay displays the joined markup, so the rendered text must keep
+        // the SAME char count — every inter-segment "\n" becomes exactly one " ".
+        let m = "<speaker>NARRATOR</speaker>\n\
+                 <segment>First sentence.</segment>\n\
+                 <segment>Second sentence.</segment>\n\
+                 <segment>Third.</segment>\n\
+                 <gloss>Commentary.</gloss>";
+        let raw = rendered_verse_text(m);
+        let joined = rendered_verse_text(&join_prose_segments(m));
+        assert_eq!(raw.chars().count(), joined.chars().count());
+        assert_eq!(joined, raw.replacen('\n', "\n", 1).replace(
+            "First sentence.\nSecond sentence.\nThird.",
+            "First sentence. Second sentence. Third."
+        ));
     }
 }
 

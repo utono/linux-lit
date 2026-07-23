@@ -10,32 +10,32 @@ pub const TITLE: &str = "Chat panel keybinds";
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Focus", &[
         ("Tab", "cycle focus: input → transcript → reader → …"),
-        ("Ctrl+Tab", "close the chat panel"),
-        ("-", "close the chat panel (transcript)"),
-        ("Esc", "transcript → reader · exit V-select first"),
-        ("Ctrl+l", "flip panel to the other column"),
+        ("Ctrl+Tab", "close_chat_layout"),
+        ("-", "close_chat_layout (transcript)"),
+        ("Esc", "focus_reader · exit V-select first"),
+        ("Ctrl+l", "flip_panel_side"),
+        ("a", "focus_prompt_insert: re-show the input"),
     ]),
-    ("Transcript navigation", &[
+    ("Navigation", &[
         ("j / h", "next exchange (cursor down)"),
         ("k / t", "prev exchange (cursor up)"),
         ("g g / G", "first / last landable row"),
-        ("Ctrl+d / Ctrl+u", "half-page down / up"),
-        ("Ctrl+n / Ctrl+p", "cycle gloss fwd / back"),
-    ]),
-    ("Transcript actions", &[
-        ("a", "ask: re-show the input, land in insert"),
-        ("s", "save the selected exchange to the journal"),
-        ("r", "vocab popup (rr toggles · r next word)"),
-        ("Ctrl+r", "Gloss view: re-gloss · Journal view: ask"),
-        ("Ctrl+w", "Gloss view: re-gloss · Journal view: rewrite"),
-        ("\\", "toggle view: gloss ↔ journal Q&A"),
-        ("c", "copy id: Gloss view → gloss id · Journal view → Q&A id"),
-        ("D", "delete: Gloss view → current gloss · Journal view → Q&A (y/Esc confirm)"),
+        ("Ctrl+d / Ctrl+u", "transcript_half_page down / up"),
+        ("Ctrl+n / Ctrl+p", "cycle_gloss fwd / back"),
         ("V", "visual select rows (j/k/h/t extend)"),
         ("y", "yank selection or cursor row → clipboard"),
-        ("space", "loop the entry's source audio · armed: pause/resume"),
     ]),
-    ("Prompt (vim editor)", &[
+    ("Playback", &[
+        ("space", "toggle_source_loop · armed: pause/resume"),
+    ]),
+    ("Editing", &[
+        ("s", "save the selected exchange to the journal"),
+        ("Ctrl+r", "Gloss view: regloss_pinned · Journal view: ask"),
+        ("Ctrl+w", "Gloss view: regloss_pinned · Journal view: rewrite_journal_entry"),
+        ("c", "copy_gloss_id · copy_journal_id (per view)"),
+        ("D", "delete_current_panel_item (y/Esc confirm)"),
+    ]),
+    ("Vim edit mode (prompt)", &[
         ("a", "from transcript: open the input in insert"),
         ("i / a / o", "insert / append / open line"),
         ("Ctrl+Enter", "send question (or revise)"),
@@ -43,7 +43,9 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+v", "paste clipboard"),
         ("Esc / :q", "hide the input (returns to transcript)"),
     ]),
-    ("Legend", &[
+    ("Misc", &[
+        ("r", "vocab_popup (rr toggles · r next word)"),
+        ("\\", "toggle_panel_view: gloss ↔ journal Q&A"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];

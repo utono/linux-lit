@@ -208,11 +208,12 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("y"), Action::PageBackward),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
-        // Cursor / dialogue. j / k move to the next / prev segment AND seek
-        // (twins of q / comma) so the move survives live MPV sync during
-        // playback. h / t are the cursor-only NO-SEEK twins.
-        (KeyCombo::plain("j"), Action::JumpToNextSpeaker),
-        (KeyCombo::plain("k"), Action::JumpToPrevSpeaker),
+        // Bookmark steps live on j / k (swapped with `'`/`;`, which carry
+        // the seeking cursor steps below). The speaker JUMPS j / k once
+        // duplicated stay on q / comma (and the shifted J / K forms below).
+        // h / t are the cursor-only NO-SEEK dialogue twins.
+        (KeyCombo::plain("j"), Action::NextBookmark),
+        (KeyCombo::plain("k"), Action::PrevBookmark),
         (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
         (KeyCombo::plain("h"), Action::CursorNextDialogueNoSeek),
         (KeyCombo::plain("t"), Action::CursorPrevDialogueNoSeek),
@@ -247,13 +248,9 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // instead.
         (KeyCombo::shift("colon"), Action::TogglePlaybackSpeed),
         (KeyCombo::shift("semicolon"), Action::TogglePlaybackSpeed),
-        // Bookmarks live on `}`/`]` (braceright/bracketright, both level-1
-        // unshifted on RPD — see AE08/AE09). Moved off the `;`/`'` home-region
-        // pair, which now duplicate the `t`/`h` dialogue-step twins below.
-        (KeyCombo::plain("braceright"), Action::PrevBookmark),
-        (KeyCombo::plain("bracketright"), Action::NextBookmark),
-        // `;`/`'` carry the seeking cursor steps swapped off `k`/`j`
-        // (prev line / next dialogue); `k`/`j` take the no-seek steps above.
+        // `;`/`'` carry the seeking cursor steps (prev line / next dialogue),
+        // swapped with `k`/`j` (which took the bookmark steps above).
+        // `}`/`]` (braceright/bracketright) stay unbound.
         (KeyCombo::plain("semicolon"), Action::CursorPrevLine),
         (KeyCombo::plain("apostrophe"), Action::CursorNextDialogue),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
@@ -288,7 +285,9 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("Left"), Action::SeekShortBackward),
         (KeyCombo::ctrl("Up"), Action::VolumeUp),
         (KeyCombo::ctrl("Down"), Action::VolumeDown),
-        (KeyCombo::plain("plus"), Action::ShowCurrentChapter),
+        // `+` copies "abbrev div1.div2" to the clipboard (CopyWorkDivision,
+        // 2026-07-22 — was ShowCurrentChapter, which stays on `C`).
+        (KeyCombo::plain("plus"), Action::CopyWorkDivision),
         (KeyCombo::alt("p"), Action::TogglePhraseHighlight),
         // Alt+, is the unshifted comma cap (<AD02>) + alt → ("comma", alt=true),
         // NOT ("less", ...) which is the shifted glyph. Jumps to prev dialogue.
@@ -308,11 +307,11 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("r"), Action::VocabPopupTap),
         // Ctrl+r: vocab journal Q&A — ask about the popup's current word
         // (gated on popup visible + a vocab word on the cursor line; was R).
-        // Ctrl+n/p page the popup's Journal answer; the pickers/overlays
-        // keep their own modal Ctrl+n/p (handled before reader dispatch).
+        // Stored answer → journal overlay; fresh ask → held toast, then the
+        // overlay on the saved entry. Reader Ctrl+n/p are unbound (the old
+        // popup Q&A paging went away with the popup Journal view); the
+        // pickers/overlays keep their own modal Ctrl+n/p.
         (KeyCombo::ctrl("r"), Action::VocabJournalAsk),
-        (KeyCombo::ctrl("n"), Action::VocabJournalPageNext),
-        (KeyCombo::ctrl("p"), Action::VocabJournalPagePrev),
         (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
         (KeyCombo::ctrl_alt("backslash"), Action::AddVocabWord),
         // Ctrl+Shift+g: on RPD this physical key emits key_name "g" (lowercase)
@@ -345,8 +344,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("f"), Action::OpenCorpusSearch),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::alt("j"), Action::OpenJournalPicker),
-        // Ctrl+o reopens the last-closed gloss/journal overlay.
-        (KeyCombo::ctrl("o"), Action::ToggleLastOverlay),
+        // Ctrl+o (ToggleLastOverlay: reopen the last-closed gloss/journal
+        // overlay) was dropped 2026-07-22 — the action remains reachable
+        // only via a keymap.json override.
         // The chat panel has no reader-table Tab caps: `-` opens it (and, when
         // it is already open, closes it — ReaderGlossChatAtCursor toggles).
         // Inside the panel, its own handlers still bind `-`/Ctrl+Tab/Escape.
@@ -381,9 +381,9 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // Ctrl+Alt+$ mirrors Ctrl+Shift+$ (previous root variant) — a
         // shift-free reverse chord on the same cap.
         (KeyCombo::ctrl_alt("dollar"), Action::RootVariantPrev),
-        // u/i plain binds are swapped (2026-07-11): i sets the start time,
-        // u sets the start timestamp (swapped with i). Their modifier families
-        // stay put (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
+        // `b` sets the start time (plain `u`/`i` no longer do — `i` opens the
+        // translation overlay). The old modifier families stay put
+        // (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
         (KeyCombo::plain("b"), Action::SetStartTime),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         // Authorship moved off Ctrl+a (now CloseChatLayout). plain("A") is the
@@ -428,7 +428,9 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
         (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
         (KeyCombo::plain("Right"), Action::SetStartTime),
-        (KeyCombo::alt("i"), Action::SetEndTime),
+        // Alt+b sets the end time (moved off Alt+i 2026-07-22, pairing with
+        // plain `b` = SetStartTime on the same cap).
+        (KeyCombo::alt("b"), Action::SetEndTime),
         (KeyCombo::plain("c"), Action::ToggleChapterStart),
         // BackSpace is overloaded (Action::DeleteTimestampTap): single tap
         // toasts the line's timestamp; a second quick tap deletes it.
@@ -498,8 +500,8 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("x")), Some(&Action::PageForward));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::JumpToNextSpeaker));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::JumpToPrevSpeaker));
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::NextBookmark));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::PrevBookmark));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
@@ -507,7 +509,8 @@ mod tests {
         // `-` (ReaderGlossChatAtCursor toggles) and the panel's own handlers.
         assert_eq!(m.get(&KeyCombo::ctrl("Tab")), None);
         assert_eq!(m.get(&KeyCombo::plain("Tab")), None);
-        assert_eq!(m.get(&KeyCombo::ctrl("o")), Some(&Action::ToggleLastOverlay));
+        // Ctrl+o (ToggleLastOverlay) dropped from the defaults.
+        assert_eq!(m.get(&KeyCombo::ctrl("o")), None);
         // AskPassage is deliberately unbound (was Ctrl+a).
         assert_eq!(m.get(&KeyCombo::ctrl("a")), None);
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
@@ -515,7 +518,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("b")), Some(&Action::SetStartTime));
         assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
         assert_eq!(m.get(&KeyCombo::alt("u")), Some(&Action::CycleScansion));
-        assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::SetEndTime));
+        assert_eq!(m.get(&KeyCombo::alt("i")), None);
+        assert_eq!(m.get(&KeyCombo::alt("b")), Some(&Action::SetEndTime));
         assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));
         assert_eq!(m.get(&KeyCombo::ctrl("i")), Some(&Action::ToggleImageView));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("I")), Some(&Action::EnterPageCalibration));
@@ -535,8 +539,9 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabJournalAsk));
         assert_eq!(m.get(&KeyCombo::plain("R")), None);
-        assert_eq!(m.get(&KeyCombo::ctrl("n")), Some(&Action::VocabJournalPageNext));
-        assert_eq!(m.get(&KeyCombo::ctrl("p")), Some(&Action::VocabJournalPagePrev));
+        // Reader Ctrl+n/p unbound since the popup Journal view was removed.
+        assert_eq!(m.get(&KeyCombo::ctrl("n")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl("p")), None);
         assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("underscore")), Some(&Action::JumpToPrevVocab));
@@ -565,10 +570,10 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("J")), Some(&Action::JumpToNextSpeaker));
         assert_eq!(m.get(&KeyCombo::plain("K")), Some(&Action::JumpToPrevSpeaker));
-        // Lowercase j / k are the seeking speaker/paragraph jumps (twins of
-        // q / comma); h / t carry the no-seek cursor steps.
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::JumpToNextSpeaker));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::JumpToPrevSpeaker));
+        // Lowercase j / k carry the bookmark steps (swapped with `'`/`;`);
+        // the speaker jumps stay on q / comma and the capitals above.
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::NextBookmark));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::PrevBookmark));
         assert_eq!(m.get(&KeyCombo::plain("h")), Some(&Action::CursorNextDialogueNoSeek));
         assert_eq!(m.get(&KeyCombo::plain("t")), Some(&Action::CursorPrevDialogueNoSeek));
     }
@@ -632,17 +637,17 @@ mod tests {
         assert_eq!(km.lookup("5", false, false, false), None);
         assert_eq!(km.lookup("parenleft", false, false, false), None);
         assert_eq!(km.lookup("ampersand", false, false, false), None);
-        // Bookmarks moved to `}`/`]` (braceright/bracketright).
-        assert_eq!(km.lookup("braceright", false, false, false), Some(Action::PrevBookmark));
-        assert_eq!(km.lookup("bracketright", false, false, false), Some(Action::NextBookmark));
-        // `;`/`'` carry the seeking steps swapped off `k`/`j`.
+        // `;`/`'` carry the seeking cursor steps; `}`/`]` are unbound.
+        assert_eq!(km.lookup("braceright", false, false, false), None);
+        assert_eq!(km.lookup("bracketright", false, false, false), None);
         assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevLine));
         assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
-        // Shift+; (the shifted colon glyph) cycles playback speed; `+` toasts
-        // the current act/scene or chapter (swapped in e42fd92).
+        // Shift+; (the shifted colon glyph) cycles playback speed; `+` copies
+        // the work + division to the clipboard (was ShowCurrentChapter, which
+        // stays on `C`).
         assert_eq!(km.lookup("colon", false, true, false), Some(Action::TogglePlaybackSpeed));
-        assert_eq!(km.lookup("plus", false, false, false), Some(Action::ShowCurrentChapter));
+        assert_eq!(km.lookup("plus", false, false, false), Some(Action::CopyWorkDivision));
         // Shift+'+' (the shifted `1` glyph on RPD <AE01>) copies the work
         // abbrev + media path + large whisperX JSON; both delivery forms.
         assert_eq!(km.lookup("1", false, true, false), Some(Action::CopyWorkInfo));
@@ -691,7 +696,7 @@ mod tests {
         assert_eq!(km.lookup("f", false, false, false), Some(Action::OpenJournalTermInput));
         assert_eq!(km.lookup("F", false, false, false), None);
         assert_eq!(km.lookup("f", true, false, false), Some(Action::OpenCorpusSearch));
-        assert_eq!(km.lookup("o", true, false, false), Some(Action::ToggleLastOverlay));
+        assert_eq!(km.lookup("o", true, false, false), None);
         assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
         // plain v (segment vim copy) vs Shift+v (reader visual mode) differ.
         assert_eq!(km.lookup("v", false, false, false), Some(Action::OpenSegmentVim));
@@ -710,7 +715,7 @@ mod tests {
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageBackward));
         // Other defaults preserved:
         assert_eq!(km.lookup("y", false, false, false), Some(Action::PageBackward));
-        assert_eq!(km.lookup("j", false, false, false), Some(Action::JumpToNextSpeaker));
+        assert_eq!(km.lookup("j", false, false, false), Some(Action::NextBookmark));
     }
 
     #[test]

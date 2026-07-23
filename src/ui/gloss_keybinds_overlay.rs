@@ -5,51 +5,50 @@
 /// Legend card title.
 pub const TITLE: &str = "Gloss keybinds";
 
+/// Most-used binds, pinned to the legend's upper-right column. Rows here are
+/// MOVED out of the groups below (not duplicated). Every MRU bind must actually
+/// work in this overlay's handler.
+pub const MRU: super::keybinds_legend::Group = ("MRU", &[
+    ("Ctrl+f", "corpus_search: all Q&As / glosses"),
+    ("Ctrl+a", "ask_journal_for_passage → journal Q&A"),
+    ("Ctrl+r", "begin_rewrite: Claude rewrite of this gloss"),
+    ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
+    ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
+    ("r", "vocab_popup (rr toggles · r next word)"),
+    ("Alt+g", "gloss_picker"),
+    ("\\", "cycle_from_gloss: → journal Q&A (same segment)"),
+]);
+
 /// Grouped (key, action) rows. Matches handle_gloss_key + the gloss visual mode.
+/// Basic nav (j/q · k/, · x/y · gg/G) is deliberately unlisted — the binds
+/// stay live in the handler; the legend keeps only the less-guessable rows.
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
-        ("j / q", "next block"),
-        ("k / ,", "prev block"),
-        ("x / y", "next / prev page (this gloss)"),
-        ("g g / G", "first / last block"),
-        ("Alt+n / Alt+p", "prev / next gloss"),
-        ("Ctrl+n / Ctrl+p", "next / prev passage"),
+        ("Ctrl+n / Ctrl+p", "navigate_gloss_passage: next / prev"),
+        ("Alt+n / Alt+p", "navigate_gloss: prev / next"),
         ("Shift+V", "visual select (y yank → clipboard)"),
-        ("r", "vocab popup (rr toggles · r next word)"),
     ]),
-    ("TTS / voice", &[
-        ("a", "play / pause (MPV, same as main card)"),
-        ("Space", "loop source audio from its start / pause"),
-        ("Ctrl+Space", "play / stop cursor block TTS (synthesizes on miss)"),
-        ("A", "restart cursor block TTS from start (synthesizes on miss)"),
+    // L (pick_source_voice), v (voice_picker), Ctrl+v (cycle_active_voice)
+    // are deliberately unlisted (2026-07-22) — the binds stay live in the
+    // handler, same policy as the basic-nav rows above.
+    ("TTS", &[
+        ("Space", "restart cursor_block TTS (synthesizes on miss)"),
+        ("a", "play / stop cursor_block TTS (synthesizes on miss)"),
         ("Shift+Space", "synthesize all prose blocks"),
-        ("l", "play / stop source verse TTS"),
-        ("L", "pick voice for source reading"),
-        ("v", "voice picker"),
-        ("Ctrl+v", "cycle active voice"),
     ]),
     ("Editing", &[
-        ("C-r", "ask Claude to rewrite this gloss"),
-        ("Ctrl+Shift+n / Ctrl+Shift+p", "browse rewrite history (view-only)"),
-        ("Ctrl+Shift+r", "restore the viewed revision"),
-        ("e", "edit gloss in place (vim)"),
-        ("u", "undo last edit (confirm)"),
-        ("D", "delete current gloss"),
-        ("c", "copy gloss id"),
+        ("e", "begin_edit (vim, in place)"),
+        ("u", "undo_gloss_edit (confirm)"),
+        ("D", "delete_current_gloss (confirm)"),
+        ("c", "copy_gloss_id"),
+        ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
     ]),
     super::keybinds_legend::VIM_EDIT_GROUP,
-    ("Journal", &[
-        ("Alt+g", "glosses picker"),
-    ]),
-    ("View", &[
-        (";", "show chapter"),
-        ("Ctrl+,", "settings"),
-        ("Ctrl+↑ / Ctrl+↓", "mpv volume"),
+    ("Misc", &[
+        ("+", "copy_work_division → clipboard"),
+        ("Ctrl+↑ / Ctrl+↓", "mpv + TTS (rodio) volume"),
         ("Ctrl+Alt+↑ / ↓", "TTS volume (saved)"),
-        ("\\", "cycle: → synopsis (same segment)"),
-        ("Ctrl+f", "search all Q&As / glosses"),
-        ("Esc", "close vocab popup / close (jump to source)"),
-        ("Ctrl+Shift+L", "save & quit app"),
+        ("Esc", "close vocab_popup / jump to source_text"),
         ("Ctrl+/", "close this legend"),
     ]),
 ];
