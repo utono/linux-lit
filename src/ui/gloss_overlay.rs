@@ -3123,11 +3123,18 @@ impl GlossOverlay {
         legend: &str,
         block_fill: &str,
         block_fg: &str,
+        fill_fraction: f32,
     ) {
         // `legend` is the centered how-to watermark (empty string opts out),
         // matching the journal Q&A / rewrite boxes. The gloss Edit card uses it
         // to explain that Ctrl+Enter on an empty box rewrites with the default
         // prompt.
+        //
+        // `fill_fraction` is the per-work-type ask-card proportion (from
+        // `Config::ask_fill_fraction_for`); pinning it here revives the host's
+        // input-fill read block. In float mode (the gloss 2-column ask) the host
+        // ignores it, so calling unconditionally is harmless.
+        self.ask_host.set_input_fill_fraction(fill_fraction);
         self.ask_host.open(title, hint, legend, block_fill, block_fg);
         self.apply_font();
     }

@@ -209,6 +209,12 @@ pub struct Config {
     /// save, like `theme` itself (see merge_configs).
     #[serde(default)]
     pub root_variants: HashMap<String, u8>,
+    /// Ask-card input fill fraction remembered per work CLASS, not per work:
+    /// keyed by `"play"` / `"prose"` / `"verse"` (see `line_types::work_class`).
+    /// Absent key = the compiled per-class default (`ask_fill_fraction_for`).
+    /// Merged ours-wins on save, like `root_variants` (see merge_configs).
+    #[serde(default)]
+    pub ask_fill_fraction_by_type: HashMap<String, f32>,
     /// Whether newly-saved journal Q&A entries are automatically tagged by
     /// the background tagger (Task 4). Default on.
     #[serde(default = "default_auto_tag_journal")]
@@ -381,6 +387,7 @@ impl Default for Config {
             theme: None,
             theme_cycle: None,
             root_variants: HashMap::new(),
+            ask_fill_fraction_by_type: HashMap::new(),
             auto_tag_journal: default_auto_tag_journal(),
             tag_extract_model: default_tag_extract_model(),
         }
@@ -418,6 +425,34 @@ impl Config {
     /// against the theme's own candidate count.
     pub fn root_variant_for(&self, theme_name: &str) -> u8 {
         self.root_variants.get(theme_name).copied().unwrap_or(0)
+    }
+
+    /// Effective ask-card fill fraction for `work_type`: the value stored under
+    /// the work's class (`play`/`prose`/`verse`), else the compiled per-class
+    /// default. Clamped to `ASK_FILL_FRACTION_RANGE`; a stored NaN or
+    /// out-of-range value falls back to the compiled default.
+    pub fn ask_fill_fraction_for(&self, work_type: &str) -> f32 {
+        let class = crate::db::line_types::work_class(work_type);
+        let default = default_ask_fill_fraction(class);
+        match self.ask_fill_fraction_by_type.get(class) {
+            Some(&f) if f.is_finite() && ASK_FILL_FRACTION_RANGE.contains(&f) => f,
+            _ => default,
+        }
+    }
+}
+
+/// Valid range for a persisted ask-card fill fraction. Values outside this
+/// (or NaN) fall back to the compiled per-class default.
+pub const ASK_FILL_FRACTION_RANGE: std::ops::RangeInclusive<f32> = 0.4..=0.9;
+
+/// Compiled per-class default ask-card fill fraction. `class` is a
+/// `line_types::work_class` token (`play`/`prose`/`verse`); an unrecognized
+/// token falls back to the verse default.
+pub fn default_ask_fill_fraction(class: &str) -> f32 {
+    match class {
+        "play" => 0.60,
+        "prose" => 0.75,
+        _ => 0.70, // verse (and any future/unknown class)
     }
 }
 
@@ -794,5 +829,51 @@ mod last_gloss_tests {
         let json = serde_json::to_string(&c).unwrap();
         let back: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(back.root_variant_for("sepia-lightest"), 1);
+    }
+
+    #[test]
+    fn ask_fill_fraction_defaults_per_class() {
+        // A config with no stored fractions falls back to the compiled defaults.
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(c.ask_fill_fraction_for("play"), 0.60);
+        assert_eq!(c.ask_fill_fraction_for("novel"), 0.75); // prose class
+        assert_eq!(c.ask_fill_fraction_for("sonnet_sequence"), 0.70); // verse class
+        assert_eq!(c.ask_fill_fraction_for("anything_else"), 0.70); // verse fallback
+    }
+
+    #[test]
+    fn ask_fill_fraction_uses_stored_value_by_class() {
+        let mut c: Config = serde_json::from_str("{}").unwrap();
+        c.ask_fill_fraction_by_type.insert("prose".into(), 0.82);
+        // Any prose-type work_type resolves to the "prose" bucket value.
+        assert_eq!(c.ask_fill_fraction_for("novel"), 0.82);
+        assert_eq!(c.ask_fill_fraction_for("prose_book"), 0.82);
+        // Other classes still use their compiled defaults.
+        assert_eq!(c.ask_fill_fraction_for("play"), 0.60);
+    }
+
+    #[test]
+    fn ask_fill_fraction_clamps_out_of_range_and_nan() {
+        let mut c: Config = serde_json::from_str("{}").unwrap();
+        // Out-of-range (too low / too high) → compiled default.
+        c.ask_fill_fraction_by_type.insert("play".into(), 0.1);
+        assert_eq!(c.ask_fill_fraction_for("play"), 0.60);
+        c.ask_fill_fraction_by_type.insert("play".into(), 1.5);
+        assert_eq!(c.ask_fill_fraction_for("play"), 0.60);
+        // NaN → compiled default.
+        c.ask_fill_fraction_by_type.insert("play".into(), f32::NAN);
+        assert_eq!(c.ask_fill_fraction_for("play"), 0.60);
+        // A valid in-range value is honored.
+        c.ask_fill_fraction_by_type.insert("play".into(), 0.55);
+        assert_eq!(c.ask_fill_fraction_for("play"), 0.55);
+    }
+
+    #[test]
+    fn ask_fill_fraction_roundtrip_serde() {
+        let mut c: Config = serde_json::from_str("{}").unwrap();
+        c.ask_fill_fraction_by_type.insert("verse".into(), 0.68);
+        let json = serde_json::to_string(&c).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ask_fill_fraction_for("sonnet_sequence"), 0.68);
     }
 }

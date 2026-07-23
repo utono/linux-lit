@@ -564,8 +564,11 @@ impl AskCardHost {
     }
 
     /// Pin the ask card's input scroll to `fraction` of the overlay card height
-    /// on every `open` (journal Q&A calls this with 0.75). Without it the input
-    /// keeps its default 160..320 natural range.
+    /// on the next non-float `open`. Called by the gloss and journal overlays'
+    /// open paths with the per-work-type fraction from
+    /// `Config::ask_fill_fraction_for` (play/prose/verse buckets). Without it the
+    /// input keeps its default 160..320 natural range; in float mode the pinned
+    /// fraction is ignored (the float branch returns before the read block).
     pub fn set_input_fill_fraction(&self, fraction: f32) {
         self.input_fill_fraction.set(Some(fraction));
     }
