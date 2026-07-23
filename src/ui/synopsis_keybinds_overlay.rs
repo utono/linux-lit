@@ -13,6 +13,7 @@ pub const TITLE: &str = "Synopsis keybinds";
 /// only it is listed.
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Alt+g", "gloss_picker (work glosses)"),
+    ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
 ]);
 
 /// Grouped (key, action) rows. Matches handle_synopsis_overlay_key + visual mode.
@@ -34,7 +35,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("e", "begin_edit (vim, in place)"),
         ("u", "undo last edit (confirm)"),
         ("c", "copy_synopsis_id (debug info)"),
-        ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
     ]),
     super::keybinds_legend::VIM_EDIT_GROUP,
     ("Misc", &[

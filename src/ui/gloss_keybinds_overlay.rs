@@ -15,6 +15,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles · r next word)"),
+    ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
     ("Alt+g", "gloss_picker"),
     ("\\", "cycle_from_gloss: → journal Q&A (same segment)"),
 ]);
@@ -41,7 +42,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("u", "undo_gloss_edit (confirm)"),
         ("D", "delete_current_gloss (confirm)"),
         ("c", "copy_gloss_id"),
-        ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
     ]),
     super::keybinds_legend::VIM_EDIT_GROUP,
     ("Misc", &[
