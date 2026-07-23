@@ -313,6 +313,7 @@ impl JournalOverlay {
         container.add_css_class("gloss-overlay");
         container.set_halign(gtk4::Align::Center);
         container.set_valign(gtk4::Align::Center);
+        container.set_width_request(column_width as i32);
         container.set_visible(false);
 
         // Running head matching the main card and the synopsis/gloss overlays:
@@ -528,10 +529,15 @@ impl JournalOverlay {
         let footer_container = footer.container.clone();
         container.append(&footer.container);
 
-        // Shared "ask" input card (canonical synopsis values), stacked last in
-        // the column. Focus returns to the page view when leaving the input.
+        // Shared "ask" input card. Floats to the RIGHT of the journal card in a
+        // 2-column layout (mirrors the gloss overlay), so Ctrl+Tab can toggle
+        // focus between the two. Added as an add_overlay sibling in `attach()`,
+        // NOT appended to the column.
         let ask = AskCard::new(text_margins as i32, &view);
-        container.append(ask.container());
+        // Center the fixed-width float panel (mirrors the gloss ask container).
+        ask.container().set_halign(gtk4::Align::Center);
+        ask.container().set_valign(gtk4::Align::Fill);
+        let ask_container_for_reserve = ask.container().clone();
 
         // The host owns the ask-card lifecycle: the fixed-scroll-height
         // viewport-shrink, the footer hide/show, and the clip recompute. The
@@ -546,10 +552,37 @@ impl JournalOverlay {
         };
         let ask_host =
             AskCardHost::new(ask, &scrolled, Some(footer_container.clone()), recompute);
-        // The journal Q&A input box fills 3/4 of the overlay height (the reading
-        // page shrinks to the remaining quarter above it). Gloss/synopsis keep
-        // the default compact input.
-        ask_host.set_input_fill_fraction(0.75);
+        // Journal ask floats to the RIGHT of the journal card (2-column layout,
+        // mirroring the gloss overlay). Fixed float width. On open the journal
+        // card reserves margin_end = ask_width + seam (shifts it left by half);
+        // the ask panel reserves margin_start = journal_width + seam (shifts it
+        // right by half). Both children are halign=Center, so the two mirrored
+        // allocation boxes yield equal L/R gutters (the centered pair).
+        let float_w = (column_width as i32 * 5 / 8).max(360);
+        {
+            let container_for_reserve = container.clone();
+            let reserve = Rc::new(move |px: i32| {
+                // `px` is the reservation (ask_width + seam) on open, 0 on close.
+                container_for_reserve.set_margin_end(px);
+                if px > 0 {
+                    let journal_w = container_for_reserve
+                        .width()
+                        .max(container_for_reserve.width_request());
+                    let seam = px - float_w; // reservation minus ask width
+                    ask_container_for_reserve.set_margin_start(journal_w + seam);
+                    // Cap the ask panel height to the journal card's height so the
+                    // two columns are top/bottom aligned.
+                    let h = container_for_reserve
+                        .height()
+                        .max(container_for_reserve.height_request());
+                    ask_container_for_reserve.set_height_request(h.max(200));
+                } else {
+                    ask_container_for_reserve.set_margin_start(0);
+                    ask_container_for_reserve.set_height_request(-1);
+                }
+            }) as Rc<dyn Fn(i32)>;
+            ask_host.enable_float(float_w, reserve);
+        }
         // Build markdown tags once against the view's tag table so every
         // render_page call reuses the same registered tags (O(1) apply).
         let md_tags = crate::ui::markdown::MarkdownTags::register(&view.buffer());
@@ -652,6 +685,14 @@ impl JournalOverlay {
         crate::ui::picker_attach::attach_overlay_panel(
             &self.overlay, child, &self.scrim, &self.container,
         );
+        // The ask card floats as a right-anchored sibling of the journal card
+        // (2-column ask layout). Added last so it paints above the card; hidden
+        // until an ask flow opens it. Not measured (its size is fixed by the
+        // float width + height reservation) and clipped like the container.
+        let ask_container = self.ask_host.card().container();
+        self.overlay.add_overlay(ask_container);
+        self.overlay.set_measure_overlay(ask_container, false);
+        self.overlay.set_clip_overlay(ask_container, true);
     }
 
     /// Dim whichever of the two 2-col cards does NOT have input focus.
@@ -709,6 +750,27 @@ impl JournalOverlay {
             head_h.height() + UNACCOUNTED_CHROME_MARGINS,
             footer_h.height(),
         );
+        // Pin the display scroll's CLOSED height INDEPENDENTLY of the host call
+        // above. When the ask card is a float (`enable_float`), `AskCardHost::size`
+        // early-returns BEFORE `pin_scroll_height()`, so it never sizes our scroll —
+        // leaving `self.scrolled` at height_request=-1 → alloc_h=0 and a blank body.
+        // Mirror the gloss overlay's `size_scroll` (gloss_overlay.rs:2082-2087),
+        // which survives the same float early-return by pinning its own scroll.
+        // The closed height is exactly what `AskCardHost::size` computes in stacked
+        // mode: card minus the fixed chrome (head row + scroll_overlay margins,
+        // already folded into UNACCOUNTED_CHROME_MARGINS = 44) minus the footer.
+        // `.max(80)` floors it like gloss / the scroll_budget_tests helper.
+        let scroll_h = (card_height
+            - (head_h.height() + UNACCOUNTED_CHROME_MARGINS)
+            - footer_h.height())
+        .max(80);
+        // Order matters: height_request → max → min, so max_content_height is never
+        // transiently below min_content_height (avoids the Gtk-CRITICAL assertion
+        // `height >= min_content_height` — same order as gloss/pin_scroll_height).
+        self.scrolled.set_height_request(scroll_h);
+        self.scrolled.set_max_content_height(scroll_h);
+        self.scrolled.set_min_content_height(scroll_h);
+        self.scrolled.queue_resize();
         // Anchor the text to a card-relative margin rather than the small fixed
         // `text_margins` — otherwise the Q&A prose runs nearly edge to edge on
         // a wide card. Card SIZE is unchanged; only the inner padding grows.
@@ -987,6 +1049,9 @@ impl JournalOverlay {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
         self.ask_host.card().close();
+        // Universal close funnel: clear any stale focus-dim (card-unfocused) left
+        // by a Ctrl+Tab focus toggle so the overlay never reopens dimmed.
+        self.clear_focus_dim();
     }
 
     pub fn is_visible(&self) -> bool {

@@ -12,6 +12,7 @@ pub const TITLE: &str = "Journal keybinds";
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+f", "corpus_search: all Q&As / glosses"),
     ("Ctrl+a", "begin_ask: new Q&A in this band"),
+    ("Ctrl+Tab", "toggle focus: ask card ↔ journal card (2-col)"),
     ("Alt+s", "JournalBand::Scene (cursor scene)"),
     ("Alt+w", "JournalBand::Work"),
     ("Alt+a", "JournalBand::Author (corpus)"),
