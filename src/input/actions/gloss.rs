@@ -942,6 +942,7 @@ fn apply_ipa_fix(
     ) {
         Some(t) => t,
         None => {
+            state_rc.borrow().gloss_overlay.stop_loading();
             show_tts_toast(state_rc, &format!("No IPA for {}", word));
             return;
         }
@@ -963,6 +964,7 @@ fn apply_ipa_fix(
             .unwrap_or_default()
         }
         Err(_) => {
+            state_rc.borrow().gloss_overlay.stop_loading();
             show_tts_toast(state_rc, "Could not save IPA fix");
             return;
         }
@@ -1056,6 +1058,7 @@ fn request_ipa_then_apply(
         match result {
             Ok(Ok(reply)) => {
                 if !crate::ui::gloss_ipa::contains_ipa_span(&reply) {
+                    state_for_result.borrow().gloss_overlay.stop_loading();
                     show_tts_toast(&state_for_result, "Could not get IPA");
                     return;
                 }
@@ -1071,6 +1074,7 @@ fn request_ipa_then_apply(
                 );
             }
             _ => {
+                state_for_result.borrow().gloss_overlay.stop_loading();
                 show_tts_toast(&state_for_result, "Could not get IPA");
             }
         }

@@ -1543,6 +1543,7 @@ impl GlossOverlay {
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
+        self.loading_animator.stop();
         self.hide_citation();
         self.title.set_visible(true);
         self.title.set_text("Gloss");
@@ -1715,6 +1716,7 @@ impl GlossOverlay {
     }
 
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
+        self.loading_animator.stop();
         // Same prose segment-merge as `show_gloss_with_color`, so the loading
         // card's passage reads identically to the result card's source block.
         let joined_doc;
@@ -3161,6 +3163,13 @@ impl GlossOverlay {
     /// True when the ask card is open in 2-col float layout.
     pub fn is_ask_float(&self) -> bool {
         self.ask_host.is_ask_float()
+    }
+
+    /// Stop the loading spinner without rendering a result over it. Error-return
+    /// branches (e.g. IPA-fix failures) call this so the "Glossing…" spinner does
+    /// not keep repainting forever after they toast + return. Idempotent.
+    pub fn stop_loading(&self) {
+        self.loading_animator.stop();
     }
 
     pub fn show_loading(&self) {
