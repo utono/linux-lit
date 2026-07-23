@@ -752,7 +752,12 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
     // Stack the input as a card below the open gloss (same widget the synopsis
     // "ask" flow uses) instead of a separate floating dialog. The gloss card
     // stays visible above it; `gloss_prompt_mode` routes the eventual submit.
-    state_rc.borrow_mut().gloss_prompt_mode = mode;
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_prompt_mode = mode;
+        // Ctrl+Tab focus toggle: a freshly opened ask card always starts focused.
+        s.ask_card_focus = true;
+    }
     {
         let s = state_rc.borrow();
         s.gloss_overlay.open_ask_card_with(
@@ -3690,6 +3695,11 @@ pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
 /// inside the gloss overlay, like the synopsis ask card).
 pub(crate) fn close_gloss_prompt(state: &Rc<RefCell<AppState>>) {
     state.borrow().gloss_overlay.close_ask_card();
+    // Ctrl+Tab focus toggle: closing the ask card always resets focus + dim so
+    // no stale state leaks into the next open.
+    let mut s = state.borrow_mut();
+    s.ask_card_focus = true;
+    s.gloss_overlay.clear_focus_dim();
 }
 
 #[cfg(test)]
