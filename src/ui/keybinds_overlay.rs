@@ -58,11 +58,12 @@ const UPPER_ROW: &[KeyDef] = &[
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("C-M-g", "annot tint")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "prev work")]),
     key("r", "R", "vocab tap", "", &[("C-r", "add vocab"), ("S-C-r", "vocab Q&A"), ("M-r", "vocab hi")]),
-    key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
+    key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker")]),
 ];
-const TAB_KEY: KeyDef = bare("Tab", "", "focus chat");
+// Tab is unbound in reader mode (chat panel disabled 2026-07-23).
+const TAB_KEY: KeyDef = bare("Tab", "", "");
 
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
@@ -75,7 +76,7 @@ const HOME_ROW: &[KeyDef] = &[
     key("t", "T", "dlg back", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
     key("n", "N", "next match", "N: prev match", &[("C-M-n", "nav test")]),
     bare("s", "S", "toggle sync"),
-    key("-", "_", "gloss chat", "", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
+    key("-", "_", "copy word", "_: collect words", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 
@@ -87,7 +88,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     bare("x", "X", "pg fwd"),
     key("b", "B", "start time", "", &[("M-b", "set end time")]),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
-    key("w", "W", "copy word", "W: collect", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
+    key("w", "W", "", "", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "vim copy", "V: visual mode", &[]),
     key("z", "Z", "conc picker", "", &[("C-z", "conc word"), ("M-z", "conc works"), ("S-C-z", "conc list")]),
 ];
@@ -287,23 +288,13 @@ Q&A filter; same as the journal overlay's f) — src/input/actions/journal.rs",
         "prev match" => "Action::SearchPrevMatch — src/input/search.rs",
 
         // ── Gloss / echo system ──
-        "gloss chat" => "Action::ReaderGlossChatAtCursor — a toggle. When the \
-chat panel is already open, `-` CLOSES it (the reader-side close path). \
-On PROSE works it otherwise opens the GLOSS OVERLAY on the gloss covering \
-the cursor — or, when the paragraph has no gloss yet, glosses it in the \
-background (\"Glossing\u{2026}\" toast, reading continues) and opens the \
-overlay when the gloss lands. On verse/play works it OPENS the panel on the \
-reader-gloss covering the cursor line and shows the stored gloss — focus \
-lands in the transcript; no-op (toasts \"No gloss on this line\") if the \
-line has no reader-gloss. In visual (`V`) mode, `-` glosses the selection: \
-prose routes to the gloss overlay (cached gloss opens it; otherwise \
-background-glossed like reader `-`); verse/play opens the chat panel \
-(action_reader_gloss_chat). — src/input/actions/gloss.rs",
-        "focus chat" => "Tab (reader mode) — toggles focus between the main \
-card and an OPEN chat panel. No-op when the panel is closed (the panel opens \
-via `-`, not Tab). From inside the panel, Tab focuses the reader again; in the \
-transcript j/h move down, k/t move up, `\\` toggles gloss ↔ journal, `-` \
-closes. — src/input/keymap.rs (reader section) + src/input/actions/chat.rs",
+        // Chat panel disabled 2026-07-23: these labels no longer appear in the
+        // strip (the `-` cap carries word-copy, Tab is unbound). The detail arms
+        // are kept for when the chat panel binds are restored.
+        "gloss chat" => "Action::ReaderGlossChatAtCursor (chat panel DISABLED \
+2026-07-23) — src/input/actions/gloss.rs",
+        "focus chat" => "Tab (reader mode) — chat panel DISABLED 2026-07-23 \
+— src/input/keymap.rs + src/input/actions/chat.rs",
         "gloss tog" => "Action::ToggleGlossOverlay — src/input/actions/gloss.rs",
         "annot tint" => "Action::ToggleAnnotationTint (toggle the main-card \
 tint on lines covered by a reader-gloss or journal passage Q&A; persisted in \
@@ -336,9 +327,11 @@ on cursor line: held toast while asking, then the journal overlay opens on \
 the entry; stored answers open immediately) — src/input/actions/vocab_journal.rs",
 
         // ── Word copy / visual ──
-        "copy word" => "Action::WordCycleCopy — src/input/actions/word_copy.rs",
+        "copy word" => "Action::WordCycleCopy (plain `-`; cycles one word at a \
+time to the clipboard) — src/input/actions/word_copy.rs",
         "copy id" => "Action::CopyLineMappingId — src/input/keymap.rs",
-        "collect" => "Action::WordCollectCopy — src/input/actions/word_copy.rs",
+        "collect words" => "Action::WordCollectCopy (`_`, Shift+-; collects the \
+whole line) — src/input/actions/word_copy.rs",
         "visual mode" => "Action::EnterVisualMode -> InputMode::Visual \
 — src/input/visual.rs",
 
@@ -398,7 +391,8 @@ Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
 
         // ── Display toggles ──
         "toggle signs" => "Action::ToggleSignColumn — src/app.rs",
-        "chat side" => "Action::ChatPanelFlipSide — src/input/actions/chat.rs",
+        "chat side" => "Action::ChatPanelFlipSide (chat panel DISABLED \
+2026-07-23) — src/input/actions/chat.rs",
         "synopsis" => "Action::ShowSynopsisOverlay — src/app.rs",
         "col layout" => "Action::ToggleColumnLayout — src/input/navigation.rs",
         // ("ask passage" was Ctrl+a -> Action::AskPassage; the bind was removed,
@@ -477,7 +471,9 @@ fn expand_action(label: &str) -> String {
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
         "annot tint" => "toggle gloss/journal line tint",
-        "gloss chat" => "reader-gloss chat at cursor",
+        "copy word" => "copy word (cycles one at a time)",
+        "collect words" => "collect line words to clipboard",
+        "gloss chat" => "reader-gloss chat at cursor (disabled)",
         "gloss pick" => "gloss picker",
         "last gloss" => "reopen last gloss",
         "BCP echo turns" => "BCP echo turns picker",
@@ -485,7 +481,7 @@ fn expand_action(label: &str) -> String {
         "vocab hi" => "toggle vocab highlight",
         "add vocab" => "add vocab word",
         "toggle signs" => "toggle sign column",
-        "chat side" => "flip chat panel column",
+        "chat side" => "flip chat panel column (disabled)",
         "toggle sync" => "toggle playback sync",
         "bkmk tap" => "bookmark (.. opens picker)",
         "dim tog" => "toggle dim",

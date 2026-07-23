@@ -319,6 +319,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("r"), Action::VocabJournalAsk),
         (KeyCombo::ctrl_shift("R"), Action::VocabJournalAsk),
         (KeyCombo::alt("r"), Action::ToggleVocabHighlight),
+        // Word-copy family lives on the `-` (minus) cap — see app_bindings.
+        // Shift+r / Ctrl+Alt+r are unbound here (word-copy moved off them
+        // 2026-07-23 when the chat panel binds were disabled and `-` freed).
         // Ctrl+Shift+g: on RPD this physical key emits key_name "g" (lowercase)
         // with shift=true under Ctrl+Shift — NOT "G" — so the "G" bind alone
         // never matched and the reader scrolled instead (confirmed from the
@@ -352,9 +355,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // Ctrl+o (ToggleLastOverlay: reopen the last-closed gloss/journal
         // overlay) was dropped 2026-07-22 — the action remains reachable
         // only via a keymap.json override.
-        // The chat panel has no reader-table Tab caps: `-` opens it (and, when
-        // it is already open, closes it — ReaderGlossChatAtCursor toggles).
-        // Inside the panel, its own handlers still bind `-`/Ctrl+Tab/Escape.
+        // Chat panel disabled 2026-07-23 — the `-` cap now carries word-copy
+        // (see app_bindings), not ReaderGlossChatAtCursor. Its own in-panel
+        // handlers (`-`/Ctrl+Tab/Escape) remain compiled but unreachable.
         // `\` cycles the segment overlays: journal Q&A → gloss → synopsis
         // (wraps; advance arms live in the overlay modal handlers).
         (KeyCombo::plain("backslash"), Action::CycleSegmentOverlays),
@@ -370,10 +373,8 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // matching the journal overlay's `f`. Font cycling used to live here.
         (KeyCombo::plain("f"), Action::OpenJournalTermInput),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
-        // The chat panel has no reader-table Tab caps. `-` opens it
-        // (ReaderGlossChatAtCursor) and, when it is already open, closes it —
-        // a one-key reader-side toggle. Focus-cycling / closing from inside the
-        // panel is handled by the panel's own key handlers (keymap.rs).
+        // Chat panel disabled 2026-07-23 (Ctrl+l ChatPanelFlipSide commented out
+        // below; `-` freed for word-copy in app_bindings).
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::ctrl("t"), Action::ThemeNext),
         (KeyCombo::ctrl_shift("T"), Action::ThemePrev),
@@ -407,7 +408,10 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // Ctrl+h unbound; ToggleSynopsis (the persistent side panel) remains
         // available for user keymaps.
         // Ctrl+l: flip a floating chat panel to the other reading column.
-        (KeyCombo::ctrl("l"), Action::ChatPanelFlipSide),
+        // Disabled 2026-07-23 with the rest of the chat panel binds; restore
+        // this line (and plain `-` = ReaderGlossChatAtCursor in app_bindings)
+        // to re-enable the chat panel.
+        // (KeyCombo::ctrl("l"), Action::ChatPanelFlipSide),
         (KeyCombo::ctrl("comma"), Action::OpenSettingsOverlay),
     ]
 }
@@ -424,8 +428,10 @@ fn selection_bindings() -> Vec<(KeyCombo, Action)> {
         // Copy-only vim view of the cursor's segment: opens in VISUAL mode,
         // visual `y` copies to the system clipboard, nothing is ever saved.
         (KeyCombo::plain("v"), Action::OpenSegmentVim),
-        (KeyCombo::plain("w"), Action::WordCycleCopy),
-        (KeyCombo::plain("W"), Action::WordCollectCopy),
+        // Word-copy moved off the `w` cap to the `-` (minus) cap (2026-07-23):
+        // plain w / Shift+W are now unbound here; WordCycleCopy is on plain `-`
+        // and WordCollectCopy on `_` (Shift+-) — see app_bindings. The w cap
+        // keeps only the Shx echo chords (Alt+w / Ctrl+w / Ctrl+Shift+W).
     ]
 }
 
@@ -463,10 +469,22 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("minus"), Action::JumpToNextVocab),
         (KeyCombo::ctrl_shift("underscore"), Action::JumpToPrevVocab),
         (KeyCombo::ctrl_shift("minus"), Action::JumpToPrevVocab),
-        // Plain `-` opens the chat panel on the reader-gloss covering the
-        // cursor line (reader mode; no V-select). Ctrl+- / Ctrl+Shift+- keep
-        // their vocab-jump binds below.
-        (KeyCombo::plain("minus"), Action::ReaderGlossChatAtCursor),
+        // Word-copy family on the `-` cap (2026-07-23; chat panel disabled).
+        // Plain `-` cycles one word at a time to the clipboard; `_` (Shift+-)
+        // collects the whole line. CONFIRMED FROM THE LOG: GTK delivers `_` as
+        // ("underscore", shift=TRUE) — not shift=false — so shift("underscore")
+        // is the bind that actually fires. `_` is a symbol, so lookup() keeps
+        // the shift flag significant (effective_shift only strips shift for bare
+        // uppercase letters), which is why plain("underscore") never matched.
+        // shift("minus") is kept defensively for a layout path that reports the
+        // shifted cap as ("minus", shift=true) instead.
+        //
+        // Chat panel disabled 2026-07-23: plain `-` previously opened/closed the
+        // reader-gloss chat panel (ReaderGlossChatAtCursor). Restore that bind
+        // (and Ctrl+l ChatPanelFlipSide in display_bindings) to re-enable it.
+        (KeyCombo::plain("minus"), Action::WordCycleCopy),
+        (KeyCombo::shift("underscore"), Action::WordCollectCopy),
+        (KeyCombo::shift("minus"), Action::WordCollectCopy),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
@@ -510,8 +528,7 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
-        // The reader table binds no Tab caps — the chat panel opens/closes via
-        // `-` (ReaderGlossChatAtCursor toggles) and the panel's own handlers.
+        // The reader table binds no Tab caps (chat panel disabled 2026-07-23).
         assert_eq!(m.get(&KeyCombo::ctrl("Tab")), None);
         assert_eq!(m.get(&KeyCombo::plain("Tab")), None);
         // Ctrl+o (ToggleLastOverlay) dropped from the defaults.
@@ -534,17 +551,33 @@ mod tests {
     fn r_is_the_vocab_hub() {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
-        // # freed; plain minus now opens the reader-gloss chat at the cursor
-        // (ReaderGlossChatAtCursor). The `r` key is the vocab hub: Ctrl+r adds
-        // a vocab word, Ctrl+Shift+r asks the vocab journal Q&A, Alt+r toggles
-        // the per-work vocab highlight (2026-07-23 consolidation).
+        // Chat panel disabled 2026-07-23: plain `-` no longer opens the
+        // reader-gloss chat. The `-` cap now carries the word-copy family —
+        // plain `-` = WordCycleCopy, `_` (Shift+-) = WordCollectCopy (bound
+        // both delivery forms). The `r` key stays the vocab hub: Ctrl+r adds a
+        // vocab word, Ctrl+Shift+r asks the vocab journal Q&A, Alt+r toggles the
+        // per-work vocab highlight. Shift+r / Ctrl+Alt+r are now unbound.
         assert_eq!(
             m.get(&KeyCombo::plain("minus")),
-            Some(&Action::ReaderGlossChatAtCursor)
+            Some(&Action::WordCycleCopy)
         );
+        // `_` arrives as ("underscore", shift=true) — shift("underscore") is
+        // the bind that fires (confirmed from the debug log); shift("minus") is
+        // a defensive alternate. plain("underscore") never matches.
+        assert_eq!(
+            m.get(&KeyCombo::shift("underscore")),
+            Some(&Action::WordCollectCopy)
+        );
+        assert_eq!(
+            m.get(&KeyCombo::shift("minus")),
+            Some(&Action::WordCollectCopy)
+        );
+        assert_eq!(m.get(&KeyCombo::plain("underscore")), None);
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::AddVocabWord));
+        // Shift+r / Ctrl+Alt+r are unbound (word-copy moved to the `-` cap).
         assert_eq!(m.get(&KeyCombo::plain("R")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl_alt("r")), None);
         assert_eq!(m.get(&KeyCombo::ctrl_shift("r")), Some(&Action::VocabJournalAsk));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), Some(&Action::VocabJournalAsk));
         assert_eq!(m.get(&KeyCombo::alt("r")), Some(&Action::ToggleVocabHighlight));
@@ -567,9 +600,10 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_l_flips_chat_panel_side() {
+    fn ctrl_l_chat_flip_disabled() {
         let m = default_reader_bindings();
-        assert_eq!(m.get(&KeyCombo::ctrl("l")), Some(&Action::ChatPanelFlipSide));
+        // Ctrl+l (ChatPanelFlipSide) disabled 2026-07-23 with the chat panel.
+        assert_eq!(m.get(&KeyCombo::ctrl("l")), None);
         assert_eq!(m.get(&KeyCombo::plain("l")), Some(&Action::ToggleSignColumn));
     }
 
