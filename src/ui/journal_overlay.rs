@@ -768,6 +768,20 @@ impl JournalOverlay {
         self.view.set_left_margin(side + JOURNAL_BODY_INDENT);
         self.view.set_right_margin(side);
         let _ = (self.text_margins, self.column_width);
+        crate::logging::log(&format!(
+            "DBG-JFLOAT size_card: card=({},{}) cont w={} wreq={} h={} hreq={} mend={} | scrolled hreq={} maxc={} minc={} alloc_h={} | scroll_overlay alloc_h={}",
+            card_width, card_height,
+            self.container.width(), self.container.width_request(),
+            self.container.height(), self.container.height_request(),
+            self.container.margin_end(),
+            self.scrolled.height_request(), self.scrolled.max_content_height(),
+            self.scrolled.min_content_height(), self.scrolled.height(),
+            self.scroll_overlay_height_dbg(),
+        ));
+    }
+
+    fn scroll_overlay_height_dbg(&self) -> i32 {
+        self.view.height()
     }
 
     pub fn show_page(
@@ -871,6 +885,20 @@ impl JournalOverlay {
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.clip_guard.on_open();
+        {
+            let cont = self.container.clone();
+            let sc = self.scrolled.clone();
+            let vw = self.view.clone();
+            glib::idle_add_local_once(move || {
+                crate::logging::log(&format!(
+                    "DBG-JFLOAT post-render(idle): cont w={} wreq={} h={} hreq={} mend={} vis={} | scrolled hreq={} maxc={} alloc_h={} alloc_w={} | view alloc_h={} alloc_w={}",
+                    cont.width(), cont.width_request(), cont.height(),
+                    cont.height_request(), cont.margin_end(), cont.is_visible(),
+                    sc.height_request(), sc.max_content_height(), sc.height(), sc.width(),
+                    vw.height(), vw.width(),
+                ));
+            });
+        }
         // The accent bar DRAW reads per-line geometry (line_yrange), which is
         // 0/stale until GTK lays out the buffer just made visible — so the
         // synchronous mark in render_page paints nothing on a fresh open. Repaint
