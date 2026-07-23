@@ -2918,14 +2918,6 @@ fn handle_synopsis_overlay_key(
         return true;
     }
 
-    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the synopsis overlay
-    // (same as the reader/gloss/journal/chat arms). It floats above the whole
-    // overlay chain and restores this mode on close.
-    if is_ctrl && is_alt && key_name == "backslash" {
-        crate::input::actions::vocab_add::open(state);
-        return true;
-    }
-
     // Shift+Space: batch-synthesize all synopsis paragraphs (cache-only).
     if key_name == "space" && is_shift {
         crate::input::actions::gloss::synth_all_synopsis_blocks(state);
@@ -2947,8 +2939,14 @@ fn handle_synopsis_overlay_key(
             crate::input::actions::gloss::read_current_synopsis_block(state);
             true
         }
-        // r: dropped (cross-create: scene ask card; asking happens from the
-        // reader). Consumed no-op.
+        // Ctrl+r: add a vocab word (uniform with the reader + every overlay —
+        // 2026-07-23 consolidation; replaces the old Ctrl+Alt+\ trigger).
+        "r" if is_ctrl => {
+            crate::input::actions::vocab_add::open(state);
+            true
+        }
+        // plain r: dropped (cross-create: scene ask card; asking happens from
+        // the reader). Consumed no-op.
         "r" => true,
         "e" => {
             crate::input::actions::synopsis::begin_edit(state);
