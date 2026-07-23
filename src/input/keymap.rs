@@ -2318,13 +2318,6 @@ fn handle_gloss_key(
         AskIntercept::NotHandled => {}
     }
 
-    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the gloss overlay. It
-    // floats above the whole overlay chain and restores this mode on close.
-    if is_ctrl && is_alt && key_name == "backslash" {
-        crate::input::actions::vocab_add::open(state);
-        return true;
-    }
-
     // Shift+Space: batch-synthesize all prose blocks (cache-only).
     if key_name == "space" && is_shift {
         crate::input::actions::gloss::synth_all_prose_blocks(state);
@@ -2443,10 +2436,16 @@ fn handle_gloss_key(
                 );
                 return true;
             }
-            // Ctrl+r: ask-Claude rewrite of the displayed gloss (moved off plain
-            // `R`, which is now reserved for the vocab surface, mirroring the
-            // main card). Opens the rewrite prompt in INSERT.
+            // Ctrl+r: add a vocab word (uniform with the reader + every overlay
+            // — 2026-07-23 consolidation). Gloss rewrite moved to Ctrl+w below.
             "r" => {
+                crate::input::actions::vocab_add::open(state);
+                return true;
+            }
+            // Ctrl+w: ask-Claude rewrite of the displayed gloss (moved off
+            // Ctrl+r, joining the journal/chat rewrite family so Ctrl+w =
+            // rewrite on every overlay). Opens the rewrite prompt in INSERT.
+            "w" => {
                 crate::input::actions::gloss::begin_rewrite(state);
                 return true;
             }
