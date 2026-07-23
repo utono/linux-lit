@@ -750,6 +750,27 @@ impl JournalOverlay {
             head_h.height() + UNACCOUNTED_CHROME_MARGINS,
             footer_h.height(),
         );
+        // Pin the display scroll's CLOSED height INDEPENDENTLY of the host call
+        // above. When the ask card is a float (`enable_float`), `AskCardHost::size`
+        // early-returns BEFORE `pin_scroll_height()`, so it never sizes our scroll —
+        // leaving `self.scrolled` at height_request=-1 → alloc_h=0 and a blank body.
+        // Mirror the gloss overlay's `size_scroll` (gloss_overlay.rs:2082-2087),
+        // which survives the same float early-return by pinning its own scroll.
+        // The closed height is exactly what `AskCardHost::size` computes in stacked
+        // mode: card minus the fixed chrome (head row + scroll_overlay margins,
+        // already folded into UNACCOUNTED_CHROME_MARGINS = 44) minus the footer.
+        // `.max(80)` floors it like gloss / the scroll_budget_tests helper.
+        let scroll_h = (card_height
+            - (head_h.height() + UNACCOUNTED_CHROME_MARGINS)
+            - footer_h.height())
+        .max(80);
+        // Order matters: height_request → max → min, so max_content_height is never
+        // transiently below min_content_height (avoids the Gtk-CRITICAL assertion
+        // `height >= min_content_height` — same order as gloss/pin_scroll_height).
+        self.scrolled.set_height_request(scroll_h);
+        self.scrolled.set_max_content_height(scroll_h);
+        self.scrolled.set_min_content_height(scroll_h);
+        self.scrolled.queue_resize();
         // Anchor the text to a card-relative margin rather than the small fixed
         // `text_margins` — otherwise the Q&A prose runs nearly edge to edge on
         // a wide card. Card SIZE is unchanged; only the inner padding grows.
