@@ -1431,6 +1431,16 @@ pub fn generate_css(
            border-right: 1px solid alpha({fg}, 0.25); \
            border-radius: 0; \
            padding: 12px; }} \
+         /* Gloss/synopsis ask card floated to the RIGHT of the gloss card (the \
+            2-column ask layout). The ask card is lifted out of the gloss \
+            container and shown as an add_overlay sibling, so — like \
+            .chat-panel-float — it needs an OPAQUE background (it would else \
+            blend with the scrim/card behind it) plus a hairline border to read \
+            as a distinct panel. Same {bg}/{fg} card surface as the gloss card. */ \
+         .gloss-ask-float {{ background-color: {bg}; \
+           border: 1px solid alpha({fg}, 0.25); \
+           border-radius: 12px; \
+           padding: 0; }} \
          /* Fix 5: the transcript renders at the CARD's own font_size, not a \
             shrunk one — source lines AND the explication/gloss paragraphs \
             must match the main card's body text (see generate_css's doc \
