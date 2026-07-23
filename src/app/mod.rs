@@ -827,6 +827,11 @@ pub struct AppState {
     /// (the opening Act/Prologue header at the top of the page) instead of
     /// scrolling the page down to the first dialogue line. Cleared on read.
     pub pending_top_anchor: Rc<Cell<bool>>,
+    /// Headless known-scene driver (`LIT_START_OVERLAY`): the overlay to open once
+    /// the work is displayed and layout has settled — `"journal"`, `"synopsis"`,
+    /// or `"gloss"`. Set at startup from the env var (gated on the hermetic env),
+    /// consumed once by the resize tick's reveal path, then cleared to `None`.
+    pub pending_start_overlay: Rc<RefCell<Option<String>>>,
     pub timestamp_undo: Option<crate::input::timestamps::TimestampUndoState>,
     /// Cached last visible range from the most recent snap_scroll_to_line or
     /// update_bottom_clip. None during cold start, after work load, or after
@@ -2057,6 +2062,35 @@ pub fn build_window(
         .map(|n| n.clamp(1, 2))
         .or(config.last_column_count);
 
+    // Headless known-scene driver: `LIT_START_OVERLAY="journal|synopsis|gloss"`
+    // opens that overlay once the work is displayed and layout has settled
+    // (consumed by the resize-tick reveal path). Gated on the hermetic env
+    // (LIT_HEADLESS_TEST or LIT_DEV) so it never fires in a normal user launch.
+    // Mirrors LIT_START_WORK / LIT_START_POS / LIT_START_COLUMNS.
+    let hermetic_env = std::env::var_os("LIT_HEADLESS_TEST").is_some()
+        || crate::mode::is_dev_mode();
+    let pending_start_overlay = if hermetic_env {
+        std::env::var("LIT_START_OVERLAY").ok().and_then(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            match v.as_str() {
+                "journal" | "synopsis" | "gloss" => {
+                    crate::logging::log(&format!("STARTUP: env override overlay='{}'", v));
+                    Some(v)
+                }
+                "" => None,
+                other => {
+                    crate::logging::log(&format!(
+                        "STARTUP: LIT_START_OVERLAY='{}' unrecognized (want journal|synopsis|gloss) — ignored",
+                        other
+                    ));
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
+
     // The in-process TTS clip player (synopsis/gloss overlays) starts
     // `tts_volume_offset` points BELOW the SYSTEM startup volume (the
     // ElevenLabs clips run hotter than the audiobook masters). Both values
@@ -2337,6 +2371,7 @@ pub fn build_window(
         trust_restored_page: Rc::new(Cell::new(false)),
         pending_synopsis: Rc::new(Cell::new(false)),
         pending_top_anchor: Rc::new(Cell::new(false)),
+        pending_start_overlay: Rc::new(RefCell::new(pending_start_overlay)),
         timestamp_undo: None,
         last_visible_range: std::cell::Cell::new(None),
         page_tops: std::cell::RefCell::new(None),
@@ -2756,6 +2791,43 @@ pub fn build_window(
                     // sourceview5::View exposes no AT-SPI Text interface, so this
                     // log line is how the harness locates the pane.
                     crate::input::scroll::emit_test_viewport_rect(&s);
+
+                    // Headless known-scene driver (LIT_START_OVERLAY): now that
+                    // the work is displayed, the cursor placed, and layout has
+                    // settled (this is the interactive reveal point), open the
+                    // requested overlay ONCE by dispatching the SAME handler its
+                    // keybind uses — no duplicated open logic. Scheduled on a
+                    // short timeout so it runs after the 400ms page-table resnap
+                    // hooks above (which repaint the buffer). `take()` guarantees
+                    // it fires exactly once even across multiple reveal frames.
+                    if s.pending_start_overlay.borrow().is_some() {
+                        let st = state_for_tick.clone();
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(500),
+                            move || {
+                                let overlay = st
+                                    .borrow()
+                                    .pending_start_overlay
+                                    .borrow_mut()
+                                    .take();
+                                if let Some(overlay) = overlay {
+                                    match overlay.as_str() {
+                                        "journal" => {
+                                            crate::input::actions::journal::toggle_overlay(&st)
+                                        }
+                                        "gloss" => {
+                                            crate::input::actions::gloss::toggle_overlay(&st)
+                                        }
+                                        "synopsis" => {
+                                            crate::app::scene_synopsis::show_synopsis_overlay(&st)
+                                        }
+                                        _ => {}
+                                    }
+                                    crate::log_fmt!("OVERLAY_MAPPED: {}", overlay);
+                                }
+                            },
+                        );
+                    }
                 }
                 // Chat layout: a work switch with the panel open deferred its
                 // re-gate to here (see `chat::on_work_switched`) because
@@ -3978,10 +4050,61 @@ pub fn display_work_at_with_prepared(
         state.effective_line_count().saturating_sub(1),
     );
 
+    // Headless known-scene driver: `LIT_START_SCENE="div1.div2"` lands the cursor
+    // on that scene's start line, resolved from the authoritative `(div1,div2)`
+    // work lines + the line map (never inferred from buffer text). It WINS over
+    // `LIT_START_POS` (logs the override) and suppresses the resume-remap and
+    // first-dialogue defaults below by taking the saved-position snap branch.
+    // On an unresolvable scene, logs a clear error and leaves the cursor where it
+    // was (the driver script fails loudly on the missing log line).
+    let mut scene_override = false;
+    if target_line_id.is_none() {
+        if let Ok(scene_spec) = std::env::var("LIT_START_SCENE") {
+            let scene_spec = scene_spec.trim();
+            if !scene_spec.is_empty() {
+                match parse_scene_spec(scene_spec) {
+                    Some((div1, div2)) => {
+                        let resolved = state.current_work.as_ref().and_then(|w| {
+                            resolve_scene_start_line(&w.lines, state.line_map.as_ref(), div1, div2)
+                        });
+                        match resolved {
+                            Some(line) => {
+                                let line = line.min(state.effective_line_count().saturating_sub(1));
+                                if std::env::var_os("LIT_START_POS").is_some() {
+                                    crate::logging::log(
+                                        "STARTUP: LIT_START_SCENE overrides LIT_START_POS",
+                                    );
+                                }
+                                crate::logging::log(&format!(
+                                    "STARTUP: LIT_START_SCENE={} resolved to buffer line {}",
+                                    scene_spec, line
+                                ));
+                                state.current_line = line;
+                                scene_override = true;
+                            }
+                            None => {
+                                crate::logging::log(&format!(
+                                    "STARTUP: ERROR LIT_START_SCENE={} unresolvable — no ({},{}) scene in this work",
+                                    scene_spec, div1, div2
+                                ));
+                            }
+                        }
+                    }
+                    None => {
+                        crate::logging::log(&format!(
+                            "STARTUP: ERROR LIT_START_SCENE='{}' malformed (want div1.div2)",
+                            scene_spec
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     // Part F: when resuming (no explicit concordance target), prefer the
     // citation-stable line_mapping_id over the legacy raw buffer index, so a
     // lit.db re-import / repagination doesn't land on the wrong speech.
-    if target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
+    if !scene_override && target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
         if let Some(work) = &state.current_work {
             if let Some(&saved_id) = state.config.work_position_ids.get(&work.abbrev) {
                 if let Some(work_idx) = work.lines.iter().position(|l| l.id == saved_id) {
@@ -5241,6 +5364,38 @@ pub fn exit_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>, 
     crate::input::navigation::show_chapter_toast_secs(&s, "Calibration saved", 2);
 }
 
+/// Parse a `LIT_START_SCENE` spec `"div1.div2"` into `(div1, div2)`. Returns
+/// `None` on anything that isn't exactly two non-negative integers separated by
+/// a single dot. Used by the headless known-scene driver.
+fn parse_scene_spec(spec: &str) -> Option<(i64, i64)> {
+    let mut parts = spec.trim().splitn(2, '.');
+    let div1 = parts.next()?.trim().parse::<i64>().ok()?;
+    let div2 = parts.next()?.trim().parse::<i64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((div1, div2))
+}
+
+/// Resolve a `(div1, div2)` scene to its start buffer line, authoritatively from
+/// the work's `(div1, div2)` lines (never inferred from buffer text). Finds the
+/// FIRST work line whose `(div1, div2)` matches, then maps it to a buffer line via
+/// `line_map.work_to_buffer` (falling back to the raw work index when there is no
+/// line map, matching the 1:1 assumption used elsewhere). Returns `None` when no
+/// line carries that scene. Used by the headless known-scene driver.
+fn resolve_scene_start_line(
+    lines: &[crate::db::models::Line],
+    line_map: Option<&crate::text_file_map::LineMap>,
+    div1: i64,
+    div2: i64,
+) -> Option<usize> {
+    let work_idx = lines.iter().position(|l| l.div1 == div1 && l.div2 == div2)?;
+    match line_map {
+        Some(lm) => lm.work_to_buffer.get(work_idx).copied(),
+        None => Some(work_idx),
+    }
+}
+
 /// Count word-character runs in a line, treating combining marks (which attach to
 /// the preceding letter) as part of the word. Used to verify scansion marks don't
 /// split vocab words. Mirrors the word-character rule used by the vocab highlight pass.
@@ -5298,6 +5453,74 @@ mod reader_gloss_range_tests {
         // the citation; the host line number is what the range checks.)
         let passages = [("2H6.1.4.43".to_string(), "2H6.1.4.50".to_string())];
         assert!(line_in_any_passage(1, 4, 43, &passages));
+    }
+}
+
+#[cfg(test)]
+mod known_scene_driver_tests {
+    use super::{parse_scene_spec, resolve_scene_start_line};
+    use crate::db::models::Line;
+
+    fn line(id: i64, div1: i64, div2: i64) -> Line {
+        Line {
+            id,
+            citation: String::new(),
+            text: String::new(),
+            normalized: String::new(),
+            speaker: None,
+            is_dialogue: true,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div: id,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+        }
+    }
+
+    #[test]
+    fn parse_scene_spec_accepts_two_ints() {
+        assert_eq!(parse_scene_spec("1.4"), Some((1, 4)));
+        assert_eq!(parse_scene_spec(" 2.1 "), Some((2, 1)));
+        assert_eq!(parse_scene_spec("0.0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn parse_scene_spec_rejects_malformed() {
+        assert_eq!(parse_scene_spec("1"), None);
+        assert_eq!(parse_scene_spec("1.2.3"), None);
+        assert_eq!(parse_scene_spec("a.b"), None);
+        assert_eq!(parse_scene_spec(""), None);
+        assert_eq!(parse_scene_spec("1."), None);
+    }
+
+    #[test]
+    fn resolve_finds_first_matching_scene_no_line_map() {
+        // Two scenes: (1,1) at work indices 0..=1, (1,2) at 2..=3.
+        let lines = vec![line(1, 1, 1), line(2, 1, 1), line(3, 1, 2), line(4, 1, 2)];
+        // No line map: buffer index == work index.
+        assert_eq!(resolve_scene_start_line(&lines, None, 1, 1), Some(0));
+        assert_eq!(resolve_scene_start_line(&lines, None, 1, 2), Some(2));
+        // Missing scene.
+        assert_eq!(resolve_scene_start_line(&lines, None, 9, 9), None);
+    }
+
+    #[test]
+    fn resolve_maps_work_index_through_line_map() {
+        let lines = vec![line(1, 1, 1), line(2, 1, 2)];
+        // Line map inserts blank/header buffer rows: work idx 0 -> buf 3,
+        // work idx 1 -> buf 7.
+        let lm = crate::text_file_map::LineMap {
+            buffer_to_work: Vec::new(),
+            work_to_buffer: vec![3, 7],
+            dialogue_buffer_lines: Vec::new(),
+            sentence_groups: Vec::new(),
+            chapter_breaks: Vec::new(),
+            section_starts: Vec::new(),
+        };
+        assert_eq!(resolve_scene_start_line(&lines, Some(&lm), 1, 2), Some(7));
+        assert_eq!(resolve_scene_start_line(&lines, Some(&lm), 1, 1), Some(3));
     }
 }
 
