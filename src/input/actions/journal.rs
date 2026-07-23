@@ -1598,6 +1598,8 @@ pub(crate) fn begin_passage_ask(
     s.journal_band = band;
     s.journal.page_index = 0;
     s.input_mode = crate::app::InputMode::JournalOverlay;
+    // Ctrl+Tab focus toggle: a freshly opened ask card always starts focused.
+    s.ask_card_focus = true;
     render_current(&mut s);
     s.journal_overlay.open_ask_card(
         "Ask a question about this passage",
@@ -1616,6 +1618,8 @@ pub(crate) fn begin_passage_ask(
 pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal.prompt_mode = JournalPromptMode::Ask;
+    // Ctrl+Tab focus toggle: a freshly opened ask card always starts focused.
+    s.ask_card_focus = true;
     let title = match s.journal_band {
         JournalBand::Work => "Ask a question about the whole work",
         JournalBand::Scene(_, _) => "Ask a question about this scene",
@@ -2209,10 +2213,15 @@ pub(crate) fn undo_journal_edit(state: &Rc<RefCell<AppState>>) {
 }
 
 pub(crate) fn close_prompt(state: &Rc<RefCell<AppState>>) {
+    state.borrow().journal_overlay.close_ask_card();
+    let mut s = state.borrow_mut();
     // Discard any pending vim rewrite so a later create-ask isn't mistaken for a
     // rewrite (Esc out of the `R` prompt; the hand-edits were already saved).
-    state.borrow_mut().journal.vim_rewrite = None;
-    state.borrow().journal_overlay.close_ask_card();
+    s.journal.vim_rewrite = None;
+    // Ctrl+Tab focus toggle: closing the ask card always resets focus + dim so
+    // no stale state leaks into the next open.
+    s.ask_card_focus = true;
+    s.journal_overlay.clear_focus_dim();
 }
 
 pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {

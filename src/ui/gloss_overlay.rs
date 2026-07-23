@@ -1477,6 +1477,25 @@ impl GlossOverlay {
         self.overlay.set_clip_overlay(ask_container, true);
     }
 
+    /// Dim whichever of the two 2-col cards does NOT have input focus.
+    /// `ask_focused` true → dim the gloss card (left), un-dim the ask float.
+    pub fn set_ask_focus_dim(&self, ask_focused: bool) {
+        let ask = self.ask_host.card().container();
+        if ask_focused {
+            self.container.add_css_class("card-unfocused");
+            ask.remove_css_class("card-unfocused");
+        } else {
+            self.container.remove_css_class("card-unfocused");
+            ask.add_css_class("card-unfocused");
+        }
+    }
+
+    /// Remove the focus-dim from both cards (on ask close/submit).
+    pub fn clear_focus_dim(&self) {
+        self.container.remove_css_class("card-unfocused");
+        self.ask_host.card().container().remove_css_class("card-unfocused");
+    }
+
     /// Restore the body-sized bold `gloss-title` style on the shared title (the
     /// synopsis view swaps it to the quiet `synopsis-header`). Idempotent.
     fn set_gloss_title_style(&self) {
@@ -3122,6 +3141,11 @@ impl GlossOverlay {
         self.ask_host.is_open()
     }
 
+    /// True when the ask card is open in 2-col float layout.
+    pub fn is_ask_float(&self) -> bool {
+        self.ask_host.is_ask_float()
+    }
+
     pub fn show_loading(&self) {
         self.show_loading_message("Glossing...");
     }
@@ -3226,6 +3250,9 @@ impl GlossOverlay {
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.
         self.ask_host.card().close();
+        // Universal close funnel: clear any stale focus-dim (card-unfocused)
+        // left by a Ctrl+Tab focus toggle so the overlay never reopens dimmed.
+        self.clear_focus_dim();
     }
 
     pub fn set_position(&self, index: usize, total: usize) {

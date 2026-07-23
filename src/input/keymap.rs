@@ -1848,19 +1848,42 @@ fn handle_journal_key(
 
     // ---- Ask input card (a vim editor) intercepts all keys while open ----
     let ask_open = state.borrow().journal_overlay.ask_is_open();
-    match ask_vim_intercept(
-        ask_open,
-        key_name,
-        key_char,
-        is_ctrl,
-        state,
-        |st, k| st.borrow().journal_overlay.feed_ask_vim_key(k),
-        crate::input::actions::journal::submit_prompt,
-        crate::input::actions::journal::close_prompt,
-        |st, t| st.borrow().journal_overlay.paste_ask_text(t),
-    ) {
-        AskIntercept::Consumed => return true,
-        AskIntercept::NotHandled => {}
+    let ask_float = ask_open && state.borrow().journal_overlay.is_ask_float();
+    // Ctrl+Tab toggles focus between the ask card and the journal card (2-col
+    // float only). Caught BEFORE ask_vim_intercept (which maps Ctrl+Tab to vim
+    // Tab).
+    if ask_float && is_ctrl && (key_name == "Tab" || key_name == "ISO_Left_Tab") {
+        let mut s = state.borrow_mut();
+        s.ask_card_focus = !s.ask_card_focus;
+        let focused = s.ask_card_focus;
+        s.journal_overlay.set_ask_focus_dim(focused);
+        return true;
+    }
+    let ask_focused = state.borrow().ask_card_focus;
+    // Escape while the journal card is focused returns focus to the ask card;
+    // it does NOT close the overlay.
+    if ask_float && !ask_focused && key_name == "Escape" && !is_ctrl {
+        let mut s = state.borrow_mut();
+        s.ask_card_focus = true;
+        s.journal_overlay.set_ask_focus_dim(true);
+        return true;
+    }
+    // Run the ask-card vim intercept ONLY when the ask card has focus.
+    if ask_open && (!ask_float || ask_focused) {
+        match ask_vim_intercept(
+            ask_open,
+            key_name,
+            key_char,
+            is_ctrl,
+            state,
+            |st, k| st.borrow().journal_overlay.feed_ask_vim_key(k),
+            crate::input::actions::journal::submit_prompt,
+            crate::input::actions::journal::close_prompt,
+            |st, t| st.borrow().journal_overlay.paste_ask_text(t),
+        ) {
+            AskIntercept::Consumed => return true,
+            AskIntercept::NotHandled => {}
+        }
     }
 
     // gg chord -> first block (mirrors the gloss/synopsis overlays' block cursor)
@@ -2001,9 +2024,9 @@ fn handle_journal_key(
             // the journal). Consumed so Ctrl+j can't fall through to the
             // plain j block-nav arm.
             "j" => return true,
-            // Ctrl+Tab: dropped inside overlays (reader-side Ctrl+Tab still
-            // reopens the last overlay). Consumed so it can't fall through
-            // to the plain Tab TTS arm.
+            // Ctrl+Tab: in 2-col float it toggles ask/card focus (handled above,
+            // before the ask intercept). Elsewhere (1-col, or reader-side reopen)
+            // consumed here so it can't fall through to the plain Tab arm.
             "Tab" | "ISO_Left_Tab" => return true,
             // Ctrl+Shift+J: open the "move this Q&A to another band" picker.
             // Arrives as key_name "J" (shifted), distinct from Ctrl+j.
@@ -2288,19 +2311,43 @@ fn handle_gloss_key(
     // The prompt is modal vim: NORMAL by default, `i`/`a` to type; `:w`/Ctrl+Enter
     // submits; double-Esc / `:q` closes. Handled before gloss nav keys.
     let ask_open = state.borrow().gloss_overlay.ask_is_open();
-    match ask_vim_intercept(
-        ask_open,
-        key_name,
-        key_char,
-        is_ctrl,
-        state,
-        |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
-        crate::input::actions::gloss::submit_gloss_prompt,
-        crate::input::actions::gloss::close_gloss_prompt,
-        |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
-    ) {
-        AskIntercept::Consumed => return true,
-        AskIntercept::NotHandled => {}
+    let ask_float = ask_open && state.borrow().gloss_overlay.is_ask_float();
+    // Ctrl+Tab toggles focus between the ask card and the gloss card (2-col
+    // float only). Caught BEFORE ask_vim_intercept, which would map Ctrl+Tab to
+    // a vim Tab and swallow it.
+    if ask_float && is_ctrl && (key_name == "Tab" || key_name == "ISO_Left_Tab") {
+        let mut s = state.borrow_mut();
+        s.ask_card_focus = !s.ask_card_focus;
+        let focused = s.ask_card_focus;
+        s.gloss_overlay.set_ask_focus_dim(focused);
+        return true;
+    }
+    let ask_focused = state.borrow().ask_card_focus;
+    // Escape while the gloss card is focused (left of a 2-col ask) returns focus
+    // to the ask card — it does NOT close the overlay.
+    if ask_float && !ask_focused && key_name == "Escape" && !is_ctrl {
+        let mut s = state.borrow_mut();
+        s.ask_card_focus = true;
+        s.gloss_overlay.set_ask_focus_dim(true);
+        return true;
+    }
+    // Run the ask-card vim intercept ONLY when the ask card has focus. When the
+    // gloss card is focused (Ctrl+Tab in 2-col), fall through to gloss read-nav.
+    if ask_open && (!ask_float || ask_focused) {
+        match ask_vim_intercept(
+            ask_open,
+            key_name,
+            key_char,
+            is_ctrl,
+            state,
+            |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
+            crate::input::actions::gloss::submit_gloss_prompt,
+            crate::input::actions::gloss::close_gloss_prompt,
+            |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
+        ) {
+            AskIntercept::Consumed => return true,
+            AskIntercept::NotHandled => {}
+        }
     }
 
     // Shift+Space: batch-synthesize all prose blocks (cache-only).
@@ -2448,9 +2495,9 @@ fn handle_gloss_key(
             // Ctrl+g: Escape-only close policy — consumed no-op (was: close
             // same as Escape). Consumed so it can't start a gg chord below.
             "g" => return true,
-            // Ctrl+Tab: dropped inside overlays (reader-side Ctrl+Tab still
-            // reopens the last overlay). Consumed so it can't fall through
-            // to the plain Tab TTS arm.
+            // Ctrl+Tab: in 2-col float it toggles ask/card focus (handled above,
+            // before the ask intercept). Elsewhere (1-col, or reader-side reopen)
+            // consumed here so it can't fall through to the plain Tab arm.
             "Tab" | "ISO_Left_Tab" => return true,
             // Ctrl+/ opens the GLOSS-specific keybind legend (its full keybind
             // set), returning to the gloss overlay on close.
