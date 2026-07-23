@@ -60,6 +60,9 @@ pub(crate) fn apply_settings_change(
         }
         SettingsChange::CursorLine(val) => {
             s.cursor_line_mode = val;
+            if val {
+                crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
+            }
             crate::input::navigation::update_highlight_only(&mut s);
         }
         SettingsChange::OpenVoicePicker => {
@@ -406,6 +409,9 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.navigation_mode = snap_nm;
     s.config.transition_style = snap_ts;
     s.cursor_line_mode = snap_cl;
+    if snap_cl {
+        crate::input::phrase_highlight::clear_phrase_highlight(&mut s);
+    }
     if s.dialogue_formatting_active {
         crate::app::formatting::apply_dialogue_formatting(&mut s);
     }
