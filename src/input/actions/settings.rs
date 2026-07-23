@@ -59,7 +59,7 @@ pub(crate) fn apply_settings_change(
             s.config.transition_style = style;
         }
         SettingsChange::CursorLine(val) => {
-            s.config.show_cursor_line = val;
+            s.cursor_line_mode = val;
             crate::input::navigation::update_highlight_only(&mut s);
         }
         SettingsChange::OpenVoicePicker => {
@@ -405,7 +405,7 @@ pub(crate) fn revert_to_snapshot(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.text_margins = snap_tm;
     s.config.navigation_mode = snap_nm;
     s.config.transition_style = snap_ts;
-    s.config.show_cursor_line = snap_cl;
+    s.cursor_line_mode = snap_cl;
     if s.dialogue_formatting_active {
         crate::app::formatting::apply_dialogue_formatting(&mut s);
     }
@@ -439,7 +439,7 @@ pub(crate) fn open_settings(state: &Rc<RefCell<crate::app::AppState>>) {
         let tm = s.config.text_margins;
         let nm = s.config.navigation_mode;
         let ts = s.config.transition_style;
-        let cl = s.config.show_cursor_line;
+        let cl = s.cursor_line_mode;
         let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
         drop(s);
         let mut s = state.borrow_mut();
@@ -471,7 +471,7 @@ pub(crate) fn open_settings_from_overlay(
     let tm = s.config.text_margins;
     let nm = s.config.navigation_mode;
     let ts = s.config.transition_style;
-    let cl = s.config.show_cursor_line;
+    let cl = s.cursor_line_mode;
     let voice = crate::elevenlabs::voice_label_for_id(&s.config.elevenlabs_voice_id);
     drop(s);
     let mut s = state.borrow_mut();
@@ -529,7 +529,7 @@ pub(crate) fn reset_to_defaults(state: &Rc<RefCell<crate::app::AppState>>) {
     s.config.text_margins = tm;
     s.config.navigation_mode = nm;
     s.config.transition_style = ts;
-    s.config.show_cursor_line = false;
+    s.cursor_line_mode = false;
     if s.dialogue_formatting_active {
         crate::app::formatting::apply_dialogue_formatting(&mut s);
     }

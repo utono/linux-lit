@@ -57,24 +57,6 @@ impl PhraseHighlightMode {
     pub fn is_on(self) -> bool {
         self != PhraseHighlightMode::Off
     }
-
-    /// Alt+p cycle order: Off -> Phrase -> Line -> Off.
-    pub fn cycle(self) -> Self {
-        match self {
-            PhraseHighlightMode::Off => PhraseHighlightMode::Phrase,
-            PhraseHighlightMode::Phrase => PhraseHighlightMode::Line,
-            PhraseHighlightMode::Line => PhraseHighlightMode::Off,
-        }
-    }
-
-    /// Toast/log label.
-    pub fn label(self) -> &'static str {
-        match self {
-            PhraseHighlightMode::Off => "OFF",
-            PhraseHighlightMode::Phrase => "PHRASE",
-            PhraseHighlightMode::Line => "LINE",
-        }
-    }
 }
 
 impl<'de> Deserialize<'de> for PhraseHighlightMode {
@@ -175,8 +157,6 @@ pub struct Config {
     pub annotation_tint: bool,
     #[serde(default = "default_scansion_level")]
     pub scansion_level: String,
-    #[serde(default = "default_show_cursor_line")]
-    pub show_cursor_line: bool,
     /// Karaoke narration highlight granularity, per work class: `off`,
     /// `phrase` (spoken phrase span; the default for prose), or `line`
     /// (whole verse line / prose sentence — still requires phrase data).
@@ -325,10 +305,6 @@ fn default_scansion_level() -> String {
     "off".to_string()
 }
 
-fn default_show_cursor_line() -> bool {
-    true
-}
-
 fn default_title_bar_visible() -> bool {
     false
 }
@@ -394,7 +370,6 @@ impl Default for Config {
             dim_enabled: default_dim_enabled(),
             annotation_tint: default_annotation_tint(),
             scansion_level: default_scansion_level(),
-            show_cursor_line: true,
             phrase_highlight_prose: PhraseHighlightMode::Phrase,
             phrase_highlight_verse: PhraseHighlightMode::Off,
             title_bar_visible: default_title_bar_visible(),
@@ -471,7 +446,6 @@ pub fn load() -> Config {
     config.font_size = config.font_size.clamp(8, 48);
     config.column_width = default_column_width();
     config.text_margins = default_text_margins();
-    config.show_cursor_line = true;
     config.title_bar_visible = false;
     if config.claude_model.contains("-20") {
         config.claude_model = default_claude_model();
@@ -722,11 +696,8 @@ mod last_gloss_tests {
     }
 
     #[test]
-    fn phrase_highlight_mode_cycle_and_is_on() {
+    fn phrase_highlight_mode_is_on() {
         use PhraseHighlightMode::*;
-        assert_eq!(Off.cycle(), Phrase);
-        assert_eq!(Phrase.cycle(), Line);
-        assert_eq!(Line.cycle(), Off);
         assert!(!Off.is_on());
         assert!(Phrase.is_on());
         assert!(Line.is_on());
