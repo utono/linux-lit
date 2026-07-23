@@ -137,10 +137,12 @@ threshold gets `superpowers:requesting-code-review` before merge.** Small
 fix branches merge as today, unreviewed. When binds changed, the
 `update-cairo-keybinds-overlay` three-pass cross-reference remains the
 keybind-specific instrument inside that review, and it enumerates all
-**four** mirrors mechanically: `keymap_config.rs`, the
-`ui/*_keybinds_overlay.rs` legends, the stowed `keymap.json` (lives in
-tty-dotfiles — this repo's log cannot witness its drift), and
-`docs/guides/keybind-surface-guide.md`.
+**three** lockstep mirrors mechanically: `keymap_config.rs`, the
+`ui/*_keybinds_overlay.rs` legends, and the stowed `keymap.json` (lives
+in tty-dotfiles — this repo's log cannot witness its drift).
+`docs/guides/keybind-surface-guide.md` is **out of the lockstep set by
+decision (2026-07-22)**: it is refreshed only on explicit request, so
+guide staleness is expected there, not drift.
 
 ### Component 4 — TDD default for sync/pagination/clipping
 

@@ -262,15 +262,15 @@ is not enough.
   It shows MAIN-CARD binds only (no overlay-context entries). It is a
   hand-maintained mirror; use the `update-cairo-keybinds-overlay` skill and
   run its three-pass cross-reference.
-- **The gloss/synopsis/journal overlays have their OWN Ctrl+/ legends**
-  (`src/ui/{gloss,synopsis,journal}_keybinds_overlay.rs`, `GROUPS` consts);
-  their binds live in the overlay modal handlers, not keymap_config. Update
-  the legend in the same change as the handler.
-- **When updating keybinds, also update
-  `docs/guides/keybind-surface-guide.md`** — it documents per-surface bind
-  behavior (one `##` section per bind, per the template in its intro). Edit
-  the bind's section if it has one, add a section for newly documented
-  binds, and keep it in the same change as the handler edit.
+- **The gloss/synopsis/journal/chat/echo overlays have their OWN Ctrl+/
+  legends** (`src/ui/{gloss,synopsis,journal,chat,echo}_keybinds_overlay.rs`,
+  `GROUPS` + MRU consts); their binds live in the overlay modal handlers,
+  not keymap_config. Update the legend in the same change as the handler.
+- **`docs/guides/keybind-surface-guide.md` is updated on request ONLY** —
+  never automatically as part of a keybind change (rule flipped
+  2026-07-22). When explicitly asked to refresh it, follow the template
+  in its intro (one `##` section per bind). It is expected to lag the
+  source; the Rust source stays the truth.
 
 ## Concordance & vocab
 
