@@ -182,12 +182,6 @@ impl AskCard {
         self.container.set_width_request(if width > 0 { width } else { -1 });
     }
 
-    /// The last float width set (0 if unset). The host uses it to size the
-    /// gloss-card margin reservation.
-    pub fn float_width(&self) -> i32 {
-        self.float_width.get()
-    }
-
     /// Reveal with heading + hint, clear the field, re-align margins to the
     /// overlay prose column (card_width/5), focus the input (AskFocus::Ask +
     /// card-focused highlight).
@@ -561,10 +555,6 @@ impl AskCardHost {
         self.float_width.set(float_width.max(0));
         self.ask.set_float_width(float_width);
         *self.reserve.borrow_mut() = Some(reserve);
-    }
-
-    pub fn is_float(&self) -> bool {
-        self.float.get()
     }
 
     /// Pin the ask card's input scroll to `fraction` of the overlay card height
