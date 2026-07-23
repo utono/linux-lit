@@ -534,6 +534,9 @@ impl JournalOverlay {
         // focus between the two. Added as an add_overlay sibling in `attach()`,
         // NOT appended to the column.
         let ask = AskCard::new(text_margins as i32, &view);
+        // Center the fixed-width float panel (mirrors the gloss ask container).
+        ask.container().set_halign(gtk4::Align::Center);
+        ask.container().set_valign(gtk4::Align::Fill);
         let ask_container_for_reserve = ask.container().clone();
 
         // The host owns the ask-card lifecycle: the fixed-scroll-height
