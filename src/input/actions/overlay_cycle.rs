@@ -33,6 +33,8 @@ pub(crate) fn cycle_from_gloss(state: &Rc<RefCell<AppState>>) {
         s.tts.stop();
         crate::input::actions::chat::chat_loop_teardown(&mut s);
         s.gloss_overlay.hide();
+        // Ctrl+Tab focus toggle: closing the overlay resets ask-card focus.
+        s.ask_card_focus = true;
         s.gloss_opened_from_picker = false;
         crate::app::return_to_reader_mode(&mut s);
         // Restore, never jump_to_gloss_source_start — see module doc. Take the

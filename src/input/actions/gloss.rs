@@ -3179,6 +3179,8 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
     // player) — leaving the overlay ends the loop.
     crate::input::actions::chat::chat_loop_teardown(&mut s);
     s.gloss_overlay.hide();
+    // Ctrl+Tab focus toggle: closing the overlay resets ask-card focus.
+    s.ask_card_focus = true;
     s.gloss_opened_from_picker = false;
     // Drop any overlay search + MRU so neither leaks into the next gloss overlay
     // session. Clear the overlay's stored whole-body match spans too, or the next

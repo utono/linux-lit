@@ -3250,6 +3250,9 @@ impl GlossOverlay {
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.
         self.ask_host.card().close();
+        // Universal close funnel: clear any stale focus-dim (card-unfocused)
+        // left by a Ctrl+Tab focus toggle so the overlay never reopens dimmed.
+        self.clear_focus_dim();
     }
 
     pub fn set_position(&self, index: usize, total: usize) {
