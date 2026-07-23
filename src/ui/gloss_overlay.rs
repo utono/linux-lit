@@ -556,7 +556,13 @@ impl GlossOverlay {
         // to `gloss_scrolled`.
         let ask = AskCard::new(text_margins as i32, &gloss_scrolled);
         ask.container().add_css_class("gloss-ask-float");
-        ask.container().set_halign(Align::End);
+        // Both the gloss card and this panel are halign=Center add_overlay
+        // children with MIRRORED margins: the gloss card reserves margin_end
+        // (shifts it left), this panel reserves margin_start (shifts it right),
+        // so the gloss+ask pair centers on screen as one unit. valign=Fill only
+        // gives the overlay's full height — the reserve closure caps it to the
+        // gloss card's height so the two columns are top/bottom aligned.
+        ask.container().set_halign(Align::Center);
         ask.container().set_valign(Align::Fill);
 
         // The host owns the ask-card lifecycle. In FLOAT mode (below) open/close
@@ -578,24 +584,37 @@ impl GlossOverlay {
             AskCardHost::new(ask, &gloss_scrolled, Some(footer_box.clone()), recompute);
         // Gloss/synopsis ask card floats to the RIGHT of the gloss card (2-column
         // ask layout, all prompts: add-question, edit gloss, fix-IPA, inner
-        // monologue, synopsis edit). Fixed float width; the card reserves
-        // margin_end = width + seam so the gloss+ask pair centers together (the
-        // container is an add_overlay child, halign=Center by default, so a right
-        // margin shifts it left and the ask panel fills the freed right space).
+        // monologue, synopsis edit). Fixed float width.
+        //
+        // Centering the pair: both children are halign=Center. On open the gloss
+        // card reserves margin_end = ask_width + seam (shifts it left by half
+        // that); the ask panel reserves margin_start = gloss_width + seam (shifts
+        // it right by half that). The two mirrored allocation boxes are each
+        // centered on screen, so the visible gloss-card|seam|ask-panel strip is
+        // centered as a unit (verified by pixel-measuring equal L/R gutters).
         let float_w = (column_width as i32 * 5 / 8).max(360);
         {
             let container_for_reserve = container.clone();
             let reserve = Rc::new(move |px: i32| {
+                // `px` is the reservation (ask_width + seam) on open, 0 on close.
                 container_for_reserve.set_margin_end(px);
-                // Match the ask panel height to the gloss card's current height
-                // (px>0 = opening). Request it so the ask panel is top/bottom
-                // aligned with the card; clear it (-1) on close.
                 if px > 0 {
+                    // Mirror the reservation on the ask panel: shift it right by
+                    // gloss_width + seam so both centered boxes yield equal L/R
+                    // gutters. gloss_width + seam = card_width + (px - float_w).
+                    let gloss_w = container_for_reserve
+                        .width()
+                        .max(container_for_reserve.width_request());
+                    let seam = px - float_w; // reservation minus ask width
+                    ask_container_for_reserve.set_margin_start(gloss_w + seam);
+                    // Cap the ask panel height to the gloss card's height so the
+                    // two columns are top/bottom aligned.
                     let h = container_for_reserve
                         .height()
                         .max(container_for_reserve.height_request());
                     ask_container_for_reserve.set_height_request(h.max(200));
                 } else {
+                    ask_container_for_reserve.set_margin_start(0);
                     ask_container_for_reserve.set_height_request(-1);
                 }
             }) as Rc<dyn Fn(i32)>;
