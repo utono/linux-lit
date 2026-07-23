@@ -54,6 +54,8 @@ pub(crate) fn cycle_from_journal(state: &Rc<RefCell<AppState>>) {
     s.tts.stop();
     crate::input::actions::chat::chat_loop_teardown(&mut s);
     s.journal_overlay.hide();
+    // Ctrl+Tab focus toggle: closing the overlay resets ask-card focus.
+    s.ask_card_focus = true;
     // Recolor BEFORE restore's update_highlight, matching
     // journal::toggle_overlay's close half.
     crate::app::return_to_reader_mode(&mut s);

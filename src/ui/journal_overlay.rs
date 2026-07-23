@@ -1028,6 +1028,9 @@ impl JournalOverlay {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
         self.ask_host.card().close();
+        // Universal close funnel: clear any stale focus-dim (card-unfocused) left
+        // by a Ctrl+Tab focus toggle so the overlay never reopens dimmed.
+        self.clear_focus_dim();
     }
 
     pub fn is_visible(&self) -> bool {
