@@ -1533,6 +1533,11 @@ impl JournalOverlay {
         self.ask_host.is_open()
     }
 
+    /// True when the ask card is open in 2-col float layout.
+    pub fn is_ask_float(&self) -> bool {
+        self.ask_host.is_ask_float()
+    }
+
     pub fn open_ask_card(
         &self,
         title: &str,
