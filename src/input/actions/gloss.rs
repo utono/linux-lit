@@ -713,8 +713,13 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         )
     };
     let is_fix_ipa = mode == crate::app::GlossPromptMode::FixIpa;
+    let is_passage_qa = mode == crate::app::GlossPromptMode::PassageQa;
 
-    let title_text = if is_fix_ipa {
+    let title_text = if is_passage_qa {
+        // Gloss-overlay Ctrl+a: journal passage Q&A (typed here, answered in the
+        // journal overlay). Matches the journal card's wording.
+        "Ask a question about this passage"
+    } else if is_fix_ipa {
         "FIX IPA — word /IPA/  OR  word <hint>"
     } else if is_edit {
         // Mirrors the journal overlay's rewrite card: the input is an
@@ -3209,55 +3214,78 @@ pub(crate) fn close_gloss_to_reader(state: &Rc<RefCell<AppState>>) {
 /// overlay through the canonical close (TTS/loop teardown, search cleanup,
 /// reader lands on the source passage) and opens the journal passage ask card
 /// with the `<speaker>/<verse>/<stage>` markup.
-pub(crate) fn ask_journal_for_passage(state: &Rc<RefCell<AppState>>) {
-    // Collect the passage args from gloss_context while holding the borrow.
-    // Prefer the exact start..end citation range; fall back to the whole
-    // scene when either citation fails to parse.
-    let passage_args = {
-        let s = state.borrow();
-        s.gloss_context.as_ref().and_then(|ctx| {
-            let work = s.current_work.as_ref()?;
-            let selected_lines: Vec<crate::db::models::Line> = match (
-                crate::app::parse_citation(&ctx.start_citation),
-                crate::app::parse_citation(&ctx.end_citation),
-            ) {
-                (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
-                    .lines
-                    .iter()
-                    .filter(|l| {
-                        l.div1 == sd1
-                            && l.div2 == sd2
-                            && l.line_in_div >= s_lid
-                            && l.line_in_div <= e_lid
-                    })
-                    .cloned()
-                    .collect(),
-                _ => work
-                    .lines
-                    .iter()
-                    .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
-                    .cloned()
-                    .collect(),
-            };
-            let markup = crate::input::actions::echoes::build_source_header(
-                &selected_lines,
-                &ctx.speaker,
-            );
-            Some((
-                ctx.act,
-                ctx.scene,
-                ctx.start_citation.clone(),
-                ctx.end_citation.clone(),
-                markup,
-            ))
-        })
+/// The current gloss passage as `(div1, div2, start_citation, end_citation,
+/// source_text)`, preferring the exact start..end citation range and falling
+/// back to the whole scene. `None` when there is no gloss context / current
+/// work. Shared by the journal-handoff path and the in-overlay float path.
+fn gloss_passage_args(
+    state: &Rc<RefCell<AppState>>,
+) -> Option<(i64, i64, String, String, String)> {
+    let s = state.borrow();
+    let ctx = s.gloss_context.as_ref()?;
+    let work = s.current_work.as_ref()?;
+    let selected_lines: Vec<crate::db::models::Line> = match (
+        crate::app::parse_citation(&ctx.start_citation),
+        crate::app::parse_citation(&ctx.end_citation),
+    ) {
+        (Some((sd1, sd2, s_lid)), Some((_, _, e_lid))) => work
+            .lines
+            .iter()
+            .filter(|l| {
+                l.div1 == sd1 && l.div2 == sd2 && l.line_in_div >= s_lid && l.line_in_div <= e_lid
+            })
+            .cloned()
+            .collect(),
+        _ => work
+            .lines
+            .iter()
+            .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
+            .cloned()
+            .collect(),
     };
-    let Some((div1, div2, start, end, source_text)) = passage_args else {
+    let markup =
+        crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+    Some((
+        ctx.act,
+        ctx.scene,
+        ctx.start_citation.clone(),
+        ctx.end_citation.clone(),
+        markup,
+    ))
+}
+
+/// Gloss-overlay Ctrl+a: open the journal passage Q&A in the gloss overlay's
+/// OWN floated ask card (gloss commentary stays left, ask floats right) instead
+/// of closing to the journal overlay. Sets the journal band + pending_passage
+/// so a submit runs the journal passage flow; the gloss overlay is NOT closed.
+pub(crate) fn open_passage_qa_float(state: &Rc<RefCell<AppState>>) {
+    let Some((div1, div2, start, end, source_text)) = gloss_passage_args(state) else {
         return;
     };
-    close_gloss_to_reader(state);
-    crate::input::actions::journal::begin_passage_ask(state, div1, div2, start, end, source_text);
-    crate::logging::log("JOURNAL-FROM-GLOSS: opened passage ask from gloss overlay");
+    {
+        let mut s = state.borrow_mut();
+        // Mirror begin_passage_ask's state setup (journal.rs:1590-1599) so the
+        // eventual ask_claude reads the right band + pending_passage — but do
+        // NOT open the journal overlay or switch input_mode (we stay in the
+        // gloss overlay; its ask-card intercept routes the typed keys).
+        s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+        s.journal.entry_page_id = None;
+        s.journal.prompt_mode = crate::app::JournalPromptMode::Ask;
+        let band = crate::app::JournalBand::Passage { div1, div2, start, end };
+        s.journal.pending_passage =
+            Some(crate::input::actions::journal::PendingPassage {
+                source_text,
+                band: band.clone(),
+            });
+        s.journal_band = band;
+        s.journal.page_index = 0;
+    }
+    // Open the gloss overlay's floated ask card in PassageQa mode, then INSERT.
+    show_prompt_dialog(state, crate::app::GlossPromptMode::PassageQa);
+    let _ = state
+        .borrow()
+        .gloss_overlay
+        .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
 /// Open the gloss overlay for the cursor line (reader Ctrl+g /
@@ -3719,6 +3747,17 @@ pub(crate) fn submit_gloss_prompt(state: &Rc<RefCell<AppState>>) {
         crate::app::GlossPromptMode::Edit => edit_gloss(state, &prompt),
         crate::app::GlossPromptMode::FixIpa if is_empty => {}
         crate::app::GlossPromptMode::FixIpa => fix_word_ipa(state, &prompt),
+        // Empty passage question → stay in the gloss overlay (nothing to ask);
+        // close_gloss_prompt (called above) already hid the float.
+        crate::app::GlossPromptMode::PassageQa if is_empty => {}
+        // Non-empty → close the gloss overlay and run the journal passage flow.
+        // The band + pending_passage were set in open_passage_qa_float, so
+        // submit_passage_question's ask_claude reads them and lands the answer
+        // in the journal overlay (today's post-submit behavior).
+        crate::app::GlossPromptMode::PassageQa => {
+            close_gloss_to_reader(state);
+            crate::input::actions::journal::submit_passage_question(state, &prompt);
+        }
     }
 }
 

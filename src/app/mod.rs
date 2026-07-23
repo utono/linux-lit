@@ -202,6 +202,10 @@ pub enum GlossPromptMode {
     Edit,
     /// Gloss-overlay `i`: correct one word's /IPA/ in the cursor's source verse.
     FixIpa,
+    /// Gloss-overlay Ctrl+a: journal passage Q&A, typed in the gloss overlay's
+    /// floated ask card. On submit the gloss overlay closes and the journal
+    /// passage-ask Claude flow runs (answer read in the journal overlay).
+    PassageQa,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

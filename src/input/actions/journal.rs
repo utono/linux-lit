@@ -2237,7 +2237,20 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
         rewrite_with_claude(state, id, &question, &answer, instruction, target);
         return;
     }
-    if text.trim().is_empty() {
+    submit_passage_question(state, &text);
+}
+
+/// A journal question with no non-whitespace content is not asked.
+pub(crate) fn is_blank_question(text: &str) -> bool {
+    text.trim().is_empty()
+}
+
+/// Run the new-Q&A ask chain for the current band/pending_passage: show the
+/// loading card, derive scene terms, improve the phrasing, then call Claude.
+/// Factored from `submit_prompt` so the gloss-overlay Ctrl+a passage-ask can
+/// reuse the exact flow. `text` is the raw typed question. No-op if blank.
+pub(crate) fn submit_passage_question(state: &Rc<RefCell<AppState>>, text: &str) {
+    if is_blank_question(text) {
         return;
     }
     // Show the loading card immediately with the raw text so the UI isn't
@@ -2247,11 +2260,11 @@ pub(crate) fn submit_prompt(state: &Rc<RefCell<AppState>>) {
         let s = state.borrow();
         let head = crate::app::scene_synopsis::cursor_head(&s);
         s.journal_overlay.set_running_head(&head.0, &head.1);
-        s.journal_overlay.show_loading(&text);
+        s.journal_overlay.show_loading(text);
     }
     // A brand-new ask has no saved entry/tags yet — derive candidate terms from
     // the scene text first, then ground the phrasing on them.
-    extract_scene_terms(state, text, move |st, question, terms| {
+    extract_scene_terms(state, text.to_string(), move |st, question, terms| {
         improve_question(st, question, &terms, move |st2, improved| {
             ask_claude(st2, &improved);
         });
@@ -2984,6 +2997,13 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blank_question_is_skipped() {
+        assert!(is_blank_question("   \n\t "));
+        assert!(is_blank_question(""));
+        assert!(!is_blank_question("why the tub?"));
+    }
 
     #[test]
     fn source_citation_range() {
