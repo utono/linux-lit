@@ -15,11 +15,6 @@ every commit** — only when asked or before a likely context break. It is a
 scoped continuity file, not a changelog: REPLACE stale state, keep it short.
 (This project deliberately opts OUT of the global "After a Commit" rule.)
 
-## To-Do List
-
-`docs/to-do/to-do.md` is the running list of reader bugs and feature requests.
-Mark completed items with a leading `[X]`; never delete them.
-
 ## Debug Log
 
 - Dev build (`cargo run`): `~/utono/linux-lit/linux-lit-dev.log`; release:
@@ -139,8 +134,7 @@ invariant bought: the main checkout ends every session clean on master.
 Session pre-flight: run `git worktree list` and `git status` in this
 main checkout at session start; a dirty main checkout is the first
 thing to resolve, not work around. Branch hygiene: when abandoning a
-branch, delete it or record it in `docs/to-do/to-do.md` — never leave a
-third state on origin.
+branch, delete it — never leave a third state on origin.
 
 - Each worktree builds its own `target/` (first build is from scratch).
   Never share `CARGO_TARGET_DIR` across worktrees — parallel builds on
