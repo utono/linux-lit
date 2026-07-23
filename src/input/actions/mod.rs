@@ -159,6 +159,11 @@ pub enum Action {
     /// without first opening the journal overlay. Confirming a pick reveals the
     /// overlay on that Q&A; Escape returns to the reader.
     OpenJournalPicker,
+    /// Open the cross-work recent-Q&A jump-back picker from the reading card
+    /// (Ctrl+a): the last 15 journal entries across ALL works, newest-first.
+    /// Confirming loads the entry's work + MPV media and opens the journal
+    /// overlay on it; Escape returns to the reader.
+    OpenRecentQaPicker,
     OpenGlossPicker,
     OpenLastGloss,
     /// Ctrl+f: open the cross-corpus journal/gloss regex search popup.
@@ -325,6 +330,7 @@ impl Action {
             | Action::ToggleLastOverlay
             | Action::CycleSegmentOverlays
             | Action::OpenJournalPicker
+            | Action::OpenRecentQaPicker
             | Action::OpenGlossPicker
             | Action::OpenLastGloss
             | Action::OpenCorpusSearch
@@ -479,6 +485,7 @@ impl Action {
             Action::ToggleLastOverlay => "ToggleLastOverlay",
             Action::CycleSegmentOverlays => "CycleSegmentOverlays",
             Action::OpenJournalPicker => "OpenJournalPicker",
+            Action::OpenRecentQaPicker => "OpenRecentQaPicker",
             Action::OpenGlossPicker => "OpenGlossPicker",
             Action::OpenLastGloss => "OpenLastGloss",
             Action::OpenCorpusSearch => "OpenCorpusSearch",

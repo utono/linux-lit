@@ -2857,6 +2857,111 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
     land_on_page(&mut s, band, target_id);
 }
 
+/// Open the cross-work "recent Q&A" jump-back picker from the reading card
+/// (Ctrl+a): the last 15 journal entries across all works, newest-first. Empty
+/// list shows an empty-state row (never a crash). Confirm loads the entry's
+/// edition and opens the journal overlay on it; Escape returns to the reader.
+pub(crate) fn open_recent_qa_picker(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if s.current_work.is_none() {
+        return;
+    }
+    // Save the reader position so Escape (and the post-open overlay's Escape)
+    // returns there.
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+
+    let matches = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| crate::db::journal::find_recent_pages(&conn, 15).ok())
+        .unwrap_or_default();
+
+    let rows: Vec<crate::ui::recent_qa_picker::RecentQaRow> = matches
+        .iter()
+        .map(|m| {
+            let p = &m.page;
+            // A passage Q&A shows the FIRST LINE of its passage (like the
+            // work-scoped picker); otherwise the question. Fall back to the
+            // question when the source markup has no verse/stage line.
+            let is_passage = p.start_citation.is_some() && p.end_citation.is_some();
+            let label_text = if is_passage {
+                p.source_text
+                    .as_deref()
+                    .and_then(first_passage_line)
+                    .unwrap_or_else(|| p.question.clone())
+            } else {
+                p.question.clone()
+            };
+            let question_prefix: String = label_text.chars().take(80).collect();
+            crate::ui::recent_qa_picker::RecentQaRow {
+                id: p.id,
+                work_abbrev: m.work_abbrev.clone(),
+                work_label: m.work_abbrev.clone(),
+                question_prefix,
+            }
+        })
+        .collect();
+
+    s.recent_qa_picker.set_items(rows);
+    s.recent_qa_picker.show();
+    s.input_mode = InputMode::RecentQaPicker;
+}
+
+/// Confirm the recent-Q&A picker selection: load the entry's edition (if it is
+/// not the current work) and open the journal overlay on that exact entry,
+/// reusing the shared cross-work open sequence (`load_arkangel_edition_then` ->
+/// `open_journal_hit` -> `find_page_by_id` -> `render_filtered_match`). A missing
+/// entry (deleted between list and confirm) toasts inside `open_journal_hit` and
+/// stays in the reader.
+pub(crate) fn confirm_recent_qa_picker(
+    state: &Rc<RefCell<AppState>>,
+    tokio_handle: &tokio::runtime::Handle,
+) {
+    let selected = state.borrow().recent_qa_picker.selected_index();
+
+    // Capture the pick + current edition, hide the picker, drop to the reader
+    // mode so the load path (which reveals the journal overlay via
+    // open_journal_hit) starts from a clean state.
+    let picked = {
+        let mut s = state.borrow_mut();
+        s.recent_qa_picker.hide();
+        let picked = selected.and_then(|idx| {
+            s.recent_qa_picker
+                .items
+                .get(idx)
+                .map(|row| (row.id, row.work_abbrev.clone()))
+        });
+        if picked.is_none() {
+            // Nothing selected (e.g. the empty-state row): return to the reader.
+            s.journal.return_pos = None;
+            crate::app::return_to_reader_mode(&mut s);
+        } else {
+            s.input_mode = InputMode::Reader;
+        }
+        picked
+    };
+
+    let Some((entry_id, base_abbrev)) = picked else {
+        return;
+    };
+
+    let current_abbrev = state
+        .borrow()
+        .current_work
+        .as_ref()
+        .map(|w| w.abbrev.clone());
+
+    // Load the entry's Arkangel edition (base if none), then open the journal
+    // overlay on the entry with no seeded search pattern. The shared loader
+    // handles the same-work skip, MPV-media discovery, and the error toast.
+    crate::input::actions::pickers::load_arkangel_edition_then(
+        state,
+        tokio_handle,
+        base_abbrev,
+        current_abbrev,
+        move |state| crate::input::actions::corpus_search::open_journal_hit(state, entry_id, ""),
+    );
+}
+
 /// Open the "move this Q&A to another band" picker over the journal overlay.
 /// Lists every band the current entry could move to (whole work + every
 /// scene/chapter), excluding its current band. No-op with a toast if there is no

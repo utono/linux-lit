@@ -136,6 +136,10 @@ pub enum InputMode {
     JournalPicker,
     JournalMovePicker,
     JournalTermInput,
+    /// Cross-work "recent Q&A" jump-back picker (Ctrl+a): the last N journal
+    /// entries across all works, newest-first. Confirm loads the entry's
+    /// edition and opens the journal overlay on it; Escape returns to the reader.
+    RecentQaPicker,
     EchoPicker,
     EchoTurnsPicker,
     EchoesOverlay,
@@ -537,6 +541,7 @@ pub struct AppState {
     pub journal_picker: JournalQaPicker,
     pub journal_move_picker: JournalMovePicker,
     pub journal_term_input: crate::ui::journal_term_input::JournalTermInput,
+    pub recent_qa_picker: crate::ui::recent_qa_picker::RecentQaPicker,
     pub journal_band: JournalBand,
     pub journal: crate::input::actions::journal::JournalState,
     /// Page-scan image surface for the main card (BCP1549 etc.). Hidden unless
@@ -1752,9 +1757,14 @@ pub fn build_window(
     journal_term_input.attach(&journal_move_picker.overlay);
     journal_term_input.overlay.set_vexpand(true);
 
-    // Translation overlay wraps the journal term input overlay
+    // Recent-Q&A jump-back picker (Ctrl+a) overlays the journal term input
+    let recent_qa_picker = crate::ui::recent_qa_picker::RecentQaPicker::new();
+    recent_qa_picker.attach(&journal_term_input.overlay);
+    recent_qa_picker.overlay.set_vexpand(true);
+
+    // Translation overlay wraps the recent-Q&A picker overlay
     let translation_overlay = crate::ui::translation_overlay::TranslationOverlay::new();
-    translation_overlay.attach(&journal_term_input.overlay);
+    translation_overlay.attach(&recent_qa_picker.overlay);
     translation_overlay.overlay.set_vexpand(true);
 
     // Gloss picker wraps the translation overlay
@@ -2257,6 +2267,7 @@ pub fn build_window(
         journal_picker,
         journal_move_picker,
         journal_term_input,
+        recent_qa_picker,
         journal_band: JournalBand::Scene(0, 0),
         journal: crate::input::actions::journal::JournalState {
             pages: Vec::new(),
@@ -2947,6 +2958,19 @@ pub fn build_window(
         s.journal_picker.search_entry().connect_changed(move |entry| {
             if let Ok(st) = state_for_journal_filter.try_borrow() {
                 st.journal_picker.populate_list(&entry.text());
+            }
+        });
+    }
+
+    // Connect recent-Q&A picker search entry filter. try_borrow (not borrow):
+    // set_text emits `changed` synchronously under open's borrow_mut; a
+    // borrow_mut here would abort on reopen (picker signal RefCell crash).
+    let state_for_recent_qa_filter = Rc::clone(&state);
+    {
+        let s = state.borrow();
+        s.recent_qa_picker.search_entry().connect_changed(move |entry| {
+            if let Ok(st) = state_for_recent_qa_filter.try_borrow() {
+                st.recent_qa_picker.populate_list(&entry.text());
             }
         });
     }
