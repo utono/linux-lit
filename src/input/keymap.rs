@@ -1706,16 +1706,12 @@ fn handle_chat_transcript_key(
             crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
             true
         }
-        // Ctrl+r: re-gloss / ask (the OLD plain-`r` body, moved off `r` — which
-        // is now the vocab surface, mirroring the gloss/journal overlays + main
-        // card). Journal view asks a NEW question (the panel's own ask input,
-        // same as `a`); other views regloss. Ctrl+r is free in this handler.
+        // Ctrl+r: add a vocab word (uniform with the reader + every overlay —
+        // 2026-07-23 consolidation). Nothing is orphaned: journal-view ask is
+        // still on plain `a` (focus_prompt_insert), and gloss-view regloss is
+        // still on Ctrl+w below.
         "r" if is_ctrl && !is_shift => {
-            if state.borrow().chat.view == crate::input::actions::chat::PanelView::Journal {
-                crate::input::actions::chat::focus_prompt_insert(&mut state.borrow_mut());
-            } else {
-                crate::input::actions::chat::regloss_pinned(state);
-            }
+            crate::input::actions::vocab_add::open(state);
             true
         }
         // Ctrl+w: rewrite / re-gloss (the OLD plain-`R` body, moved off `R`).
