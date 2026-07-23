@@ -74,12 +74,48 @@ frequency-ordered checklist (and a surface note if relevant) with its tell,
 root cause, and fix, so the next occurrence is diagnosed from the doc, not
 re-derived. This is required, not optional.
 
+## Troubleshooting Ledgers
+
+The clip-prevention pattern generalizes: each recurring-bug domain
+keeps a frequency-ordered ledger in `docs/troubleshooting/` (clipping
+and page-turning exist; playback-sync is the next candidate). Trigger:
+if diagnosis took more than one session OR the root cause contradicted
+the first hypothesis, append the failure mode — tell, root cause, fix —
+in the same change. This is required, not optional.
+
 ## Build & Run
 
 Verify with `cargo build`; do NOT run the app — the user runs `cargo run`
 themselves. Multi-instance is supported (per-process slots: own log suffix,
 `i{n}-` MPV sockets, config merge-on-save), but a running instance predates
 any rebuild.
+
+## Workflow Rules (superpowers)
+
+Spec: `docs/superpowers/specs/2026-07-22-superpowers-workflow-integration-design.md`.
+
+- **Spec threshold.** Invoke `superpowers:brainstorming` and write a
+  spec (a few sentences is enough) BEFORE any change that: reshuffles
+  two or more reader-surface keybinds in one change; changes a mode,
+  axis, or per-class default; spans two or more surfaces (main card +
+  overlay + chat); or alters config schema. EXEMPT: single keybind
+  moves, single-file bug fixes, cosmetic tweaks. Retrospective signal:
+  more than ~3 commits to the same file within 24 hours means the
+  change was above this threshold — note it and spec the follow-up.
+- **Pre-merge review gate (one trigger only).** A branch whose change
+  met the spec threshold gets `superpowers:requesting-code-review`
+  before merge. Small fix branches merge as today, unreviewed. When
+  binds changed, the `update-cairo-keybinds-overlay` three-pass
+  cross-reference runs inside that review and enumerates all three
+  lockstep mirrors: `keymap_config.rs`, the `ui/*_keybinds_overlay.rs`
+  legends, and the stowed `keymap.json` (in tty-dotfiles).
+  `keybind-surface-guide.md` is NOT in the set (on-request only).
+- **Batch-day playbook.** When a queue of small independent polish
+  items is planned: (1) one plan via `superpowers:writing-plans` with
+  explicitly independent tasks; (2) execute via
+  `superpowers:subagent-driven-development`, one worktree per task;
+  (3) merge serially from the main checkout; (4) run the e2e suite
+  once at the end, not per branch.
 
 ## Parallel Claude Code Sessions (git worktrees)
 
@@ -93,6 +129,18 @@ are safe):
 ```bash
 git worktree add ~/utono/linux-lit-wt/<branch> -b <branch>
 ```
+
+Worktrees are not only for concurrent sessions: any branch **expected
+to span sessions** — or likely to leave the tree dirty at session end —
+starts in a worktree via `superpowers:using-git-worktrees`. EXEMPT:
+quick fixes branched, committed, and merged within one session. The
+invariant bought: the main checkout ends every session clean on master.
+
+Session pre-flight: run `git worktree list` and `git status` in this
+main checkout at session start; a dirty main checkout is the first
+thing to resolve, not work around. Branch hygiene: when abandoning a
+branch, delete it or record it in `docs/to-do/to-do.md` — never leave a
+third state on origin.
 
 - Each worktree builds its own `target/` (first build is from scratch).
   Never share `CARGO_TARGET_DIR` across worktrees — parallel builds on
@@ -119,6 +167,14 @@ git worktree add ~/utono/linux-lit-wt/<branch> -b <branch>
 cargo test
 cargo clippy
 ```
+
+**TDD default for sync/pagination/clipping (seek included):** bug fixes
+in these subsystems start with a FAILING headless repro (extend
+`test-playback-sync`, the nav-fuzz, or the clipping e2e) per
+`superpowers:test-driven-development`; then fix; then green. Strong
+default, not a hard gate: when the state is genuinely live-only and
+cannot be automated, say so explicitly in the commit message and
+proceed.
 
 ## Headless Verification (agent self-check)
 
@@ -333,6 +389,11 @@ forces generation at current geometry. Audit with `validate-play-pages`.
   the app's own config (`theme` + `theme_cycle`; current defaults in
   `src/config.rs`). SIGUSR1 re-reads the app's own config. linux-lit never
   touches the theme system's `.current_theme`.
+- **Upstream root-cause routing**: when a reader bug root-causes to
+  lit.db data (litdb) or timestamp output (whisper-transcript), the fix
+  and its regression guard land in the UPSTREAM repo; this repo gets
+  only a troubleshooting-ledger entry linking to the upstream commit.
+  Never patch around an upstream defect in reader code.
 
 ## Reference Codebases
 
