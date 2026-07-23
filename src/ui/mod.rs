@@ -2,6 +2,7 @@ pub mod authorship_picker;
 pub mod markdown;
 pub mod action_popup;
 pub mod ask_card;
+pub mod loading_animator;
 pub mod chat_panel;
 pub(crate) mod chat_pagination;
 pub(crate) mod bottom_clip_guard;
