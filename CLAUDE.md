@@ -285,6 +285,19 @@ is not enough.
 
 ## Keybinds
 
+- **ALWAYS update every relevant keybind overlay and legend in the SAME
+  change as the keybind itself — this is required, not optional.** After
+  adding, removing, or moving ANY bind, update all surfaces it touches:
+  the main-card Ctrl+/ overlay (`src/ui/keybinds_overlay.rs` — keycap strip
+  AND describe() arm) for main-card binds, and the per-overlay legend
+  (`src/ui/{gloss,synopsis,journal,chat,echo}_keybinds_overlay.rs` GROUPS +
+  MRU consts) for any overlay bind. A change that shifts a chord's meaning
+  on multiple surfaces must touch EACH affected legend — including
+  reserved-key comments and consumed-no-op notes that the change
+  invalidates. The per-surface mechanics are spelled out in the bullets
+  below; run the `update-cairo-keybinds-overlay` three-pass cross-reference
+  to confirm nothing drifted. (`docs/guides/keybind-surface-guide.md`
+  remains the one exception — on-request only.)
 - **The spacebar is `"space"`.** The Rust code binds it by that keysym name,
   so refer to it as `"space"` — never `"Space"` or `"spacebar"`. When the user
   asks to change the space bind, respond using `"space"`.

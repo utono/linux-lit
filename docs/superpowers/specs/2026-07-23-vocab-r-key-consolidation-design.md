@@ -51,14 +51,23 @@ stay on the `-` stepper key — see Non-goals).
 ### Change 2 — `AddVocabWord` consolidated onto `Ctrl+r` everywhere
 
 `AddVocabWord` is reachable from inside the gloss and journal overlays today via
-an inline `Ctrl+Alt+\` check. Consolidate all of it onto `Ctrl+r`:
+an inline `Ctrl+Alt+\` check. Consolidate it onto `Ctrl+r` on **every** reading
+and chat surface, so the chord is uniform everywhere:
 
 - Reader: `Ctrl+r` → AddVocabWord (Change 1).
 - Gloss overlay: add `Ctrl+r` → AddVocabWord (its old `Ctrl+r` = begin_rewrite
   moves — Change 3).
 - Journal overlay: change `Ctrl+r` from consumed no-op → AddVocabWord.
+- Synopsis overlay: change `Ctrl+r` from consumed no-op → AddVocabWord (adds
+  add-vocab access the synopsis overlay lacked once `Ctrl+Alt+\` is removed).
+- Chat panel: change `Ctrl+r` from re-gloss/ask → AddVocabWord. This orphans
+  nothing: in **gloss view** `regloss_pinned` is already redundantly on
+  `Ctrl+w`; in **journal view** the ask input is already on plain `a`
+  (`focus_prompt_insert`), which `Ctrl+r` merely duplicated. (Verified at
+  `keymap.rs:1702-1720` and the chat legend lines 17/33/39.)
 - **Remove the `Ctrl+Alt+\` chord entirely** — the reader default bind AND both
-  in-overlay inline checks. `AddVocabWord` then lives only on `Ctrl+r`.
+  in-overlay inline checks (gloss `keymap.rs:2323`, journal `keymap.rs:1897`).
+  `AddVocabWord` then lives only on `Ctrl+r`.
 
 ### Change 3 — Gloss rewrite joins the `w` family
 
@@ -67,7 +76,8 @@ an inline `Ctrl+Alt+\` check. Consolidate all of it onto `Ctrl+r`:
 | Gloss overlay  | `Ctrl+r` | begin_rewrite | *(now AddVocabWord)*    |
 | Gloss overlay  | `Ctrl+w` | *(free)*      | **begin_rewrite**       |
 
-Result: `Ctrl+w` = rewrite on every overlay (gloss + journal + chat).
+Result: `Ctrl+w` = rewrite on every overlay (gloss + journal + chat). Synopsis
+rewrite stays on plain `R` (its long-standing bind — unchanged).
 
 ### Freed chords (left free, not reassigned)
 
@@ -120,21 +130,38 @@ Every keybind change updates all three mirrors in the same change:
      `Ctrl+Alt+\` add-vocab check (KM:2323).
    - `handle_journal_key`: change the `Ctrl+r` no-op arm to `vocab_add::open`;
      remove the inline `Ctrl+Alt+\` add-vocab check (KM:1897).
+   - `handle_synopsis_overlay_key`: change the `Ctrl+r` consumed no-op to
+     `vocab_add::open`. (Synopsis rewrite stays on plain `R` — unchanged.)
+   - `handle_chat_transcript_key`: change the `"r" if is_ctrl` arm (KM:1713)
+     from the view-dependent re-gloss/ask to `vocab_add::open` for both views.
 3. **`~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json`** — update the
    `r` / `Ctrl+r` entries, add `Ctrl+Shift+r` and `Alt+r`, remove the `Alt+\`
    ToggleVocabHighlight entry (and the `Ctrl+Alt+\` AddVocabWord entry if
-   present). Deploy with `cd ~/tty-dotfiles && stow linux-lit`.
-4. **Legends** —
+   present). Deploy with `cd ~/tty-dotfiles && stow linux-lit`. (The overlay
+   handlers are direct key-matches in `keymap.rs`, not `keymap.json`-driven —
+   only the main-reader binds need JSON edits.)
+4. **Legends — every affected overlay legend, per the CLAUDE.md umbrella rule.**
    - `src/ui/keybinds_overlay.rs` (main-card Cairo keycap strip **and** the
      `describe()` detail arm): `Ctrl+r` → add vocab word, `Ctrl+Shift+r` →
      vocab Q&A, `Alt+r` → toggle vocab highlight; drop the `Ctrl+Alt+\` /
-     `Alt+\` vocab entries.
-   - `src/ui/gloss_keybinds_overlay.rs`: `Ctrl+r` now = add vocab word (was
-     rewrite), `Ctrl+w` = rewrite this gloss. (Bonus: the gloss/journal/chat
-     legends currently omit their `Ctrl+r` entirely — this change closes that
-     stale gap for gloss.)
+     `Alt+\` vocab entries. Update the `key("r", …)`, `key("\\", …)`, and the
+     `describe()`/short-label arms (`"vocab Q&A"`, `"vocab hi"`, `"add vocab"`).
+   - `src/ui/gloss_keybinds_overlay.rs`: line 14 `Ctrl+r` = **add vocab word**
+     (was `begin_rewrite`); add `Ctrl+w` = rewrite this gloss; line 18 drop the
+     `Ctrl+Alt+\` vocab-add entry.
+   - `src/ui/journal_keybinds_overlay.rs`: the doc comment (line 10) calling
+     `Ctrl+r` a consumed no-op is now false — `Ctrl+r` = add vocab word; line 21
+     drop the `Ctrl+Alt+\` vocab-add entry.
+   - `src/ui/synopsis_keybinds_overlay.rs`: the doc comment (line 11) listing
+     `Ctrl+r` among consumed no-ops is now false — `Ctrl+r` = add vocab word;
+     line 16 drop the `Ctrl+Alt+\` vocab-add entry.
+   - `src/ui/chat_keybinds_overlay.rs`: line 33 `Ctrl+r` = **add vocab word**
+     (was "Gloss view: regloss_pinned · Journal view: ask"). `Ctrl+w` (line 34)
+     unchanged.
+   - `src/ui/echo_keybinds_overlay.rs`: no `Ctrl+r` / `Ctrl+Alt+\` entries — no
+     edit needed (listed here only to confirm it was checked).
    - Run the `update-cairo-keybinds-overlay` three-pass cross-reference across
-     `keymap_config.rs`, the `ui/*_keybinds_overlay.rs` legends, and the stowed
+     `keymap_config.rs`, ALL `ui/*_keybinds_overlay.rs` legends, and the stowed
      `keymap.json`.
 
 `docs/guides/keybind-surface-guide.md` is NOT in the lockstep set (on-request
@@ -152,7 +179,7 @@ the project's "testing before completion" rule.
 ## Pre-merge review gate
 
 This change meets the spec threshold (reshuffles multiple reader-surface
-keybinds, spans main card + gloss overlay + journal overlay). It gets
-`superpowers:requesting-code-review` before merge, and the
-`update-cairo-keybinds-overlay` three-pass cross-reference runs inside that
-review.
+keybinds; spans the main card + gloss, journal, synopsis, and chat overlays).
+It gets `superpowers:requesting-code-review` before merge, and the
+`update-cairo-keybinds-overlay` three-pass cross-reference — covering ALL five
+touched legends — runs inside that review.
