@@ -2896,26 +2896,54 @@ fn handle_synopsis_overlay_key(
     is_shift: bool,
 ) -> bool {
     let ask_open = state.borrow().gloss_overlay.ask_is_open();
+    let ask_float = ask_open && state.borrow().gloss_overlay.is_ask_float();
+    // Ctrl+Tab toggles focus between the ask card and the synopsis card (2-col
+    // float only). Caught BEFORE ask_vim_intercept, which would map Ctrl+Tab to
+    // a vim Tab and swallow it. The ask host is the shared gloss overlay.
+    if ask_float && is_ctrl && (key_name == "Tab" || key_name == "ISO_Left_Tab") {
+        let mut s = state.borrow_mut();
+        s.ask_card_focus = !s.ask_card_focus;
+        let focused = s.ask_card_focus;
+        s.gloss_overlay.set_ask_focus_dim(focused);
+        return true;
+    }
+    let ask_focused = state.borrow().ask_card_focus;
+    // Escape while the synopsis card is focused (left of a 2-col ask) returns
+    // focus to the ask card — it does NOT close the overlay. The existing
+    // Escape-close handler below still fires for the ask-focused / closed-card /
+    // 1-col cases (this guard only returns early when ask_float && !ask_focused).
+    if ask_float && !ask_focused && key_name == "Escape" && !is_ctrl {
+        let mut s = state.borrow_mut();
+        s.ask_card_focus = true;
+        s.gloss_overlay.set_ask_focus_dim(true);
+        return true;
+    }
 
     // The edit prompt is modal vim (NORMAL by default, `i`/`a` to type; `:w`/
-    // Ctrl+Enter submits; double-Esc / `:q` closes).
-    match ask_vim_intercept(
-        ask_open,
-        key_name,
-        key_char,
-        is_ctrl,
-        state,
-        |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
-        crate::input::actions::synopsis::submit_amend_prompt,
-        crate::input::actions::synopsis::close_amend_prompt,
-        |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
-    ) {
-        AskIntercept::Consumed => return true,
-        AskIntercept::NotHandled => {}
+    // Ctrl+Enter submits; double-Esc / `:q` closes). Run the ask-card vim
+    // intercept ONLY when the ask card has focus. When the synopsis card is
+    // focused (Ctrl+Tab in 2-col), fall through to synopsis read-nav.
+    if ask_open && (!ask_float || ask_focused) {
+        match ask_vim_intercept(
+            ask_open,
+            key_name,
+            key_char,
+            is_ctrl,
+            state,
+            |st, k| st.borrow().gloss_overlay.feed_ask_vim_key(k),
+            crate::input::actions::synopsis::submit_amend_prompt,
+            crate::input::actions::synopsis::close_amend_prompt,
+            |st, t| st.borrow().gloss_overlay.paste_ask_text(t),
+        ) {
+            AskIntercept::Consumed => return true,
+            AskIntercept::NotHandled => {}
+        }
     }
 
     // Closed-card overlay-level semantics (preserved verbatim):
-    // Tab is always consumed so it never reaches playback toggle.
+    // Tab is always consumed so it never reaches playback toggle. In a 2-col
+    // ask float, Ctrl+Tab toggles focus (handled above); this arm only matters
+    // for the 1-col/closed cases.
     if key_name == "Tab" || key_name == "ISO_Left_Tab" {
         return true;
     }
