@@ -151,6 +151,12 @@ impl AskCard {
         &self.container
     }
 
+    /// True when the ask card is in 2-column float layout (a fixed-width panel
+    /// floated beside the gloss/journal card). False in 1-col stacked layout.
+    pub fn is_float(&self) -> bool {
+        self.float_width.get() > 0
+    }
+
     /// The input TextView — exposed so each overlay applies its own font.
     pub fn input(&self) -> &TextView {
         &self.input
@@ -568,6 +574,11 @@ impl AskCardHost {
     /// its input for font application).
     pub fn card(&self) -> &AskCard {
         &self.ask
+    }
+
+    /// True when the hosted ask card is in 2-column float layout.
+    pub fn is_ask_float(&self) -> bool {
+        self.card().is_float()
     }
 
     /// Record the card geometry and set the scroll's CLOSED height. Call from the
