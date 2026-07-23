@@ -2703,8 +2703,16 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
             let mut s = st.borrow_mut();
             s.journal_band = band.clone();
             s.journal.page_index = new_index;
+            // The rendered answer lives in the journal overlay, so make the
+            // overlay the active input consumer. Without this the overlay is
+            // visible but keys (j/k block-nav, comma/q, Escape) fall through to
+            // whatever mode the ask flow left us in — Reader for the gloss-side
+            // Ctrl+a passage-ask, which routes close_gloss_to_reader before
+            // handing off here. (2026-07-23: fixes "overlay keys dead after
+            // asking".)
+            s.input_mode = crate::app::InputMode::JournalOverlay;
             render_current(&mut s);
-            crate::logging::log("JOURNAL: saved page");
+            crate::logging::log("JOURNAL: saved page (mode=JournalOverlay)");
         },
         move |st, msg| {
             st.borrow().journal_overlay.show_message(msg);

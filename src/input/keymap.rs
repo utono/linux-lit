@@ -65,7 +65,7 @@ pub fn handle_key(
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
-    crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={}", key_name, is_ctrl, is_shift, is_alt));
+    crate::logging::log(&format!("KEY: name={} ctrl={} shift={} alt={} mode={:?}", key_name, is_ctrl, is_shift, is_alt, state.borrow().input_mode));
 
     // ── Shift-tap tracking (main-card timestamp delete/undo) ──
     // A LONE Shift press+release (nothing else pressed during the hold) is a
