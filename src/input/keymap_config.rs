@@ -305,15 +305,20 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // AND ConcordancePrev are deliberately unbound (step in-work hits
         // with n/N while a concordance is active).
         (KeyCombo::plain("r"), Action::VocabPopupTap),
-        // Ctrl+r: vocab journal Q&A — ask about the popup's current word
-        // (gated on popup visible + a vocab word on the cursor line; was R).
-        // Stored answer → journal overlay; fresh ask → held toast, then the
-        // overlay on the saved entry. Reader Ctrl+n/p are unbound (the old
-        // popup Q&A paging went away with the popup Journal view); the
-        // pickers/overlays keep their own modal Ctrl+n/p.
-        (KeyCombo::ctrl("r"), Action::VocabJournalAsk),
-        (KeyCombo::alt("backslash"), Action::ToggleVocabHighlight),
-        (KeyCombo::ctrl_alt("backslash"), Action::AddVocabWord),
+        // The `r` key is the vocab hub: plain = tap the popup word, Ctrl =
+        // add a vocab word, Ctrl+Shift = vocab journal Q&A, Alt = toggle the
+        // per-work vocab highlight. AddVocabWord moved here off Ctrl+Alt+\ and
+        // ToggleVocabHighlight off Alt+\ (both freed) so every vocab function
+        // lives on one cap (2026-07-23 consolidation).
+        (KeyCombo::ctrl("r"), Action::AddVocabWord),
+        // Ctrl+Shift+r: vocab journal Q&A — ask about the popup's current word
+        // (gated on popup visible + a vocab word on the cursor line). Stored
+        // answer → journal overlay; fresh ask → held toast, then the overlay
+        // on the saved entry. RPD emits this as lowercase "r"+shift, so bind
+        // both cases (mirrors OpenLastGloss below).
+        (KeyCombo::ctrl_shift("r"), Action::VocabJournalAsk),
+        (KeyCombo::ctrl_shift("R"), Action::VocabJournalAsk),
+        (KeyCombo::alt("r"), Action::ToggleVocabHighlight),
         // Ctrl+Shift+g: on RPD this physical key emits key_name "g" (lowercase)
         // with shift=true under Ctrl+Shift — NOT "G" — so the "G" bind alone
         // never matched and the reader scrolled instead (confirmed from the
@@ -526,23 +531,26 @@ mod tests {
     }
 
     #[test]
-    fn r_cycles_vocab_and_ctrl_r_asks_journal() {
+    fn r_is_the_vocab_hub() {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
         // # freed; plain minus now opens the reader-gloss chat at the cursor
-        // (ReaderGlossChatAtCursor); Ctrl+r = vocab journal Q&A (was R, now
-        // unbound; VocabPopupNext dropped from Ctrl+r); Ctrl+n/p page its answer.
+        // (ReaderGlossChatAtCursor). The `r` key is the vocab hub: Ctrl+r adds
+        // a vocab word, Ctrl+Shift+r asks the vocab journal Q&A, Alt+r toggles
+        // the per-work vocab highlight (2026-07-23 consolidation).
         assert_eq!(
             m.get(&KeyCombo::plain("minus")),
             Some(&Action::ReaderGlossChatAtCursor)
         );
         assert_eq!(m.get(&KeyCombo::plain("numbersign")), None);
-        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::VocabJournalAsk));
+        assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::AddVocabWord));
         assert_eq!(m.get(&KeyCombo::plain("R")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("r")), Some(&Action::VocabJournalAsk));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), Some(&Action::VocabJournalAsk));
+        assert_eq!(m.get(&KeyCombo::alt("r")), Some(&Action::ToggleVocabHighlight));
         // Reader Ctrl+n/p unbound since the popup Journal view was removed.
         assert_eq!(m.get(&KeyCombo::ctrl("n")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("p")), None);
-        assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("underscore")), Some(&Action::JumpToPrevVocab));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("minus")), Some(&Action::JumpToPrevVocab));
