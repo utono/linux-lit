@@ -1607,15 +1607,8 @@ fn handle_chat_transcript_key(
     key_name: &str,
     is_ctrl: bool,
     is_shift: bool,
-    is_alt: bool,
+    _is_alt: bool,
 ) -> bool {
-    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the transcript. It
-    // floats above the whole overlay chain and restores ChatTranscript on close.
-    if is_ctrl && is_alt && key_name == "backslash" {
-        crate::input::actions::vocab_add::open(state);
-        return true;
-    }
-
     // gg chord -> first landable row (mirrors the journal/gloss/synopsis
     // overlays' block cursor; see keymap.rs:1457 for the sibling this
     // mirrors). Checked BEFORE the match below so a completed `gg` never
