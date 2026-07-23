@@ -32,6 +32,7 @@ impl_picker!(crate::ui::authorship_picker::AuthorshipPicker);
 impl_picker!(crate::ui::journal_picker::JournalQaPicker);
 impl_picker!(crate::ui::journal_move_picker::JournalMovePicker);
 impl_picker!(crate::ui::journal_term_input::JournalTermInput);
+impl_picker!(crate::ui::recent_qa_picker::RecentQaPicker);
 impl_picker!(crate::ui::echo_line_picker::EchoLinePicker);
 
 /// The single source of truth for "which picker is active in this mode".
@@ -49,6 +50,7 @@ pub(crate) fn picker_for_mode(s: &AppState, mode: InputMode) -> Option<&dyn Pick
         InputMode::JournalPicker => Some(&s.journal_picker),
         InputMode::JournalMovePicker => Some(&s.journal_move_picker),
         InputMode::JournalTermInput => Some(&s.journal_term_input),
+        InputMode::RecentQaPicker => Some(&s.recent_qa_picker),
         InputMode::EchoLinePicker => Some(&s.echo_line_picker),
         _ => None,
     }

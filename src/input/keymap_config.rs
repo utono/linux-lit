@@ -352,6 +352,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("f"), Action::OpenCorpusSearch),
         (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
         (KeyCombo::alt("j"), Action::OpenJournalPicker),
+        // Ctrl+a: cross-work recent-Q&A jump-back picker (last 15 entries across
+        // all works, newest-first). "ask/answer recall" mnemonic.
+        (KeyCombo::ctrl("a"), Action::OpenRecentQaPicker),
         // Ctrl+o (ToggleLastOverlay: reopen the last-closed gloss/journal
         // overlay) was dropped 2026-07-22 — the action remains reachable
         // only via a keymap.json override.
@@ -533,8 +536,9 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("Tab")), None);
         // Ctrl+o (ToggleLastOverlay) dropped from the defaults.
         assert_eq!(m.get(&KeyCombo::ctrl("o")), None);
-        // AskPassage is deliberately unbound (was Ctrl+a).
-        assert_eq!(m.get(&KeyCombo::ctrl("a")), None);
+        // Ctrl+a: recent-Q&A jump-back picker (was AskPassage's cap, rebound
+        // 2026-07-23).
+        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::OpenRecentQaPicker));
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
         assert_eq!(m.get(&KeyCombo::plain("b")), Some(&Action::SetStartTime));
@@ -722,14 +726,14 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // The `a` cap: plain = TogglePause; Ctrl+a is UNBOUND (AskPassage was
-        // removed from it), Ctrl+Shift+a is bound — so those two still resolve
-        // differently. (Both Tab caps are now unbound — the chat panel uses `-`
-        // and its own handlers.)
+        // The `a` cap: plain = TogglePause; Ctrl+a opens the recent-Q&A picker
+        // (rebound 2026-07-23, was AskPassage's cap), Ctrl+Shift+a is the
+        // attribution set — so those two resolve differently. (Both Tab caps are
+        // now unbound — the chat panel uses `-` and its own handlers.)
         let a_ctrl = km.lookup("a", true, false, false);
         let a_ctrl_shift = km.lookup("A", true, true, false);
         assert_ne!(a_ctrl, a_ctrl_shift);
-        assert_eq!(a_ctrl, None); // Ctrl+a deliberately unbound
+        assert_eq!(a_ctrl, Some(Action::OpenRecentQaPicker));
         assert_eq!(a_ctrl_shift, Some(Action::PickAttributionSet));
         assert_eq!(km.lookup("Tab", false, false, false), None);
         assert_eq!(km.lookup("Tab", true, false, false), None);

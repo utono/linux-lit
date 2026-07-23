@@ -203,7 +203,7 @@ fn open_gloss_hit(state: &Rc<RefCell<AppState>>, gloss_id: i64, pattern: &str) {
 /// `render_filtered_match`): the entry is shown via a one-item `JournalFilter`,
 /// which paints it through `show_page` WITHOUT switching `journal_band` /
 /// `current_work` — the same cross-work-display trick term browse uses.
-fn open_journal_hit(state: &Rc<RefCell<AppState>>, entry_id: i64, pattern: &str) {
+pub(crate) fn open_journal_hit(state: &Rc<RefCell<AppState>>, entry_id: i64, pattern: &str) {
     let m = match crate::db::queries::open_db()
         .ok()
         .and_then(|conn| crate::db::journal::find_page_by_id(&conn, entry_id).ok().flatten())

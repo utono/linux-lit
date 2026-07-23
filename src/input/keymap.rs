@@ -287,6 +287,7 @@ pub fn handle_key(
             | crate::app::InputMode::JournalPicker
             | crate::app::InputMode::JournalMovePicker
             | crate::app::InputMode::JournalTermInput
+            | crate::app::InputMode::RecentQaPicker
             | crate::app::InputMode::GlossPicker => handle_picker_key(state, key_name, is_ctrl, is_shift, is_alt, tokio_handle, mode),
             crate::app::InputMode::Settings => handle_settings_key(state, key_name, is_ctrl),
             crate::app::InputMode::VocabLoop => handle_vocab_loop_key(state, key_name, is_ctrl),
@@ -850,6 +851,10 @@ fn handle_picker_key(
                 }
                 InputMode::JournalPicker => {
                     crate::input::actions::journal::confirm_picker(state);
+                    true
+                }
+                InputMode::RecentQaPicker => {
+                    crate::input::actions::journal::confirm_recent_qa_picker(state, tokio_handle);
                     true
                 }
                 InputMode::JournalMovePicker => {
@@ -4390,6 +4395,7 @@ fn dispatch_action(
         }
         CycleSegmentOverlays => crate::input::actions::overlay_cycle::cycle_from_reader(state),
         OpenJournalPicker => crate::input::actions::journal::open_picker_from_reader(state),
+        OpenRecentQaPicker => crate::input::actions::journal::open_recent_qa_picker(state),
         OpenGlossPicker => crate::input::actions::pickers::open_gloss_picker(state, tokio_handle),
         OpenLastGloss => crate::input::actions::gloss::open_last_gloss(state),
         OpenCorpusSearch => crate::input::actions::corpus_search::open(state),

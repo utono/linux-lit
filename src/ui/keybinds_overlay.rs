@@ -66,7 +66,7 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = bare("Tab", "", "");
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
+    key("a", "A", "play/pause", "A: authorship", &[("C-a", "recent Q&A"), ("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "", "U: undo ts", &[("M-u", "scansion")]),
@@ -304,6 +304,10 @@ config) — src/input/keymap.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (gloss → journal Q&A \
 → back to reader, no wrap; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
+        "recent Q&A" => "Action::OpenRecentQaPicker (cross-work recent-Q&A \
+jump-back: the last 15 journal entries across ALL works, newest-first; confirm \
+loads the entry's edition + MPV media and opens the journal overlay on it) \
+— src/input/actions/journal.rs",
         "last gloss" => "Action::OpenLastGloss — src/input/actions/gloss.rs",
         "BCP echo turns" => "Action::ShowEchoTurnsBcp — src/input/actions/echoes.rs",
         "BCP echoes" => "Action::ShowEchoesBcp — src/input/actions/echoes.rs",
@@ -342,8 +346,8 @@ is the chat panel. Plain `a`: pure MPV pause/resume, no seek, all work types \
 the journal / gloss / translation overlays and the vocab-sentence loop. \
 EXCEPTION — with the chat panel focused on its TRANSCRIPT, `a` re-shows a \
 retired input instead (the panel is modal there; pause is unavailable until you \
-Tab back to the reader). Ctrl+a is UNBOUND (it was AskPassage: select with `V`, \
-then Ctrl+a in visual mode, for a passage Q&A). Shift+a = authorship; \
+Tab back to the reader). Ctrl+a opens the recent-Q&A jump-back picker \
+(OpenRecentQaPicker; was AskPassage's cap). Shift+a = authorship; \
 Ctrl+Shift+a = attribution set. — src/input/keymap.rs",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",

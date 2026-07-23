@@ -386,6 +386,27 @@ pub fn find_page_by_id(
     }
 }
 
+/// The most-recently-created (or -edited) journal entries across ALL works,
+/// newest-first, capped at `limit`. Carries `work_abbrev` like `find_page_by_id`
+/// so the cross-work open path can resolve each entry's edition. `id DESC` is the
+/// monotonic tiebreaker when two rows share a `timestamp`. Feeds the recent-Q&A
+/// jump-back picker (Ctrl+a). No `timestamp`-only index today; a small `LIMIT`
+/// scan is cheap at current table sizes — revisit only if the table grows large.
+pub fn find_recent_pages(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<TermMatch>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS}, work_abbrev \
+         FROM journal_entries \
+         ORDER BY timestamp DESC, id DESC \
+         LIMIT ?1"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([limit], map_term_match_row)?;
+    rows.collect()
+}
+
 fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Error> {
     let page = map_journal_page_row(row)?;
     // work_abbrev is the column AFTER the JOURNAL_PAGE_COLUMNS list (index 11).
@@ -820,6 +841,57 @@ mod tests {
         let ordered = find_all_pages_ordered(&conn, "Ham").unwrap();
         let qs: Vec<&str> = ordered.iter().map(|p| p.question.as_str()).collect();
         assert_eq!(qs, vec!["W1?", "W2?", "S12a?", "S12b?", "S31a?"]);
+    }
+
+    #[test]
+    fn recent_pages_newest_first_across_works_with_limit_and_id_tiebreak() {
+        let conn = mem();
+        // Insert across two works, then stamp explicit timestamps (the DEFAULT
+        // datetime('now') would collide within the same second). id order is
+        // insertion order (id1 < id2 < ...).
+        let id_a1 =
+            save_journal_page(&conn, "Ham", 1, 2, "Ham-old?", "a", "m", "scene", "qa").unwrap();
+        let id_r1 =
+            save_journal_page(&conn, "Rom", 2, 2, "Rom-mid?", "a", "m", "scene", "qa").unwrap();
+        let id_a2 =
+            save_journal_page(&conn, "Ham", 1, 3, "Ham-new-a?", "a", "m", "scene", "qa").unwrap();
+        let id_r2 =
+            save_journal_page(&conn, "Rom", 3, 1, "Rom-new-b?", "a", "m", "scene", "qa").unwrap();
+
+        let stamp = |id: i64, ts: &str| {
+            conn.execute(
+                "UPDATE journal_entries SET timestamp = ?2 WHERE id = ?1",
+                rusqlite::params![id, ts],
+            )
+            .unwrap();
+        };
+        stamp(id_a1, "2026-07-20T10:00:00");
+        stamp(id_r1, "2026-07-21T10:00:00");
+        // Two rows share the newest timestamp → id DESC breaks the tie
+        // (id_r2 > id_a2, so Rom-new-b? leads Ham-new-a?).
+        stamp(id_a2, "2026-07-22T10:00:00");
+        stamp(id_r2, "2026-07-22T10:00:00");
+
+        // Full ordering: newest-first across both works, id-tiebroken.
+        let all = find_recent_pages(&conn, 10).unwrap();
+        let got: Vec<(&str, &str)> = all
+            .iter()
+            .map(|m| (m.work_abbrev.as_str(), m.page.question.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Rom", "Rom-new-b?"),
+                ("Ham", "Ham-new-a?"),
+                ("Rom", "Rom-mid?"),
+                ("Ham", "Ham-old?"),
+            ]
+        );
+
+        // LIMIT is honored and returns the newest N.
+        let top2 = find_recent_pages(&conn, 2).unwrap();
+        let q2: Vec<&str> = top2.iter().map(|m| m.page.question.as_str()).collect();
+        assert_eq!(q2, vec!["Rom-new-b?", "Ham-new-a?"]);
     }
 
     #[test]
