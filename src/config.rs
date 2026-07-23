@@ -318,7 +318,7 @@ fn default_phrase_highlight_prose() -> PhraseHighlightMode {
 }
 
 fn default_phrase_highlight_verse() -> PhraseHighlightMode {
-    PhraseHighlightMode::Off
+    PhraseHighlightMode::Phrase
 }
 
 fn default_echo_affect_weight() -> f32 {
@@ -371,7 +371,7 @@ impl Default for Config {
             annotation_tint: default_annotation_tint(),
             scansion_level: default_scansion_level(),
             phrase_highlight_prose: PhraseHighlightMode::Phrase,
-            phrase_highlight_verse: PhraseHighlightMode::Off,
+            phrase_highlight_verse: PhraseHighlightMode::Phrase,
             title_bar_visible: default_title_bar_visible(),
             chapter_toast_shown: default_chapter_toast_shown(),
             echo_affect_weight: default_echo_affect_weight(),
@@ -431,6 +431,19 @@ fn config_path() -> PathBuf {
     PathBuf::from(home).join(".config/linux-lit").join(filename)
 }
 
+/// `off` is no longer a persisted karaoke mode — the session axis (Alt+p)
+/// expresses it at runtime. Stored `off` values predate the axis; treat
+/// them as `phrase` so verse karaoke actually defaults on (a stored value
+/// always beats a compiled default).
+pub(crate) fn migrate_phrase_modes(config: &mut Config) {
+    if config.phrase_highlight_prose == PhraseHighlightMode::Off {
+        config.phrase_highlight_prose = PhraseHighlightMode::Phrase;
+    }
+    if config.phrase_highlight_verse == PhraseHighlightMode::Off {
+        config.phrase_highlight_verse = PhraseHighlightMode::Phrase;
+    }
+}
+
 pub fn load() -> Config {
     let path = config_path();
     if !path.exists() {
@@ -447,6 +460,7 @@ pub fn load() -> Config {
     config.column_width = default_column_width();
     config.text_margins = default_text_margins();
     config.title_bar_visible = false;
+    migrate_phrase_modes(&mut config);
     if config.claude_model.contains("-20") {
         config.claude_model = default_claude_model();
     }
@@ -661,20 +675,22 @@ mod last_gloss_tests {
     }
 
     #[test]
-    fn phrase_highlight_defaults_prose_phrase_verse_off() {
+    fn phrase_highlight_defaults_prose_phrase_verse_phrase() {
         let cfg: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.phrase_highlight_prose, PhraseHighlightMode::Phrase);
-        assert_eq!(cfg.phrase_highlight_verse, PhraseHighlightMode::Off);
+        assert_eq!(cfg.phrase_highlight_verse, PhraseHighlightMode::Phrase);
         let dflt = Config::default();
         assert_eq!(dflt.phrase_highlight_prose, PhraseHighlightMode::Phrase);
-        assert_eq!(dflt.phrase_highlight_verse, PhraseHighlightMode::Off);
+        assert_eq!(dflt.phrase_highlight_verse, PhraseHighlightMode::Phrase);
     }
 
     #[test]
     fn phrase_highlight_mode_legacy_bools_deserialize() {
         // Legacy ON means the default "on" state — Phrase — so a stored
         // `true` from the boolean era keeps phrase-width highlighting
-        // (stored values override compiled defaults).
+        // (stored values override compiled defaults). Legacy `false` still
+        // deserializes to Off here; migrate_phrase_modes (run in load())
+        // is what maps Off -> Phrase, not deserialization itself.
         let cfg: Config = serde_json::from_str(
             r#"{"phrase_highlight_prose": true, "phrase_highlight_verse": false}"#,
         )
@@ -701,6 +717,23 @@ mod last_gloss_tests {
         assert!(!Off.is_on());
         assert!(Phrase.is_on());
         assert!(Line.is_on());
+    }
+
+    #[test]
+    fn migrate_phrase_modes_maps_off_to_phrase() {
+        use PhraseHighlightMode::{Line, Off, Phrase};
+        let mut c = Config::default();
+        c.phrase_highlight_prose = Off;
+        c.phrase_highlight_verse = Off;
+        migrate_phrase_modes(&mut c);
+        assert_eq!(c.phrase_highlight_prose, Phrase);
+        assert_eq!(c.phrase_highlight_verse, Phrase);
+        // phrase / line survive untouched.
+        c.phrase_highlight_prose = Phrase;
+        c.phrase_highlight_verse = Line;
+        migrate_phrase_modes(&mut c);
+        assert_eq!(c.phrase_highlight_prose, Phrase);
+        assert_eq!(c.phrase_highlight_verse, Line);
     }
 
     #[test]
