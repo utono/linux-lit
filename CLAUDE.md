@@ -298,6 +298,18 @@ is not enough.
   below; run the `update-cairo-keybinds-overlay` three-pass cross-reference
   to confirm nothing drifted. (`docs/guides/keybind-surface-guide.md`
   remains the one exception — on-request only.)
+- **ALWAYS consult `docs/guides/keybind-consistency-guide.md` when changing
+  keybinds.** It holds the app's key→concept map (`r`=vocab, `g`=gloss,
+  `j`=journal, `w`=rewrite, `a`=ask, `/`=search+legend), the modifier
+  conventions, and the ranked list of known inconsistencies. Before adding a
+  bind, check which key already owns that concept and put the new bind on it.
+  **Proactively propose reorganizing binds** to help the user remember them —
+  when a change lands near a known inconsistency, or when you notice a concept
+  scattered across keys or a cap carrying unrelated meanings, surface a
+  consolidation proposal (don't silently rebind — reorganizations are the
+  user's call). Record each approved consistency decision in that guide's
+  change log, and run its sweep procedure as a self-check after multi-surface
+  bind changes.
 - **The spacebar is `"space"`.** The Rust code binds it by that keysym name,
   so refer to it as `"space"` — never `"Space"` or `"spacebar"`. When the user
   asks to change the space bind, respond using `"space"`.
