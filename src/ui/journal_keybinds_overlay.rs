@@ -7,8 +7,8 @@ pub const TITLE: &str = "Journal keybinds";
 
 /// Most-used binds, pinned to the legend's upper-right column. Rows here are
 /// MOVED out of the groups below (not duplicated). Every MRU bind must actually
-/// work in this overlay's handler — Ctrl+r and Alt+g are consumed no-ops in
-/// handle_journal_key (moved to Ctrl+a / dropped), so they are NOT listed.
+/// work in this overlay's handler — Alt+g is a consumed no-op in
+/// handle_journal_key (dropped), so it is NOT listed. Ctrl+r = add vocab word.
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+f", "corpus_search: all Q&As / glosses"),
     ("Ctrl+a", "begin_ask: new Q&A in this band"),
@@ -18,7 +18,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles \u{b7} r next word)"),
-    ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
+    ("Ctrl+r", "vocab_add_card: add a vocab word"),
     ("\\", "cycle_from_journal: → close (reading card)"),
 ]);
 

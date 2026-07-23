@@ -30,7 +30,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Editing", &[
         ("s", "save the selected exchange to the journal"),
-        ("Ctrl+r", "Gloss view: regloss_pinned · Journal view: ask"),
+        ("Ctrl+r", "add vocab word"),
         ("Ctrl+w", "Gloss view: regloss_pinned · Journal view: rewrite_journal_entry"),
         ("c", "copy_gloss_id · copy_journal_id (per view)"),
         ("D", "delete_current_panel_item (y/Esc confirm)"),

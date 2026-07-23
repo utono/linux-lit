@@ -11,11 +11,11 @@ pub const TITLE: &str = "Gloss keybinds";
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+f", "corpus_search: all Q&As / glosses"),
     ("Ctrl+a", "passage Q&A: floats here → answer in journal"),
-    ("Ctrl+r", "begin_rewrite: Claude rewrite of this gloss"),
+    ("Ctrl+r", "vocab_add_card: add a vocab word"),
+    ("Ctrl+w", "begin_rewrite: Claude rewrite of this gloss"),
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles · r next word)"),
-    ("Ctrl+Alt+\\", "vocab_add_card: add a vocab word"),
     ("Alt+g", "gloss_picker"),
     ("\\", "cycle_from_gloss: → journal Q&A (same segment)"),
 ]);

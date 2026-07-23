@@ -57,10 +57,10 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "term filter", "", &[("M-f", "font info"), ("C-f", "corpus search")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("C-M-g", "annot tint")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "prev work")]),
-    key("r", "R", "vocab tap", "", &[("C-r", "vocab Q&A")]),
+    key("r", "R", "vocab tap", "", &[("C-r", "add vocab"), ("S-C-r", "vocab Q&A"), ("M-r", "vocab hi")]),
     key("l", "L", "toggle signs", "", &[("C-l", "chat side"), ("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
-    key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker"), ("M-\\", "vocab hi"), ("C-M-\\", "add vocab")]),
+    key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker")]),
 ];
 const TAB_KEY: KeyDef = bare("Tab", "", "focus chat");
 
