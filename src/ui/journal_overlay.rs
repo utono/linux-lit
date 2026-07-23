@@ -81,6 +81,10 @@ pub struct JournalOverlay {
     /// overlay font would survive an edit.
     pre_edit_family: RefCell<Option<String>>,
     last_card_size: Cell<(i32, i32)>,
+    /// Drives the Braille-spinner tick for the loading state; started by
+    /// `show_loading`, stopped by every result-render path (`show_page`,
+    /// `show_message`, `show_passage_source`) and by `hide()`.
+    loading_animator: crate::ui::loading_animator::LoadingAnimator,
     /// Owns the ask-card lifecycle + the fixed-scroll-height viewport-shrink (the
     /// occlusion fix) + the footer hide/show + the clip recompute. Shared with the
     /// gloss overlay so the mechanism can't drift. See `AskCardHost`.
@@ -656,6 +660,7 @@ impl JournalOverlay {
             font_size: Cell::new(crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_SIZE),
             pre_edit_family: RefCell::new(None),
             last_card_size: Cell::new((0, 0)),
+            loading_animator: crate::ui::loading_animator::LoadingAnimator::new(),
             ask_host,
             vim_engine: RefCell::new(None),
             vim_seed: RefCell::new(String::new()),
@@ -805,6 +810,9 @@ impl JournalOverlay {
         card_width: i32,
         card_height: i32,
     ) {
+        // Stop the loading spinner: this render replaces the loading buffer with
+        // the real answer, so no queued tick may repaint over it.
+        self.loading_animator.stop();
         // Restore the navigation footer BEFORE sizing: `size_card` reads
         // `footer_container.preferred_size()` to reserve the footer's slot in the
         // fixed-scroll-height budget, but `show_loading` hid the footer during the
@@ -947,31 +955,35 @@ impl JournalOverlay {
         }
     }
 
-    pub fn show_loading(&self, question: &str) {
+    pub fn show_loading(&self, question: &str, label: &str) {
         let (w, h) = self.last_card_size.get();
         if w > 0 {
             self.container.set_size_request(w, h);
         }
-        // Echo the submitted question above the "Asking…" indicator so the user
-        // sees what they asked while the answer is being generated.
-        let body = if question.trim().is_empty() {
-            "Asking\u{2026}".to_string()
-        } else {
-            format!("{}\n\nAsking\u{2026}", prefix_question(question))
-        };
-        self.view.buffer().set_text(&body);
         self.apply_font();
         self.ask_host.card().close();
-        // Drop the prior page's blocks + bar: during the transient "Asking…"
+        // Drop the prior page's blocks + bar: during the transient loading
         // state there is no real Q&A page, so Space/a must not read the prior
         // page's cursor paragraph. With no blocks, current_block_text() is None
         // and play_journal_block is a no-op.
         self.clear_blocks();
-        // Keep the navigation footer hidden during the Asking state. The result
+        // Keep the navigation footer hidden during the loading state. The result
         // render (show_page/show_message) restores it.
         self.footer_container.set_visible(false);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+        // Animate the indicator: the sink writes the view buffer each frame.
+        // Body = the held question (empty → indicator only). The animator paints
+        // frame 0 immediately, so the first paint is correct before any tick.
+        let body = if question.trim().is_empty() {
+            String::new()
+        } else {
+            prefix_question(question)
+        };
+        let view = self.view.clone();
+        let sink: std::rc::Rc<dyn Fn(String)> =
+            std::rc::Rc::new(move |text: String| view.buffer().set_text(&text));
+        self.loading_animator.start(sink, body, label.to_string());
     }
 
     /// Render a PENDING passage ask: the visually selected source text
@@ -990,6 +1002,9 @@ impl JournalOverlay {
         card_width: i32,
         card_height: i32,
     ) {
+        // Stop the loading spinner: this render replaces the loading buffer, so
+        // no queued tick may repaint over it.
+        self.loading_animator.stop();
         self.size_card(card_width, card_height);
         self.entry_pos.set((0, 0));
         // Anchor the source tags at the COLUMN edge (left_margin minus the body
@@ -1009,6 +1024,9 @@ impl JournalOverlay {
     }
 
     pub fn show_message(&self, text: &str) {
+        // Stop the loading spinner: this render replaces the loading buffer, so
+        // no queued tick may repaint over it.
+        self.loading_animator.stop();
         let (w, h) = self.last_card_size.get();
         if w > 0 {
             self.container.set_size_request(w, h);
@@ -1046,6 +1064,9 @@ impl JournalOverlay {
     }
 
     pub fn hide(&self) {
+        // Universal close funnel: stop any running spinner so leaving the
+        // overlay mid-load cannot leave a tick running.
+        self.loading_animator.stop();
         self.container.set_visible(false);
         self.scrim.set_visible(false);
         self.ask_host.card().close();
