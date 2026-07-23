@@ -157,8 +157,12 @@ fn main() {
         // Build the window with works list, Tokio handle, and config
         let state = app::build_window(gtk_app, works, tokio_handle, config, cmd_tx);
 
-        // Start background reader for the 8BitDo Micro gamepad (no-op if absent).
-        crate::input::gamepad::spawn(std::rc::Rc::clone(&state));
+        // Gamepad support disabled 2026-07-23 (user does not use a gamepad).
+        // Re-enable by uncommenting; the background reader thread polls for an
+        // 8BitDo Micro every 5s (logging "device not found" until one appears).
+        // The GamepadOverlay UI stays wired up but never activates while this
+        // is off. See src/input/gamepad.rs.
+        // crate::input::gamepad::spawn(std::rc::Rc::clone(&state));
 
         // Process MPV events — CursorSync updates cursor position
         let state_for_events = std::rc::Rc::clone(&state);
