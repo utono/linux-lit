@@ -547,19 +547,28 @@ impl GlossOverlay {
 
         container.append(&footer_box);
 
-        // ---- Shared "ask" input card, stacked below the synopsis -------------
-        // Lives inside `container` so the two cards form one centered column and
-        // the synopsis scroll viewport (which vexpands) shrinks to make room when
-        // this card is revealed. Hidden until `A` opens it. Built from the
-        // canonical values inside `AskCard`; focus returns to `gloss_scrolled`.
+        // ---- Shared "ask" input card, FLOATED to the right of the gloss card --
+        // The ask card is NOT appended into `container`: in the gloss overlay it
+        // floats as a right-side add_overlay sibling of the card (the 2-column
+        // ask layout). It is added to `self.overlay` after the scrim/container
+        // are attached (see `attach`). Here we only build it and style it as the
+        // opaque floating panel. Hidden until an ask flow opens it; focus returns
+        // to `gloss_scrolled`.
         let ask = AskCard::new(text_margins as i32, &gloss_scrolled);
-        container.append(ask.container());
+        ask.container().add_css_class("gloss-ask-float");
+        // Both the gloss card and this panel are halign=Center add_overlay
+        // children with MIRRORED margins: the gloss card reserves margin_end
+        // (shifts it left), this panel reserves margin_start (shifts it right),
+        // so the gloss+ask pair centers on screen as one unit. valign=Fill only
+        // gives the overlay's full height — the reserve closure caps it to the
+        // gloss card's height so the two columns are top/bottom aligned.
+        ask.container().set_halign(Align::Center);
+        ask.container().set_valign(Align::Fill);
 
-        // The host owns the ask-card lifecycle: the fixed-scroll-height
-        // viewport-shrink, the clip recompute (driving this overlay's
-        // BottomClipGuard clip box), and open/close. The footer (hr + keybind
-        // hints) is HIDDEN while the ask card is open, mirroring the journal Q&A —
-        // so it is registered as the host's toggled footer.
+        // The host owns the ask-card lifecycle. In FLOAT mode (below) open/close
+        // reserve room on the gloss card and reveal the panel instead of
+        // shrinking the scroll; the clip recompute still drives this overlay's
+        // BottomClipGuard against the (full-height) gloss viewport.
         let recompute = {
             let clip = clip_guard.clip().clone();
             let view = gloss_view.clone();
@@ -568,11 +577,49 @@ impl GlossOverlay {
                 crate::ui::recompute_overlay_bottom_clip(&view, &clip, &scrolled);
             }) as Rc<dyn Fn()>
         };
+        // Capture the ask container BEFORE `AskCardHost::new` consumes `ask`, so
+        // the reservation closure can size/height it on open.
+        let ask_container_for_reserve = ask.container().clone();
         let ask_host =
             AskCardHost::new(ask, &gloss_scrolled, Some(footer_box.clone()), recompute);
-        // The gloss/synopsis ask card (add-question, edit gloss, fix-IPA, inner
-        // monologue) fills 3/4 of the overlay height, matching the journal Q&A.
-        ask_host.set_input_fill_fraction(0.75);
+        // Gloss/synopsis ask card floats to the RIGHT of the gloss card (2-column
+        // ask layout, all prompts: add-question, edit gloss, fix-IPA, inner
+        // monologue, synopsis edit). Fixed float width.
+        //
+        // Centering the pair: both children are halign=Center. On open the gloss
+        // card reserves margin_end = ask_width + seam (shifts it left by half
+        // that); the ask panel reserves margin_start = gloss_width + seam (shifts
+        // it right by half that). The two mirrored allocation boxes are each
+        // centered on screen, so the visible gloss-card|seam|ask-panel strip is
+        // centered as a unit (verified by pixel-measuring equal L/R gutters).
+        let float_w = (column_width as i32 * 5 / 8).max(360);
+        {
+            let container_for_reserve = container.clone();
+            let reserve = Rc::new(move |px: i32| {
+                // `px` is the reservation (ask_width + seam) on open, 0 on close.
+                container_for_reserve.set_margin_end(px);
+                if px > 0 {
+                    // Mirror the reservation on the ask panel: shift it right by
+                    // gloss_width + seam so both centered boxes yield equal L/R
+                    // gutters. gloss_width + seam = card_width + (px - float_w).
+                    let gloss_w = container_for_reserve
+                        .width()
+                        .max(container_for_reserve.width_request());
+                    let seam = px - float_w; // reservation minus ask width
+                    ask_container_for_reserve.set_margin_start(gloss_w + seam);
+                    // Cap the ask panel height to the gloss card's height so the
+                    // two columns are top/bottom aligned.
+                    let h = container_for_reserve
+                        .height()
+                        .max(container_for_reserve.height_request());
+                    ask_container_for_reserve.set_height_request(h.max(200));
+                } else {
+                    ask_container_for_reserve.set_margin_start(0);
+                    ask_container_for_reserve.set_height_request(-1);
+                }
+            }) as Rc<dyn Fn(i32)>;
+            ask_host.enable_float(float_w, reserve);
+        }
 
         container.set_visible(false);
 
@@ -1420,6 +1467,14 @@ impl GlossOverlay {
         crate::ui::picker_attach::attach_overlay_panel(
             &self.overlay, child, &self.scrim, &self.container,
         );
+        // The ask card floats as a right-anchored sibling of the gloss card (the
+        // 2-column ask layout). Added last so it paints above the card; hidden
+        // until an ask flow opens it. Not measured (its size is fixed by the
+        // float width + height reservation) and clipped like the container.
+        let ask_container = self.ask_host.card().container();
+        self.overlay.add_overlay(ask_container);
+        self.overlay.set_measure_overlay(ask_container, false);
+        self.overlay.set_clip_overlay(ask_container, true);
     }
 
     /// Restore the body-sized bold `gloss-title` style on the shared title (the

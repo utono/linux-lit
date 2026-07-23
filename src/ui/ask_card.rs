@@ -46,6 +46,10 @@ pub struct AskCard {
     /// so `open` insets the card to the same column. Set by the journal
     /// overlay's `set_prose_reading`; gloss/synopsis leave the default false.
     prose_reading: Cell<bool>,
+    /// Fixed container width for the right-floated ask card (gloss 2-column
+    /// layout). 0 = unset (the card uses the overlay's prose-column insets in
+    /// `open_in_mode`). Set by `AskCardHost` in float mode.
+    float_width: Cell<i32>,
 }
 
 impl AskCard {
@@ -138,6 +142,7 @@ impl AskCard {
             vim: std::cell::RefCell::new(None),
             blink: std::cell::RefCell::new(None),
             prose_reading: Cell::new(false),
+            float_width: Cell::new(0),
         }
     }
 
@@ -165,6 +170,16 @@ impl AskCard {
             self.scrolled.set_min_content_height(160);
             self.scrolled.set_max_content_height(320);
         }
+    }
+
+    /// Pin the ask-card container to a FIXED width (the right-floated gloss
+    /// layout). `width <= 0` clears the pin (`width_request = -1`), restoring
+    /// the default full-width-column behavior. Also skips the prose-column
+    /// margin insetting in `open_in_mode` (a fixed-width float panel is inset by
+    /// its overlay margin, not by card_width/5).
+    pub fn set_float_width(&self, width: i32) {
+        self.float_width.set(width.max(0));
+        self.container.set_width_request(if width > 0 { width } else { -1 });
     }
 
     /// Reveal with heading + hint, clear the field, re-align margins to the
@@ -217,7 +232,13 @@ impl AskCard {
         // hides it on INSERT. An empty legend string opts out entirely.
         self.legend.set_text(legend);
         self.legend.set_visible(!legend.is_empty());
-        if card_width > 0 {
+        if self.float_width.get() > 0 {
+            // Float mode: fixed-width right panel. Keep the container's pinned
+            // width; use a uniform inner inset (the panel border is the card
+            // edge, not a card/5 column margin).
+            self.container.set_margin_start(16);
+            self.container.set_margin_end(16);
+        } else if card_width > 0 {
             // Match the host overlay's text column: card/8 when the journal is
             // showing a prose work at the main reading card's margin, card/5
             // otherwise (see `prose_reading`).
@@ -424,6 +445,18 @@ impl AskCard {
     }
 }
 
+/// Gap between the gloss card's right edge and the floated ask panel. Matches
+/// the chat panel's card↔panel seam so the two 2-column designs read alike.
+const FLOAT_SEAM: i32 = 24;
+
+/// Width the gloss card must reserve (`margin_end`) so the floated ask card of
+/// `float_width` sits beside it with a `seam` gap. Pure so it is unit-tested
+/// without GTK. The gloss overlay adds this to its container's `margin_end` and
+/// re-centers the widened footprint.
+pub(crate) fn gloss_reservation_width(float_width: i32, seam: i32) -> i32 {
+    float_width + seam
+}
+
 /// Hosts an `AskCard` inside a free-scroll overlay (journal Q&A / gloss synopsis)
 /// and owns the **fixed-scroll-height** lifecycle that keeps the ask card from
 /// occluding the reading text.
@@ -478,6 +511,16 @@ pub struct AskCardHost {
     /// overlay's card height on every `open` (journal Q&A = 0.75). `None` keeps
     /// the input's default 160..320 natural range (gloss/synopsis).
     input_fill_fraction: Cell<Option<f32>>,
+    /// Float mode (gloss/synopsis 2-column ask): `open`/`close` reserve room on
+    /// the gloss card and reveal the ask card as a right panel INSTEAD of
+    /// shrinking the scroll. The journal overlay leaves this false → its stacked
+    /// behavior is unchanged.
+    float: Cell<bool>,
+    /// Fixed ask-card width in float mode (0 = unset).
+    float_width: Cell<i32>,
+    /// Called on open with the reservation px, and on close with 0. The gloss
+    /// overlay uses it to set/clear its card's `margin_end` and re-center.
+    reserve: std::cell::RefCell<Option<Rc<dyn Fn(i32)>>>,
 }
 
 impl AskCardHost {
@@ -497,7 +540,21 @@ impl AskCardHost {
             fixed_chrome_h: Cell::new(0),
             card_width: Cell::new(0),
             input_fill_fraction: Cell::new(None),
+            float: Cell::new(false),
+            float_width: Cell::new(0),
+            reserve: std::cell::RefCell::new(None),
         }
+    }
+
+    /// Enable float mode: the ask card floats at `float_width` to the right of
+    /// the gloss card, which reserves room via `reserve`. `reserve(px)` is
+    /// called with the reservation width on open and `reserve(0)` on close.
+    /// Pins the card's float width now so `open` reveals it narrow.
+    pub fn enable_float(&self, float_width: i32, reserve: Rc<dyn Fn(i32)>) {
+        self.float.set(true);
+        self.float_width.set(float_width.max(0));
+        self.ask.set_float_width(float_width);
+        *self.reserve.borrow_mut() = Some(reserve);
     }
 
     /// Pin the ask card's input scroll to `fraction` of the overlay card height
@@ -526,6 +583,12 @@ impl AskCardHost {
         self.card_width.set(card_width);
         self.card_height.set(card_height);
         self.fixed_chrome_h.set(fixed_chrome_h);
+        if self.float.get() {
+            // Float mode: the gloss scroll keeps its own full height; the ask
+            // card is a fixed-width right panel whose height matches the card.
+            self.ask.set_float_width(self.float_width.get());
+            return;
+        }
         let scroll_h = (card_height - fixed_chrome_h - footer_h).max(80);
         self.closed_scroll_h.set(scroll_h);
         self.pin_scroll_height(scroll_h);
@@ -557,6 +620,19 @@ impl AskCardHost {
     /// the toggled footer (if any) is hidden, freeing its slot. Recomputes the
     /// clip now and on the idle tick after the height lands.
     pub fn open(&self, title: &str, hint: &str, legend: &str, block_fill: &str, block_fg: &str) {
+        if self.float.get() {
+            // Reveal the ask card at its pinned float width and reserve room on
+            // the gloss card. No scroll shrink — the commentary stays full height.
+            // `card_width = 0` so `open_in_mode` keeps the pinned float width
+            // instead of re-insetting to the prose column.
+            self.ask.set_float_width(self.float_width.get());
+            self.ask.open(title, hint, legend, 0, block_fill, block_fg);
+            if let Some(reserve) = self.reserve.borrow().as_ref() {
+                reserve(gloss_reservation_width(self.float_width.get(), FLOAT_SEAM));
+            }
+            self.recompute_now_and_idle();
+            return;
+        }
         self.ask
             .open(title, hint, legend, self.card_width.get(), block_fill, block_fg);
         if let Some(f) = &self.footer {
@@ -586,6 +662,13 @@ impl AskCardHost {
     /// footer first). Uses the stored `closed_scroll_h` rather than re-measuring.
     pub fn close(&self) {
         self.ask.close();
+        if self.float.get() {
+            if let Some(reserve) = self.reserve.borrow().as_ref() {
+                reserve(0);
+            }
+            self.recompute_now_and_idle();
+            return;
+        }
         if let Some(f) = &self.footer {
             f.set_visible(true);
         }
@@ -626,5 +709,22 @@ impl AskCardHost {
     /// Paste system-clipboard text into the ask card's vim engine.
     pub fn paste_text(&self, text: &str) {
         self.ask.paste_text(text);
+    }
+}
+
+#[cfg(test)]
+mod host_float_tests {
+    use super::*;
+
+    #[test]
+    fn reservation_is_width_plus_seam() {
+        assert_eq!(gloss_reservation_width(560, 24), 584);
+        assert_eq!(gloss_reservation_width(0, 24), 24);
+    }
+
+    #[test]
+    fn reservation_uses_the_float_seam_const() {
+        // The gloss overlay reserves `float_width + FLOAT_SEAM`.
+        assert_eq!(gloss_reservation_width(400, FLOAT_SEAM), 400 + FLOAT_SEAM);
     }
 }
