@@ -227,6 +227,11 @@ pub struct GlossOverlay {
     /// `rewrite_diff_full`). Empty when no search is active.
     search_full: RefCell<Vec<(i32, i32)>>,
     search_full_current: Cell<usize>,
+    /// Braille-spinner animator for the "Glossing…"/"Synthesizing…" loading
+    /// title. Started by `show_loading_message`; stopped by every result-render
+    /// path (`show_gloss_with_color`, `show_synopsis`) and by `hide()`, so a
+    /// queued tick never repaints the title over the rendered answer.
+    loading_animator: crate::ui::loading_animator::LoadingAnimator,
 }
 
 /// Default font for the synopsis/gloss/echoes overlay cards.
@@ -728,6 +733,7 @@ impl GlossOverlay {
             rewrite_diff_full: RefCell::new(Vec::new()),
             search_full: RefCell::new(Vec::new()),
             search_full_current: Cell::new(0),
+            loading_animator: crate::ui::loading_animator::LoadingAnimator::new(),
         }
     }
 
@@ -1537,6 +1543,7 @@ impl GlossOverlay {
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
+        self.loading_animator.stop();
         self.hide_citation();
         self.title.set_visible(true);
         self.title.set_text("Gloss");
@@ -1583,6 +1590,9 @@ impl GlossOverlay {
     }
 
     pub fn show_gloss_with_color(&self, _original: &str, gloss: &str, card_width: i32, card_height: i32, root_color: Option<&str>, source_line_numbers: &[(String, i64)], head: (&str, &str)) {
+        // Result-render: stop any running loading-title spinner first, so a
+        // queued tick can never repaint the "Glossing…" title over the result.
+        self.loading_animator.stop();
         // Prose: merge adjacent source segments BEFORE anything derives from the
         // markup — `current_gloss`, blocks, pagination measurement, and the
         // whole-entry text basis all read the stored (joined) string, so every
@@ -1706,6 +1716,7 @@ impl GlossOverlay {
     }
 
     pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
+        self.loading_animator.stop();
         // Same prose segment-merge as `show_gloss_with_color`, so the loading
         // card's passage reads identically to the result card's source block.
         let joined_doc;
@@ -1798,6 +1809,10 @@ impl GlossOverlay {
         dim_color: Option<&str>,
         selected: usize,
     ) {
+        // Result-render: stop any running loading-title spinner first (echoes
+        // are reached from show_loading_message("Searching for echoes...")),
+        // so a queued tick can never repaint the title after it's hidden below.
+        self.loading_animator.stop();
         // No synopsis label bolding in echo view.
         self.hide_citation();
         self.synopsis_label_ranges.borrow_mut().clear();        self.hi_ranges.borrow_mut().clear();
@@ -1915,6 +1930,10 @@ impl GlossOverlay {
         card_height: i32,
         prose_card: Option<SynopsisProseCard>,
     ) {
+        // Result-render: stop any running loading-title spinner first, so a
+        // queued tick can never repaint the "Synthesizing…" title over the
+        // result.
+        self.loading_animator.stop();
         self.hide_citation();
         *self.current_synopsis.borrow_mut() = synopsis.to_string();
         // Clear any stale visual-mode anchor: showing a (possibly different)
@@ -3146,6 +3165,13 @@ impl GlossOverlay {
         self.ask_host.is_ask_float()
     }
 
+    /// Stop the loading spinner without rendering a result over it. Error-return
+    /// branches (e.g. IPA-fix failures) call this so the "Glossing…" spinner does
+    /// not keep repainting forever after they toast + return. Idempotent.
+    pub fn stop_loading(&self) {
+        self.loading_animator.stop();
+    }
+
     pub fn show_loading(&self) {
         self.show_loading_message("Glossing...");
     }
@@ -3185,6 +3211,21 @@ impl GlossOverlay {
         // the message float as bare text with no backdrop).
         self.scrim.set_visible(true);
         self.container.set_visible(true);
+
+        // Animate the label: the sink writes the title Label each frame. Empty
+        // body → the title shows just "<spinner> <message>". The animator paints
+        // frame 0 immediately.
+        let title = self.title.clone();
+        let sink: std::rc::Rc<dyn Fn(String)> =
+            std::rc::Rc::new(move |text: String| title.set_text(&text));
+        // `message` may carry a trailing "..."/"…" already (e.g. "Glossing...").
+        // Strip a trailing ellipsis/dots so the animated label reads
+        // "<spinner> Glossing" without doubled dots; keep the word(s).
+        let label = message
+            .trim_end_matches(|c| c == '.' || c == '\u{2026}')
+            .trim_end()
+            .to_string();
+        self.loading_animator.start(sink, String::new(), label);
     }
 
     pub fn scroll_gloss(&self, delta: i32) {
@@ -3246,6 +3287,7 @@ impl GlossOverlay {
     }
 
     pub fn hide(&self) {
+        self.loading_animator.stop();
         self.container.set_visible(false);
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.

@@ -2269,7 +2269,7 @@ pub(crate) fn submit_passage_question(state: &Rc<RefCell<AppState>>, text: &str)
         let s = state.borrow();
         let head = crate::app::scene_synopsis::cursor_head(&s);
         s.journal_overlay.set_running_head(&head.0, &head.1);
-        s.journal_overlay.show_loading(text);
+        s.journal_overlay.show_loading(text, "Refining question\u{2026}");
     }
     // A brand-new ask has no saved entry/tags yet — derive candidate terms from
     // the scene text first, then ground the phrasing on them.
@@ -2607,7 +2607,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         let s = state_rc.borrow();
         let head = crate::app::scene_synopsis::cursor_head(&s);
         s.journal_overlay.set_running_head(&head.0, &head.1);
-        s.journal_overlay.show_loading(question);
+        s.journal_overlay.show_loading(question, "Answering\u{2026}");
     }
 
     // For a Passage band, consume pending_passage — but ONLY when it belongs
