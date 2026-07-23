@@ -29,9 +29,17 @@ karaoke sweep OR cursor line, never both.
 
 ### State model: session-only axis flag
 
-New runtime field `AppState.cursor_line_mode: bool`, launching `false`
-(= karaoke). NOT persisted: every launch starts in karaoke mode (matches
-the existing forced-reset behavior of `show_cursor_line`).
+**AMENDED 2026-07-22 (post-live-test):** the axis is per work class with
+different launch defaults — `cursor_line_mode_prose: bool` launches
+`false` (karaoke) and `cursor_line_mode_verse: bool` launches `true`
+(cursor line; the sweep is OFF on verse until Alt+p opts in for the
+session). `AppState::cursor_line_mode()` / `set_cursor_line_mode()`
+select the flag by the current work's class; Alt+p and the settings
+overlay flip only the displayed class's flag, and settings "reset"
+restores the class default (`cursor_line_mode_default()`). Still NOT
+persisted. The original single-flag design (everything launching in
+karaoke) is superseded by this amendment; the rest of the spec's
+references to "the axis flag" read as "the current class's flag".
 
 The persisted per-class karaoke modes (`phrase_highlight_prose`,
 `phrase_highlight_verse`) are untouched by the axis — they keep expressing
