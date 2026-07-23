@@ -2450,11 +2450,12 @@ fn handle_gloss_key(
                 crate::input::actions::gloss::begin_rewrite(state);
                 return true;
             }
-            // Ctrl+a: cross-create — journal Q&A ask card for the gloss's
-            // source passage, mirroring the reader's visual-mode Ctrl+a ask.
-            // Closes the overlay (canonical close) and opens the passage ask.
+            // Ctrl+a: journal passage Q&A, typed in the gloss overlay's OWN
+            // floated ask card (gloss commentary stays visible). On submit the
+            // overlay closes and the journal passage flow runs (answer in the
+            // journal overlay); on cancel it stays in the gloss overlay.
             "a" => {
-                crate::input::actions::gloss::ask_journal_for_passage(state);
+                crate::input::actions::gloss::open_passage_qa_float(state);
                 return true;
             }
             // Ctrl+j: dropped (cross-jump to journal — the \ cycle is the

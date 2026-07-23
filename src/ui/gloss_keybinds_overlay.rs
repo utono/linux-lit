@@ -10,7 +10,7 @@ pub const TITLE: &str = "Gloss keybinds";
 /// work in this overlay's handler.
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+f", "corpus_search: all Q&As / glosses"),
-    ("Ctrl+a", "ask_journal_for_passage → journal Q&A"),
+    ("Ctrl+a", "passage Q&A: floats here → answer in journal"),
     ("Ctrl+r", "begin_rewrite: Claude rewrite of this gloss"),
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
