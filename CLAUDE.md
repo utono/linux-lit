@@ -69,6 +69,38 @@ frequency-ordered checklist (and a surface note if relevant) with its tell,
 root cause, and fix, so the next occurrence is diagnosed from the doc, not
 re-derived. This is required, not optional.
 
+## Hidden Timestamp Glyphs — READ THE LOG FIRST
+
+When prompted that the **left-gutter timestamp glyphs are hidden/missing**
+(or "timestamp glyphs hidden", "signs disappeared", "gutter glyphs gone",
+or any similar wording), the bug is **intermittent and does not reproduce
+on demand** — a fresh load of the exact work/chapter and repeated `\`
+overlay cycling both keep the glyphs (verified headlessly 2026-07-24). Do
+NOT try to reproduce it first, and do NOT blind-fix. **Read the debug log
+and grep for the breadcrumb lines** committed for exactly this bug:
+
+- `GUTTER_TS: has_timestamp rebuilt len=… true=… line_map=… current_work=… visible=…`
+  — the key line. Healthy is `true=7287`-ish and `visible=true`; a
+  disappearance shows `true=0` / tiny (the `has_timestamp` vec rebuilt
+  empty — dropped `current_work` or a `line_map` length mismatch) or
+  `visible=false` (the sign flag got flipped off).
+- `SIGN: … via show_translations` / `… via strip_translation_lines` /
+  `… had no saved prev` — the translations save/restore path (only runs
+  on works that HAVE translations; the reported BH-Barrett has none).
+- `SIGN: signs … via toggle_sign_column (l key)` — the `l` toggle.
+- `RETURN_TO_READER: from … sign_column_visible=…` — timeline anchor at
+  each overlay close (the `\` event users attribute it to).
+
+The log is cleared on every launch, so if the user still has the affected
+instance running, have them copy it BEFORE relaunching:
+`cp linux-lit-dev.log vanished-glyphs-$(date +%H%M%S).log`. Only these
+lines pin the culprit; fix the ROOT CAUSE they reveal, not the symptom.
+Known non-causes (already eliminated): the `\` gloss/journal cycle alone
+(overlays render into their own views, never the reader gutter), and the
+translations path on a work with zero translations. Diagnostic source:
+`src/app/mod.rs` `setup_gutter`/`return_to_reader_mode`,
+`src/app/translations.rs`; instrumentation commit `015dc67c`.
+
 ## Troubleshooting Ledgers
 
 The clip-prevention pattern generalizes: each recurring-bug domain
