@@ -539,8 +539,13 @@ impl JournalOverlay {
         // NOT appended to the column.
         let ask = AskCard::new(text_margins as i32, &view);
         // Center the fixed-width float panel (mirrors the gloss ask container).
+        // valign=Center MATCHES the journal card (also valign=Center); with the
+        // reserve closure capping the ask panel to the card's height, both
+        // centered same-height cards share a top edge, so the "Ask a question…"
+        // title aligns with the running head. (Was valign=Fill, which pinned the
+        // ask card to the overlay top while the journal card sat centered.)
         ask.container().set_halign(gtk4::Align::Center);
-        ask.container().set_valign(gtk4::Align::Fill);
+        ask.container().set_valign(gtk4::Align::Center);
         let ask_container_for_reserve = ask.container().clone();
 
         // The host owns the ask-card lifecycle: the fixed-scroll-height
@@ -711,6 +716,9 @@ impl JournalOverlay {
             self.container.remove_css_class("card-unfocused");
             ask.add_css_class("card-unfocused");
         }
+        // Freeze the ask card's INSERT caret solid while it is the inactive
+        // (unfocused) surface; resume the blink when focus returns to it.
+        self.ask_host.set_active(ask_focused);
     }
 
     /// Remove the focus-dim from both cards (on ask close/submit).

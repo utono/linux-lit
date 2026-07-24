@@ -564,11 +564,15 @@ impl GlossOverlay {
         // Both the gloss card and this panel are halign=Center add_overlay
         // children with MIRRORED margins: the gloss card reserves margin_end
         // (shifts it left), this panel reserves margin_start (shifts it right),
-        // so the gloss+ask pair centers on screen as one unit. valign=Fill only
-        // gives the overlay's full height — the reserve closure caps it to the
-        // gloss card's height so the two columns are top/bottom aligned.
+        // so the gloss+ask pair centers on screen as one unit. valign=Center
+        // MATCHES the gloss card (which is also valign=Center): with the reserve
+        // closure capping the ask panel to the gloss card's height, both centered
+        // same-height cards share the same top edge, so the "Ask a question…"
+        // title lines up with the running head. (Was valign=Fill, which pinned
+        // the ask card to the overlay's top while the gloss card sat centered —
+        // so their tops, and thus their headers, never aligned.)
         ask.container().set_halign(Align::Center);
-        ask.container().set_valign(Align::Fill);
+        ask.container().set_valign(Align::Center);
 
         // The host owns the ask-card lifecycle. In FLOAT mode (below) open/close
         // reserve room on the gloss card and reveal the panel instead of
@@ -1494,6 +1498,9 @@ impl GlossOverlay {
             self.container.remove_css_class("card-unfocused");
             ask.add_css_class("card-unfocused");
         }
+        // Freeze the ask card's INSERT caret solid while it is the inactive
+        // (unfocused) surface; resume the blink when focus returns to it.
+        self.ask_host.set_active(ask_focused);
     }
 
     /// Remove the focus-dim from both cards (on ask close/submit).

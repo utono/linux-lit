@@ -186,6 +186,21 @@ impl AskCard {
     pub fn set_float_width(&self, width: i32) {
         self.float_width.set(width.max(0));
         self.container.set_width_request(if width > 0 { width } else { -1 });
+        // In float mode the card's height_request is pinned to the doc card's
+        // height and both are valign=Center, so their tops align ONLY if the ask
+        // card adds no extra vertical margin. The default top(14)/bottom(80)
+        // margins (designed for the 1-col STACKED layout, where the bottom margin
+        // lifts the card above the act/scene toast) would make the float card
+        // 94px taller than the doc card and push its top edge up. Zero them in
+        // float mode; restore them when the float pin is cleared.
+        if width > 0 {
+            self.container.set_margin_top(0);
+            self.container.set_margin_bottom(0);
+        } else {
+            self.container.set_margin_top(14);
+            self.container
+                .set_margin_bottom(crate::app::layout::OVERLAY_BOTTOM_CLEARANCE);
+        }
     }
 
     /// Reveal with heading + hint, clear the field, re-align margins to the
@@ -244,6 +259,13 @@ impl AskCard {
             // edge, not a card/5 column margin).
             self.container.set_margin_start(16);
             self.container.set_margin_end(16);
+            // With the card tops now aligned (valign=Center + zeroed vertical
+            // margins, see set_float_width), nudge the title down so its baseline
+            // sits level with the doc card's running head (24px below its card
+            // top). The default 12px already lands within a few px; +5 closes the
+            // residual left by the two headings' different fonts/ascents.
+            // Calibrated on the real render.
+            self.title.set_margin_top(FLOAT_TITLE_TOP_MARGIN);
         } else if card_width > 0 {
             // Match the host overlay's text column: card/8 when the journal is
             // showing a prose work at the main reading card's margin, card/5
@@ -384,6 +406,33 @@ impl AskCard {
         }
     }
 
+    /// Track whether the ask card is the ACTIVE (focused) surface. In the 2-col
+    /// float layout the reader can Ctrl+Tab focus to the doc card, leaving the
+    /// ask card visible but inactive; the INSERT caret should not keep blinking
+    /// on an unfocused surface. `active=false` freezes the caret SOLID (blink
+    /// stopped, caret still shown so the reader sees where they were typing);
+    /// `active=true` resumes the blink, but only while in INSERT (NORMAL/VISUAL
+    /// use the painted block cursor, which does not blink). Idempotent and safe
+    /// to call whether or not the card is open.
+    pub fn set_active(&self, active: bool) {
+        if active {
+            // Resume the INSERT blink only if the engine is actually in Insert;
+            // in NORMAL/VISUAL the block cursor is authoritative (no blink).
+            let insert = self
+                .vim
+                .borrow()
+                .as_ref()
+                .is_some_and(|e| e.mode() == crate::input::vim::Mode::Insert);
+            if insert {
+                self.start_caret_blink();
+            }
+        } else {
+            // Freeze solid: stop the timer, leave the caret visible.
+            self.stop_caret_blink();
+            self.input.set_cursor_visible(true);
+        }
+    }
+
     /// Hide, set AskFocus::Doc, drop the highlight, return focus to return_focus.
     pub fn close(&self) {
         self.container.set_visible(false);
@@ -454,6 +503,14 @@ impl AskCard {
 /// Gap between the gloss card's right edge and the floated ask panel. Matches
 /// the chat panel's card↔panel seam so the two 2-column designs read alike.
 const FLOAT_SEAM: i32 = 24;
+
+/// Title top margin in the 2-col FLOAT layout. Once the card tops align (see
+/// `set_float_width`), this lands the "Ask a question…" heading level with the
+/// doc card's running head. The two headings use different fonts (small-caps
+/// running head vs the `gloss-header` ask title) with different ascents, so it
+/// is calibrated on the real render (default 12 → +5). The stacked (1-col)
+/// layout keeps the default 12px title margin.
+const FLOAT_TITLE_TOP_MARGIN: i32 = 17;
 
 /// Width the gloss card must reserve (`margin_end`) so the floated ask card of
 /// `float_width` sits beside it with a `seam` gap. Pure so it is unit-tested
@@ -695,6 +752,13 @@ impl AskCardHost {
     /// Paste system-clipboard text into the ask card's vim engine.
     pub fn paste_text(&self, text: &str) {
         self.ask.paste_text(text);
+    }
+
+    /// Set whether the hosted ask card is the ACTIVE (focused) surface — freezes
+    /// the INSERT caret solid while inactive, resumes the blink when refocused.
+    /// See `AskCard::set_active`.
+    pub fn set_active(&self, active: bool) {
+        self.ask.set_active(active);
     }
 }
 
