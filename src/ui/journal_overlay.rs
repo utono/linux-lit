@@ -23,6 +23,10 @@ pub struct JournalOverlay {
     position_label: Label,
     hint: Label,
     bar_drawing: gtk4::DrawingArea,
+    /// Whether the doc card's accent bar is drawn (see the `bar_drawing` draw
+    /// func). Toggled by `set_doc_accent_active` — hidden while the ask card is
+    /// the active surface in the 2-col float.
+    bar_active: Rc<Cell<bool>>,
     panel_drawing: gtk4::DrawingArea,
     bar_ranges: Rc<RefCell<Vec<(i32, i32)>>>,
     /// When the vim editor's NORMAL/VISUAL cursor sits on a BLANK line, that
@@ -417,6 +421,12 @@ impl JournalOverlay {
         // Accent-bar color = theme root_color, set by set_bar_color at startup.
         let bar_color: Rc<RefCell<(f64, f64, f64)>> =
             Rc::new(RefCell::new((0.53, 0.62, 0.71))); // placeholder; set at startup
+        // Whether the doc card's accent bar (the left selection/cursor line) is
+        // shown. False while the ask card holds focus in the 2-col float: the
+        // hidden bar is the doc card's inactive cue (replacing the old dim). The
+        // page marker stays drawn regardless — only the vim block cursor and the
+        // selection spans are gated. Set by `set_doc_accent_active`.
+        let bar_active: Rc<Cell<bool>> = Rc::new(Cell::new(true));
         let bar_drawing = gtk4::DrawingArea::new();
         bar_drawing.set_can_target(false);
         {
@@ -426,8 +436,11 @@ impl JournalOverlay {
             let marker_glyph_clone = marker_glyph.clone();
             let marker_color_clone = marker_color.clone();
             let bar_color_clone = bar_color.clone();
+            let bar_active_clone = bar_active.clone();
             bar_drawing.set_draw_func(move |_area, cr, area_w, _h| {
-                // Page marker first (independent of the selection bar's early-return).
+                // Page marker first (independent of the selection bar's early-return
+                // AND of the accent-bar active flag — the ⌄/• cue stays visible even
+                // when the doc card is the inactive surface).
                 crate::ui::draw_page_marker_glyph(
                     cr,
                     &view_clone,
@@ -437,6 +450,11 @@ impl JournalOverlay {
                     0.55,
                     8,
                 );
+                // Accent bar (vim block cursor + selection spans) is the doc card's
+                // focus cue: skip it entirely while the ask card is active.
+                if !bar_active_clone.get() {
+                    return;
+                }
                 // Vim block cursor on a BLANK line (shared draw). Drawn BEFORE
                 // the selection-bar early-return so it shows while editing (no
                 // selection ranges then). x reads left_margin() live.
@@ -639,6 +657,7 @@ impl JournalOverlay {
             position_label,
             hint,
             bar_drawing,
+            bar_active,
             panel_drawing,
             bar_ranges,
             vim_block_line,
@@ -705,26 +724,27 @@ impl JournalOverlay {
         self.overlay.set_clip_overlay(ask_container, true);
     }
 
-    /// Dim whichever of the two 2-col cards does NOT have input focus.
-    /// `ask_focused` true → dim the journal card (left), un-dim the ask float.
+    /// Show/hide the doc card's accent bar (its inactive cue). `active=false`
+    /// hides the left selection/cursor bar (page marker stays); `true` restores
+    /// it. Repaints the bar layer.
+    pub fn set_doc_accent_active(&self, active: bool) {
+        self.bar_active.set(active);
+        self.bar_drawing.queue_draw();
+    }
+
+    /// Update the two 2-col cards' focus cues. No dimming: the ask card freezes
+    /// its INSERT caret when inactive, and the journal (doc) card hides its
+    /// accent bar when inactive. `ask_focused` true → doc bar hidden, ask caret
+    /// blinking; false → doc bar shown, ask caret frozen.
     pub fn set_ask_focus_dim(&self, ask_focused: bool) {
-        let ask = self.ask_host.card().container();
-        if ask_focused {
-            self.container.add_css_class("card-unfocused");
-            ask.remove_css_class("card-unfocused");
-        } else {
-            self.container.remove_css_class("card-unfocused");
-            ask.add_css_class("card-unfocused");
-        }
-        // Freeze the ask card's INSERT caret solid while it is the inactive
-        // (unfocused) surface; resume the blink when focus returns to it.
+        self.set_doc_accent_active(!ask_focused);
         self.ask_host.set_active(ask_focused);
     }
 
-    /// Remove the focus-dim from both cards (on ask close/submit).
+    /// Restore both cards' cues on ask close/submit: doc accent bar back, ask
+    /// caret handled by the ask card's own close.
     pub fn clear_focus_dim(&self) {
-        self.container.remove_css_class("card-unfocused");
-        self.ask_host.card().container().remove_css_class("card-unfocused");
+        self.set_doc_accent_active(true);
     }
 
     /// Set by the journal action layer before each show: `true` when the
@@ -1078,8 +1098,8 @@ impl JournalOverlay {
         self.container.set_visible(false);
         self.scrim.set_visible(false);
         self.ask_host.card().close();
-        // Universal close funnel: clear any stale focus-dim (card-unfocused) left
-        // by a Ctrl+Tab focus toggle so the overlay never reopens dimmed.
+        // Universal close funnel: restore the doc card's accent bar (hidden while
+        // the ask card held focus) so the overlay never reopens with a missing bar.
         self.clear_focus_dim();
     }
 
