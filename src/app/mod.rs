@@ -4442,6 +4442,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         state.buffer.set_text(&bb.buf_lines.join("\n"));
         state.line_map = Some(line_map);
         state.block_indent_tiers = bb.indent_tiers;
+        crate::app::formatting::apply_block_typography(state);
         return;
     }
 
