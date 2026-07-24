@@ -1639,6 +1639,10 @@ impl JournalOverlay {
         // over the empty box, cleared on INSERT.
         self.ask_host.open(title, hint, legend, block_fill, block_fg);
         self.apply_font();
+        // A fresh ask card always starts focused, so dim the doc card from the
+        // moment it opens (mirrors the gloss overlay). Without this the journal
+        // page stayed at full brightness until a Ctrl+Tab toggled the dim.
+        self.set_ask_focus_dim(true);
 
         // Headless test: emit the scrolled viewport rect WITH the ask card open
         // (the exact regression from Tasks 1-5). The card open shrinks the
