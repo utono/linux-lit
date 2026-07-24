@@ -1,5 +1,15 @@
 # Richer inline rendering for prose works — design (linux-lit)
 
+> **SUPERSEDED (Facet 2), 2026-07-24.** This document's Facet-2 (verse) design
+> targets the **block-granularity** LoJ data model (one `line_mapping` row per
+> verse *block*, embedded `\n`, one block-level timestamp). litdb has since
+> reimported LoJ to a **per-line** model (one row per verse line, each
+> independently timestamped, empty rows as stanza gaps). The reader-side finish
+> for that new model is designed in
+> `2026-07-24-per-line-verse-reader-finish-design.md` — **use that spec for verse
+> work.** This document is retained for its Facet-1 (inline italics) reference,
+> which the new spec carries forward as its Phase B.
+
 **Status:** **Facet 2 (verse rendering) is a FINISHED reader-side design** as of
 2026-07-24 — ready for `superpowers:writing-plans` (see "Facet 2 — reader design
 (RESOLVED)"). **Facet 1 (inline italics) remains a deferred brainstorming
