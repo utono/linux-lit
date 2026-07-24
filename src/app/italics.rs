@@ -6,6 +6,16 @@ pub struct ItalicParse {
     pub removed_positions: Vec<usize>,
 }
 
+/// Translate a SOURCE char offset to the DISPLAY (stripped) offset by
+/// subtracting the number of removed `_` at-or-before it. Identity when
+/// `removed` is empty (non-italic line → zero cost, no shift).
+/// `removed` must be sorted ascending (as `ItalicParse.removed_positions` is).
+pub fn translate_offset(removed: &[usize], source_offset: usize) -> usize {
+    // `removed` is sorted ascending; count entries <= source_offset.
+    let n = removed.partition_point(|&p| p <= source_offset);
+    source_offset - n
+}
+
 /// Parse paired `_..._` runs in a line. `None` when there is no `_` or an ODD
 /// number of `_` (unpaired — the caller renders the line verbatim and logs it,
 /// so a stray `_` never italicizes to end-of-line). Offsets are UNICODE CHAR
@@ -125,5 +135,27 @@ mod tests {
         let r = p("café _x_").unwrap();
         assert_eq!(r.stripped_text, "café x");
         assert_eq!(r.spans, vec![(5, 6)]); // "café " = 5 chars; x at 5..6
+    }
+
+    #[test]
+    fn translate_identity_when_empty() {
+        assert_eq!(translate_offset(&[], 0), 0);
+        assert_eq!(translate_offset(&[], 42), 42);
+    }
+
+    #[test]
+    fn translate_subtracts_removed_before_offset() {
+        // removed `_` at source 9 and 16 (the _London_ case)
+        let removed = vec![9usize, 16];
+        assert_eq!(translate_offset(&removed, 5), 5);    // before both -> unchanged
+        assert_eq!(translate_offset(&removed, 10), 9);   // 1 removed (<=10) -> -1
+        assert_eq!(translate_offset(&removed, 20), 18);  // 2 removed (<=20) -> -2
+    }
+
+    #[test]
+    fn translate_offset_exactly_at_removed_position_counts_it() {
+        // a `_` exactly AT the offset is at-or-before -> counted
+        assert_eq!(translate_offset(&[9, 16], 9), 8);   // one removed <= 9
+        assert_eq!(translate_offset(&[9, 16], 16), 14); // two removed <= 16
     }
 }
