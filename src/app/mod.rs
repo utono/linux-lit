@@ -855,6 +855,9 @@ pub struct AppState {
     /// ~/.config/linux-lit/keymap.json if present.
     pub keymap: crate::input::keymap_config::Keymap,
     pub input_mode: InputMode,
+    /// Per-buffer-line verse indent tier (0/1/2) for the block-aware path;
+    /// empty on all other works. Consumed by apply_block_typography.
+    pub block_indent_tiers: Vec<u8>,
 }
 
 /// Core of `AppState::is_play`, split out so it is unit-testable without an
@@ -2399,6 +2402,7 @@ pub fn build_window(
         input_mode: InputMode::Reader,
         ask_card_focus: true,
         tts_batch_running: std::cell::Cell::new(false),
+        block_indent_tiers: Vec::new(),
     }));
 
     // Suppress startup flicker: vbox is hidden (opacity 0) until layout has
@@ -4359,6 +4363,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
             }
         }
         state.line_map = Some(prep.line_map);
+        state.block_indent_tiers = Vec::new();
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
             prep.abbrev,
@@ -4419,11 +4424,30 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         );
         state.buffer.set_text(&buf_lines.join("\n"));
         state.line_map = Some(line_map);
+        state.block_indent_tiers = Vec::new();
+        return;
+    }
+
+    // Block-aware path: works whose rows carry non-prose block_type (verse /
+    // heading) — currently LoJ post verse-preserving reimport. Split verse rows
+    // on their embedded `\n` into N buffer lines (leading spaces -> indent tier),
+    // and build a LineMap so timestamps / sync / u-. / concordance still resolve
+    // through work_line_for_buffer (the buffer==work identity would be off-by-one
+    // per extra verse line). Formatting (apply_block_typography) tags them next.
+    if crate::db::line_types::work_has_blocks(&work.lines) {
+        let bb = crate::app::text_prep::prepare_block_buffer(&work.lines);
+        let line_map = crate::text_file_map::build_line_map_blocks(
+            &bb.buf_lines, &bb.source_index, &work.lines,
+        );
+        state.buffer.set_text(&bb.buf_lines.join("\n"));
+        state.line_map = Some(line_map);
+        state.block_indent_tiers = bb.indent_tiers;
         return;
     }
 
     // Default: join work.lines
     state.line_map = None;
+    state.block_indent_tiers = Vec::new();
     let text: String = work
         .lines
         .iter()
