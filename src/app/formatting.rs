@@ -682,10 +682,19 @@ pub fn apply_block_typography(state: &mut AppState) {
         let bt = line.block_type.as_str();
 
         let Some(start) = state.buffer.iter_at_line(bl as i32) else { continue };
-        let mut end = start;
-        if !end.ends_line() {
-            end.forward_to_line_end();
-        }
+        // `left_margin` is a paragraph property: a tag range that stops before
+        // the line's `\n` (as `forward_to_line_end()` does) does NOT mark the
+        // paragraph, so left_margin silently no-ops. Build `end` as the START
+        // of the NEXT buffer line (i.e. past this line's terminator) instead —
+        // the same idiom apply_dialogue_formatting uses above.
+        let end = if bl + 1 < buffer_line_count {
+            match state.buffer.iter_at_line((bl + 1) as i32) {
+                Some(iter) => iter,
+                None => state.buffer.end_iter(),
+            }
+        } else {
+            state.buffer.end_iter()
+        };
 
         if crate::db::line_types::is_verse_line(bt) {
             let tier = state.block_indent_tiers.get(bl).copied().unwrap_or(0);
