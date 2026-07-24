@@ -1330,7 +1330,7 @@ pub fn generate_css(
            color: {dim}; padding-top: 8px; \
            border-top: 1px solid {dim}; }} \
          .gloss-position {{ font-size: 14px; color: {dim}; }} \
-         .ask-card {{ background-color: alpha({gloss_bg}, 0.82); border-radius: 10px; \
+         .ask-card {{ background-color: {gloss_bg}; border-radius: 10px; \
            border: 1px solid {header_border}; transition: opacity 120ms ease; }} \
          .ask-card .gloss-header {{ margin-top: 0; font-size: 15px; }} \
          textview.ask-input {{ background-color: transparent; color: {fg}; }} \

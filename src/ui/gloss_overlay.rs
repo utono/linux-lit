@@ -3130,6 +3130,10 @@ impl GlossOverlay {
         // prompt.
         self.ask_host.open(title, hint, legend, block_fill, block_fg);
         self.apply_font();
+        // A fresh ask card always starts focused, so dim the doc card (left of
+        // the 2-col float) from the moment it opens. Without this the doc card
+        // stayed at full brightness until a Ctrl+Tab round-trip toggled it.
+        self.set_ask_focus_dim(true);
     }
 
     /// Hide the ask card and return focus + highlight to the synopsis. The host
