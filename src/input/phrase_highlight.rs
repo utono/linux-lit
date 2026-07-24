@@ -186,13 +186,21 @@ pub(crate) fn block_buffer_range(
     buffer_to_work: &[Option<usize>],
     active: usize,
 ) -> (usize, usize) {
+    // Out-of-range active line: no block to tint. Return an empty range at the
+    // clamped end so callers iterate nothing (a `for l in bs..be` no-ops when
+    // bs == be) rather than spinning — the `end` loop below would otherwise
+    // never terminate, since get(end) keeps yielding None == the None `src`.
+    let n = buffer_to_work.len();
+    if active >= n {
+        return (n, n);
+    }
     let src = buffer_to_work.get(active).copied().flatten();
     let mut start = active;
     while start > 0 && buffer_to_work.get(start - 1).copied().flatten() == src {
         start -= 1;
     }
     let mut end = active + 1;
-    while buffer_to_work.get(end).copied().flatten() == src {
+    while end < n && buffer_to_work.get(end).copied().flatten() == src {
         end += 1;
     }
     (start, end)
@@ -1006,6 +1014,12 @@ mod tests {
         // active on a non-verse line -> single-line range
         assert_eq!(block_buffer_range(&b2w, 0), (0, 1));
         assert_eq!(block_buffer_range(&b2w, 5), (5, 6));
+        // out-of-range active line -> empty range at the end, no hang, no panic
+        // (guards a future caller from the None==None infinite loop).
+        assert_eq!(block_buffer_range(&b2w, 6), (6, 6));
+        assert_eq!(block_buffer_range(&b2w, 99), (6, 6));
+        // empty map -> empty range at 0.
+        assert_eq!(block_buffer_range(&[], 0), (0, 0));
     }
 
     #[test]
