@@ -4385,6 +4385,26 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
             first_mapped,
             prep.path
         ));
+        // Phase-B tripwire: inline italics (apply_inline_italics) run ONLY on the
+        // block-aware and default DB-join branches, NOT this text_file branch.
+        // Today 0 gated (prose/prose_book/epic_translation) works have a text_file,
+        // so this path never carries `_word_` markup. If a future re-import gives a
+        // prose work a text_file, its italics would SILENTLY not render — trip here
+        // so that regression is caught, not diagnosed months later.
+        debug_assert!(
+            !prep.is_prose || !prep.filtered_contents.contains('_'),
+            "prose work '{}' reached the text_file branch with `_` markup — inline \
+             italics (Phase B) are skipped here; wire apply_inline_italics into this \
+             branch or strip the markup upstream",
+            prep.abbrev
+        );
+        if prep.is_prose && prep.filtered_contents.contains('_') {
+            crate::logging::log(&format!(
+                "ITALIC_SKIPPED_TEXT_FILE: prose work '{}' has `_` markup on the \
+                 text_file branch — inline italics NOT applied (see Phase B).",
+                prep.abbrev
+            ));
+        }
         return;
     }
 
