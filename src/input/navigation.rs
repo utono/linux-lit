@@ -2763,7 +2763,9 @@ pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
 /// no bookmark past the current line, the cursor stays put.
 pub fn next_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();
-    if is_bm.is_empty() {
+    if !is_bm.iter().any(|&b| b) {
+        drop(is_bm);
+        show_chapter_toast_secs(state, "No bookmarks", 2);
         return;
     }
     let line_count = is_bm.len();
@@ -2780,7 +2782,12 @@ pub fn next_bookmark(state: &mut AppState) {
 /// there is no bookmark before the current line, the cursor stays put.
 pub fn prev_bookmark(state: &mut AppState) {
     let is_bm = state.is_bookmarked.borrow();
-    if is_bm.is_empty() || state.current_line == 0 {
+    if !is_bm.iter().any(|&b| b) {
+        drop(is_bm);
+        show_chapter_toast_secs(state, "No bookmarks", 2);
+        return;
+    }
+    if state.current_line == 0 {
         return;
     }
     let line_count = is_bm.len();
