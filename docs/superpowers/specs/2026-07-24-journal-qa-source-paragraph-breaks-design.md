@@ -17,10 +17,13 @@ line 449). The overlay (`src/ui/journal_overlay.rs`) renders each
 only one quote paragraph, no blank-line break ever appears between the source's
 distinct paragraphs — only the citation gets its own separate paragraph.
 
-The stored `source_text` for journal passages is plain text with `\n`
-separating lines (verified in `lit.db`: all 1394 passages are untagged; the
-`<segment>`/`<speaker>`/`<stage>` branches in `source_paragraphs` are a
-legacy/defensive path that current stored data never exercises). Each `\n` is:
+The `passages.source_text` column stores plain text with `\n` separating lines,
+but the source_text that reaches `source_paragraphs` at render time is rebuilt
+with per-line `<segment>` tags by `build_source_header`
+(`src/input/actions/echoes.rs`) — verified on-screen: the render receives
+`<segment>This infallibly convinced me…</segment>\n<segment>In two days…`.
+So the fix must handle the `<segment>`/`<stage>` path, not only the untagged
+plain-text path. Each source line is:
 
 - a distinct **paragraph** for prose works (TT: `line_in_div` 5, 6, 7 are three
   full paragraphs), OR
@@ -41,19 +44,20 @@ not text inference" rule the project follows — no line-length heuristics.
 
 ## Fix
 
-Give `source_paragraphs` an `is_prose: bool` parameter and split the untagged
-plain-quote handling on it:
+Give `source_paragraphs` an `is_prose: bool` parameter and flush the
+accumulated quote lines (from BOTH the `<segment>`/`<stage>` path and the
+untagged-plain path) by it:
 
-- **Prose work** (`is_prose` true): each `\n`-separated untagged quote line
-  becomes its **own** `paras` entry, so the overlay's `"\n\n"` join yields a
-  blank-line gap between paragraphs.
-- **Verse/play work** (`is_prose` false): unchanged — untagged/`<segment>`/
-  `<stage>` lines collapse into ONE `\n`-joined paragraph rendered at pure
-  line-height, matching the main reading card.
+- **Prose work** (`is_prose` true): each quote line becomes its **own** `paras`
+  entry, so the overlay's `"\n\n"` join yields a blank-line gap between
+  paragraphs.
+- **Verse/play work** (`is_prose` false): unchanged — quote lines collapse into
+  ONE `\n`-joined paragraph rendered at pure line-height, matching the main
+  reading card.
 
-The `<speaker>` and `<segment>`/`<stage>` tag branches keep their existing
-verse-collapsing behavior regardless of `is_prose` (verse markup only occurs on
-verse works anyway). Only the untagged-plain-line path branches on `is_prose`.
+A `<speaker>` label flushes the prior speech first (so lines never merge across
+a label) and is always its own paragraph. The flush lives in one closure so both
+the `<segment>`/`<stage>` branch and the untagged branch share it.
 
 The caller at `journal.rs:640` passes the `is_prose` already in scope from
 line 578-581.

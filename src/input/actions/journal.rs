@@ -408,23 +408,56 @@ fn tag_inner<'a>(line: &'a str, tags: &[&str]) -> Option<&'a str> {
 }
 
 /// Build the ordered source paragraphs to prepend above a passage Q&A:
-/// `[speaker?, verse/stage block, citation?]`. The speaker paragraph is
-/// dropped when empty or `UNKNOWN` (prose works). All `<segment>`/`<stage>` lines
-/// collapse into ONE `\n`-joined paragraph so the overlay renders them at pure
-/// line-height (consecutive lines, no blank line between) — matching the main
-/// card — while the blank-line gaps between paragraphs still separate the
-/// speaker, quote, and citation. The quoted block steps as a single navigable
-/// block. (No trailing `———` rule — the user dropped it; the citation plus the
-/// blank-line gap separate the quote from the question on their own.)
-/// The returned `JournalSource` carries `has_speaker`/`has_citation` explicitly
-/// so the overlay never has to sniff paragraph roles from their text.
-fn source_paragraphs(source_text: &str, citation: Option<&str>) -> JournalSource {
+/// `[speaker?, quote block(s), citation?]`. The speaker paragraph is dropped
+/// when empty or `UNKNOWN` (prose works).
+///
+/// The quote lines (whether `<segment>`/`<stage>`-tagged — the display source is
+/// rebuilt with per-line `<segment>` tags by `build_source_header` — or plain
+/// untagged text) flush by `is_prose`:
+///
+/// - **Verse/play work** (`is_prose` false): all quote lines collapse into ONE
+///   `\n`-joined paragraph so the overlay renders them at pure line-height
+///   (consecutive lines, no blank line between) — matching the main card. Verse
+///   lines of a speech belong together.
+/// - **Prose work** (`is_prose` true): each quote line is a distinct PARAGRAPH
+///   and becomes its own `paras` entry, so the overlay's `"\n\n"` join gives a
+///   blank-line gap between them — a multi-paragraph prose passage reads as
+///   separate paragraphs, not a run-together wall of text.
+///
+/// `is_prose` is the authoritative `works.work_type` signal (`is_prose_work`),
+/// never inferred from the text. The quoted block(s) plus citation still get
+/// blank-line gaps between the speaker, quote, and citation. (No trailing `———`
+/// rule — the user dropped it; the citation plus the blank-line gap separate the
+/// quote from the question on their own.) The returned `JournalSource` carries
+/// `has_speaker`/`has_citation` explicitly so the overlay never has to sniff
+/// paragraph roles from their text.
+fn source_paragraphs(source_text: &str, citation: Option<&str>, is_prose: bool) -> JournalSource {
     let mut out: Vec<String> = Vec::new();
     let mut has_speaker = false;
+    // Quote lines accumulate here; flushed by `is_prose` (one joined block for
+    // verse, one paragraph each for prose) via `flush`.
     let mut verse: Vec<String> = Vec::new();
+    // Flush accumulated quote lines into `out`: one `\n`-joined block on verse
+    // works (line-height, matches the main card), one paragraph each on prose
+    // works (blank-line gap between paragraphs). Called before a speaker label
+    // and once at the end so a speaker never merges into the prior speech.
+    let flush = |verse: &mut Vec<String>, out: &mut Vec<String>| {
+        if verse.is_empty() {
+            return;
+        }
+        if is_prose {
+            out.extend(verse.drain(..));
+        } else {
+            out.push(verse.join("\n"));
+            verse.clear();
+        }
+    };
     for raw in source_text.lines() {
         if let Some(sp) = tag_inner(raw, &["speaker"]) {
             if !sp.is_empty() && sp != "UNKNOWN" {
+                // A speaker starts a new speech: flush the prior one first so it
+                // doesn't merge across the label.
+                flush(&mut verse, &mut out);
                 out.push(sp.to_string());
                 has_speaker = true;
             }
@@ -437,17 +470,15 @@ fn source_paragraphs(source_text: &str, citation: Option<&str>) -> JournalSource
             }
         } else {
             // Untagged line: vocab Q&As store the cursor segment as PLAIN text
-            // (no <speaker>/<segment> markup), so treat bare lines as quote
-            // lines — otherwise a vocab entry renders only its citation.
+            // (no <speaker>/<segment> markup), so treat bare lines as quote lines
+            // — otherwise a vocab entry renders only its citation.
             let seg = raw.trim();
             if !seg.is_empty() {
                 verse.push(seg.to_string());
             }
         }
     }
-    if !verse.is_empty() {
-        out.push(verse.join("\n"));
-    }
+    flush(&mut verse, &mut out);
     let has_citation = citation.is_some();
     if let Some(c) = citation {
         out.push(c.to_string());
@@ -637,7 +668,7 @@ pub(crate) fn render_current(s: &mut AppState) {
             .unwrap_or_default();
         let citation =
             format_source_citation(&title, p.start_citation.as_deref(), p.end_citation.as_deref());
-        Some(source_paragraphs(src, citation.as_deref()))
+        Some(source_paragraphs(src, citation.as_deref(), is_prose))
     });
 
     let head = crate::app::scene_synopsis::cursor_head(s);
@@ -3215,7 +3246,7 @@ mod tests {
                    <segment>You do not meet a man but frowns. Our bloods</segment>\n\
                    <segment>No more obey the heavens than our courtiers\u{2019}</segment>\n\
                    <segment>Still seem as does the King\u{2019}s.</segment>";
-        let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"));
+        let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"), false);
         assert_eq!(
             got.paras,
             vec![
@@ -3234,7 +3265,7 @@ mod tests {
     #[test]
     fn source_paragraphs_no_citation_omits_citation_para() {
         let src = "<speaker>KING</speaker>\n<segment>Now is the winter</segment>";
-        let got = source_paragraphs(src, None);
+        let got = source_paragraphs(src, None, false);
         assert_eq!(
             got.paras,
             vec!["KING".to_string(), "Now is the winter".to_string()]
@@ -3246,7 +3277,8 @@ mod tests {
     #[test]
     fn source_paragraphs_speakerless_prose_drops_speaker() {
         let src = "<speaker>UNKNOWN</speaker>\n<segment>a prose line</segment>";
-        let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"));
+        // <segment> lines collapse to one block regardless of is_prose.
+        let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"), true);
         assert_eq!(
             got.paras,
             vec![
@@ -3259,6 +3291,102 @@ mod tests {
         // whole quote to the speaker tag's reduced scale).
         assert!(!got.has_speaker);
         assert!(got.has_citation);
+    }
+
+    #[test]
+    fn source_paragraphs_prose_multiparagraph_splits_segments() {
+        // The display source for a prose passage is rebuilt with per-line
+        // `<segment>` tags (build_source_header) — three paragraphs, three tags.
+        // On a prose work each becomes its OWN paragraph so the overlay renders a
+        // blank-line gap between them — the A Tale of a Tub 0.0.5–7 Q&A the bug
+        // was reported against.
+        let src = "<segment>This infallibly convinced me that your Lordship was the person.</segment>\n\
+                   <segment>In two days they brought me ten sheets of paper.</segment>\n\
+                   <segment>If by altering the title I could make the same materials serve.</segment>";
+        let got = source_paragraphs(src, Some("\u{2014} A Tale of a Tub, 0.0.5\u{2013}7"), true);
+        assert_eq!(
+            got.paras,
+            vec![
+                "This infallibly convinced me that your Lordship was the person.".to_string(),
+                "In two days they brought me ten sheets of paper.".to_string(),
+                "If by altering the title I could make the same materials serve.".to_string(),
+                "\u{2014} A Tale of a Tub, 0.0.5\u{2013}7".to_string(),
+            ]
+        );
+        assert!(!got.has_speaker);
+        assert!(got.has_citation);
+    }
+
+    #[test]
+    fn source_paragraphs_prose_plain_untagged_splits() {
+        // Untagged plain prose (e.g. a vocab-sentence cursor segment stored raw):
+        // still splits per line on a prose work.
+        let src = "First paragraph of prose.\nSecond paragraph of prose.";
+        let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"), true);
+        assert_eq!(
+            got.paras,
+            vec![
+                "First paragraph of prose.".to_string(),
+                "Second paragraph of prose.".to_string(),
+                "\u{2014} Bleak House, 1.1.1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_prose_single_line() {
+        let src = "<segment>A single paragraph of prose.</segment>";
+        let got = source_paragraphs(src, Some("\u{2014} Bleak House, 1.1.1"), true);
+        assert_eq!(
+            got.paras,
+            vec![
+                "A single paragraph of prose.".to_string(),
+                "\u{2014} Bleak House, 1.1.1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_paragraphs_verse_segments_stay_one_block() {
+        // The SAME per-line `<segment>` shape on a VERSE/play work: the lines are
+        // verse lines of one speech, so they stay a single line-height block
+        // (is_prose=false), never gapped — the existing Cymbeline behavior.
+        let src = "<segment>You do not meet a man but frowns. Our bloods</segment>\n\
+                   <segment>No more obey the heavens than our courtiers\u{2019}</segment>\n\
+                   <segment>Still seem as does the King\u{2019}s.</segment>";
+        let got = source_paragraphs(src, Some("\u{2014} Cymbeline, 1.1.1\u{2013}3"), false);
+        assert_eq!(
+            got.paras,
+            vec![
+                "You do not meet a man but frowns. Our bloods\n\
+                 No more obey the heavens than our courtiers\u{2019}\n\
+                 Still seem as does the King\u{2019}s."
+                    .to_string(),
+                "\u{2014} Cymbeline, 1.1.1\u{2013}3".to_string(),
+            ]
+        );
+        assert!(!got.has_speaker);
+        assert!(got.has_citation);
+    }
+
+    #[test]
+    fn source_paragraphs_prose_speaker_flushes_before_label() {
+        // Defensive: on a prose work with a speaker (rare), the prior speech
+        // flushes to its own paragraphs BEFORE the speaker label, so lines never
+        // merge across the label.
+        let src = "<speaker>ESTHER</speaker>\n\
+                   <segment>Line one of prose.</segment>\n\
+                   <segment>Line two of prose.</segment>";
+        let got = source_paragraphs(src, None, true);
+        assert_eq!(
+            got.paras,
+            vec![
+                "ESTHER".to_string(),
+                "Line one of prose.".to_string(),
+                "Line two of prose.".to_string(),
+            ]
+        );
+        assert!(got.has_speaker);
     }
 
     #[test]
