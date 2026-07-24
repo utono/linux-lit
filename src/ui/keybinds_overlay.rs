@@ -66,7 +66,7 @@ const UPPER_ROW: &[KeyDef] = &[
 const TAB_KEY: KeyDef = bare("Tab", "", "");
 
 const HOME_ROW: &[KeyDef] = &[
-    key("a", "A", "play/pause", "A: authorship", &[("C-a", "recent Q&A"), ("S-C-a", "attr set")]),
+    key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
     key("u", "U", "", "U: undo ts", &[("M-u", "scansion")]),
@@ -83,7 +83,7 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "cursor \u{2193}"),
     key("q", "Q", "next speaker", "Q: next dlg", &[]),
-    key("j", "J", "next bkmk", "J: next speaker", &[("C-j", "journal tog"), ("M-j", "jrnl Q&A picker")]),
+    key("j", "J", "next bkmk", "J: next speaker", &[("C-j", "jrnl Q&A picker"), ("M-j", "recent Q&A")]),
     key("k", "K", "prev bkmk", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     key("b", "B", "start time", "", &[("M-b", "set end time")]),
@@ -300,7 +300,12 @@ Q&A filter; same as the journal overlay's f) — src/input/actions/journal.rs",
 tint on lines covered by a reader-gloss or journal passage Q&A; persisted in \
 config) — src/input/keymap.rs",
         "gloss pick" => "Action::OpenGlossPicker — src/input/actions/pickers.rs",
-        "journal tog" => "Action::ToggleJournalOverlay — src/input/actions/journal.rs",
+        // "journal tog" (Action::ToggleJournalOverlay, formerly Ctrl+j) was
+        // dropped from the reader binds 2026-07-23 — the `\` overlay cycle opens
+        // the journal. The label no longer appears in the strip; the arm is kept
+        // for a possible future rebind (Action still reachable via keymap.json).
+        "journal tog" => "Action::ToggleJournalOverlay (UNBOUND since 2026-07-23) \
+— src/input/actions/journal.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (gloss → journal Q&A \
 → back to reader, no wrap; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
@@ -346,8 +351,8 @@ is the chat panel. Plain `a`: pure MPV pause/resume, no seek, all work types \
 the journal / gloss / translation overlays and the vocab-sentence loop. \
 EXCEPTION — with the chat panel focused on its TRANSCRIPT, `a` re-shows a \
 retired input instead (the panel is modal there; pause is unavailable until you \
-Tab back to the reader). Ctrl+a opens the recent-Q&A jump-back picker \
-(OpenRecentQaPicker; was AskPassage's cap). Shift+a = authorship; \
+Tab back to the reader). Ctrl+a is UNBOUND since 2026-07-23 (the recent-Q&A \
+jump-back picker moved to Alt+j — see the j cap). Shift+a = authorship; \
 Ctrl+Shift+a = attribution set. — src/input/keymap.rs",
         "vim copy" => "Action::OpenSegmentVim -> InputMode::SegmentVim \
 — src/input/actions/segment_vim.rs",

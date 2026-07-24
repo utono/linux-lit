@@ -350,11 +350,12 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // directly (bypassing this table) from the journal/gloss overlay key
         // handlers, which short-circuit before reaching keymap.lookup.
         (KeyCombo::ctrl("f"), Action::OpenCorpusSearch),
-        (KeyCombo::ctrl("j"), Action::ToggleJournalOverlay),
-        (KeyCombo::alt("j"), Action::OpenJournalPicker),
-        // Ctrl+a: cross-work recent-Q&A jump-back picker (last 15 entries across
-        // all works, newest-first). "ask/answer recall" mnemonic.
-        (KeyCombo::ctrl("a"), Action::OpenRecentQaPicker),
+        // `j` = journal (2026-07-23 reshuffle): both journal pickers live on the
+        // j cap. Ctrl+j = work-wide journal Q&A picker (was Alt+j); Alt+j =
+        // cross-work recent-Q&A jump-back (was Ctrl+a). ToggleJournalOverlay
+        // (formerly Ctrl+j) is dropped — the `\` overlay cycle opens the journal.
+        (KeyCombo::ctrl("j"), Action::OpenJournalPicker),
+        (KeyCombo::alt("j"), Action::OpenRecentQaPicker),
         // Ctrl+o (ToggleLastOverlay: reopen the last-closed gloss/journal
         // overlay) was dropped 2026-07-22 — the action remains reachable
         // only via a keymap.json override.
@@ -536,9 +537,12 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("Tab")), None);
         // Ctrl+o (ToggleLastOverlay) dropped from the defaults.
         assert_eq!(m.get(&KeyCombo::ctrl("o")), None);
-        // Ctrl+a: recent-Q&A jump-back picker (was AskPassage's cap, rebound
-        // 2026-07-23).
-        assert_eq!(m.get(&KeyCombo::ctrl("a")), Some(&Action::OpenRecentQaPicker));
+        // `j` = journal (2026-07-23 reshuffle): Ctrl+j = work-wide journal Q&A
+        // picker, Alt+j = cross-work recent-Q&A jump-back. Ctrl+a is now unbound
+        // and ToggleJournalOverlay (formerly Ctrl+j) has no reader bind.
+        assert_eq!(m.get(&KeyCombo::ctrl("j")), Some(&Action::OpenJournalPicker));
+        assert_eq!(m.get(&KeyCombo::alt("j")), Some(&Action::OpenRecentQaPicker));
+        assert_eq!(m.get(&KeyCombo::ctrl("a")), None);
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
         assert_eq!(m.get(&KeyCombo::plain("b")), Some(&Action::SetStartTime));
@@ -726,15 +730,19 @@ mod tests {
     #[test]
     fn keymap_lookup_distinguishes_modifiers() {
         let km = Keymap::default();
-        // The `a` cap: plain = TogglePause; Ctrl+a opens the recent-Q&A picker
-        // (rebound 2026-07-23, was AskPassage's cap), Ctrl+Shift+a is the
-        // attribution set — so those two resolve differently. (Both Tab caps are
-        // now unbound — the chat panel uses `-` and its own handlers.)
-        let a_ctrl = km.lookup("a", true, false, false);
-        let a_ctrl_shift = km.lookup("A", true, true, false);
-        assert_ne!(a_ctrl, a_ctrl_shift);
-        assert_eq!(a_ctrl, Some(Action::OpenRecentQaPicker));
-        assert_eq!(a_ctrl_shift, Some(Action::PickAttributionSet));
+        // The `a` cap: plain = TogglePause; Ctrl+a is now UNBOUND (its recent-Q&A
+        // picker moved to Alt+j in the 2026-07-23 reshuffle), Ctrl+Shift+a is the
+        // attribution set. (Both Tab caps are unbound — the chat panel uses `-`
+        // and its own handlers.)
+        assert_eq!(km.lookup("a", true, false, false), None);
+        assert_eq!(km.lookup("A", true, true, false), Some(Action::PickAttributionSet));
+        // The `j` cap resolves its two modifiers to the two journal pickers:
+        // Ctrl+j = work-wide journal Q&A picker, Alt+j = recent-Q&A jump-back.
+        let j_ctrl = km.lookup("j", true, false, false);
+        let j_alt = km.lookup("j", false, false, true);
+        assert_ne!(j_ctrl, j_alt);
+        assert_eq!(j_ctrl, Some(Action::OpenJournalPicker));
+        assert_eq!(j_alt, Some(Action::OpenRecentQaPicker));
         assert_eq!(km.lookup("Tab", false, false, false), None);
         assert_eq!(km.lookup("Tab", true, false, false), None);
         // Plain f opens the journal term filter (matching the journal overlay);
