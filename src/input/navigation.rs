@@ -2195,9 +2195,17 @@ pub(crate) fn adjacent_paragraph(
 
 /// Pure core: advance `bl` past consecutive gap rows (`is_gap_at(bl) == true`)
 /// in direction `dir` (+1 down, -1 up), clamped to `[0, line_count)`. Returns
-/// the first non-gap line, or the original `bl` if the run of gaps extends to
-/// the buffer edge (nothing non-gap in that direction) or `bl` was never a gap
-/// to begin with (identity — the required no-op for works with no gap rows).
+/// the first non-gap line, or — if the gap run extends to the buffer edge with
+/// no non-gap line in that direction — the LAST in-bounds line reached (which is
+/// itself a gap). When `bl` was never a gap it returns `bl` unchanged (identity —
+/// the required no-op for works with no gap rows).
+///
+/// KNOWN EDGE (inert on current data — LoJ has zero empty verse rows): a run of
+/// gap rows that reaches the buffer edge leaves the cursor ON the edge gap row,
+/// so the "never rests on a gap" intent has a hole at a trailing/leading gap run.
+/// Revisit when real empty-verse-row data exists (Phase C) — a fix would fall
+/// back to the opposite direction, or leave the cursor before the run.
+///
 /// Buffer-agnostic so it can be unit-tested on a plain closure/slice, mirroring
 /// `adjacent_paragraph` / `block_buffer_range` (phrase_highlight.rs).
 pub(crate) fn skip_gap_rows(
