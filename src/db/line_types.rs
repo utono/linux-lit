@@ -454,9 +454,55 @@ pub fn is_dialogue(text: &str, is_prose: bool) -> bool {
     !is_speaker(text) && !is_stage_direction(text)
 }
 
+/// True for a verse block row (embedded `\n`, leading-space indent).
+pub fn is_verse_line(block_type: &str) -> bool {
+    block_type == "verse"
+}
+
+/// True for a heading row (rendered centered small-caps).
+pub fn is_heading_line(block_type: &str) -> bool {
+    block_type == "heading"
+}
+
+/// True if any line carries non-prose typography — the activation gate for the
+/// block-aware buffer-fill path. Prose-only works (the whole non-LoJ corpus by
+/// the migration default) return false and render unchanged.
+pub fn work_has_blocks(lines: &[crate::db::models::Line]) -> bool {
+    lines.iter().any(|l| l.block_type != "prose")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::models::Line;
+
+    #[test]
+    fn block_predicates_and_activation() {
+        assert!(is_verse_line("verse"));
+        assert!(!is_verse_line("prose"));
+        assert!(is_heading_line("heading"));
+        assert!(!is_heading_line("verse"));
+
+        let mk = |bt: &str| Line {
+            id: 0,
+            citation: String::new(),
+            text: String::new(),
+            normalized: String::new(),
+            speaker: None,
+            is_dialogue: false,
+            timestamp: None,
+            div1: 1,
+            div2: 0,
+            line_in_div: 1,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+            block_type: bt.into(),
+        };
+        assert!(!work_has_blocks(&[mk("prose"), mk("prose")]));
+        assert!(work_has_blocks(&[mk("prose"), mk("verse")]));
+        assert!(work_has_blocks(&[mk("heading")]));
+    }
 
     #[test]
     fn test_prose_types() {
