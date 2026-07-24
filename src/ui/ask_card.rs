@@ -513,10 +513,6 @@ pub struct AskCardHost {
     /// because it is hidden, so it is not in this sum.
     fixed_chrome_h: Cell<i32>,
     card_width: Cell<i32>,
-    /// If set, the ask card's input scroll is pinned to this fraction of the
-    /// overlay's card height on every `open` (journal Q&A = 0.75). `None` keeps
-    /// the input's default 160..320 natural range (gloss/synopsis).
-    input_fill_fraction: Cell<Option<f32>>,
     /// Float mode (gloss/synopsis 2-column ask): `open`/`close` reserve room on
     /// the gloss card and reveal the ask card as a right panel INSTEAD of
     /// shrinking the scroll. The journal overlay leaves this false → its stacked
@@ -545,7 +541,6 @@ impl AskCardHost {
             card_height: Cell::new(0),
             fixed_chrome_h: Cell::new(0),
             card_width: Cell::new(0),
-            input_fill_fraction: Cell::new(None),
             float: Cell::new(false),
             float_width: Cell::new(0),
             reserve: std::cell::RefCell::new(None),
@@ -561,16 +556,6 @@ impl AskCardHost {
         self.float_width.set(float_width.max(0));
         self.ask.set_float_width(float_width);
         *self.reserve.borrow_mut() = Some(reserve);
-    }
-
-    /// Pin the ask card's input scroll to `fraction` of the overlay card height
-    /// on the next non-float `open`. Called by the gloss and journal overlays'
-    /// open paths with the per-work-type fraction from
-    /// `Config::ask_fill_fraction_for` (play/prose/verse buckets). Without it the
-    /// input keeps its default 160..320 natural range; in float mode the pinned
-    /// fraction is ignored (the float branch returns before the read block).
-    pub fn set_input_fill_fraction(&self, fraction: f32) {
-        self.input_fill_fraction.set(Some(fraction));
     }
 
     /// The hosted `AskCard` (e.g. so the surface can append its container or read
@@ -651,19 +636,6 @@ impl AskCardHost {
             .open(title, hint, legend, self.card_width.get(), block_fill, block_fg);
         if let Some(f) = &self.footer {
             f.set_visible(false);
-        }
-        // Size the input so the WHOLE ask card fills `frac` of the overlay
-        // before measuring the ask container (the scroll-shrink below reads its
-        // preferred height). The input is pinned to the fraction target minus
-        // the card's own chrome (title + hint + margins), which we measure by
-        // subtracting the current input height from the container's natural
-        // height. Done here (not once at build) because card_height is per-size.
-        if let Some(frac) = self.input_fill_fraction.get() {
-            self.ask.set_input_height(160); // known baseline for chrome measurement
-            let (_, base) = self.ask.container().preferred_size();
-            let chrome = (base.height() - 160).max(0);
-            let target = ((self.card_height.get() as f32 * frac).round() as i32) - chrome;
-            self.ask.set_input_height(target.max(80));
         }
         let (_, ask_size) = self.ask.container().preferred_size();
         let scroll_h =

@@ -1601,14 +1601,12 @@ pub(crate) fn begin_passage_ask(
     // Ctrl+Tab focus toggle: a freshly opened ask card always starts focused.
     s.ask_card_focus = true;
     render_current(&mut s);
-    let frac = s.ask_fill_fraction();
     s.journal_overlay.open_ask_card(
         "Ask a question about this passage",
         "Ctrl+Enter submit",
         "", // no legend: a new question has no answer, so we drop straight to INSERT
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
-        frac,
     );
     // No existing answer (brand-new question) → auto-enter INSERT so the reader
     // types immediately.
@@ -1628,14 +1626,12 @@ pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
         JournalBand::Passage { .. } => "Ask a question about this passage",
         JournalBand::Author(_) => "Ask a question about this author's corpus",
     };
-    let frac = s.ask_fill_fraction();
     s.journal_overlay.open_ask_card(
         title,
         "Ctrl+Enter submit",
         "", // no legend: a new question has no answer, so we drop straight to INSERT
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
-        frac,
     );
     // No existing answer (brand-new question) → auto-enter INSERT.
     let _ = s
@@ -1875,15 +1871,13 @@ pub(crate) fn vim_open_rewrite(
         land_on_current_band_id(&mut s, id);
         s.journal.vim_rewrite = Some((id, q, a, RewriteTarget::Answer));
     }
-    let mut s = state.borrow_mut();
-    let frac = s.ask_fill_fraction();
+    let s = state.borrow();
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
         "Ctrl+Enter with NO instruction\nrewrites the answer afresh under the default prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
-        frac,
     );
     // Open in NORMAL (do NOT auto-enter INSERT) so the legend — which explains
     // that an empty Ctrl+Enter regenerates the answer — is readable before the
@@ -1940,15 +1934,13 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
         let mut s = state.borrow_mut();
         s.journal.vim_rewrite = Some((id, q, a, RewriteTarget::Answer));
     }
-    let mut s = state.borrow_mut();
-    let frac = s.ask_fill_fraction();
+    let s = state.borrow();
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
         "Ctrl+Enter with NO instruction\nrewrites the answer afresh under the default prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
-        frac,
     );
     // Open in NORMAL so the empty-Ctrl+Enter legend is readable first (see
     // vim_open_rewrite). Press `i` to type an instruction.
@@ -1968,15 +1960,13 @@ pub(crate) fn begin_rewrite_with(state: &Rc<RefCell<AppState>>, id: i64, q: &str
         let mut s = state.borrow_mut();
         s.journal.vim_rewrite = Some((id, q.to_string(), a.to_string(), RewriteTarget::Both));
     }
-    let mut s = state.borrow_mut();
-    let frac = s.ask_fill_fraction();
+    let s = state.borrow();
     s.journal_overlay.open_ask_card(
         "Rewrite instruction",
         "Ctrl+Enter rewrite \u{00b7} Esc cancel",
         "Ctrl+Enter with NO instruction\nrewrites the answer afresh under the default prompt.",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
-        frac,
     );
     // Open in NORMAL so the empty-Ctrl+Enter legend is readable first.
 }

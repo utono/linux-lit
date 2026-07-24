@@ -498,10 +498,30 @@ pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
     (card_w, card_h)
 }
 
-/// Width + height an overlay should request to match the visible main card.
-/// Thin alias over [`main_card_rect`] so existing call sites read naturally.
+/// Width + height an answer overlay (journal Q&A, gloss, synopsis) should
+/// request. Intentionally does NOT alias [`main_card_rect`]'s width: the
+/// overlay uses the **1-column reading measure** so it presents at the same
+/// width regardless of the reader's real `column_count()` (a 2-column play
+/// spread and a 1-column prose work behind it yield an identically-sized
+/// overlay). Forcing `column_count = 1` and `translations = false` makes
+/// `target_card_width` return the 1-col measure (`effective_column_width`,
+/// prose-adaptive) rather than the wide 2-col proportional width.
+///
+/// Height is unchanged — the reader card's settled/allocated height, which is
+/// already column-count-invariant.
 pub(crate) fn overlay_card_size(s: &AppState) -> (i32, i32) {
-    main_card_rect(s)
+    let ww = s.window.width().max(0);
+    let width = overlay_card_width(ww, effective_column_width(s));
+    (width, main_card_rect(s).1)
+}
+
+/// Pure 1-column overlay-width computation, factored out for unit testing.
+/// `one_col_measure` is the reader's `effective_column_width` (the configured
+/// column width, or the prose-adaptive measure for 1-col prose). Returns the
+/// 1-col `target_card_width` clamped to the window, matching `main_card_rect`.
+pub(crate) fn overlay_card_width(window_width: i32, one_col_measure: u32) -> i32 {
+    let target = target_card_width(window_width, one_col_measure, 1, false);
+    target.min(window_width.max(1))
 }
 
 /// Height an overlay should request to match the visible main card.
@@ -554,7 +574,7 @@ mod column_default_tests {
 
 #[cfg(test)]
 mod card_width_tests {
-    use super::{prose_card_width_px, target_card_width, PROSE_MEASURE_CHARS};
+    use super::{overlay_card_width, prose_card_width_px, target_card_width, PROSE_MEASURE_CHARS};
 
     #[test]
     fn prose_card_width_inverts_the_75_percent_measure() {
@@ -609,5 +629,29 @@ mod card_width_tests {
             target_card_width(2400, 1050, 1, true),
             target_card_width(2400, 1050, 2, false),
         );
+    }
+
+    #[test]
+    fn overlay_width_is_one_col_invariant_over_two_column_reader() {
+        // A 2-column play behind the overlay: the reader card is the wide 2-col
+        // proportional width, but the overlay must present at the 1-col measure.
+        // (effective_column_width would return the configured 1050 for a play,
+        // so the overlay sees one_col_measure = 1050.)
+        let window = 2400;
+        let one_col_measure = 1050;
+        let overlay = overlay_card_width(window, one_col_measure);
+        // Overlay equals the 1-col target, NOT the wider 2-col proportional one.
+        assert_eq!(overlay, target_card_width(window, one_col_measure, 1, false));
+        assert_eq!(overlay, one_col_measure as i32);
+        assert_ne!(overlay, target_card_width(window, one_col_measure, 2, false));
+        assert!(overlay < target_card_width(window, one_col_measure, 2, false));
+    }
+
+    #[test]
+    fn overlay_width_clamps_to_window() {
+        // Degenerate pre-allocation window: never exceed window.max(1).
+        assert_eq!(overlay_card_width(0, 1050), 1); // clamps to 1
+        // Narrow window smaller than the configured measure clamps down.
+        assert_eq!(overlay_card_width(800, 1050), 800);
     }
 }
