@@ -321,6 +321,30 @@ established response to "buffer diverges from timestamp granularity" is to DISAB
 - Verse in prose stays narrated at BLOCK (stanza) granularity — no per-verse-line
   timestamps (Facet-2 non-goal, unchanged).
 
+#### 4a. TWO highlighters paint a verse block — both must expand (correction 2026-07-24)
+
+The original build wired whole-block tint into ONLY the karaoke/phrase-highlight
+path (`phrase_highlight.rs`, `paint_phrase_at`, gated `PhraseHighlightMode::Line
+&& !is_prose`). On-screen testing found that path never fires for the mode the
+user actually navigates in: LoJ (a prose work) DEFAULTS to Karaoke mode, whose
+tint needs a live audio position AND per-line phrase spans — and the LoJ trial
+data has `spans=0` (no phrase timing), so nothing paints. Toggling to **"Cursor
+line" mode** (`Alt+p`) DOES paint, but via a SEPARATE, verse-unaware path:
+`src/input/highlight.rs` (`update_highlight`, ~line 418-430) applies
+`cursor_line_tag` to the SINGLE `state.current_line`. So a cursor on a verse line
+tints one line, not the block — the "whole-block" promise of §4 is unmet in the
+mode the user sees.
+
+**Correction:** the block-expansion must live in BOTH highlighters. The
+cursor-line path in `highlight.rs` must, when `state.current_line`'s row is a
+verse `block_type`, expand the `cursor_line_tag` range to the whole block using
+the SAME `block_buffer_range(&buffer_to_work, current_line)` helper the karaoke
+path already uses (it is `pub(crate)` in `phrase_highlight.rs`). Same rule,
+applied at the single-line `apply_tag(cl_tag, line_start, line_end)` site: when
+the active row is verse, iterate the block's buffer-line range and tag each line.
+This is the true "verify the VISIBLE surface" lesson — the karaoke branch the
+plan named was not the branch the user's mode renders.
+
 ### 5. Heading style — uniform (decided)
 
 All `block_type='heading'` rows render identically (centered small-caps). The
