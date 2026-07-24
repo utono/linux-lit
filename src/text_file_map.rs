@@ -2241,6 +2241,87 @@ mod tests {
         assert_eq!(m.work_to_buffer[3], 6);
         // buffer line count == expanded lines
         assert_eq!(m.buffer_to_work.len(), 7);
+
+        // --- Field length/content assertions (2) ---
+        // section_starts is sized to the BUFFER line count (n_split), not the
+        // work-row count (n_work=4) — a future edit that sources this vec's
+        // length from n_work instead would silently under/over-allocate.
+        assert_eq!(m.section_starts.len(), 7, "section_starts must be sized to buffer lines, not work rows");
+        assert!(m.section_starts.iter().all(|&b| !b), "build_line_map_blocks never marks section starts");
+        assert!(m.sentence_groups.is_empty(), "sentence_groups is prose-only; blocks builder never populates it");
+    }
+
+    #[test]
+    fn build_line_map_blocks_dialogue_and_chapter_flags() {
+        // work rows: 0 prose (plain), 1 verse dialogue (3 visual lines), 2 heading (chapter), 3 prose
+        let mk = |bt: &str, txt: &str, is_dialogue: bool, is_chapter: bool| Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter, is_spoken: None,
+            block_type: bt.into(),
+        };
+        let work = vec![
+            mk("prose", "Ordinary prose.", false, false),
+            mk("verse", "l1\n  l2\n  l3", true, false),
+            mk("heading", "MELIBOEUS.", false, true),
+            mk("prose", "After the verse.", false, false),
+        ];
+        let file_lines: Vec<String> = vec![
+            "Ordinary prose.".into(),
+            "l1".into(), "l2".into(), "l3".into(),
+            "MELIBOEUS.".into(),
+            "After the verse.".into(),
+        ];
+        // indices:                0            1      2      3            4              5
+        let source_index: Vec<usize> = vec![0, 1, 1, 1, 2, 3];
+
+        let m = build_line_map_blocks(&file_lines, &source_index, &work);
+
+        // Every split buffer line belonging to the dialogue verse row (indices 1,2,3)
+        // must appear in dialogue_buffer_lines, and nothing else.
+        assert_eq!(m.dialogue_buffer_lines, vec![1, 2, 3]);
+
+        // The chapter row (work row 2) is buffer index 4 (its first, and only,
+        // buffer line). chapter_breaks must contain exactly that index.
+        assert_eq!(m.chapter_breaks, vec![4]);
+    }
+
+    #[test]
+    fn build_line_map_blocks_adjacent_verse_rows_no_gap() {
+        // Two back-to-back multi-line verse rows with no non-verse row between
+        // them. This exercises the `while j < n_split && source_index[j] == src`
+        // advance across a block boundary where the source index changes on the
+        // very next split line (a `<` vs `<=` off-by-one would either leak the
+        // next block's first line into the previous block, or drop the first
+        // line of the next block).
+        let mk = |txt: &str| Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue: false, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter: false, is_spoken: None,
+            block_type: "verse".into(),
+        };
+        let work = vec![
+            mk("a1\na2"), // work row 0: verse, 2 split lines, source index 0
+            mk("b1\nb2"), // work row 1: verse, 2 split lines, source index 1
+        ];
+        let file_lines: Vec<String> = vec![
+            "a1".into(), "a2".into(), "b1".into(), "b2".into(),
+        ];
+        let source_index: Vec<usize> = vec![0, 0, 1, 1];
+
+        let m = build_line_map_blocks(&file_lines, &source_index, &work);
+
+        // Row 0's block (buffer 0,1) must map ONLY to row 0.
+        assert_eq!(m.buffer_to_work[0], Some(0));
+        assert_eq!(m.buffer_to_work[1], Some(0));
+        // Row 1's block (buffer 2,3) must map ONLY to row 1 — none of it leaks
+        // back into row 0, and row 0 doesn't overrun into it.
+        assert_eq!(m.buffer_to_work[2], Some(1));
+        assert_eq!(m.buffer_to_work[3], Some(1));
+
+        // work_to_buffer anchors each row at its own first buffer line.
+        assert_eq!(m.work_to_buffer[0], 0);
+        assert_eq!(m.work_to_buffer[1], 2);
     }
 
     /// Regression for the folded-SD coloring bug: build the map through the SAME
