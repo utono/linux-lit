@@ -4450,7 +4450,7 @@ pub fn toggle_sign_column(state: &mut AppState) {
         renderer.queue_draw();
     }
     crate::logging::log(&format!(
-        "SIGN: signs {}",
+        "SIGN: signs {} via toggle_sign_column (l key)",
         if new_val { "shown" } else { "hidden" },
     ));
 }
@@ -4494,6 +4494,21 @@ pub(super) fn setup_gutter(state: &mut AppState) {
                 .map(|w| w.lines.iter().map(|l| l.timestamp.is_some()).collect())
                 .unwrap_or_default()
         };
+        // Breadcrumb for the intermittent "timestamp glyphs vanished" bug: if a
+        // rebuild recomputes this vec as empty/all-false (current_work dropped,
+        // or a line_map whose length no longer matches the buffer), the signs
+        // blank even though sign_column_visible is still true. Logging the
+        // true-count + provenance here pins which input went wrong when it
+        // recurs, without needing a live repro.
+        let ts_true = new_has_ts.iter().filter(|b| **b).count();
+        crate::logging::log(&format!(
+            "GUTTER_TS: has_timestamp rebuilt len={} true={} line_map={} current_work={} visible={}",
+            new_has_ts.len(),
+            ts_true,
+            state.line_map.is_some(),
+            state.current_work.is_some(),
+            state.sign_column_visible.get(),
+        ));
         *state.has_timestamp.borrow_mut() = new_has_ts;
 
         let new_is_manual: Vec<bool> = if let Some(ref lm) = state.line_map {
@@ -4680,7 +4695,12 @@ pub(super) fn setup_gutter(state: &mut AppState) {
         state.right_gutter_renderer = Some(right_renderer);
     }
 
-    crate::logging::log("GUTTER: set up on demand");
+    crate::logging::log(&format!(
+        "GUTTER: set up on demand (visible={} left_renderer=yes right_renderer={} chunk_renderer={})",
+        state.sign_column_visible.get(),
+        state.right_gutter_renderer.is_some(),
+        state.chunk_renderer.is_some(),
+    ));
 }
 
 /// Apply AB loop dimming: dim everything outside the A-B line range.
@@ -5059,6 +5079,17 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
         InputMode::GlossOverlay => state.last_overlay = Some(LastOverlay::Gloss),
         InputMode::JournalOverlay => state.last_overlay = Some(LastOverlay::Journal),
         _ => {}
+    }
+    // Timeline anchor for the intermittent "vanished glyphs" bug: the user
+    // attributes it to overlay toggling (`\`), which always routes through
+    // here. Logging the sign-visibility state at each overlay close lets the
+    // log correlate a disappearance with the exact close that preceded it.
+    if was_overlay {
+        crate::logging::log(&format!(
+            "RETURN_TO_READER: from {:?} sign_column_visible={}",
+            state.input_mode,
+            state.sign_column_visible.get(),
+        ));
     }
     state.input_mode = InputMode::Reader;
     apply_reader_gloss_highlighting(state);

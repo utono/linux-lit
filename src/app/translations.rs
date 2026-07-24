@@ -206,6 +206,10 @@ fn show_translations(state: &mut AppState) {
     if state.sign_visible_before_translations.is_none() {
         state.sign_visible_before_translations = Some(state.sign_column_visible.get());
     }
+    crate::logging::log(&format!(
+        "SIGN: hidden via show_translations (saved_prev={:?})",
+        state.sign_visible_before_translations,
+    ));
     state.sign_column_visible.set(false);
     crate::input::timestamps::redraw_sign_gutters(state);
 
@@ -511,8 +515,19 @@ fn strip_translation_lines(state: &mut AppState) {
 
     // Restore the sign column to its pre-translation visibility.
     if let Some(prev) = state.sign_visible_before_translations.take() {
+        crate::logging::log(&format!(
+            "SIGN: restored via strip_translation_lines -> {}",
+            if prev { "shown" } else { "hidden" },
+        ));
         state.sign_column_visible.set(prev);
         crate::input::timestamps::redraw_sign_gutters(state);
+    } else {
+        // No saved value to restore. If signs are currently hidden here, they
+        // will STAY hidden — the leak the "vanished glyphs" bug would show.
+        crate::logging::log(&format!(
+            "SIGN: strip_translation_lines had no saved prev (current visible={})",
+            state.sign_column_visible.get(),
+        ));
     }
 
     reapply_font(state);
