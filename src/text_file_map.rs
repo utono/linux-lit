@@ -1752,6 +1752,21 @@ mod tests {
     }
 
     #[test]
+    fn build_line_map_blocks_per_line_verse_maps_each_line_to_own_row() {
+        let work: Vec<Line> = ["l1","l2","l3","l4","l5"].iter().map(|t| Line {
+            id: 0, citation: String::new(), text: (*t).into(), normalized: String::new(),
+            speaker: None, is_dialogue: false, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter: false, is_spoken: None,
+            block_type: "verse".into(),
+        }).collect();
+        let file_lines: Vec<String> = work.iter().map(|l| l.text.clone()).collect();
+        let source_index: Vec<usize> = (0..work.len()).collect();
+        let map = build_line_map_blocks(&file_lines, &source_index, &work);
+        assert_eq!(map.buffer_to_work, vec![Some(0),Some(1),Some(2),Some(3),Some(4)]);
+        assert_eq!(map.work_to_buffer, vec![0,1,2,3,4]);
+    }
+
+    #[test]
     fn test_find_mid_line_sentence_boundary() {
         // Basic case: period + space + uppercase
         // "end of the fog. On such an afternoon"

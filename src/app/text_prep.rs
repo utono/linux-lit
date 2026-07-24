@@ -222,24 +222,26 @@ fn leading_space_tier(line: &str) -> (u8, usize) {
     (tier, n)
 }
 
-/// Splits verse rows on embedded `\n` into display lines, strips leading
-/// spaces (recording an indent tier per line), and produces the
-/// `source_index` that `build_line_map_blocks` (src/text_file_map.rs)
-/// consumes to map buffer lines back to DB rows. Emits every work-line
-/// index exactly once, in order — the non-decreasing/full-coverage
-/// precondition `build_line_map_blocks` relies on.
+/// Strips leading spaces from verse rows (recording an indent tier per line),
+/// and produces the `source_index` that `build_line_map_blocks`
+/// (src/text_file_map.rs) consumes to map buffer lines back to DB rows.
+/// Emits every work-line index exactly once, in order — the
+/// non-decreasing/full-coverage precondition `build_line_map_blocks` relies
+/// on. Per-line data model: verse is stored ONE line_mapping row per line, so
+/// each verse row already IS one display line (no embedded-`\n` split).
 pub fn prepare_block_buffer(work_lines: &[crate::db::models::Line]) -> BlockBuffer {
     let mut buf_lines = Vec::new();
     let mut source_index = Vec::new();
     let mut indent_tiers = Vec::new();
     for (wi, l) in work_lines.iter().enumerate() {
         if crate::db::line_types::is_verse_line(&l.block_type) {
-            for vline in l.text.split('\n') {
-                let (tier, n) = leading_space_tier(vline);
-                buf_lines.push(vline[n..].to_string()); // strip leading spaces
-                source_index.push(wi);
-                indent_tiers.push(tier);
-            }
+            // Per-line verse model: one row = one display line. Strip this row's
+            // own leading spaces (the indent tier); an empty verse row stays one
+            // empty buffer line, tier 0 (stanza gap — load-bearing, keep it).
+            let (tier, n) = leading_space_tier(&l.text);
+            buf_lines.push(l.text[n..].to_string());
+            source_index.push(wi);
+            indent_tiers.push(tier);
         } else {
             buf_lines.push(l.text.clone());
             source_index.push(wi);
@@ -280,25 +282,34 @@ mod block_buffer_tests {
 
     #[test]
     fn prepare_block_buffer_splits_verse_and_tiers_indent() {
+        // Per-line model: each verse line is its own row (was one row with
+        // embedded `\n` under the old block-granularity model).
         let work = vec![
             mk("prose", "Ordinary prose."),
-            mk("verse", "l1\n  l2\n    l3"),   // tiers 0, 1, 2
+            mk("verse", "l1"),     // tier 0
+            mk("verse", "  l2"),   // tier 1
+            mk("verse", "    l3"), // tier 2
             mk("heading", "MELIBOEUS."),
         ];
         let b = prepare_block_buffer(&work);
         assert_eq!(b.buf_lines, vec![
             "Ordinary prose.", "l1", "l2", "l3", "MELIBOEUS.",
         ]);
-        assert_eq!(b.source_index, vec![0, 1, 1, 1, 2]);
+        assert_eq!(b.source_index, vec![0, 1, 2, 3, 4]);
         assert_eq!(b.indent_tiers, vec![0, 0, 1, 2, 0]);
     }
 
     #[test]
     fn prepare_block_buffer_source_index_covers_every_row_non_decreasing() {
-        // mix of prose + a multi-line verse + a heading
+        // Per-line model: mix of prose + per-line verse rows + a heading, each
+        // row its own work-line index (was one multi-line verse row under the
+        // old block-granularity model).
         let work = vec![
             mk("prose", "Opening prose."),
-            mk("verse", "a\n  b\n    c\nd"),
+            mk("verse", "a"),
+            mk("verse", "  b"),
+            mk("verse", "    c"),
+            mk("verse", "d"),
             mk("heading", "SCENE I."),
             mk("prose", "Closing prose."),
         ];
@@ -308,5 +319,33 @@ mod block_buffer_tests {
         // distinct count == input row count (every work-line index emitted exactly once)
         let distinct: std::collections::BTreeSet<_> = b.source_index.iter().collect();
         assert_eq!(distinct.len(), work.len());
+    }
+
+    #[test]
+    fn prepare_block_buffer_empty_verse_row_is_one_blank_line_tier0() {
+        let work = vec![
+            mk("verse", "Stanza one line A,"),
+            mk("verse", ""),                 // stanza gap
+            mk("verse", "Stanza two line A,"),
+        ];
+        let b = prepare_block_buffer(&work);
+        assert_eq!(b.buf_lines, vec!["Stanza one line A,", "", "Stanza two line A,"]);
+        assert_eq!(b.source_index, vec![0, 1, 2]);
+        assert_eq!(b.indent_tiers, vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn prepare_block_buffer_per_line_verse_no_embedded_newline() {
+        // per-line model: each verse row is already one line; indent tier from its
+        // own leading spaces. (Was: one row "a\n  b" -> 2 lines; now two rows.)
+        let work = vec![
+            mk("verse", "a"),
+            mk("verse", "  b"),   // 2 leading spaces -> tier 1
+            mk("verse", "    c"), // 4 -> tier 2
+        ];
+        let b = prepare_block_buffer(&work);
+        assert_eq!(b.buf_lines, vec!["a", "b", "c"]);
+        assert_eq!(b.source_index, vec![0, 1, 2]);
+        assert_eq!(b.indent_tiers, vec![0, 1, 2]);
     }
 }

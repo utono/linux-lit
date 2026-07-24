@@ -706,12 +706,18 @@ pub fn apply_block_typography(state: &mut AppState) {
         };
 
         if crate::db::line_types::is_verse_line(bt) {
-            let tier = state.block_indent_tiers.get(bl).copied().unwrap_or(0);
-            state
-                .buffer
-                .apply_tag_by_name(&format!("verse-indent-{tier}"), &start, &end);
-            if prev_src != Some(wi) {
+            // An empty verse row is a stanza-gap separator: gap tag only, no
+            // indent tag, no cursor/karaoke target.
+            if line.text.trim().is_empty() {
                 state.buffer.apply_tag_by_name("verse-stanza-gap", &start, &end);
+            } else {
+                let tier = state.block_indent_tiers.get(bl).copied().unwrap_or(0);
+                state
+                    .buffer
+                    .apply_tag_by_name(&format!("verse-indent-{tier}"), &start, &end);
+                if prev_src != Some(wi) {
+                    state.buffer.apply_tag_by_name("verse-stanza-gap", &start, &end);
+                }
             }
         } else if crate::db::line_types::is_heading_line(bt) {
             state.buffer.apply_tag_by_name("block-heading-center", &start, &end);

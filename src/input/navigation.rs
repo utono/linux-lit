@@ -1587,8 +1587,11 @@ pub fn cursor_prev_line(state: &mut AppState) {
     let target = if state.is_prose() {
         // Prose works (.txt or DB) have no play-style dialogue structure and
         // few/no DB-mapped buffer lines, so dialogue-stepping skips headings
-        // ("CHAPTER I") and behaves erratically. Step one plain buffer line.
-        Some(state.current_line - 1)
+        // ("CHAPTER I") and behaves erratically. Step one plain buffer line,
+        // then skip past any empty verse row (stanza-gap separator, never a
+        // cursor stop) so the landed line is always non-gap.
+        let line_count = state.buffer.line_count() as usize;
+        Some(skip_empty_verse(state, state.current_line - 1, -1, line_count))
     } else {
         let stage_lookup = |bi: usize| -> Option<i64> {
             state.work_line_for_buffer(bi)
@@ -1625,8 +1628,10 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
     }
     let target = if state.is_prose() {
         // Prose: step one plain buffer line (see cursor_prev_line). Lands on
-        // every line incl. headings; plays keep dialogue-skipping below.
-        (state.current_line + 1 < line_count).then(|| state.current_line + 1)
+        // every line incl. headings; plays keep dialogue-skipping below. Skip
+        // past any empty verse row (stanza-gap separator, never a cursor stop).
+        (state.current_line + 1 < line_count)
+            .then(|| skip_empty_verse(state, state.current_line + 1, 1, line_count))
     } else {
         let stage_lookup = |bi: usize| -> Option<i64> {
             state.work_line_for_buffer(bi)
@@ -2186,6 +2191,56 @@ pub(crate) fn adjacent_paragraph(
         Direction::Next => ((from + 1)..line_count).find(|&i| !is_blank_at(i)),
         Direction::Prev => (0..from).rev().find(|&i| !is_blank_at(i)),
     }
+}
+
+/// Pure core: advance `bl` past consecutive gap rows (`is_gap_at(bl) == true`)
+/// in direction `dir` (+1 down, -1 up), clamped to `[0, line_count)`. Returns
+/// the first non-gap line, or — if the gap run extends to the buffer edge with
+/// no non-gap line in that direction — the LAST in-bounds line reached (which is
+/// itself a gap). When `bl` was never a gap it returns `bl` unchanged (identity —
+/// the required no-op for works with no gap rows).
+///
+/// KNOWN EDGE (inert on current data — LoJ has zero empty verse rows): a run of
+/// gap rows that reaches the buffer edge leaves the cursor ON the edge gap row,
+/// so the "never rests on a gap" intent has a hole at a trailing/leading gap run.
+/// Revisit when real empty-verse-row data exists (Phase C) — a fix would fall
+/// back to the opposite direction, or leave the cursor before the run.
+///
+/// Buffer-agnostic so it can be unit-tested on a plain closure/slice, mirroring
+/// `adjacent_paragraph` / `block_buffer_range` (phrase_highlight.rs).
+pub(crate) fn skip_gap_rows(
+    line_count: usize,
+    mut bl: usize,
+    dir: isize,
+    is_gap_at: impl Fn(usize) -> bool,
+) -> usize {
+    while is_gap_at(bl) {
+        let next = bl as isize + dir;
+        if next < 0 || next as usize >= line_count {
+            break;
+        }
+        bl = next as usize;
+    }
+    bl
+}
+
+/// True when buffer line `bl` maps to a verse row whose text is empty/whitespace
+/// (a stanza-gap separator — never a cursor stop).
+fn is_empty_verse_line(state: &AppState, bl: usize) -> bool {
+    state
+        .work_line_for_buffer(bl)
+        .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
+        .is_some_and(|l| {
+            crate::db::line_types::is_verse_line(&l.block_type) && l.text.trim().is_empty()
+        })
+}
+
+/// Advance `bl` past consecutive empty verse rows in direction `dir` (+1 down,
+/// -1 up), clamped to `[0, line_count)`. Returns the first non-gap line, or the
+/// original `bl` if none exists in that direction. Thin `AppState`-facing
+/// wrapper over the pure `skip_gap_rows` core.
+fn skip_empty_verse(state: &AppState, bl: usize, dir: isize, line_count: usize) -> usize {
+    skip_gap_rows(line_count, bl, dir, |i| is_empty_verse_line(state, i))
 }
 
 /// Jump to the first dialogue line of the NEXT speaker turn (`J`). Seeks audio.
@@ -4443,7 +4498,7 @@ mod interpolate_cross_time_tests {
 
 #[cfg(test)]
 mod speaker_turn_tests {
-    use super::{adjacent_paragraph, current_block_first_line, speaker_turn_target, Direction};
+    use super::{adjacent_paragraph, current_block_first_line, skip_gap_rows, speaker_turn_target, Direction};
 
     /// Build a fixture from compact tuples: (speaker, is_dialogue).
     /// `""` speaker means None (unmapped/chrome line).
@@ -4542,6 +4597,57 @@ mod speaker_turn_tests {
         // Edges: no paragraph after the last / before the first.
         assert_eq!(adjacent_paragraph(6, 5, Direction::Next, is_blank), None);
         assert_eq!(adjacent_paragraph(6, 0, Direction::Prev, is_blank), None);
+    }
+
+    #[test]
+    fn skip_gap_rows_advances_past_the_gap() {
+        // lines: 0 verse "a" (non-gap), 1 verse "" (gap), 2 verse "b" (non-gap).
+        let gap = [false, true, false];
+        let is_gap = |i: usize| gap[i];
+        // Down from the gap (1) skips to the next non-gap (2).
+        assert_eq!(skip_gap_rows(3, 1, 1, is_gap), 2);
+        // Up from the gap (1) skips to the previous non-gap (0).
+        assert_eq!(skip_gap_rows(3, 1, -1, is_gap), 0);
+        // Starting on a non-gap line is untouched (identity).
+        assert_eq!(skip_gap_rows(3, 0, 1, is_gap), 0);
+        assert_eq!(skip_gap_rows(3, 2, -1, is_gap), 2);
+    }
+
+    #[test]
+    fn skip_gap_rows_skips_a_run_of_multiple_gaps() {
+        // lines: 0 non-gap, 1 gap, 2 gap, 3 gap, 4 non-gap.
+        let gap = [false, true, true, true, false];
+        let is_gap = |i: usize| gap[i];
+        assert_eq!(skip_gap_rows(5, 1, 1, is_gap), 4);
+        assert_eq!(skip_gap_rows(5, 3, -1, is_gap), 0);
+    }
+
+    #[test]
+    fn skip_gap_rows_clamped_at_buffer_edge() {
+        // A gap that runs to the edge with nothing non-gap beyond it: clamp,
+        // returning the last in-bounds line reached (not the starting line),
+        // since the loop still walks forward until `next` goes out of bounds.
+        let gap = [false, true, true];
+        let is_gap = |i: usize| gap[i];
+        assert_eq!(skip_gap_rows(3, 1, 1, is_gap), 2);
+        // No non-gap line at all: every index reports a gap, so the walk
+        // proceeds to the edge and stops there (never panics/hangs).
+        let all_gap = [true, true, true];
+        let is_gap_all = |i: usize| all_gap[i];
+        assert_eq!(skip_gap_rows(3, 0, 1, is_gap_all), 2);
+        assert_eq!(skip_gap_rows(3, 2, -1, is_gap_all), 0);
+    }
+
+    #[test]
+    fn skip_gap_rows_no_gaps_is_identity() {
+        // Guard: works with NO empty verse rows must be byte-identical —
+        // is_gap always false means skip_gap_rows returns its input untouched.
+        let no_gap = [false, false, false, false];
+        let is_gap = |_: usize| false;
+        for bl in 0..no_gap.len() {
+            assert_eq!(skip_gap_rows(no_gap.len(), bl, 1, is_gap), bl);
+            assert_eq!(skip_gap_rows(no_gap.len(), bl, -1, is_gap), bl);
+        }
     }
 
     #[test]
