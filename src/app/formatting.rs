@@ -102,6 +102,15 @@ pub(crate) fn apply_dialogue_formatting(state: &mut AppState) {
         return;
     }
 
+    // Block-aware works (verse/heading typography, e.g. LoJ) render their own
+    // per-line tags via apply_block_typography. apply_dialogue_formatting's
+    // all-line dialogue-indent fallback would override the verse tiers (its tag
+    // is added later => higher priority), flattening the indent. Such works have
+    // no genuine dialogue/speakers, so skip this pass entirely.
+    if !state.block_indent_tiers.is_empty() {
+        return;
+    }
+
     // One section per page (sonnet_sequence): center the bare stanza-number
     // headings over the centered block (the text region is symmetric, set in
     // apply_tiled_mode). Verse lines keep the default left justification.
