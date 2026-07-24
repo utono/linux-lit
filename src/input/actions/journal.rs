@@ -1615,6 +1615,55 @@ pub(crate) fn begin_passage_ask(
         .feed_ask_vim_key(crate::input::vim::VimKey::Char('i'));
 }
 
+/// Ctrl+a in the journal overlay: open the ask card for a NEW Q&A, choosing the
+/// band correctly whether or not a term/one-match filter is active.
+///
+/// With no filter, this is just `begin_ask` on the current band. With a filter
+/// (recent-Q&A picker, Ctrl+f corpus hit, or an `f` term browse) the overlay is
+/// showing an entry that may sit in a different band — or a different WORK — than
+/// the origin cursor. Two cases:
+///
+/// - **Cross-work match** (`displayed_entry_is_cross_work`): the entry belongs to
+///   a work OTHER than the one loaded, so `ask_claude`'s grounding (built from
+///   `current_work`) would be the wrong work. There is no safe home band on
+///   screen — swallow with the clear-filter toast, exactly as before.
+/// - **Same-work match** (the recent-Q&A / corpus-hit single-entry cases, which
+///   load the entry's edition first, and any `f`-match in the current work):
+///   retarget `journal_band` to the DISPLAYED entry's own band (via
+///   `band_for_rewrite`) so the new Q&A attaches to the entry the reader is
+///   actually looking at, then ask.
+pub(crate) fn begin_ask_or_filter_gate(state: &Rc<RefCell<AppState>>) {
+    let filtered = state.borrow().journal.filter.is_some();
+    if filtered {
+        if displayed_entry_is_cross_work(&state.borrow()) {
+            crate::input::navigation::show_chapter_toast_secs(
+                &state.borrow(),
+                "Clear the term filter (Esc) for this key",
+                3,
+            );
+            return;
+        }
+        // Same-work filter match: point the ask at the displayed entry's own
+        // band before asking, so the new Q&A lands on it (not the origin band
+        // journal_band still holds under a filter). Then END the filter: the
+        // reader is committing to this band, and leaving `journal.filter` set
+        // would make the post-submit `render_current` / later nav diverge onto
+        // the stale one-match browse view. The overlay stays on this entry (the
+        // ask card opens over the current render); the answer save + render_current
+        // then repaint the band normally.
+        let band = {
+            let s = state.borrow();
+            displayed_journal_page(&s).map(|p| band_for_rewrite(&p))
+        };
+        let mut s = state.borrow_mut();
+        if let Some(band) = band {
+            s.journal_band = band;
+        }
+        s.journal.filter = None;
+    }
+    begin_ask(state);
+}
+
 pub(crate) fn begin_ask(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal.prompt_mode = JournalPromptMode::Ask;

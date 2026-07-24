@@ -2006,24 +2006,15 @@ fn handle_journal_key(
                 crate::input::actions::journal::nav_page(state, -1);
                 return true;
             }
-            // Ctrl+a: ask a new Q&A in the current band (moved off Ctrl+r so
-            // every ask surface sits on Ctrl+a — reader visual mode, gloss
-            // overlay, here). GATED by the term filter exactly like the shared
-            // intercept below: while a filter shows a cross-work entry there is
-            // no clear home band for a new Q&A, so swallow it with the same
-            // clear-filter toast instead of asking against the wrong band.
-            // (This is the is_ctrl block, which returns before the shared
-            // intercept further down, so the gate must be duplicated here.)
+            // Ctrl+a: ask a new Q&A (moved off Ctrl+r so every ask surface sits
+            // on Ctrl+a — reader visual mode, gloss overlay, here). Under a term
+            // filter the target band is ambiguous: begin_ask_or_filter_gate keeps
+            // the clear-filter toast ONLY for a cross-work match (wrong-work
+            // grounding), and otherwise retargets to the displayed entry's own
+            // band and asks — so an entry reached via the recent-Q&A picker
+            // (Alt+j) or a corpus hit can be asked-about directly.
             "a" => {
-                if state.borrow().journal.filter.is_some() {
-                    crate::input::navigation::show_chapter_toast_secs(
-                        &state.borrow(),
-                        "Clear the term filter (Esc) for this key",
-                        3,
-                    );
-                    return true;
-                }
-                crate::input::actions::journal::begin_ask(state);
+                crate::input::actions::journal::begin_ask_or_filter_gate(state);
                 return true;
             }
             // Ctrl+r: add a vocab word (uniform with the reader + every overlay
