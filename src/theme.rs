@@ -852,8 +852,9 @@ fn gloss_background(theme: &Theme) -> String {
 
 /// The inset-panel fill for the prose overlays. It now paints the card's own
 /// `gloss_bg` cream — i.e. NO tint — so the prose column reads as one flat
-/// surface. Framing is done entirely by the dimmed `scrim_bg` matting around the
-/// card (see `scrim_bg`); an additional panel tint here produced a competing
+/// surface. Framing is done entirely by the `scrim_bg` matting around the
+/// card (see `scrim_bg`, the live root color); an additional panel tint here
+/// produced a competing
 /// second box inside the frame. The `panel_drawing` plumbing is retained (the
 /// overlay's measured main child, z-order below the accent bar, bottom-clip
 /// guard) — it simply fills invisibly. To reintroduce a subtle inset later,
@@ -937,13 +938,16 @@ fn center_toast_bg(theme: &Theme) -> String {
 }
 
 /// Matting color for the full-bleed overlay scrim (gloss/journal/synopsis/
-/// translation/echo-keybinds). A subtle (~20%) darkening of `root_color` so the
-/// border area around an overlay card reads as an intentional dimmed frame
-/// rather than the identical, un-dimmed window background. Stays opaque (the
-/// main reading card is fully hidden behind the overlay), same hue as root, and
-/// tracks every theme automatically.
+/// translation/echo-keybinds). This is the LIVE `root_color` verbatim, so the
+/// backdrop around an overlay card matches the reader's window background
+/// exactly (user request 2026-07-24: the card overlays' backdrop must equal the
+/// reader's root, not an intentionally-dimmed frame). Stays opaque (the main
+/// reading card is fully hidden behind the overlay) and, because it is derived
+/// from `root_color` in `resolve_theme_variant`, tracks every root-variant step
+/// in lockstep with the reader. The library/legend/settings pickers use a
+/// separate translucent scrim (`.library-picker-scrim`) and are unaffected.
 fn scrim_bg(theme: &Theme) -> String {
-    darken_color(&theme.root_color, 0.80)
+    theme.root_color.clone()
 }
 
 /// Scale the alpha of an `rgba(r, g, b, a)` string by `factor`. Any other
@@ -2320,13 +2324,17 @@ mod tests {
         }
         assert_eq!(v0.overlay_panel_bg, v1.overlay_panel_bg);
         assert_eq!(v0.overlay_panel_bg, v2.overlay_panel_bg);
-        // scrim_bg DIFFERS between v0 and v1 — it follows root.
+        // scrim_bg DIFFERS between v0 and v1 — it IS the root color now, and
+        // the root differs across variants.
         assert_ne!(v0.scrim_bg, v1.scrim_bg);
     }
 
     #[test]
-    fn scrim_bg_is_a_small_darkening_of_root() {
-        // Sample themes with distinct root colors (light-ish and dark).
+    fn scrim_bg_equals_root_color() {
+        // The overlay backdrop must match the reader's window background exactly
+        // (the reader paints `window { background-color: {root} }`), so the scrim
+        // IS the live root color verbatim — no dimming. Sample themes with
+        // distinct root colors (light-ish and dark).
         let light = Theme {
             is_light: true,
             root_color: "#c8c0a8".to_string(),
@@ -2339,23 +2347,10 @@ mod tests {
         };
 
         for theme in [&light, &dark] {
-            let scrim = scrim_bg(theme);
-            let root = &theme.root_color;
-            // Distinct from the un-dimmed window background...
-            assert_ne!(&scrim, root, "scrim must differ from root_color");
-            // ...but strictly darker on every channel (a dim, never a brighten)...
-            let (sr, sg, sb) = hex_to_rgb(&scrim);
-            let (rr, rg, rb) = hex_to_rgb(root);
-            assert!(
-                sr <= rr && sg <= rg && sb <= rb && (sr < rr || sg < rg || sb < rb),
-                "scrim {scrim} must be no brighter than root {root} on any channel"
-            );
-            // ...and a subtle (~20%) delta, not a heavy blackout.
-            let ratio = contrast_ratio(root, &scrim);
-            assert!(
-                ratio > 1.0 && ratio < 1.6,
-                "scrim darkening out of the subtle band: ratio={ratio} \
-                 (scrim={scrim}, root={root}, is_light={})",
+            assert_eq!(
+                scrim_bg(theme),
+                theme.root_color,
+                "scrim must equal root_color exactly (is_light={})",
                 theme.is_light
             );
         }
