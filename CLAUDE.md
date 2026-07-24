@@ -105,12 +105,32 @@ Spec: `docs/superpowers/specs/2026-07-22-superpowers-workflow-integration-design
   lockstep mirrors: `keymap_config.rs`, the `ui/*_keybinds_overlay.rs`
   legends, and the stowed `keymap.json` (in tty-dotfiles).
   `keybind-surface-guide.md` is NOT in the set (on-request only).
+  **"No review gates" waives the code-review subagents ONLY.** Build,
+  clippy, tests, AND the on-screen headless/real-renderer check are
+  correctness, not review, and remain mandatory whatever the user says
+  about review. Do not re-derive this each session.
+- **Verify against the VISIBLE surface, not the branch the spec names.**
+  For any UI change, the acceptance check must exercise the exact
+  widget/mode the user actually interacts with. A spec that names an
+  internal branch (e.g. "the non-float open path") is NOT proof the
+  change affects what the user sees — confirm which branch actually
+  renders for the real interaction before calling it verified. (Backlog
+  #13 was fully green — build + clippy + tests + a spec-matching
+  implementation — and still a silent no-op, because it sized a pinned
+  ask card the user never opens instead of the float column they do.)
 - **Batch-day playbook.** When a queue of small independent polish
   items is planned: (1) one plan via `superpowers:writing-plans` with
   explicitly independent tasks; (2) execute via
   `superpowers:subagent-driven-development`, one worktree per task;
   (3) merge serially from the main checkout; (4) run the e2e suite
-  once at the end, not per branch.
+  once at the end, not per branch. **If reviews are waived, the
+  end-of-batch e2e/on-screen run is MANDATORY (not optional) and must
+  exercise each item's own on-screen criterion — it is the only
+  remaining gate.** **If verification or user feedback invalidates an
+  already-merged item, treat the correction as a fresh
+  spec→plan→implement cycle (including a revert of the superseded
+  change), not an in-place patch** — as the #13 → overlay-width pivot
+  did.
 - **Effort-level retrospective.** After finishing a plan (branch merged
   or ready), append a short **effort-level trade-off** note. The axis is
   EFFORT LEVEL (how much verification/review/adversarial-checking/headless
@@ -225,6 +245,26 @@ LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
   has no synopsis; overlay-open line-scroll keys scroll the overlay; Escape
   closes it.
 - A cage run takes instance slot 2+ (own `-{n}` log, `i{n}-` MPV sockets).
+- **A direct cage launch reusing `XDG_RUNTIME_DIR=/run/user/1000` collides
+  with the user's OWN compositor** — `grim` on the ambiguous `wayland-0` then
+  screenshots the user's live desktop, not the test. Prefer `land-on.sh` /
+  `e2e-env.sh` (they mint a fresh temp `XDG_RUNTIME_DIR`); for a hand-rolled
+  cage run, set a fresh runtime dir and screenshot THAT socket.
+- **`land-on.sh` and hand-rolled cage runs must stay foreground-alive** — a
+  `nohup … &`, `setsid … &`, or `timeout N ./land-on.sh` kills the instance
+  the moment the wrapper returns. For agent self-check, launch cage with the
+  harness `run_in_background` (it owns the lifecycle), not a detached shell
+  backgrounding.
+- **After a `wlr-randr` resize the first `wtype` chord is dropped** (focus
+  lost) — re-send it and confirm the `KEY:` log line landed before trusting
+  the screenshot. The vim ask card also eats Escapes one modal layer at a
+  time, so to test a reader-mode bind, LAND in reader mode directly
+  (`land-on.sh WORK d1.d2` with no overlay arg) rather than escaping into it.
+- **LSP/rust-analyzer diagnostics injected right after a merge or revert can
+  be PHANTOM** (stale editor index) — a real `cargo build` is the only
+  authority. Twice in one session a phantom `E0107`/`E0004` on freshly-merged
+  `journal.rs` vanished under a real compile. Never edit code to satisfy a
+  post-merge LSP diagnostic without confirming with `cargo build` first.
 - **Cleanup: ONLY `pkill -f "cage -- ./target/debug/linux-lit"`.** A bare
   `pkill -f target/debug/linux-lit` kills the user's live instance.
 
