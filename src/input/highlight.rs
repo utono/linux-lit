@@ -277,6 +277,44 @@ pub(crate) fn auto_show_vocab_popup(state: &mut AppState) {
     }
 }
 
+/// Pure decision: given a buffer line's mapped work-line index and whether
+/// that work-line's row is verse, plus the `buffer_to_work` map, return the
+/// `[start, end)` buffer-line range to apply the cursor-line tint to. `None`
+/// means "no widening" — the caller falls back to tinting just `active` alone
+/// (no line_map, unmapped line, or a non-verse row).
+fn verse_block_range(
+    buffer_to_work: &[Option<usize>],
+    active: usize,
+    is_verse: bool,
+) -> Option<(usize, usize)> {
+    if !is_verse {
+        return None;
+    }
+    Some(crate::input::phrase_highlight::block_buffer_range(
+        buffer_to_work,
+        active,
+    ))
+}
+
+/// Cursor-line tint widening for the current buffer line: `Some((start, end))`
+/// when `state.current_line` sits on a verse row that spans multiple buffer
+/// lines (or even a single-line verse row — `block_buffer_range` degrades to
+/// `(active, active+1)` there), `None` when there is no line_map, the line is
+/// unmapped, or the row is not verse — callers should tint just the current
+/// line in that case. Mirrors the karaoke Line-mode widening in
+/// `phrase_highlight::update_phrase_highlight`.
+fn verse_block_lines_for_cursor(state: &AppState) -> Option<(usize, usize)> {
+    let lm = state.line_map.as_ref()?;
+    let wi = state.work_line_for_buffer(state.current_line)?;
+    let is_verse = state
+        .current_work
+        .as_ref()
+        .and_then(|w| w.lines.get(wi))
+        .map(|l| crate::db::line_types::is_verse_line(&l.block_type))
+        .unwrap_or(false);
+    verse_block_range(&lm.buffer_to_work, state.current_line, is_verse)
+}
+
 /// Update visual state for the current line. Only applies dim/cursor tags
 /// to the visible range (page_top_line +/- margin) for performance.
 /// When dim is off, fades out the old cursor highlight smoothly.
@@ -425,8 +463,26 @@ pub(crate) fn update_highlight(state: &mut AppState) {
                     buffer.remove_tag(tag, &line_start, &line_end);
                 } else if !karaoke_no_tint {
                     // No persistent cursor tint while karaoke marks the
-                    // cursor line — the sweep is the only marking.
-                    buffer.apply_tag(cl_tag, &line_start, &line_end);
+                    // cursor line — the sweep is the only marking. Verse
+                    // blocks split across several buffer lines (long rows
+                    // wrapped for typography) tint as one unit, mirroring
+                    // the karaoke Line-mode widening in phrase_highlight.rs.
+                    match verse_block_lines_for_cursor(state) {
+                        Some((bs, be)) => {
+                            for line in bs..be {
+                                if let Some(bl_start) = buffer.iter_at_line(line as i32) {
+                                    let mut bl_end = bl_start;
+                                    if !bl_end.ends_line() {
+                                        bl_end.forward_to_line_end();
+                                    }
+                                    buffer.apply_tag(cl_tag, &bl_start, &bl_end);
+                                }
+                            }
+                        }
+                        None => {
+                            buffer.apply_tag(cl_tag, &line_start, &line_end);
+                        }
+                    }
                 }
                 // Intentional observability hook (NOT stale per-keystroke trace):
                 // the saved-position-resume regression test asserts the highlight
@@ -640,5 +696,45 @@ fn repaint_reader_gloss_visible(state: &AppState) {
             crate::app::remove_reader_gloss_cursor_tag_from_line(state, buf_idx);
             crate::app::apply_reader_gloss_tag_to_line(state, buf_idx);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verse_block_range;
+
+    #[test]
+    fn verse_row_widens_to_the_whole_split_block() {
+        // buffer_to_work: line 0 prose(row0), 1-4 verse(row1), 5 heading(row2) —
+        // same fixture shape as phrase_highlight's block_buffer_range test.
+        let b2w = vec![Some(0usize), Some(1), Some(1), Some(1), Some(1), Some(2)];
+        // Cursor anywhere inside the verse block widens to the full [1, 5) range.
+        assert_eq!(verse_block_range(&b2w, 3, true), Some((1, 5)));
+        assert_eq!(verse_block_range(&b2w, 1, true), Some((1, 5)));
+        // A single-line verse row still returns Some (degrades to one line, but
+        // callers get the explicit "verse" signal rather than falling through
+        // to the caller's own current_line..current_line+1 default).
+        let single = vec![Some(0usize)];
+        assert_eq!(verse_block_range(&single, 0, true), Some((0, 1)));
+    }
+
+    #[test]
+    fn non_verse_row_does_not_widen() {
+        let b2w = vec![Some(0usize), Some(1), Some(1), Some(1), Some(1), Some(2)];
+        // Prose/heading rows: no widening even though the map has adjacent
+        // same-work-line runs elsewhere — the caller's is_verse gate wins.
+        assert_eq!(verse_block_range(&b2w, 0, false), None);
+        assert_eq!(verse_block_range(&b2w, 5, false), None);
+        assert_eq!(verse_block_range(&b2w, 3, false), None);
+    }
+
+    #[test]
+    fn no_line_map_or_unmapped_line_falls_through() {
+        // No line_map (empty map, is_verse forced false by the caller when
+        // state.line_map is None) — verse_block_lines_for_cursor short-circuits
+        // on the `?` before ever calling verse_block_range, but verse_block_range
+        // itself must still be a safe no-op on an empty/degenerate map.
+        assert_eq!(verse_block_range(&[], 0, true), Some((0, 0)));
+        assert_eq!(verse_block_range(&[], 0, false), None);
     }
 }
