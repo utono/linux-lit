@@ -790,6 +790,16 @@ pub(crate) fn apply_char_range_tag(
         }
         e.line_offset().max(0) as usize
     };
+    // Inline italics (Phase B) may have removed `_` from THIS buffer line, so the
+    // DB span (source-relative) must shift to the stripped display offset. Empty
+    // map entry (non-italic line, or a work without italics) = identity.
+    let (start_char, end_char) = match s.italic_offset_map.get(&bl) {
+        Some(removed) => (
+            crate::app::italics::translate_offset(removed, start_char),
+            crate::app::italics::translate_offset(removed, end_char),
+        ),
+        None => (start_char, end_char),
+    };
     let sc = start_char.min(line_chars);
     let ec = end_char.min(line_chars).max(sc);
     if ec == sc {
