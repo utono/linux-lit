@@ -23,20 +23,6 @@ pub fn is_prose_work(work_type: &str) -> bool {
     PROSE_TYPES.contains(&work_type)
 }
 
-/// Collapse a work's `work_type` into one of three ask-card size buckets:
-/// `"prose"` (any prose type), `"play"` (exactly `work_type == "play"`), or
-/// `"verse"` (everything else — sonnets, poems, anthologies, BCP, ...). Used to
-/// key the per-work-type ask-card fill fraction (`Config::ask_fill_fraction_by_type`).
-pub fn work_class(work_type: &str) -> &'static str {
-    if is_prose_work(work_type) {
-        "prose"
-    } else if work_type == "play" {
-        "play"
-    } else {
-        "verse"
-    }
-}
-
 pub fn is_blank(text: &str) -> bool {
     text.trim().is_empty()
 }
@@ -480,24 +466,6 @@ mod tests {
         assert!(is_prose_work("prose"));
         assert!(!is_prose_work("play"));
         assert!(!is_prose_work("poem"));
-    }
-
-    #[test]
-    fn test_work_class() {
-        // Every prose type buckets to "prose".
-        assert_eq!(work_class("novel"), "prose");
-        assert_eq!(work_class("essay_collection"), "prose");
-        assert_eq!(work_class("prose_book"), "prose");
-        assert_eq!(work_class("prose"), "prose");
-        // Only the literal "play" buckets to "play".
-        assert_eq!(work_class("play"), "play");
-        // Everything else is verse-like.
-        assert_eq!(work_class("sonnet_sequence"), "verse");
-        assert_eq!(work_class("anthology"), "verse");
-        assert_eq!(work_class("poem"), "verse");
-        assert_eq!(work_class("sonnet"), "verse");
-        assert_eq!(work_class("BCP"), "verse");
-        assert_eq!(work_class("unknown_future_type"), "verse");
     }
 
     #[test]

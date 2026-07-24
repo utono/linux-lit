@@ -759,15 +759,13 @@ fn show_prompt_dialog(state_rc: &Rc<RefCell<AppState>>, mode: crate::app::GlossP
         s.ask_card_focus = true;
     }
     {
-        let mut s = state_rc.borrow_mut();
-        let frac = s.ask_fill_fraction();
+        let s = state_rc.borrow();
         s.gloss_overlay.open_ask_card_with(
             title_text,
             hint_text,
             legend_text,
             &s.theme.cursor_bg,
             &s.theme.cursor_fg,
-            frac,
         );
     }
 }

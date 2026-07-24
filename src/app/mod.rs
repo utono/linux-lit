@@ -924,33 +924,6 @@ impl AppState {
             .unwrap_or(false)
     }
 
-    /// Effective ask-card fill fraction for the CURRENT work's class, ALSO
-    /// remembering it in config under that class key so the next ask of the same
-    /// class reopens at it. Returns the compiled per-class default when no work
-    /// is loaded (verse-like fallback).
-    ///
-    /// NOTE (persist-on-close semantics): there is no drag-to-resize UI, so the
-    /// "effective" fraction is exactly what was looked up on open (a stored value
-    /// or the compiled default). Storing it here on every open is idempotent and
-    /// populates `ask_fill_fraction_by_type` for the class; the normal exit
-    /// `config::save()` writes it (this map rides the ours-wins `merge_configs`
-    /// clone path, like `root_variants`, so no `mark_work_dirty` is needed).
-    /// TODO: if a resize handle is ever added, write the ADJUSTED fraction back
-    /// on close instead of re-storing the lookup value on open.
-    pub fn ask_fill_fraction(&mut self) -> f32 {
-        let work_type = self
-            .current_work
-            .as_ref()
-            .map(|w| w.work_type.clone())
-            .unwrap_or_default();
-        let frac = self.config.ask_fill_fraction_for(&work_type);
-        let class = crate::db::line_types::work_class(&work_type);
-        self.config
-            .ask_fill_fraction_by_type
-            .insert(class.to_string(), frac);
-        frac
-    }
-
     /// True only for a play (`work_type == "play"`). Distinct from `!is_prose()`,
     /// which also matches poem / sonnet_sequence / anthology. Used to decide
     /// whether the `+` chapter toast persists.

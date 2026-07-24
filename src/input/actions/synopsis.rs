@@ -35,19 +35,17 @@ similar paragraph structure. Output ONLY the <p>-tagged paragraphs, nothing else
 /// card, edit framing). On Ctrl+Enter the typed instruction is sent to Claude
 /// with the structural-editor prompt. No-op if a card is already open.
 pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
-    let mut s = state_rc.borrow_mut();
+    let s = state_rc.borrow();
     if s.gloss_overlay.ask_is_open() {
         return;
     }
     let scene = s.synopsis_overlay_scene;
-    let frac = s.ask_fill_fraction();
     s.gloss_overlay.open_ask_card_with(
         "Edit this scene",
         "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Ctrl+Enter submit",
         "",
         &s.theme.cursor_bg,
         &s.theme.cursor_fg,
-        frac,
     );
     drop(s);
     let mut s = state_rc.borrow_mut();
