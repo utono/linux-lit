@@ -205,3 +205,108 @@ pub fn prepare_text_for_display(work: &Work) -> Option<PreparedText> {
         is_prose,
     })
 }
+
+/// Buffer lines + mapping + per-line indent tier for a block-aware work.
+pub struct BlockBuffer {
+    pub buf_lines: Vec<String>,
+    pub source_index: Vec<usize>,
+    pub indent_tiers: Vec<u8>,
+}
+
+/// Leading-space count -> indent tier (0/1/2). 0 spaces = tier 0, 1-2 = tier 1,
+/// 3+ = tier 2. Matches the producer's 2-space `&nbsp;&nbsp;` tiers with slack.
+/// Returns (tier, leading_space_byte_count) — spaces are ASCII so byte==char.
+fn leading_space_tier(line: &str) -> (u8, usize) {
+    let n = line.chars().take_while(|c| *c == ' ').count();
+    let tier = if n == 0 { 0 } else if n <= 2 { 1 } else { 2 };
+    (tier, n)
+}
+
+/// Splits verse rows on embedded `\n` into display lines, strips leading
+/// spaces (recording an indent tier per line), and produces the
+/// `source_index` that `build_line_map_blocks` (src/text_file_map.rs)
+/// consumes to map buffer lines back to DB rows. Emits every work-line
+/// index exactly once, in order — the non-decreasing/full-coverage
+/// precondition `build_line_map_blocks` relies on.
+pub fn prepare_block_buffer(work_lines: &[crate::db::models::Line]) -> BlockBuffer {
+    let mut buf_lines = Vec::new();
+    let mut source_index = Vec::new();
+    let mut indent_tiers = Vec::new();
+    for (wi, l) in work_lines.iter().enumerate() {
+        if crate::db::line_types::is_verse_line(&l.block_type) {
+            for vline in l.text.split('\n') {
+                let (tier, n) = leading_space_tier(vline);
+                buf_lines.push(vline[n..].to_string()); // strip leading spaces
+                source_index.push(wi);
+                indent_tiers.push(tier);
+            }
+        } else {
+            buf_lines.push(l.text.clone());
+            source_index.push(wi);
+            indent_tiers.push(0);
+        }
+    }
+
+    // Contract guarantee for build_line_map_blocks's consumer precondition:
+    // every work-line index appears at least once, and source_index never
+    // decreases. A violation here would silently misalign (or panic) the
+    // consumer, so fail fast in debug builds.
+    debug_assert_eq!(
+        source_index.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        work_lines.len(),
+        "prepare_block_buffer must emit every work-line index"
+    );
+    debug_assert!(
+        source_index.windows(2).all(|w| w[0] <= w[1]),
+        "source_index must be non-decreasing"
+    );
+
+    BlockBuffer { buf_lines, source_index, indent_tiers }
+}
+
+#[cfg(test)]
+mod block_buffer_tests {
+    use super::*;
+    use crate::db::models::Line;
+
+    fn mk(bt: &str, txt: &str) -> Line {
+        Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue: false, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter: false, is_spoken: None,
+            block_type: bt.into(),
+        }
+    }
+
+    #[test]
+    fn prepare_block_buffer_splits_verse_and_tiers_indent() {
+        let work = vec![
+            mk("prose", "Ordinary prose."),
+            mk("verse", "l1\n  l2\n    l3"),   // tiers 0, 1, 2
+            mk("heading", "MELIBOEUS."),
+        ];
+        let b = prepare_block_buffer(&work);
+        assert_eq!(b.buf_lines, vec![
+            "Ordinary prose.", "l1", "l2", "l3", "MELIBOEUS.",
+        ]);
+        assert_eq!(b.source_index, vec![0, 1, 1, 1, 2]);
+        assert_eq!(b.indent_tiers, vec![0, 0, 1, 2, 0]);
+    }
+
+    #[test]
+    fn prepare_block_buffer_source_index_covers_every_row_non_decreasing() {
+        // mix of prose + a multi-line verse + a heading
+        let work = vec![
+            mk("prose", "Opening prose."),
+            mk("verse", "a\n  b\n    c\nd"),
+            mk("heading", "SCENE I."),
+            mk("prose", "Closing prose."),
+        ];
+        let b = prepare_block_buffer(&work);
+        // non-decreasing
+        assert!(b.source_index.windows(2).all(|w| w[0] <= w[1]));
+        // distinct count == input row count (every work-line index emitted exactly once)
+        let distinct: std::collections::BTreeSet<_> = b.source_index.iter().collect();
+        assert_eq!(distinct.len(), work.len());
+    }
+}
