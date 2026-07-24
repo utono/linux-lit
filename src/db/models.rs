@@ -60,6 +60,10 @@ pub struct Line {
     /// Whether this line is spoken in the active media file.
     /// None = no spoken-status data (treat as spoken). Some(false) = skip on dialogue nav.
     pub is_spoken: Option<bool>,
+    /// Typography class from `line_mapping.block_type`:
+    /// `"prose"` (default), `"verse"` (embedded `\n`, leading-space indent),
+    /// or `"heading"` (centered). Drives the block-aware buffer-fill + formatting.
+    pub block_type: String,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -177,6 +177,35 @@ pub fn tint_range(
     }
 }
 
+/// Given `buffer_to_work` and an active buffer line, return the `[start, end)`
+/// buffer-line range of the contiguous run sharing the same source work-line
+/// index as `active`. For a verse row split into N buffer lines this is the
+/// whole block; for a 1:1 row it is a single line. Used to tint a verse block
+/// as one unit rather than only its active buffer line.
+pub(crate) fn block_buffer_range(
+    buffer_to_work: &[Option<usize>],
+    active: usize,
+) -> (usize, usize) {
+    // Out-of-range active line: no block to tint. Return an empty range at the
+    // clamped end so callers iterate nothing (a `for l in bs..be` no-ops when
+    // bs == be) rather than spinning — the `end` loop below would otherwise
+    // never terminate, since get(end) keeps yielding None == the None `src`.
+    let n = buffer_to_work.len();
+    if active >= n {
+        return (n, n);
+    }
+    let src = buffer_to_work.get(active).copied().flatten();
+    let mut start = active;
+    while start > 0 && buffer_to_work.get(start - 1).copied().flatten() == src {
+        start -= 1;
+    }
+    let mut end = active + 1;
+    while end < n && buffer_to_work.get(end).copied().flatten() == src {
+        end += 1;
+    }
+    (start, end)
+}
+
 /// Text of buffer line `bl` (no trailing newline). Empty when out of range.
 pub(crate) fn buffer_line_text(s: &AppState, bl: usize) -> String {
     let buffer = &s.buffer;
@@ -423,6 +452,36 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
     };
     if s.active_phrase == Some((bl, span_idx)) {
         return;
+    }
+    // Verse block: one timestamp (one line_mapping row) can span several
+    // buffer lines (long verse rows are split for wrap/typography). In Line
+    // mode, widen the existing whole-line tint from just `bl` to every buffer
+    // line in the block, so the whole verse unit lights up together instead
+    // of only the buffer line the split landed on. Prose/heading rows (and
+    // Phrase mode) are unaffected and fall through to the single-line path
+    // below unchanged. `None` at any step (unmapped line, no line_map, no
+    // current_work) falls through too — never panics.
+    if mode == PhraseHighlightMode::Line && !s.is_prose() {
+        let is_verse_active = s.line_map.as_ref().and_then(|lm| {
+            lm.buffer_to_work
+                .get(bl)
+                .copied()
+                .flatten()
+                .and_then(|wi| s.current_work.as_ref()?.lines.get(wi))
+                .map(|l| crate::db::line_types::is_verse_line(&l.block_type))
+        });
+        if is_verse_active == Some(true) {
+            let (bs, be) = block_buffer_range(&s.line_map.as_ref().unwrap().buffer_to_work, bl);
+            let tag = s.phrase_tag.clone();
+            let (buf_start, buf_end) = s.buffer.bounds();
+            s.buffer.remove_tag(&tag, &buf_start, &buf_end);
+            for line in bs..be {
+                let line_text = buffer_line_text(s, line);
+                apply_char_range_tag(s, &tag, line, 0, line_text.chars().count());
+            }
+            s.active_phrase = Some((bl, span_idx));
+            return;
+        }
     }
     let line_text = buffer_line_text(s, bl);
     let (sc, ec) = tint_range(mode, s.is_prose(), &line_text, span);
@@ -943,6 +1002,24 @@ mod tests {
         // strict rule.
         assert_eq!(cross_line_pick(&[], Some(902.0), 897.945, true), Some(902.0));
         assert_eq!(cross_line_pick(&[], Some(897.945), 897.945, true), None);
+    }
+
+    #[test]
+    fn verse_block_range_covers_all_split_lines() {
+        // buffer_to_work: line 0 prose(row0), 1-4 verse(row1), 5 heading(row2)
+        let b2w = vec![Some(0usize), Some(1), Some(1), Some(1), Some(1), Some(2)];
+        // active on any verse buffer line -> full [1,5) range
+        assert_eq!(block_buffer_range(&b2w, 3), (1, 5));
+        assert_eq!(block_buffer_range(&b2w, 1), (1, 5));
+        // active on a non-verse line -> single-line range
+        assert_eq!(block_buffer_range(&b2w, 0), (0, 1));
+        assert_eq!(block_buffer_range(&b2w, 5), (5, 6));
+        // out-of-range active line -> empty range at the end, no hang, no panic
+        // (guards a future caller from the None==None infinite loop).
+        assert_eq!(block_buffer_range(&b2w, 6), (6, 6));
+        assert_eq!(block_buffer_range(&b2w, 99), (6, 6));
+        // empty map -> empty range at 0.
+        assert_eq!(block_buffer_range(&[], 0), (0, 0));
     }
 
     #[test]

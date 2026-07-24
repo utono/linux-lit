@@ -102,6 +102,15 @@ pub(crate) fn apply_dialogue_formatting(state: &mut AppState) {
         return;
     }
 
+    // Block-aware works (verse/heading typography, e.g. LoJ) render their own
+    // per-line tags via apply_block_typography. apply_dialogue_formatting's
+    // all-line dialogue-indent fallback would override the verse tiers (its tag
+    // is added later => higher priority), flattening the indent. Such works have
+    // no genuine dialogue/speakers, so skip this pass entirely.
+    if !state.block_indent_tiers.is_empty() {
+        return;
+    }
+
     // One section per page (sonnet_sequence): center the bare stanza-number
     // headings over the centered block (the text region is symmetric, set in
     // apply_tiled_mode). Verse lines keep the default left justification.
@@ -608,5 +617,105 @@ pub(crate) fn apply_authorship_formatting(state: &mut AppState) {
             };
             state.buffer.apply_tag(&state.authorship_tag, &line_start, &line_end);
         }
+    }
+}
+
+// Verse indent tiers (left_margin in px; base = prose-ish inset, +step per
+// tier). left_margin is used (not TextTag indent / justify) because GTK
+// collapses leading whitespace and indent/justify render unreliably
+// (project convention — see the "Fill justification" note above).
+fn verse_margin_px(tier: u8) -> i32 {
+    let base = 48; // verse block inset from the card's text start
+    let step = 32; // per-tier additional indent
+    base + step * tier as i32
+}
+
+/// Idempotently ensure the block-typography tags exist on the buffer's tag
+/// table: `verse-indent-{0,1,2}` (per-tier left_margin), `verse-stanza-gap`
+/// (space above the first line of a verse block), and `block-heading-center`
+/// (centered small-caps, for heading rows). Creation is kept in this single
+/// place so `apply_block_typography` never creates duplicate-named tags.
+fn ensure_block_typography_tags(state: &AppState) {
+    let tag_table = state.buffer.tag_table();
+
+    for tier in 0u8..=2 {
+        let name = format!("verse-indent-{tier}");
+        if tag_table.lookup(&name).is_none() {
+            let tag = gtk4::TextTag::builder()
+                .name(&name)
+                .left_margin(verse_margin_px(tier))
+                .build();
+            tag_table.add(&tag);
+        }
+    }
+
+    if tag_table.lookup("verse-stanza-gap").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("verse-stanza-gap")
+            .pixels_above_lines(12)
+            .build();
+        tag_table.add(&tag);
+    }
+
+    // Centered small-caps heading. The small-caps property is copied verbatim
+    // from the "speaker-name" tag above (`.variant(pango::Variant::SmallCaps)`)
+    // — NOT a "font-features" string — plus centered justification, matching
+    // how "stanza-number-center" sets Center in this same file.
+    if tag_table.lookup("block-heading-center").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("block-heading-center")
+            .justification(gtk4::Justification::Center)
+            .variant(pango::Variant::SmallCaps)
+            .build();
+        tag_table.add(&tag);
+    }
+}
+
+/// Tag verse lines (per-tier left_margin + stanza gap) and heading rows
+/// (centered small-caps) for a block-aware work. No-op when
+/// `block_indent_tiers` is empty (every non-block work).
+pub fn apply_block_typography(state: &mut AppState) {
+    if state.block_indent_tiers.is_empty() {
+        return;
+    }
+    let Some(work) = state.current_work.clone() else { return };
+    let Some(map) = state.line_map.clone() else { return };
+
+    ensure_block_typography_tags(state);
+
+    let buffer_line_count = state.buffer.line_count() as usize;
+    let mut prev_src: Option<usize> = None;
+    for bl in 0..buffer_line_count.min(map.buffer_to_work.len()) {
+        let Some(wi) = map.buffer_to_work[bl] else { continue };
+        let Some(line) = work.lines.get(wi) else { continue };
+        let bt = line.block_type.as_str();
+
+        let Some(start) = state.buffer.iter_at_line(bl as i32) else { continue };
+        // `left_margin` is a paragraph property: a tag range that stops before
+        // the line's `\n` (as `forward_to_line_end()` does) does NOT mark the
+        // paragraph, so left_margin silently no-ops. Build `end` as the START
+        // of the NEXT buffer line (i.e. past this line's terminator) instead —
+        // the same idiom apply_dialogue_formatting uses above.
+        let end = if bl + 1 < buffer_line_count {
+            match state.buffer.iter_at_line((bl + 1) as i32) {
+                Some(iter) => iter,
+                None => state.buffer.end_iter(),
+            }
+        } else {
+            state.buffer.end_iter()
+        };
+
+        if crate::db::line_types::is_verse_line(bt) {
+            let tier = state.block_indent_tiers.get(bl).copied().unwrap_or(0);
+            state
+                .buffer
+                .apply_tag_by_name(&format!("verse-indent-{tier}"), &start, &end);
+            if prev_src != Some(wi) {
+                state.buffer.apply_tag_by_name("verse-stanza-gap", &start, &end);
+            }
+        } else if crate::db::line_types::is_heading_line(bt) {
+            state.buffer.apply_tag_by_name("block-heading-center", &start, &end);
+        }
+        prev_src = Some(wi);
     }
 }

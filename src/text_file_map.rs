@@ -235,6 +235,67 @@ pub fn build_line_map_bcp(
     }
 }
 
+/// Build a LineMap for a block-aware work (verse rows split into N buffer lines).
+/// Same 1:1-per-group contract as `build_line_map_bcp`: `source_index[b]` is the
+/// work-line index that buffer line `b` belongs to, non-decreasing, every work
+/// line present. Verse rows contribute several consecutive buffer lines sharing
+/// one source index; prose/heading rows contribute one.
+pub fn build_line_map_blocks(
+    file_lines: &[String],
+    source_index: &[usize],
+    work_lines: &[Line],
+) -> LineMap {
+    assert_eq!(file_lines.len(), source_index.len());
+    let n_split = file_lines.len();
+    let n_work = work_lines.len();
+
+    let mut collapsed_first_split: Vec<usize> = Vec::with_capacity(n_work);
+    let mut buffer_to_work: Vec<Option<usize>> = vec![None; n_split];
+    {
+        let mut i = 0usize;
+        while i < n_split {
+            let src = source_index[i];
+            collapsed_first_split.push(i);
+            let mut j = i;
+            while j < n_split && source_index[j] == src {
+                buffer_to_work[j] = Some(src);
+                j += 1;
+            }
+            i = j;
+        }
+    }
+    debug_assert_eq!(collapsed_first_split.len(), n_work);
+
+    let work_to_buffer: Vec<usize> = (0..n_work)
+        .map(|wi| collapsed_first_split.get(wi).copied().unwrap_or(0))
+        .collect();
+
+    let mut dialogue_buffer_lines: Vec<usize> = Vec::new();
+    for (split_idx, w) in buffer_to_work.iter().enumerate() {
+        if let Some(wi) = w {
+            if work_lines[*wi].is_dialogue {
+                dialogue_buffer_lines.push(split_idx);
+            }
+        }
+    }
+
+    let mut chapter_breaks: Vec<usize> = Vec::new();
+    for (wi, l) in work_lines.iter().enumerate() {
+        if l.is_chapter {
+            chapter_breaks.push(collapsed_first_split[wi]);
+        }
+    }
+
+    LineMap {
+        buffer_to_work,
+        work_to_buffer,
+        dialogue_buffer_lines,
+        sentence_groups: Vec::new(),
+        chapter_breaks,
+        section_starts: vec![false; n_split],
+    }
+}
+
 /// Build a bidirectional map between `file_lines` (raw lines from a plain-text
 /// file) and `work_lines` (DB rows for a work).
 ///
@@ -1226,6 +1287,7 @@ mod tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
@@ -1246,6 +1308,7 @@ mod tests {
             sub_line,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
@@ -1933,6 +1996,7 @@ mod tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
@@ -2082,7 +2146,7 @@ mod tests {
             normalized: super::normalize(text), speaker: None,
             is_dialogue: dialogue, timestamp: None, div1: 1, div2: 4,
             line_in_div: if id < 4 { 43 } else { 44 }, sub_line: sub,
-            is_chapter: false, is_spoken: None,
+            is_chapter: false, is_spoken: None, block_type: "prose".to_string(),
         };
         let work_lines = vec![
             mk(1, "Lay hands upon these traitors and their trash.", 0, true),
@@ -2136,6 +2200,128 @@ mod tests {
         assert_eq!(map.buffer_to_work[4], Some(4));
         assert_eq!(map.buffer_to_work[5], Some(4), "prayer's 2nd sentence shares its row");
         assert_eq!(map.work_to_buffer[4], 4, "prayer canonical = first sentence line");
+    }
+
+    #[test]
+    fn build_line_map_blocks_splits_verse_row_maps_back() {
+        // work rows: 0 prose, 1 verse (4 visual lines), 2 heading, 3 prose
+        let mk = |bt: &str, txt: &str| Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue: false, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter: false, is_spoken: None,
+            block_type: bt.into(),
+        };
+        let work = vec![
+            mk("prose", "Ordinary prose."),
+            mk("verse", "l1\n  l2\n  l3\nl4"),
+            mk("heading", "MELIBOEUS."),
+            mk("prose", "After the verse."),
+        ];
+        // buffer as the producer would emit it (verse split, spaces already stripped
+        // for display — but mapping only cares about source_index):
+        let file_lines: Vec<String> = vec![
+            "Ordinary prose.".into(),
+            "l1".into(), "l2".into(), "l3".into(), "l4".into(),
+            "MELIBOEUS.".into(),
+            "After the verse.".into(),
+        ];
+        let source_index: Vec<usize> = vec![0, 1, 1, 1, 1, 2, 3];
+
+        let m = build_line_map_blocks(&file_lines, &source_index, &work);
+
+        // every verse buffer line maps back to work row 1
+        assert_eq!(m.buffer_to_work[1], Some(1));
+        assert_eq!(m.buffer_to_work[2], Some(1));
+        assert_eq!(m.buffer_to_work[3], Some(1));
+        assert_eq!(m.buffer_to_work[4], Some(1));
+        // work_to_buffer points each row at its FIRST buffer line (sync/u-. anchor)
+        assert_eq!(m.work_to_buffer[0], 0);
+        assert_eq!(m.work_to_buffer[1], 1);
+        assert_eq!(m.work_to_buffer[2], 5);
+        assert_eq!(m.work_to_buffer[3], 6);
+        // buffer line count == expanded lines
+        assert_eq!(m.buffer_to_work.len(), 7);
+
+        // --- Field length/content assertions (2) ---
+        // section_starts is sized to the BUFFER line count (n_split), not the
+        // work-row count (n_work=4) — a future edit that sources this vec's
+        // length from n_work instead would silently under/over-allocate.
+        assert_eq!(m.section_starts.len(), 7, "section_starts must be sized to buffer lines, not work rows");
+        assert!(m.section_starts.iter().all(|&b| !b), "build_line_map_blocks never marks section starts");
+        assert!(m.sentence_groups.is_empty(), "sentence_groups is prose-only; blocks builder never populates it");
+    }
+
+    #[test]
+    fn build_line_map_blocks_dialogue_and_chapter_flags() {
+        // work rows: 0 prose (plain), 1 verse dialogue (3 visual lines), 2 heading (chapter), 3 prose
+        let mk = |bt: &str, txt: &str, is_dialogue: bool, is_chapter: bool| Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter, is_spoken: None,
+            block_type: bt.into(),
+        };
+        let work = vec![
+            mk("prose", "Ordinary prose.", false, false),
+            mk("verse", "l1\n  l2\n  l3", true, false),
+            mk("heading", "MELIBOEUS.", false, true),
+            mk("prose", "After the verse.", false, false),
+        ];
+        let file_lines: Vec<String> = vec![
+            "Ordinary prose.".into(),
+            "l1".into(), "l2".into(), "l3".into(),
+            "MELIBOEUS.".into(),
+            "After the verse.".into(),
+        ];
+        // indices:                0            1      2      3            4              5
+        let source_index: Vec<usize> = vec![0, 1, 1, 1, 2, 3];
+
+        let m = build_line_map_blocks(&file_lines, &source_index, &work);
+
+        // Every split buffer line belonging to the dialogue verse row (indices 1,2,3)
+        // must appear in dialogue_buffer_lines, and nothing else.
+        assert_eq!(m.dialogue_buffer_lines, vec![1, 2, 3]);
+
+        // The chapter row (work row 2) is buffer index 4 (its first, and only,
+        // buffer line). chapter_breaks must contain exactly that index.
+        assert_eq!(m.chapter_breaks, vec![4]);
+    }
+
+    #[test]
+    fn build_line_map_blocks_adjacent_verse_rows_no_gap() {
+        // Two back-to-back multi-line verse rows with no non-verse row between
+        // them. This exercises the `while j < n_split && source_index[j] == src`
+        // advance across a block boundary where the source index changes on the
+        // very next split line (a `<` vs `<=` off-by-one would either leak the
+        // next block's first line into the previous block, or drop the first
+        // line of the next block).
+        let mk = |txt: &str| Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue: false, timestamp: None, div1: 1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter: false, is_spoken: None,
+            block_type: "verse".into(),
+        };
+        let work = vec![
+            mk("a1\na2"), // work row 0: verse, 2 split lines, source index 0
+            mk("b1\nb2"), // work row 1: verse, 2 split lines, source index 1
+        ];
+        let file_lines: Vec<String> = vec![
+            "a1".into(), "a2".into(), "b1".into(), "b2".into(),
+        ];
+        let source_index: Vec<usize> = vec![0, 0, 1, 1];
+
+        let m = build_line_map_blocks(&file_lines, &source_index, &work);
+
+        // Row 0's block (buffer 0,1) must map ONLY to row 0.
+        assert_eq!(m.buffer_to_work[0], Some(0));
+        assert_eq!(m.buffer_to_work[1], Some(0));
+        // Row 1's block (buffer 2,3) must map ONLY to row 1 — none of it leaks
+        // back into row 0, and row 0 doesn't overrun into it.
+        assert_eq!(m.buffer_to_work[2], Some(1));
+        assert_eq!(m.buffer_to_work[3], Some(1));
+
+        // work_to_buffer anchors each row at its own first buffer line.
+        assert_eq!(m.work_to_buffer[0], 0);
+        assert_eq!(m.work_to_buffer[1], 2);
     }
 
     /// Regression for the folded-SD coloring bug: build the map through the SAME
@@ -2196,6 +2382,7 @@ mod mark_chapter_starts_tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 

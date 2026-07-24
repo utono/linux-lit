@@ -321,6 +321,39 @@ established response to "buffer diverges from timestamp granularity" is to DISAB
 - Verse in prose stays narrated at BLOCK (stanza) granularity — no per-verse-line
   timestamps (Facet-2 non-goal, unchanged).
 
+#### 4a. CURSOR tint is line-by-line; whole-block is a KARAOKE-only idea (decided 2026-07-24)
+
+Iteration history (kept as a lesson): the build first put whole-block tint only
+in the karaoke path (`phrase_highlight.rs`); on-screen testing showed that path
+never fires for LoJ's default Karaoke mode (no phrase spans in trial data →
+`spans=0`). A follow-up then widened the CURSOR-line path (`highlight.rs`) to
+whole-block too — which rendered, but revealed the real problem:
+
+**Whole-block cursor tint is WRONG for long verse.** A short block (a 4-line
+epitaph) reads fine as one lit unit, but a page-filling verse passage (e.g. the
+multi-stanza Virgil eclogue in LoJ ch.1) is ALSO one `block_type='verse'` run —
+often ONE `line_mapping` row — so whole-block tint floods the entire page and,
+because the block is a single unit, the highlight never MOVES as the reader
+descends the poem. A cursor-line indicator exists to show WHERE YOU ARE; one line
+at a time is exactly its job. A short-vs-long threshold was considered and
+rejected (arbitrary line-count magic number, wrong at the boundary).
+
+**Decision:**
+- **Cursor-line mode → LINE-BY-LINE on verse, always.** Same as prose and plays.
+  The whole-block cursor widening in `highlight.rs` is REVERTED. This also
+  dissolves the ragged-indent highlight problem (a single line's tint needs no
+  multi-line rectangle to align under the per-tier `left_margin`).
+- **Karaoke (playback) tint → whole-block MAY remain** (`phrase_highlight.rs`,
+  Task 7 code, kept). Rationale: audio narrates the block as one timed unit, so
+  lighting the whole block tracks the audio correctly — a DIFFERENT question from
+  cursor navigation. It is currently unexercisable (LoJ trial data has no phrase
+  timing); revisit if/when phrase-timed verse exists. If playback whole-block
+  also reads wrong on real audio, make it line-by-line too in a later change.
+
+Lesson: "whole-block" conflated the audio model (one timestamp = one narrated
+unit) with the cursor model (show my position). They are separate; only the audio
+model motivates whole-block.
+
 ### 5. Heading style — uniform (decided)
 
 All `block_type='heading'` rows render identically (centered small-caps). The

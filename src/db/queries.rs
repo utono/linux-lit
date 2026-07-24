@@ -171,7 +171,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
 
     // 2. Load all lines
     let mut line_stmt = conn.prepare(
-        "SELECT id, canonical_text, normalized_text, speaker, div1, div2, line_in_div, sub_line \
+        "SELECT id, canonical_text, normalized_text, speaker, div1, div2, line_in_div, sub_line, COALESCE(block_type,'prose') \
          FROM line_mapping WHERE work_abbrev = ?1 \
          ORDER BY div1, div2, line_in_div, sub_line",
     )?;
@@ -184,6 +184,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
             let div2: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(0);
             let line_in_div: i64 = row.get(6)?;
             let sub_line: i64 = row.get(7)?;
+            let block_type: String = row.get(8)?;
             let citation = crate::db::models::citation(abbrev, div1, div2, line_in_div);
             Ok(Line {
                 id: row.get(0)?,
@@ -200,6 +201,7 @@ pub fn load_work(conn: &Connection, abbrev: &str) -> Result<Work, rusqlite::Erro
                 sub_line,
                 is_chapter: false,
                 is_spoken: None,
+                block_type,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -2407,6 +2409,39 @@ pub fn next_start_after(conn: &Connection, media_id: i64, t: f64) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_work_reads_block_type() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE works (abbrev TEXT PRIMARY KEY, title TEXT, author TEXT, \
+                 work_type TEXT, text_file TEXT, vocab_highlight INTEGER, image_dir TEXT);
+             CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, work_abbrev TEXT, \
+                 canonical_text TEXT, normalized_text TEXT, speaker TEXT, div1 INTEGER, \
+                 div2 INTEGER, line_in_div INTEGER, sub_line INTEGER, \
+                 block_type TEXT NOT NULL DEFAULT 'prose');
+             CREATE TABLE line_timestamps (id INTEGER PRIMARY KEY, citation TEXT, \
+                 line_mapping_id INTEGER, media_id INTEGER, start_time REAL, end_time REAL, \
+                 source TEXT, is_track_mark INTEGER DEFAULT 0, sentence_start_time REAL, \
+                 sentence_end_time REAL, created_at TEXT, updated_at TEXT, \
+                 UNIQUE(line_mapping_id, media_id));
+             CREATE TABLE media_files (id INTEGER PRIMARY KEY, path TEXT);
+             CREATE TABLE work_media_associations (work_abbrev TEXT, media_id INTEGER, priority INTEGER);
+             INSERT INTO works VALUES ('T','t','a','prose_book',NULL,NULL,NULL);
+             INSERT INTO line_mapping (id,work_abbrev,canonical_text,normalized_text,\
+                 speaker,div1,div2,line_in_div,sub_line,block_type) VALUES \
+                 (1,'T','Ordinary.','ordinary',NULL,1,0,1,0,'prose'),\
+                 (2,'T','Line one,\n  Line two;','line one line two',NULL,1,0,2,0,'verse'),\
+                 (3,'T','MELIBOEUS.','meliboeus',NULL,1,0,3,0,'heading');",
+        )
+        .unwrap();
+        let work = load_work(&conn, "T").unwrap();
+        assert_eq!(work.lines[0].block_type, "prose");
+        assert_eq!(work.lines[1].block_type, "verse");
+        assert_eq!(work.lines[2].block_type, "heading");
+        // verse row keeps its embedded newline in text
+        assert!(work.lines[1].text.contains('\n'));
+    }
 
     #[test]
     fn normalize_segment_tags_rewrites_legacy_verse() {
