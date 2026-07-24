@@ -1341,7 +1341,6 @@ pub fn generate_css(
            border-left: 4px solid {cursor_bg}; \
            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
          .ask-card.card-dimmed {{ opacity: 0.55; }} \
-         .card-unfocused {{ opacity: 0.55; }} \
          .definition-panel {{ background-color: {bg}; color: {fg}; \
            border-radius: 12px; padding: 20px 24px; }} \
          .vocab-popup {{ background-color: {root}; color: {vocab_popup_fg}; \

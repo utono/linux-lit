@@ -61,6 +61,10 @@ pub struct GlossOverlay {
     gloss_scrolled: gtk4::ScrolledWindow,
     gloss_view: gtk4::TextView,
     bar_drawing: gtk4::DrawingArea,
+    /// Whether the doc card's accent bar is drawn (see the `bar_drawing` draw
+    /// func). Hidden while the ask card is the active surface in the 2-col float
+    /// — the doc card's inactive cue. Toggled by `set_doc_accent_active`.
+    bar_active: Rc<Cell<bool>>,
     panel_drawing: gtk4::DrawingArea,
     /// Owns the clip Box pinned to the bottom of the gloss viewport and all three
     /// recompute paths (value_changed catch-all, reset_scroll_top range+idle,
@@ -374,6 +378,13 @@ impl GlossOverlay {
         let echo_lines: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
         let blocks: Rc<RefCell<Vec<BlockRange>>> = Rc::new(RefCell::new(Vec::new()));
 
+        // Whether the gloss (doc) card's accent bar is drawn. False while the ask
+        // card holds focus in the 2-col float: the hidden bar is the doc card's
+        // inactive cue (replacing the old dim). The page marker stays drawn; only
+        // the vim block cursor, selection spans, and line numbers are gated. Set
+        // by `set_doc_accent_active`.
+        let bar_active: Rc<Cell<bool>> = Rc::new(Cell::new(true));
+
         let ranges_clone = bar_ranges.clone();
         let color_clone = bar_color.clone();
         let bar_x_clone = bar_x.clone();
@@ -382,6 +393,7 @@ impl GlossOverlay {
         let vim_block_clone = vim_block_line.clone();
         let marker_glyph_clone = marker_glyph.clone();
         let marker_color_clone = marker_color.clone();
+        let bar_active_clone = bar_active.clone();
         let block_left_margin = text_margins as i32;
         let right_margin_val = right_margin;
         bar_drawing.set_draw_func(move |_area, cr, w, _h| {
@@ -390,7 +402,8 @@ impl GlossOverlay {
             let x = *bar_x_clone.borrow() as f64;
 
             // Page marker (⌄/•) drawn just below the last line — no Label, so no
-            // overlay-child allocation lag.
+            // overlay-child allocation lag. Drawn regardless of the accent-bar
+            // active flag, so the ⌄/• cue survives while the doc card is inactive.
             crate::ui::draw_page_marker_glyph(
                 cr,
                 &view_clone,
@@ -400,6 +413,12 @@ impl GlossOverlay {
                 0.55,
                 8,
             );
+
+            // Accent bar (vim block cursor + selection spans + line numbers) is
+            // the doc card's focus cue: skip it while the ask card is active.
+            if !bar_active_clone.get() {
+                return;
+            }
 
             // Vim block cursor on a BLANK line (shared draw; same coord path as
             // the accent bar / line numbers below).
@@ -690,6 +709,7 @@ impl GlossOverlay {
             gloss_scrolled,
             gloss_view,
             bar_drawing,
+            bar_active,
             panel_drawing,
             clip_guard,
             bar_ranges,
@@ -1487,26 +1507,27 @@ impl GlossOverlay {
         self.overlay.set_clip_overlay(ask_container, true);
     }
 
-    /// Dim whichever of the two 2-col cards does NOT have input focus.
-    /// `ask_focused` true → dim the gloss card (left), un-dim the ask float.
+    /// Show/hide the gloss (doc) card's accent bar (its inactive cue).
+    /// `active=false` hides the left selection/cursor bar (page marker stays);
+    /// `true` restores it. Repaints the bar layer.
+    pub fn set_doc_accent_active(&self, active: bool) {
+        self.bar_active.set(active);
+        self.bar_drawing.queue_draw();
+    }
+
+    /// Update the two 2-col cards' focus cues. No dimming: the ask card freezes
+    /// its INSERT caret when inactive, and the gloss (doc) card hides its accent
+    /// bar when inactive. `ask_focused` true → doc bar hidden, ask caret
+    /// blinking; false → doc bar shown, ask caret frozen.
     pub fn set_ask_focus_dim(&self, ask_focused: bool) {
-        let ask = self.ask_host.card().container();
-        if ask_focused {
-            self.container.add_css_class("card-unfocused");
-            ask.remove_css_class("card-unfocused");
-        } else {
-            self.container.remove_css_class("card-unfocused");
-            ask.add_css_class("card-unfocused");
-        }
-        // Freeze the ask card's INSERT caret solid while it is the inactive
-        // (unfocused) surface; resume the blink when focus returns to it.
+        self.set_doc_accent_active(!ask_focused);
         self.ask_host.set_active(ask_focused);
     }
 
-    /// Remove the focus-dim from both cards (on ask close/submit).
+    /// Restore both cards' cues on ask close/submit: doc accent bar back, ask
+    /// caret handled by the ask card's own close.
     pub fn clear_focus_dim(&self) {
-        self.container.remove_css_class("card-unfocused");
-        self.ask_host.card().container().remove_css_class("card-unfocused");
+        self.set_doc_accent_active(true);
     }
 
     /// Restore the body-sized bold `gloss-title` style on the shared title (the
@@ -3303,8 +3324,9 @@ impl GlossOverlay {
         self.scrim.set_visible(false);
         // Reset the ask card so it never re-shows stale when the overlay reopens.
         self.ask_host.card().close();
-        // Universal close funnel: clear any stale focus-dim (card-unfocused)
-        // left by a Ctrl+Tab focus toggle so the overlay never reopens dimmed.
+        // Universal close funnel: restore the doc card's accent bar (hidden
+        // while the ask card held focus) so the overlay never reopens with a
+        // missing bar.
         self.clear_focus_dim();
     }
 
