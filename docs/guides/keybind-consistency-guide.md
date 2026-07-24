@@ -36,12 +36,17 @@ against the Rust source, which is always authoritative for what a bind IS today:
 
 - **`g` = gloss** — `Ctrl+g` toggle overlay · `Alt+g` picker · `Ctrl+Shift+g`
   last gloss · `Ctrl+Alt+g` annotation tint.
-- **`j` = journal** — `Ctrl+j` toggle overlay · `Alt+j` picker.
+- **`j` = journal** — `Ctrl+j` work-wide journal Q&A picker · `Alt+j`
+  cross-work recent-Q&A jump-back picker. (Reshuffled 2026-07-23: both journal
+  pickers now live on the `j` cap; the overlay TOGGLE was dropped — the `\`
+  overlay cycle opens the journal — and recent-Q&A moved here off `Ctrl+a`.)
 - **`r` = vocab** — plain `r` tap the popup word · `Ctrl+r` add vocab word ·
   `Ctrl+Shift+r` vocab journal Q&A · `Alt+r` toggle per-work vocab highlight.
 - **`a` = ask** — `Ctrl+a` opens an ask-a-question card on every surface that
   has one (reader-visual, gloss, journal). The most deliberately-unified
-  cross-surface family in the app.
+  cross-surface family in the app. (In plain READER mode `Ctrl+a` is now
+  UNBOUND as of 2026-07-23 — its recent-Q&A jump-back picker moved to `Alt+j`;
+  the ask-card family on the visual/gloss/journal surfaces is unaffected.)
 - **`w` = rewrite** — `Ctrl+w` starts a Claude rewrite of the current gloss /
   journal Q&A / chat item, on every overlay.
 - **`/` = search + legend** — plain `/` searches the current surface; `Ctrl+/`
@@ -174,6 +179,15 @@ Record each deliberate consistency move here so future sweeps know the intent.
   family so `Ctrl+w` = rewrite everywhere. `Ctrl+Alt+\` and `Alt+\` vocab chords
   removed. Spec:
   `docs/superpowers/specs/2026-07-23-vocab-r-key-consolidation-design.md`.
+
+- **2026-07-23 — journal pickers consolidated onto `j`.** Both journal pickers
+  now live on the `j` cap: `Ctrl+j` = work-wide journal Q&A picker (moved off
+  `Alt+j`), `Alt+j` = cross-work recent-Q&A jump-back (moved off `Ctrl+a`). The
+  journal-overlay TOGGLE (`ToggleJournalOverlay`, formerly `Ctrl+j`) was dropped
+  from the reader binds — the `\` overlay cycle is the way in — and reader
+  `Ctrl+a` is now unbound. Strengthens "j = journal"; recent-Q&A is a journal
+  jump-back, so it reads more naturally on `j` than on `a`. Spec:
+  `docs/superpowers/specs/2026-07-23-journal-bind-reshuffle-design.md`.
 
 **Open candidates** (flagged, not yet scheduled): consolidate the echoes
 concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2).
