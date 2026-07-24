@@ -238,13 +238,14 @@ pub const DEFAULT_THEME: &str = "kindle-sepia";
 
 fn default_theme_cycle() -> Vec<String> {
     [
+        "rose-pine-dawn",
         "zenbones-light",
-        "papercolor-light",
         "zenwritten-light",
+        "sepia-light",
         "sepia-lightest",
         "green-lightest",
-        "sepia-light",
         "green-light",
+        "papercolor-light",
         "kindle-sepia",
         "kindle-green",
     ]
@@ -755,13 +756,14 @@ mod last_gloss_tests {
         assert_eq!(
             config.theme_cycle(),
             vec![
+                "rose-pine-dawn",
                 "zenbones-light",
-                "papercolor-light",
                 "zenwritten-light",
+                "sepia-light",
                 "sepia-lightest",
                 "green-lightest",
-                "sepia-light",
                 "green-light",
+                "papercolor-light",
                 "kindle-sepia",
                 "kindle-green"
             ]
