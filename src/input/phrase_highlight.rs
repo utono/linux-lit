@@ -453,36 +453,11 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
     if s.active_phrase == Some((bl, span_idx)) {
         return;
     }
-    // Verse block: one timestamp (one line_mapping row) can span several
-    // buffer lines (long verse rows are split for wrap/typography). In Line
-    // mode, widen the existing whole-line tint from just `bl` to every buffer
-    // line in the block, so the whole verse unit lights up together instead
-    // of only the buffer line the split landed on. Prose/heading rows (and
-    // Phrase mode) are unaffected and fall through to the single-line path
-    // below unchanged. `None` at any step (unmapped line, no line_map, no
-    // current_work) falls through too — never panics.
-    if mode == PhraseHighlightMode::Line && !s.is_prose() {
-        let is_verse_active = s.line_map.as_ref().and_then(|lm| {
-            lm.buffer_to_work
-                .get(bl)
-                .copied()
-                .flatten()
-                .and_then(|wi| s.current_work.as_ref()?.lines.get(wi))
-                .map(|l| crate::db::line_types::is_verse_line(&l.block_type))
-        });
-        if is_verse_active == Some(true) {
-            let (bs, be) = block_buffer_range(&s.line_map.as_ref().unwrap().buffer_to_work, bl);
-            let tag = s.phrase_tag.clone();
-            let (buf_start, buf_end) = s.buffer.bounds();
-            s.buffer.remove_tag(&tag, &buf_start, &buf_end);
-            for line in bs..be {
-                let line_text = buffer_line_text(s, line);
-                apply_char_range_tag(s, &tag, line, 0, line_text.chars().count());
-            }
-            s.active_phrase = Some((bl, span_idx));
-            return;
-        }
-    }
+    // Verse now takes the same per-line tint path as prose: with per-line
+    // verse data, a verse block is no longer "one timestamp = N buffer
+    // lines," so widening the tint across `block_buffer_range` is wrong.
+    // (Per-line-verse migration, Phase 4; Phase C removes `block_buffer_range`
+    // once nothing else calls it.)
     let line_text = buffer_line_text(s, bl);
     let (sc, ec) = tint_range(mode, s.is_prose(), &line_text, span);
     apply_phrase_tag(s, bl, sc, ec);
