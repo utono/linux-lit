@@ -1,4 +1,5 @@
 pub mod vocab_popup;
+pub mod italics;
 pub mod font;
 use self::font::reapply_font;
 pub mod text_prep;
