@@ -4454,6 +4454,12 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         state.block_indent_tiers = bb.indent_tiers;
         state.italic_offset_map.clear();
         crate::app::formatting::apply_block_typography(state);
+        // Inline `_word_` italics (Phase B): gated internally to
+        // prose/prose_book/epic_translation (e.g. LoJ, a prose_book with
+        // verse/heading block rows, lands here rather than the default
+        // branch below). Runs BEFORE display_work's build_vocab_matches
+        // (which tokenizes the live buffer), so vocab sees stripped text.
+        crate::app::formatting::apply_inline_italics(state);
         return;
     }
 
@@ -4468,6 +4474,11 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         .collect::<Vec<_>>()
         .join("\n");
     state.buffer.set_text(&text);
+    // Inline `_word_` italics (Phase B): the plain DB-join path most
+    // prose/prose_book/epic_translation works without block rows take (e.g.
+    // BH, Aen-MW). Gated internally by work_type; no-op for plays. Runs
+    // before display_work's build_vocab_matches tokenizes the buffer.
+    crate::app::formatting::apply_inline_italics(state);
 }
 
 /// Toggle sign column visibility.
