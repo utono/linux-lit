@@ -859,6 +859,12 @@ pub struct AppState {
     /// Per-buffer-line verse indent tier (0/1/2) for the block-aware path;
     /// empty on all other works. Consumed by apply_block_typography.
     pub block_indent_tiers: Vec<u8>,
+    /// Per buffer-line source→display offset data for inline-italic lines
+    /// (Phase B): buffer line index -> sorted source char offsets of removed
+    /// `_` delimiters. Only lines with paired `_` stripped have an entry;
+    /// absent = no shift (identity). Consumed by phrase_highlight::apply_char_range_tag.
+    /// Rebuilt on every rebuild_buffer_text; never leaks across works.
+    pub italic_offset_map: std::collections::HashMap<usize, Vec<usize>>,
 }
 
 /// Core of `AppState::is_play`, split out so it is unit-testable without an
@@ -2404,6 +2410,7 @@ pub fn build_window(
         ask_card_focus: true,
         tts_batch_running: std::cell::Cell::new(false),
         block_indent_tiers: Vec::new(),
+        italic_offset_map: std::collections::HashMap::new(),
     }));
 
     // Suppress startup flicker: vbox is hidden (opacity 0) until layout has
@@ -4365,6 +4372,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         }
         state.line_map = Some(prep.line_map);
         state.block_indent_tiers = Vec::new();
+        state.italic_offset_map.clear();
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
             prep.abbrev,
@@ -4426,6 +4434,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         state.buffer.set_text(&buf_lines.join("\n"));
         state.line_map = Some(line_map);
         state.block_indent_tiers = Vec::new();
+        state.italic_offset_map.clear();
         return;
     }
 
@@ -4443,6 +4452,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         state.buffer.set_text(&bb.buf_lines.join("\n"));
         state.line_map = Some(line_map);
         state.block_indent_tiers = bb.indent_tiers;
+        state.italic_offset_map.clear();
         crate::app::formatting::apply_block_typography(state);
         return;
     }
@@ -4450,6 +4460,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
     // Default: join work.lines
     state.line_map = None;
     state.block_indent_tiers = Vec::new();
+    state.italic_offset_map.clear();
     let text: String = work
         .lines
         .iter()
