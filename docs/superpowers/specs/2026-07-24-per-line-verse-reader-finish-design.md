@@ -55,7 +55,8 @@ or C.
 
 - **Phase A — per-line verse finish (linux-lit, ready now, low-risk):** per-line
   rendering + indent tiers, empty-verse-row stanza gap, per-line cursor seek, and
-  retiring the now-wrong block-granularity machinery.
+  neutralizing the now-wrong block-granularity karaoke path (stop calling it; its
+  deletion is deferred to Phase C).
 - **Phase B — inline italics `_word_` (linux-lit, higher-risk, own plan):** the
   Facet-1 offset-remap work, carried from the 2026-07-23 spec. Corpus-wide.
   Decoupled from A.
@@ -137,8 +138,15 @@ if crate::db::line_types::is_verse_line(bt) {
 ```
 
 `prev_src` still updates to `Some(wi)` for the empty row, so the next stanza's
-first line also gets its gap tag — harmless (adjacent gap tags collapse to one
-visual separator) and consistent with the existing contiguous-run logic. The
+first line also gets its gap tag too. **MUST-VERIFY (do not assume):** two adjacent
+rows each carrying `verse-stanza-gap` (`pixels_above_lines`) may produce a DOUBLE
+gap, not one — GTK stacks `pixels-above-lines` per line; it does not necessarily
+"collapse." The Phase-A plan treats the visual result of an empty row immediately
+followed by a stanza-first line as a pixel-measured headless check (single vs
+double vertical gap), and if it double-gaps, suppresses the redundant tag (e.g.
+the stanza-first line skips its gap tag when the previous row was an empty verse
+row). Do NOT ship the "harmless, collapses" assumption unverified — this is the
+class of pixel-stacking claim that passed headless-by-eye and failed before. The
 `verse-stanza-gap` tag already exists (`ensure_block_typography_tags`,
 `formatting.rs:~652`).
 
@@ -151,17 +159,25 @@ audio-cursor placement) — an empty verse row is a visual separator, never a
 navigation stop. Since vol1 has zero empty verse rows, the plan's headless proof
 of this rule uses a later volume (or a synthetic fixture) that has one.
 
-### A5. Retire the block-granularity tint machinery
+### A5. Stop asserting block granularity for verse karaoke (deletion deferred to C)
 
 The whole-block **cursor** tint was already reverted (`fc936aa1`,
 `1357dc27`) — cursor tint is line-by-line on verse, correct and unchanged.
-Phase A additionally retires the whole-block **karaoke** path as the verse model:
-`block_buffer_range` (`src/input/phrase_highlight.rs`, ~line 185) and the
-"tint the whole block" branch exist only to serve "one block = one timestamp = N
-buffer lines," which per-line data eliminates. Phase A stops the code asserting
-block granularity for verse (verse karaoke, when it renders, is line-by-line like
-prose — Phase C). Removing dead paths is in scope; the guard is that the
-non-LoJ/prose karaoke behavior is byte-identical after the change.
+The whole-block **karaoke** path — `block_buffer_range`
+(`src/input/phrase_highlight.rs`, ~line 185) and the "tint the whole block"
+branch — exists only to serve "one block = one timestamp = N buffer lines," which
+per-line data eliminates.
+
+**Phase A stops CALLING the whole-block verse karaoke branch** (verse karaoke,
+when it renders, is line-by-line like prose), so no code asserts block granularity
+for verse at runtime. **The actual DELETION of `block_buffer_range` and the dead
+branch is DEFERRED to Phase C**, which reworks verse karaoke in that same
+offset-sensitive file (`phrase_highlight.rs`, the highest-risk consumer). Deleting
+it in low-risk Phase A — separate from the phase that actually reworks that area —
+would touch the riskiest file for only a dead-code payoff, and risks removing a
+tested `pub(crate)` helper C might still want. So: A neutralizes (stops calling)
+here; C removes it as part of reworking verse karaoke. The guard for A's change is
+that non-LoJ/prose karaoke behavior is byte-identical afterward.
 
 ### A6. Testing & acceptance (Phase A)
 
@@ -266,10 +282,12 @@ after the full reimport — now satisfied).
 ### C2. Reader side (make it line-by-line correct)
 
 With per-line timestamps + phrase data, verse karaoke uses the **same line-by-line
-sweep as prose** — no block machinery (retired in Phase A). The old
-whole-block-vs-line-by-line debate is dissolved by the per-line data: each verse
-line is its own timed unit, so line-by-line is the only coherent model. The reader
-work is "verse karaoke behaves like prose karaoke," not new machinery.
+sweep as prose** — no block machinery (Phase A already stopped calling the
+whole-block branch; **Phase C DELETES `block_buffer_range` and that dead branch**
+as part of this rework, in the same `phrase_highlight.rs` file it touches anyway).
+The old whole-block-vs-line-by-line debate is dissolved by the per-line data: each
+verse line is its own timed unit, so line-by-line is the only coherent model. The
+reader work is "verse karaoke behaves like prose karaoke," not new machinery.
 
 ### C3. Sequencing (the plan must enforce)
 
