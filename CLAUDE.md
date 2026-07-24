@@ -131,7 +131,11 @@ Spec: `docs/superpowers/specs/2026-07-22-superpowers-workflow-integration-design
   spec→plan→implement cycle (including a revert of the superseded
   change), not an in-place patch** — as the #13 → overlay-width pivot
   did.
-- **Effort-level retrospective.** After finishing a plan (branch merged
+- **Effort-level retrospective.** **PAUSED (2026-07-23) — do NOT append
+  the retrospective note for now.** The full rule is kept below so it can
+  be turned back on later (delete this PAUSED line to re-enable). When
+  paused, finish a plan without the effort-level trade-off note.
+  After finishing a plan (branch merged
   or ready), append a short **effort-level trade-off** note. The axis is
   EFFORT LEVEL (how much verification/review/adversarial-checking/headless
   re-running was done), NOT model choice — the user runs opus (or fable),
