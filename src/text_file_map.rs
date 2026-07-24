@@ -1226,6 +1226,7 @@ mod tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
@@ -1246,6 +1247,7 @@ mod tests {
             sub_line,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
@@ -1933,6 +1935,7 @@ mod tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
@@ -2082,7 +2085,7 @@ mod tests {
             normalized: super::normalize(text), speaker: None,
             is_dialogue: dialogue, timestamp: None, div1: 1, div2: 4,
             line_in_div: if id < 4 { 43 } else { 44 }, sub_line: sub,
-            is_chapter: false, is_spoken: None,
+            is_chapter: false, is_spoken: None, block_type: "prose".to_string(),
         };
         let work_lines = vec![
             mk(1, "Lay hands upon these traitors and their trash.", 0, true),
@@ -2196,6 +2199,7 @@ mod mark_chapter_starts_tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 

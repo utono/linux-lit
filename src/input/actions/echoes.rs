@@ -1686,6 +1686,7 @@ mod tests {
             sub_line: 0,
             is_chapter: false,
             is_spoken: None,
+            block_type: "prose".to_string(),
         }
     }
 
