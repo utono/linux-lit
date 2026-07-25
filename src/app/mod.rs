@@ -326,6 +326,9 @@ pub struct AppState {
     /// Memo for "does this media have ANY phrase_timestamps rows" keyed by
     /// media id; cleared on MPV connection changes. None = not yet checked.
     pub phrase_capable_memo: Option<(i64, bool)>,
+    /// TimePos tick counter, advanced only under `LIT_DEBUG_KARAOKE` to pace
+    /// the karaoke trace heartbeat. Diagnostic-only; never read by the sweep.
+    pub karaoke_tick: u64,
     pub page_turn_overlay: gtk4::Overlay,
     /// Focus cue: the main card's twin of the chat panel's focus rule. See
     /// `card_focus_rule` construction (build_window) and
@@ -2153,6 +2156,7 @@ pub fn build_window(
         cursor_line_mode_prose: false,
         cursor_line_mode_verse: true,
         phrase_capable_memo: None,
+        karaoke_tick: 0,
         page_turn_overlay: page_turn_overlay.clone(),
         card_focus_rule: card_focus_rule.clone(),
         bottom_clip,

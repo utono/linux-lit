@@ -159,6 +159,47 @@ use crate::app::AppState;
 use crate::config::PhraseHighlightMode;
 use gtk4::prelude::*;
 
+/// Karaoke tracing is opt-in via `LIT_DEBUG_KARAOKE=1`: the sweep runs on every
+/// MPV TimePos tick (~10/s), so unconditional logging would bury every other
+/// line in the debug log. Read once — env lookups per tick are wasteful and the
+/// flag cannot change mid-run.
+fn karaoke_trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("LIT_DEBUG_KARAOKE").is_ok_and(|v| {
+            let v = v.trim();
+            !v.is_empty() && v != "0"
+        })
+    })
+}
+
+/// One karaoke trace line, written only under `LIT_DEBUG_KARAOKE`. All lines
+/// share the `KARAOKE:` prefix so a whole session's sweep is one `rg KARAOKE:`.
+macro_rules! ktrace {
+    ($($arg:tt)*) => {
+        if karaoke_trace_on() {
+            $crate::logging::log_always(&format!("KARAOKE: {}", format!($($arg)*)));
+        }
+    };
+}
+
+/// Why a sweep tick painted nothing. Each variant is a distinct failure mode
+/// the log must distinguish — "the tint is missing" has ~8 different causes and
+/// guessing between them from a screenshot is how these bugs eat whole sessions.
+fn mode_name(m: PhraseHighlightMode) -> &'static str {
+    match m {
+        PhraseHighlightMode::Off => "off",
+        PhraseHighlightMode::Phrase => "phrase",
+        PhraseHighlightMode::Line => "line",
+    }
+}
+
+/// Steady-state sweep lines are logged only when the painted phrase CHANGES
+/// (see `paint_phrase_at`), but a stuck sweep produces no change at all — so a
+/// heartbeat every `KTRACE_HEARTBEAT_TICKS` ticks proves the driver is still
+/// being called and shows the position it is stuck at.
+const KTRACE_HEARTBEAT_TICKS: u64 = 50;
+
 /// Char range to tag for the active span: the span itself in Phrase mode;
 /// in Line mode the whole buffer line (verse) or the containing sentence
 /// (prose). Off never reaches here (gated in update_phrase_highlight).
@@ -311,16 +352,43 @@ pub fn karaoke_marks_cursor(s: &mut AppState) -> bool {
 /// through its own suppression window).
 pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
     let mode = active_mode(s);
+    // Heartbeat: proves the TimePos driver is still firing even when nothing
+    // changes, and pins the position a stuck sweep is stuck at.
+    if karaoke_trace_on() {
+        s.karaoke_tick = s.karaoke_tick.wrapping_add(1);
+        if s.karaoke_tick % KTRACE_HEARTBEAT_TICKS == 0 {
+            ktrace!(
+                "tick #{} pos={:.2} mode={} playing={} sync={} painted={:?}",
+                s.karaoke_tick,
+                pos,
+                mode_name(mode),
+                s.mpv_playing,
+                s.sync_enabled,
+                s.active_phrase
+            );
+        }
+    }
     // NOT gated on `sync_enabled`: the karaoke tint tracks the audio position
     // itself, so it must keep sweeping even when playback SYNC (the cursor/page
     // following the audio) is toggled off. It IS gated on the class mode being
     // on and on translations being hidden (the inflated translation buffer
     // misaligns character offsets).
     if !mode.is_on() || s.translations_visible {
+        // Distinguishes a deliberately-off sweep (class mode / cursor-line axis
+        // / vocab drill) from a broken one — the single most common "karaoke
+        // stopped working" report.
+        ktrace!(
+            "gate-off mode={} translations={} cursor_line_mode={} vocab_loop={}",
+            mode_name(mode),
+            s.translations_visible,
+            s.cursor_line_mode(),
+            s.vocab_loop.is_some()
+        );
         clear_phrase_highlight(s);
         return;
     }
     if !s.mpv_playing || s.loading_work.get() {
+        ktrace!("gate-hold playing={} loading={}", s.mpv_playing, s.loading_work.get());
         return;
     }
     let suppressed = s
@@ -332,6 +400,10 @@ pub fn update_phrase_highlight(s: &mut AppState, pos: f64) {
             .phrase_paint_hold
             .map(|until| std::time::Instant::now() < until)
             .unwrap_or(false);
+        // A seek keybind's pending paint is held through its own suppression
+        // window; without the hold the tint clears. Both look identical on
+        // screen a tick later, so the log must say which happened.
+        ktrace!("gate-suppressed held={} pos={:.2}", held, pos);
         if !held {
             clear_phrase_highlight(s);
         }
@@ -350,8 +422,15 @@ pub fn paint_pending_phrase(s: &mut AppState, pos: f64) -> bool {
     // Not gated on `sync_enabled` (see update_phrase_highlight) — a seek-driven
     // pending paint should show the karaoke tint at the target even with sync off.
     if !mode.is_on() || s.translations_visible {
+        ktrace!(
+            "pending-gate-off mode={} translations={} pos={:.2}",
+            mode_name(mode),
+            s.translations_visible,
+            pos
+        );
         return false;
     }
+    ktrace!("pending-paint pos={:.2}", pos);
     paint_phrase_at(s, pos, true);
     true
 }
@@ -380,10 +459,12 @@ pub fn show_startup_phrase(s: &mut AppState) {
 fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
     let mode = active_mode(s);
     let Some(media) = s.media_id else {
+        ktrace!("no-media pos={:.2}", pos);
         clear_phrase_highlight(s);
         return;
     };
     let Some(cursor_wi) = s.work_line_for_buffer(s.current_line) else {
+        ktrace!("no-cursor-work-line buffer_line={} pos={:.2}", s.current_line, pos);
         return;
     };
     // The sync cursor leads by SYNC_PREROLL, so resolve the line actually
@@ -409,6 +490,16 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
         // resolve will replace it). Clear only when nothing is painted, so a
         // genuinely stopped/off-data state still shows nothing. Mirrors how
         // `phrase_at_time` already holds a span through inter-span gaps.
+        // The narration is outside every timestamped line in the ±8-line walk
+        // window around the cursor. On prose this is the known drift case; a
+        // PERSISTENT run of these lines instead means the cursor is genuinely
+        // lost (bad line timestamps, wrong edition) — the count distinguishes.
+        ktrace!(
+            "resolve-miss pos={:.2} cursor_wi={} holding={}",
+            pos,
+            cursor_wi,
+            s.active_phrase.is_some()
+        );
         if s.active_phrase.is_none() {
             clear_phrase_highlight(s);
         }
@@ -429,6 +520,31 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
             media,
             spans.len()
         ));
+        // Phrase-WIDTH profile for the freshly-loaded line. This is the tuning
+        // instrument, not a failure diagnostic: it reports how the grouper cut
+        // this line so span granularity can be judged against a long-clause
+        // reading style (a reader who takes a period with two or more relative
+        // clauses as one unit is served badly by 1-2s chops). `min`/`max`
+        // bracket the cut sizes; a line whose max is small is uniformly
+        // over-chopped, while a low min with a high max means one stray cut.
+        if karaoke_trace_on() && !spans.is_empty() {
+            let durs: Vec<f64> = spans.iter().map(|sp| sp.end_time - sp.start_time).collect();
+            let total: f64 = durs.iter().sum();
+            let min = durs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max = durs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let chars: usize = spans.iter().map(|sp| sp.end_char - sp.start_char).sum();
+            ktrace!(
+                "profile line_id={} spans={} span_secs avg={:.2} min={:.2} max={:.2} \
+                 line_secs={:.2} avg_chars={}",
+                line_id,
+                spans.len(),
+                total / spans.len() as f64,
+                min,
+                max,
+                total,
+                chars / spans.len().max(1)
+            );
+        }
         s.phrase_cache = Some(PhraseCache { line_mapping_id: line_id, media_id: media, spans });
     }
     let hit = s.phrase_cache.as_ref().and_then(|c| {
@@ -442,12 +558,25 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
         // stretch. Keep the last-painted phrase rather than blanking mid-sweep;
         // a later tick with a real span replaces it. Clear only when nothing is
         // painted.
+        // The resolved line HAS spans (or none at all) but none is active at
+        // `pos` — i.e. playback sits before the line's first span. A repeating
+        // run here on a line with spans>0 means the line's phrase times and its
+        // line timestamp disagree (the two are backfilled separately).
+        ktrace!(
+            "span-miss pos={:.2} spoken_wi={} line_id={} spans={} holding={}",
+            pos,
+            spoken_wi,
+            line_id,
+            s.phrase_cache.as_ref().map_or(0, |c| c.spans.len()),
+            s.active_phrase.is_some()
+        );
         if s.active_phrase.is_none() {
             clear_phrase_highlight(s);
         }
         return;
     };
     let Some(bl) = s.buffer_line_for_work(spoken_wi) else {
+        ktrace!("no-buffer-line spoken_wi={} pos={:.2}", spoken_wi, pos);
         return;
     };
     if s.active_phrase == Some((bl, span_idx)) {
@@ -460,6 +589,27 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
     // once nothing else calls it.)
     let line_text = buffer_line_text(s, bl);
     let (sc, ec) = tint_range(mode, s.is_prose(), &line_text, span);
+    // The advance line: the exact text the reader now sees tinted, with the
+    // span's own audio window. Logging the TEXT (not just offsets) is what
+    // makes phrase width judgeable from the log — a sweep that reads as
+    // "...that slavery which booksellers" / "usually lie under" is visible as a
+    // mid-clause cut here without watching the screen.
+    if karaoke_trace_on() {
+        let shown: String = line_text.chars().skip(sc).take(ec.saturating_sub(sc)).collect();
+        ktrace!(
+            "paint bl={} span={}/{} t={:.2}-{:.2} ({:.2}s) chars={}-{} mode={} text={:?}",
+            bl,
+            span_idx + 1,
+            s.phrase_cache.as_ref().map_or(0, |c| c.spans.len()),
+            span.start_time,
+            span.end_time,
+            span.end_time - span.start_time,
+            sc,
+            ec,
+            mode_name(mode),
+            shown
+        );
+    }
     apply_phrase_tag(s, bl, sc, ec);
     s.active_phrase = Some((bl, span_idx));
 }
