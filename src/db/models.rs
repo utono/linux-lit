@@ -62,7 +62,8 @@ pub struct Line {
     pub is_spoken: Option<bool>,
     /// Typography class from `line_mapping.block_type`:
     /// `"prose"` (default), `"verse"` (embedded `\n`, leading-space indent),
-    /// or `"heading"` (centered). Drives the block-aware buffer-fill + formatting.
+    /// `"heading"` (centered small-caps), or `"blockquote"` (inset letter/note,
+    /// symmetric left+right margin). Drives the block-aware buffer-fill + formatting.
     pub block_type: String,
 }
 

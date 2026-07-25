@@ -630,6 +630,14 @@ fn verse_margin_px(tier: u8) -> i32 {
     base + step * tier as i32
 }
 
+// Blockquote inset: symmetric left+right margin so an inset letter/note frames
+// like the browser's <blockquote> (~8%). Uses px margins (not indent/justify)
+// for the same reason verse_margin_px does — GTK collapses leading whitespace
+// and indent/justify render unreliably here.
+fn blockquote_margin_px() -> i32 {
+    64 // symmetric inset applied to BOTH left_margin and right_margin
+}
+
 /// Idempotently ensure the block-typography tags exist on the buffer's tag
 /// table: `verse-indent-{0,1,2}` (per-tier left_margin), `verse-stanza-gap`
 /// (space above the first line of a verse block), and `block-heading-center`
@@ -666,6 +674,17 @@ fn ensure_block_typography_tags(state: &AppState) {
             .name("block-heading-center")
             .justification(gtk4::Justification::Center)
             .variant(pango::Variant::SmallCaps)
+            .build();
+        tag_table.add(&tag);
+    }
+
+    // Blockquote: symmetric left+right inset, same font (indent is the sole cue).
+    if tag_table.lookup("block-blockquote-indent").is_none() {
+        let m = blockquote_margin_px();
+        let tag = gtk4::TextTag::builder()
+            .name("block-blockquote-indent")
+            .left_margin(m)
+            .right_margin(m)
             .build();
         tag_table.add(&tag);
     }
@@ -721,6 +740,11 @@ pub fn apply_block_typography(state: &mut AppState) {
             }
         } else if crate::db::line_types::is_heading_line(bt) {
             state.buffer.apply_tag_by_name("block-heading-center", &start, &end);
+        } else if crate::db::line_types::is_blockquote_line(bt) {
+            // Inset letter/note/document: symmetric left+right margin, same font.
+            state
+                .buffer
+                .apply_tag_by_name("block-blockquote-indent", &start, &end);
         }
         prev_src = Some(wi);
     }
