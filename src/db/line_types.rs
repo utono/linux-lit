@@ -464,6 +464,11 @@ pub fn is_heading_line(block_type: &str) -> bool {
     block_type == "heading"
 }
 
+/// True for a blockquote row (inset letter/note/document; symmetric margins).
+pub fn is_blockquote_line(block_type: &str) -> bool {
+    block_type == "blockquote"
+}
+
 /// True if any line carries non-prose typography — the activation gate for the
 /// block-aware buffer-fill path. Prose-only works (the whole non-LoJ corpus by
 /// the migration default) return false and render unchanged.
@@ -502,6 +507,16 @@ mod tests {
         assert!(!work_has_blocks(&[mk("prose"), mk("prose")]));
         assert!(work_has_blocks(&[mk("prose"), mk("verse")]));
         assert!(work_has_blocks(&[mk("heading")]));
+        // blockquote is also a non-prose block_type -> activates block-aware fill
+        assert!(work_has_blocks(&[mk("prose"), mk("blockquote")]));
+    }
+
+    #[test]
+    fn blockquote_line_detected() {
+        assert!(is_blockquote_line("blockquote"));
+        assert!(!is_blockquote_line("prose"));
+        assert!(!is_blockquote_line("verse"));
+        assert!(!is_blockquote_line("heading"));
     }
 
     #[test]
