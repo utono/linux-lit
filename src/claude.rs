@@ -186,8 +186,8 @@ mod chat_body_tests {
             turn("assistant", "a1"),
             turn("user", "q2"),
         ];
-        let body = chat_body("SYS", &turns, "claude-opus-4-8");
-        assert_eq!(body["model"], "claude-opus-4-8");
+        let body = chat_body("SYS", &turns, "claude-opus-5");
+        assert_eq!(body["model"], "claude-opus-5");
         assert_eq!(body["max_tokens"], 4096);
         // System is a cache-marked content block.
         assert_eq!(body["system"][0]["text"], "SYS");

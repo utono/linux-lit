@@ -275,8 +275,12 @@ fn default_text_margins() -> u32 {
     DEFAULT_TEXT_MARGINS
 }
 
+/// The current default Claude model, referenced by every config default.
+/// Change this one line to swap models repo-wide.
+const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-5";
+
 fn default_claude_model() -> String {
-    "claude-opus-4-8".to_string()
+    DEFAULT_CLAUDE_MODEL.to_string()
 }
 
 fn default_elevenlabs_voice_id() -> String {
@@ -343,7 +347,7 @@ fn default_auto_tag_journal() -> bool {
 }
 
 fn default_tag_extract_model() -> String {
-    "claude-haiku-4-5-20251001".to_string()
+    DEFAULT_CLAUDE_MODEL.to_string()
 }
 
 impl Default for Config {
