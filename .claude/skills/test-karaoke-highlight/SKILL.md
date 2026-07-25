@@ -58,6 +58,41 @@ PASS  TT  advances=9  median=2.08s  mean=2.65s  max=5.84s  under1.5s=33%  median
   number is normal (inter-phrase gaps, page straddles). **Hundreds means the
   sweep is mostly frozen even though it "passed"** — read the trace.
 
+## Sweeping a whole work
+
+`run-karaoke-test.sh` samples ONE position. To cover every passage, use the
+sweep driver — it walks the work in `--at` windows and prints a whole-work
+roll-up including a mid-clause-cut count:
+
+```bash
+.claude/skills/test-karaoke-highlight/sweep-work.sh TT --windows 12 --secs 30 --speed 3.0
+```
+
+`--speed` is the accelerant: mpv advances through `time-pos` faster, so each
+wall-clock second covers proportionally more text. Span timestamps are
+absolute, so speed does not distort the widths being measured — only how fast
+the sweep walks them. 3x is comfortable; the last window (`--at 0.98`) often
+FAILs on too little audio left, which is expected.
+
+TT whole-work, 12 windows at 3x: 96 distinct phrases, median 2.90s, p10/p90
+1.20s/4.86s, 0 misses, 11/12 windows PASS.
+
+**Interpreting the mid-clause count:** it flags spans not ending in terminal
+punctuation, which over-reports in two ways. (1) A long span that IS a
+complete unit but exceeds the 6.0s budget has no closing mark — TT's worst
+"offenders" are 6.7-7.2s complete clauses, held too whole rather than cut.
+(2) **Italic markup shifts the count.** On lines whose `canonical_text`
+contains `_italics_`, the reader strips the underscores for display and
+translates DB char offsets through `italic_offset_map`; where that
+under-compensates, the paint is shifted and the span text comes out mangled
+(`d how can it be otherwise, w` instead of `and how can it be otherwise,` —
+shifted by exactly the 2 underscores earlier in the line). 70 of TT's 279
+phrase-bearing lines carry italics, which accounts for most of its 22%
+raw mid-clause rate. Measured on non-italic lines only, TT is 2913 spans,
+mean 3.04s, 8.9% mid-clause. **This offset bug is pre-existing** (identical
+in a pre-merge DB backup) and is a linux-lit rendering issue, not a grouping
+one — verify against the DB before blaming the grouper.
+
 ## Baselines (2026-07-25, `--secs 30 --at 0.5`)
 
 Measured after litdb `2674463` (SEAMLESS_MAX_SECONDS 6.0, SILENCE_GAP 0.45).
