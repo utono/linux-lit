@@ -747,10 +747,27 @@ pub fn apply_inline_italics(state: &mut AppState) {
         return;
     }
 
-    // Each italic span gets its OWN fresh, anonymous TextTag (see the tag loop
-    // below for why — GTK4/Pango renders only the last of multiple disjoint
-    // ranges of a single shared style=Italic tag in one paragraph). So there is
-    // no shared named "inline-italic" tag to pre-create here.
+    // NET-ZERO tag lifecycle (matches the sibling formatters' lookup-remove-readd
+    // idiom, e.g. apply_dialogue_formatting): the buffer's TextTagTable is
+    // app-lifetime and shared across every work load, and apply_inline_italics
+    // re-runs not only on work-switch but on scansion toggle / column change. So
+    // FIRST remove any `inline-italic-*` tags left by a prior run, or they
+    // accumulate unbounded in the shared table. Anonymous tags can't be looked up
+    // by name, so we use per-LINE NAMED tags (`inline-italic-{line}`) — collect
+    // and remove them via tag_table.foreach.
+    let tag_table = state.buffer.tag_table();
+    {
+        let mut stale: Vec<gtk4::TextTag> = Vec::new();
+        tag_table.foreach(|t| {
+            if t.name().map(|n| n.starts_with("inline-italic-")).unwrap_or(false) {
+                stale.push(t.clone());
+            }
+        });
+        for t in stale {
+            tag_table.remove(&t);
+        }
+    }
+
     let line_count = state.buffer.line_count() as usize;
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
@@ -789,28 +806,29 @@ pub fn apply_inline_italics(state: &mut AppState) {
                     d_end.forward_char();
                     state.buffer.delete(&mut d, &mut d_end);
                 }
-                // Tag each span (offsets are DISPLAY-relative, i.e. relative
-                // to the now-stripped line). Re-fetch the line base fresh for
-                // every span so no iterator survives past a prior mutation.
+                // Tag each span (offsets are DISPLAY-relative, i.e. relative to
+                // the now-stripped line). Re-fetch the line base fresh for every
+                // span so no iterator survives past a prior mutation.
                 //
-                // Each span gets its OWN fresh italic TextTag, NOT a shared
-                // named tag re-applied per span. Root-caused 2026-07-24: GTK4/
-                // Pango renders only the LAST of multiple disjoint ranges of a
-                // single style=Italic tag inside one paragraph (has_tag is true
-                // on every range, but only the last slants). LoJ footnote lines
-                // routinely carry 2+ italic titles, so the shared-tag idiom
-                // silently under-rendered every earlier span. A distinct tag
-                // object per span renders all of them. (The shared idiom works
-                // for one-range-per-line tags like `speaker-name`, which is why
-                // it wasn't caught earlier.)
-                let tag_table = state.buffer.tag_table();
-                for &(sc, ec) in &parse.spans {
+                // ONE fresh italic tag PER SPAN (each NAMED so the net-zero
+                // removal above can drop it next run). Root-caused + PIXEL-VERIFIED
+                // 2026-07-24: GTK4/Pango renders only the LAST of multiple disjoint
+                // ranges of ONE style=Italic tag within a single paragraph, so a
+                // per-span DISTINCT tag is required — a per-LINE tag shared by a
+                // line's spans would be that same failing case (disjoint ranges of
+                // one tag in one paragraph) and was NOT adopted. Each buffer line
+                // is its own paragraph; a single tag per span slants every span.
+                // (The old whole-buffer shared idiom, e.g. `speaker-name`, works
+                // only because those are one-range-per-line, never disjoint in a
+                // paragraph — which is why this wasn't caught before.)
+                for (k, &(sc, ec)) in parse.spans.iter().enumerate() {
                     let base = state.buffer.iter_at_line(i as i32).unwrap();
                     let mut a = base;
                     a.forward_chars(sc as i32);
                     let mut b = base;
                     b.forward_chars(ec as i32);
                     let span_tag = gtk4::TextTag::builder()
+                        .name(&format!("inline-italic-{i}-{k}"))
                         .style(pango::Style::Italic)
                         .build();
                     tag_table.add(&span_tag);

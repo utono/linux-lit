@@ -1,6 +1,10 @@
 //! Inline `_word_` italic parsing (Phase B). Pure, buffer-agnostic.
 
 pub struct ItalicParse {
+    /// The line with paired `_` removed. Production does NOT read this — it
+    /// deletes `_` from the live GTK buffer via `removed_positions` — but the
+    /// unit tests assert on it as a cross-check that the parser strips correctly.
+    #[allow(dead_code)]
     pub stripped_text: String,
     pub spans: Vec<(usize, usize)>,
     pub removed_positions: Vec<usize>,
