@@ -865,6 +865,10 @@ pub struct AppState {
     /// absent = no shift (identity). Consumed by phrase_highlight::apply_char_range_tag.
     /// Rebuilt on every rebuild_buffer_text; never leaks across works.
     pub italic_offset_map: std::collections::HashMap<usize, Vec<usize>>,
+    /// Per buffer-line italic spans (display coords) for the tag-application pass
+    /// (apply_inline_italics). Set at buffer-fill by strip_italics_for_fill;
+    /// cleared on every rebuild path. Mirrors italic_offset_map's lifecycle.
+    pub italic_line_spans: std::collections::HashMap<usize, Vec<(usize, usize)>>,
 }
 
 /// Core of `AppState::is_play`, split out so it is unit-testable without an
@@ -2411,6 +2415,7 @@ pub fn build_window(
         tts_batch_running: std::cell::Cell::new(false),
         block_indent_tiers: Vec::new(),
         italic_offset_map: std::collections::HashMap::new(),
+        italic_line_spans: std::collections::HashMap::new(),
     }));
 
     // Suppress startup flicker: vbox is hidden (opacity 0) until layout has
@@ -4373,6 +4378,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         state.line_map = Some(prep.line_map);
         state.block_indent_tiers = Vec::new();
         state.italic_offset_map.clear();
+        state.italic_line_spans.clear();
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
             prep.abbrev,
@@ -4455,6 +4461,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         state.line_map = Some(line_map);
         state.block_indent_tiers = Vec::new();
         state.italic_offset_map.clear();
+        state.italic_line_spans.clear();
         return;
     }
 
@@ -4469,10 +4476,27 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         let line_map = crate::text_file_map::build_line_map_blocks(
             &bb.buf_lines, &bb.source_index, &work.lines,
         );
-        state.buffer.set_text(&bb.buf_lines.join("\n"));
+        // Strip inline `_word_` italics BEFORE set_text (prose/prose_book/
+        // epic_translation only) so the buffer never contains `_` — no per-
+        // underscore buffer.delete (the ~7.3s LoJ regression). The tag pass
+        // (apply_inline_italics) then only APPLIES the italic tags.
+        let is_italic_work = matches!(
+            work.work_type.as_str(),
+            "prose" | "prose_book" | "epic_translation"
+        );
+        let display_lines: Vec<String> = if is_italic_work {
+            let strip = crate::app::italics::strip_italics_for_fill(&bb.buf_lines);
+            state.italic_offset_map = strip.line_removed;
+            state.italic_line_spans = strip.line_spans;
+            strip.stripped_lines
+        } else {
+            state.italic_offset_map.clear();
+            state.italic_line_spans.clear();
+            bb.buf_lines
+        };
+        state.buffer.set_text(&display_lines.join("\n"));
         state.line_map = Some(line_map);
         state.block_indent_tiers = bb.indent_tiers;
-        state.italic_offset_map.clear();
         crate::app::formatting::apply_block_typography(state);
         // Inline `_word_` italics (Phase B): gated internally to
         // prose/prose_book/epic_translation (e.g. LoJ, a prose_book with
@@ -4487,13 +4511,21 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
     state.line_map = None;
     state.block_indent_tiers = Vec::new();
     state.italic_offset_map.clear();
-    let text: String = work
-        .lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    state.buffer.set_text(&text);
+    state.italic_line_spans.clear();
+    let raw_lines: Vec<String> = work.lines.iter().map(|l| l.text.clone()).collect();
+    let is_italic_work = matches!(
+        work.work_type.as_str(),
+        "prose" | "prose_book" | "epic_translation"
+    );
+    let display_lines: Vec<String> = if is_italic_work {
+        let strip = crate::app::italics::strip_italics_for_fill(&raw_lines);
+        state.italic_offset_map = strip.line_removed;
+        state.italic_line_spans = strip.line_spans;
+        strip.stripped_lines
+    } else {
+        raw_lines
+    };
+    state.buffer.set_text(&display_lines.join("\n"));
     // Inline `_word_` italics (Phase B): the plain DB-join path most
     // prose/prose_book/epic_translation works without block rows take (e.g.
     // BH, Aen-MW). Gated internally by work_type; no-op for plays. Runs
