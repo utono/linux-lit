@@ -214,7 +214,9 @@ pub struct Config {
     #[serde(default = "default_auto_tag_journal")]
     pub auto_tag_journal: bool,
     /// Claude model id used for the background journal-tag extraction call.
-    /// A small/cheap model — extraction is not the main gloss/journal chat.
+    /// Defaults to the same model as the main gloss/journal chat
+    /// (DEFAULT_CLAUDE_MODEL); override here to use a cheaper model for this
+    /// background call.
     #[serde(default = "default_tag_extract_model")]
     pub tag_extract_model: String,
 }
