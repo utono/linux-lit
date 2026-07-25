@@ -81,17 +81,16 @@ TT whole-work, 12 windows at 3x: 96 distinct phrases, median 2.90s, p10/p90
 punctuation, which over-reports in two ways. (1) A long span that IS a
 complete unit but exceeds the 6.0s budget has no closing mark — TT's worst
 "offenders" are 6.7-7.2s complete clauses, held too whole rather than cut.
-(2) **Italic markup shifts the count.** On lines whose `canonical_text`
-contains `_italics_`, the reader strips the underscores for display and
-translates DB char offsets through `italic_offset_map`; where that
-under-compensates, the paint is shifted and the span text comes out mangled
-(`d how can it be otherwise, w` instead of `and how can it be otherwise,` —
-shifted by exactly the 2 underscores earlier in the line). 70 of TT's 279
-phrase-bearing lines carry italics, which accounts for most of its 22%
-raw mid-clause rate. Measured on non-italic lines only, TT is 2913 spans,
-mean 3.04s, 8.9% mid-clause. **This offset bug is pre-existing** (identical
-in a pre-merge DB backup) and is a linux-lit rendering issue, not a grouping
-one — verify against the DB before blaming the grouper.
+(2) Italic markup used to shift the logged text — **fixed 2026-07-25**. The
+trace sliced the DISPLAY (italic-stripped) buffer line with SOURCE offsets,
+so on a line containing `_italics_` the logged span came out shifted by the
+number of `_` before it (`d how can it be otherwise, w` instead of `and how
+can it be otherwise,`). The ON-SCREEN tint was always correct —
+`apply_char_range_tag` translates through `italic_offset_map`; only the log
+lied. The trace now translates the same way, guarded by
+`trace_slice_translates_italic_offsets`. If a span ever again looks mangled
+mid-word, suspect the offset spaces (source vs display) before the grouper,
+and check the span against `canonical_text` in the DB.
 
 ## Baselines (2026-07-25, `--secs 30 --at 0.5`)
 
