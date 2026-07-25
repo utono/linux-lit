@@ -595,7 +595,20 @@ fn paint_phrase_at(s: &mut AppState, pos: f64, snap_forward: bool) {
     // "...that slavery which booksellers" / "usually lie under" is visible as a
     // mid-clause cut here without watching the screen.
     if karaoke_trace_on() {
-        let shown: String = line_text.chars().skip(sc).take(ec.saturating_sub(sc)).collect();
+        // `line_text` is the DISPLAY (italic-stripped) buffer line, but sc/ec
+        // are SOURCE offsets — apply_char_range_tag translates them through
+        // italic_offset_map on the way to the buffer. Slicing stripped text
+        // with unstripped offsets logs a shifted, mangled span ("d how can it
+        // be otherwise, w") while the on-screen tint is correct. Translate
+        // here too so the log shows what is actually painted.
+        let (lsc, lec) = match s.italic_offset_map.get(&bl) {
+            Some(removed) => (
+                crate::app::italics::translate_offset(removed, sc),
+                crate::app::italics::translate_offset(removed, ec),
+            ),
+            None => (sc, ec),
+        };
+        let shown: String = line_text.chars().skip(lsc).take(lec.saturating_sub(lsc)).collect();
         ktrace!(
             "paint bl={} span={}/{} t={:.2}-{:.2} ({:.2}s) chars={}-{} mode={} text={:?}",
             bl,
@@ -1155,6 +1168,34 @@ mod tests {
         assert_eq!(block_buffer_range(&b2w, 99), (6, 6));
         // empty map -> empty range at 0.
         assert_eq!(block_buffer_range(&[], 0), (0, 0));
+    }
+
+    #[test]
+    fn trace_slice_translates_italic_offsets() {
+        // TT line 1761145 regression (2026-07-25): the KARAOKE trace sliced the
+        // DISPLAY (italic-stripped) line with SOURCE offsets, logging a span
+        // shifted by the number of `_` earlier in the line — "and how can it be
+        // otherwise," came out as "d how can it be otherwise, w" — while the
+        // on-screen tint (which translates in apply_char_range_tag) was right.
+        // The trace must translate the same way, or a correct render reads as a
+        // mid-clause cut in the log.
+        let source = "reckon among the _artes perditæ_; and how can it be otherwise,";
+        let parse = crate::app::italics::parse_italic_spans(source).unwrap();
+        let display = &parse.stripped_text;
+        let removed = &parse.removed_positions;
+        // DB span for "and how can it be otherwise," in SOURCE coordinates.
+        let sc = source.chars().count() - "and how can it be otherwise,".chars().count();
+        let ec = source.chars().count();
+        // Untranslated slicing of the stripped line is the BUG: shifted by 2.
+        let naive: String = display.chars().skip(sc).take(ec - sc).collect();
+        assert_ne!(naive, "and how can it be otherwise,");
+        // Translated slicing is what the trace must do.
+        let (lsc, lec) = (
+            crate::app::italics::translate_offset(removed, sc),
+            crate::app::italics::translate_offset(removed, ec),
+        );
+        let shown: String = display.chars().skip(lsc).take(lec - lsc).collect();
+        assert_eq!(shown, "and how can it be otherwise,");
     }
 
     #[test]

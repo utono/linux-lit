@@ -401,6 +401,34 @@ card sidesteps this by using `line_yrange`, whose y already includes the offsets
 — but overlays can't, because their multi-row paragraphs need per-visual-row
 rects.)
 
+## Coordinate-space gotcha — SOURCE vs DISPLAY char offsets (italics)
+
+Same class of bug as `top_margin` above, in the CHARACTER axis instead of the
+pixel axis. Two char coordinate spaces coexist on any
+prose/prose_book/epic_translation line carrying inline `_word_` markup:
+
+- **SOURCE** — offsets into `line_mapping.canonical_text`, underscores present.
+  Everything the DB stores (`phrase_timestamps.start_char/end_char`) is here.
+- **DISPLAY** — offsets into the buffer line after `strip_italics_for_fill`
+  removed the paired `_`. Everything read back off the buffer is here.
+
+`apply_char_range_tag` converts SOURCE → DISPLAY via
+`italics::translate_offset(italic_offset_map[bl], off)` before setting iters,
+so the rendered tint is right. Any OTHER consumer that slices buffer text with
+a DB offset must translate too.
+
+Symptom — a span shifted left by exactly the number of `_` earlier in the line,
+mangling both ends: `and how can it be otherwise,` reads as
+`d how can it be otherwise, w`. Diagnosed 2026-07-25 (TT line 1761145). The
+offending consumer was the `KARAOKE:` trace, which sliced the stripped
+`line_text` with untranslated `sc`/`ec` — so the LOG lied while the screen was
+correct. That inverted the usual debugging assumption and briefly looked like a
+litdb grouping defect; the DB span was clean the whole time.
+
+Rule: when a logged/derived span disagrees with what is on screen, check which
+coordinate space each side is in BEFORE suspecting the data. Guarded by
+`phrase_highlight::tests::trace_slice_translates_italic_offsets`.
+
 ## Not the same as the paged clip (do NOT "dedup")
 
 Three clip strategies coexist deliberately; merging them changes behavior:
