@@ -726,15 +726,16 @@ pub fn apply_block_typography(state: &mut AppState) {
     }
 }
 
-/// Inline `_word_` italics for prose/prose_book/epic_translation works (Phase
-/// B). Mirrors apply_bcp_formatting's `^...^` delete-and-retag idiom: per
-/// line, delete the paired `_` from the buffer highest-offset-first
-/// (re-fetching iterators after every mutation — a delete invalidates
-/// outstanding iters, which is the source of the "Invalid text buffer
-/// iterator" GTK critical if reused), tag each stripped span italic, and
-/// record removed `_` source offsets in state.italic_offset_map for karaoke
-/// offset translation. No-op (byte-identical) for excluded work types and for
-/// lines with no `_`.
+/// Apply inline `_word_` italic TAGS for prose/prose_book/epic_translation
+/// works. TAG-ONLY: the `_` delimiters were already stripped from the buffer at
+/// fill time (`strip_italics_for_fill` in `rebuild_buffer_text`), which also
+/// stashed the per-line italic spans in `state.italic_line_spans` and the
+/// removed-`_` positions in `state.italic_offset_map`. This pass does NOT parse,
+/// delete, or touch the offset map — it reads the stashed spans and applies
+/// italic tags from a bounded K-POOL of reusable tags (`inline-italic-pool-{k}`)
+/// so LoJ's ~22k spans cost ~K tag objects instead of ~22k (see the body for the
+/// intra-paragraph-disjoint-range rationale). No-op (byte-identical) for
+/// excluded work types and when `italic_line_spans` is empty.
 pub fn apply_inline_italics(state: &mut AppState) {
     // Gate: prose / prose_book / epic_translation only. (Redundant with the
     // fill-path gate, but keeps this pass a no-op if called for a non-italic
