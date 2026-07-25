@@ -36,6 +36,7 @@ MIN_ADVANCES=3
 START_LINE=""
 SKIP=0
 AT_FRAC=""   # 0.0-1.0: measure this far into the timestamped text
+SPEED=1.0    # mpv playback speed; >1 covers more text per wall-clock second
 KEEP_LOG=0
 WORKS=()
 while [[ $# -gt 0 ]]; do
@@ -45,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --start-line) START_LINE="$2"; shift 2 ;;
     --skip)       SKIP="$2"; shift 2 ;;
     --at)         AT_FRAC="$2"; shift 2 ;;
+    --speed)      SPEED="$2"; shift 2 ;;
     --keep-log)   KEEP_LOG=1; shift ;;
     *)            WORKS+=("$1"); shift ;;
   esac
@@ -171,7 +173,8 @@ for W in "${WORKS[@]}"; do
   env -u WAYLAND_DISPLAY -u DISPLAY mpv --no-config \
     --input-ipc-server="$SOCKET" \
     --ao=null --vo=null --no-video --force-window=no \
-    --pause --no-terminal --really-quiet ${AT_FRAC:+--start="$SEEK_T"} "$LINK" &
+    --pause --no-terminal --really-quiet --speed="$SPEED" \
+    ${AT_FRAC:+--start="$SEEK_T"} "$LINK" &
   MPV_PID=$!
   for ((i = 0; i < 50; i++)); do [[ -S "$SOCKET" ]] && break; sleep 0.1; done
   [[ -S "$SOCKET" ]] || { RESULTS+=("FAIL  $W (mpv socket never appeared)"); ((FAILS++)); cleanup_work; continue; }
