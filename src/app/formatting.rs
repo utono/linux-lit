@@ -748,32 +748,40 @@ pub fn apply_inline_italics(state: &mut AppState) {
         return;
     }
 
-    // NET-ZERO tag lifecycle (unchanged from Phase B): remove any inline-italic-*
-    // tags left by a prior run before re-applying, so the app-lifetime shared tag
-    // table doesn't grow across reloads / scansion toggles.
-    let tag_table = state.buffer.tag_table();
-    {
-        let mut stale: Vec<gtk4::TextTag> = Vec::new();
-        tag_table.foreach(|t| {
-            if t.name().map(|n| n.starts_with("inline-italic-")).unwrap_or(false) {
-                stale.push(t.clone());
-            }
-        });
-        for t in stale {
-            tag_table.remove(&t);
-        }
-    }
-
     // Apply italic tags from the spans computed at buffer-fill
     // (strip_italics_for_fill). The `_` are already gone from the buffer, so
     // there is NO parsing and NO buffer.delete here — this pass only tags.
     //
-    // ONE fresh NAMED tag PER SPAN (inline-italic-{line}-{span}): GTK4/Pango
+    // K-POOL of reusable italic tags (inline-italic-pool-{k}). GTK4/Pango
     // renders only the LAST of multiple disjoint ranges of one style=Italic tag
-    // within a single paragraph, so a per-span distinct tag is required (a
-    // per-line shared tag would be that same failing case). Named so the
-    // net-zero removal above can drop them next run.
+    // WITHIN ONE PARAGRAPH — so the k-th span of a line must use a tag DISTINCT
+    // from that line's other spans. But the bug is intra-paragraph ONLY (verified
+    // on screen): the SAME tag object reused across DIFFERENT lines (different
+    // paragraphs) renders every span correctly. So instead of one fresh tag per
+    // span (~22.5k objects for LoJ → ~4.1s), we keep a pool of K tags (K = max
+    // spans on any one line) and tag the k-th span of EVERY line with pool tag k.
+    // The k-index is distinct within a line (satisfies the fix); pool-k is shared
+    // across lines (no per-line allocation) → ~K objects, ~0.55s.
+    //
+    // Pool tags are created lookup-then-create (idempotent) and are app-lifetime
+    // / reused across every run — so there is NO per-run tag accumulation and NO
+    // foreach-remove needed (the Phase-B leak came from making FRESH tags each
+    // run; the bounded reused pool cannot leak). `set_text` on a work switch
+    // drops tag APPLICATIONS but the pool tag OBJECTS persist and are re-applied.
+    let tag_table = state.buffer.tag_table();
     let spans = state.italic_line_spans.clone();
+    let k_max = spans.values().map(|s| s.len()).max().unwrap_or(0);
+    // Ensure the pool has k_max tags (grows if a later, denser work needs more).
+    for k in 0..k_max {
+        let name = format!("inline-italic-pool-{k}");
+        if tag_table.lookup(&name).is_none() {
+            let t = gtk4::TextTag::builder()
+                .name(&name)
+                .style(pango::Style::Italic)
+                .build();
+            tag_table.add(&t);
+        }
+    }
     for (&i, line_spans) in spans.iter() {
         for (k, &(sc, ec)) in line_spans.iter().enumerate() {
             let Some(base) = state.buffer.iter_at_line(i as i32) else { continue };
@@ -781,12 +789,7 @@ pub fn apply_inline_italics(state: &mut AppState) {
             a.forward_chars(sc as i32);
             let mut b = base;
             b.forward_chars(ec as i32);
-            let span_tag = gtk4::TextTag::builder()
-                .name(&format!("inline-italic-{i}-{k}"))
-                .style(pango::Style::Italic)
-                .build();
-            tag_table.add(&span_tag);
-            state.buffer.apply_tag(&span_tag, &a, &b);
+            state.buffer.apply_tag_by_name(&format!("inline-italic-pool-{k}"), &a, &b);
         }
     }
 }
