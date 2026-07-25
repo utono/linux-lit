@@ -1,10 +1,10 @@
 //! Inline `_word_` italic parsing (Phase B). Pure, buffer-agnostic.
 
 pub struct ItalicParse {
-    /// The line with paired `_` removed. Production does NOT read this — it
-    /// deletes `_` from the live GTK buffer via `removed_positions` — but the
-    /// unit tests assert on it as a cross-check that the parser strips correctly.
-    #[allow(dead_code)]
+    /// The line with paired `_` removed. Load-bearing: `strip_italics_for_fill`
+    /// reads this directly to build the buffer-fill text (the fill-time
+    /// stripped text), and the unit tests assert on it as a cross-check that
+    /// the parser strips correctly.
     pub stripped_text: String,
     pub spans: Vec<(usize, usize)>,
     pub removed_positions: Vec<usize>,
@@ -69,6 +69,44 @@ pub fn parse_italic_spans(line: &str) -> Option<ItalicParse> {
         spans,
         removed_positions,
     })
+}
+
+pub struct ItalicStripResult {
+    pub stripped_lines: Vec<String>,
+    pub line_spans: std::collections::HashMap<usize, Vec<(usize, usize)>>,
+    pub line_removed: std::collections::HashMap<usize, Vec<usize>>,
+}
+
+/// Strip paired `_` from each line for buffer-fill. Output index = buffer line
+/// index. See parse_italic_spans for the None (no `_` / odd count) rule.
+pub fn strip_italics_for_fill(lines: &[String]) -> ItalicStripResult {
+    let mut stripped_lines = Vec::with_capacity(lines.len());
+    let mut line_spans = std::collections::HashMap::new();
+    let mut line_removed = std::collections::HashMap::new();
+    for (i, line) in lines.iter().enumerate() {
+        // Fast path: no `_` -> verbatim, no entry.
+        if !line.contains('_') {
+            stripped_lines.push(line.clone());
+            continue;
+        }
+        match parse_italic_spans(line) {
+            Some(parse) => {
+                stripped_lines.push(parse.stripped_text);
+                line_spans.insert(i, parse.spans);
+                line_removed.insert(i, parse.removed_positions);
+            }
+            None => {
+                // odd `_` count (unpaired) -> render verbatim + log.
+                crate::log_fmt!(
+                    "ITALIC_UNPAIRED: line {} odd `_` count, rendered literal: {:?}",
+                    i,
+                    line.chars().take(60).collect::<String>()
+                );
+                stripped_lines.push(line.clone());
+            }
+        }
+    }
+    ItalicStripResult { stripped_lines, line_spans, line_removed }
 }
 
 #[cfg(test)]
@@ -161,5 +199,40 @@ mod tests {
         // a `_` exactly AT the offset is at-or-before -> counted
         assert_eq!(translate_offset(&[9, 16], 9), 8);   // one removed <= 9
         assert_eq!(translate_offset(&[9, 16], 16), 14); // two removed <= 16
+    }
+
+    #[test]
+    fn strip_for_fill_mixed_lines() {
+        let lines = vec![
+            "plain roman".to_string(),          // 0: no `_`
+            "he wrote _London_ later".to_string(), // 1: one span
+            "(_Page_ 115, _note_ 4.)".to_string(), // 2: two spans
+            "a stray _ underscore".to_string(), // 3: odd -> verbatim
+        ];
+        let r = strip_italics_for_fill(&lines);
+        // stripped text: unchanged lines, `_` removed on 1 & 2, verbatim on 0 & 3
+        assert_eq!(r.stripped_lines, vec![
+            "plain roman",
+            "he wrote London later",
+            "(Page 115, note 4.)",
+            "a stray _ underscore",            // odd -> left as-is
+        ]);
+        // spans: only 1 & 2 have entries (display coords)
+        assert_eq!(r.line_spans.get(&0), None);
+        assert_eq!(r.line_spans.get(&1), Some(&vec![(9, 15)]));   // "London"
+        assert_eq!(r.line_spans.get(&2), Some(&vec![(1, 5), (11, 15)])); // "Page","note"
+        assert_eq!(r.line_spans.get(&3), None);                  // odd -> no entry
+        // removed: source `_` positions on 1 & 2
+        assert_eq!(r.line_removed.get(&1), Some(&vec![9, 16]));
+        assert_eq!(r.line_removed.get(&2), Some(&vec![1, 6, 13, 18]));
+        assert_eq!(r.line_removed.get(&3), None);
+    }
+
+    #[test]
+    fn strip_for_fill_preserves_line_count_and_indices() {
+        let lines: Vec<String> = (0..5).map(|i| format!("_x{i}_ tail")).collect();
+        let r = strip_italics_for_fill(&lines);
+        assert_eq!(r.stripped_lines.len(), 5);          // 1:1 with input
+        for i in 0..5 { assert!(r.line_spans.contains_key(&i)); } // each has a span
     }
 }
