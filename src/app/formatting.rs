@@ -747,16 +747,10 @@ pub fn apply_inline_italics(state: &mut AppState) {
         return;
     }
 
-    // Ensure the italic tag exists (idempotent lookup-then-create).
-    let tag_table = state.buffer.tag_table();
-    if tag_table.lookup("inline-italic").is_none() {
-        let t = gtk4::TextTag::builder()
-            .name("inline-italic")
-            .style(pango::Style::Italic)
-            .build();
-        tag_table.add(&t);
-    }
-
+    // Each italic span gets its OWN fresh, anonymous TextTag (see the tag loop
+    // below for why — GTK4/Pango renders only the last of multiple disjoint
+    // ranges of a single shared style=Italic tag in one paragraph). So there is
+    // no shared named "inline-italic" tag to pre-create here.
     let line_count = state.buffer.line_count() as usize;
     for i in 0..line_count {
         let Some(line_start) = state.buffer.iter_at_line(i as i32) else { continue };
@@ -798,13 +792,29 @@ pub fn apply_inline_italics(state: &mut AppState) {
                 // Tag each span (offsets are DISPLAY-relative, i.e. relative
                 // to the now-stripped line). Re-fetch the line base fresh for
                 // every span so no iterator survives past a prior mutation.
+                //
+                // Each span gets its OWN fresh italic TextTag, NOT a shared
+                // named tag re-applied per span. Root-caused 2026-07-24: GTK4/
+                // Pango renders only the LAST of multiple disjoint ranges of a
+                // single style=Italic tag inside one paragraph (has_tag is true
+                // on every range, but only the last slants). LoJ footnote lines
+                // routinely carry 2+ italic titles, so the shared-tag idiom
+                // silently under-rendered every earlier span. A distinct tag
+                // object per span renders all of them. (The shared idiom works
+                // for one-range-per-line tags like `speaker-name`, which is why
+                // it wasn't caught earlier.)
+                let tag_table = state.buffer.tag_table();
                 for &(sc, ec) in &parse.spans {
                     let base = state.buffer.iter_at_line(i as i32).unwrap();
                     let mut a = base;
                     a.forward_chars(sc as i32);
                     let mut b = base;
                     b.forward_chars(ec as i32);
-                    state.buffer.apply_tag_by_name("inline-italic", &a, &b);
+                    let span_tag = gtk4::TextTag::builder()
+                        .style(pango::Style::Italic)
+                        .build();
+                    tag_table.add(&span_tag);
+                    state.buffer.apply_tag(&span_tag, &a, &b);
                 }
                 state.italic_offset_map.insert(i, parse.removed_positions);
             }
