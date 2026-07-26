@@ -77,6 +77,54 @@ buffer-fill path. A guard that reads such state is only as safe as the least
 careful fill branch. When adding a new fill path, reset all three fields —
 the test will fail if you forget.
 
+### Aftermath: pinned page tables generated while formatting was broken
+
+Fixing #1 exposes a second, separate symptom — **one row too many at the
+bottom of each column**, the last line clipped by the card edge (sometimes
+with a scrollbar). The formatting is correct; the PAGINATION is stale.
+
+`play_pages` / `prose_pages` spreads are pinned in lit.db. A table generated
+while dialogue formatting was suppressed measured rows with NO speaker gaps
+(14px) and NO stage-direction gaps (8px), so it packed more rows per column
+than now fit once those gaps came back.
+
+**The layout fingerprint does NOT catch this.** `layout_fingerprint()`
+(`src/input/page_table.rs`) hashes font family/size, ascent/descent, char
+width, window geometry, line spacing, margins, columns, and top-spacer
+height — nothing about whether per-tag `pixels_above_lines` are applied. A
+table generated under broken formatting therefore still reads as a valid
+`PAGES: table hit` and is accepted.
+
+Tell: `PAGES: table hit (N pages)` where the generation timestamp falls
+inside the window when formatting was broken.
+
+```bash
+# Which pinned tables were generated during a suspect window?
+sqlite3 ~/utono/litdb/data/lit.db \
+  "SELECT work_abbrev, layout_fingerprint, page_count, generated_at
+     FROM play_pages_meta
+    WHERE CAST(REPLACE(generated_at,'epoch:','') AS INTEGER) > <epoch>;"
+```
+
+Fix: delete the affected rows from BOTH `play_pages` and `play_pages_meta`
+(matching `work_abbrev` + exact `layout_fingerprint`); the app regenerates on
+next load at that geometry. Back up lit.db first and make sure no instance is
+running (it rewrites config/state on exit).
+
+Concretely on 2026-07-25/26: Ham-Arkangel's `v4 … 1920x1200` table was
+generated at 21:52, one minute before the bug report, and pinned **81**
+pages. Regenerated with formatting restored it is **85** — four more spreads
+for the same text. It was the only affected play table.
+
+Regenerating headlessly has two traps worth knowing:
+
+- `page_table_gen_attempted` is a **one-shot latch per session**
+  (`generate_and_store`), so resizing AFTER the first layout settles never
+  regenerates. Resize to the target geometry during startup, before the
+  layout settles.
+- `LIT_GEN_PAGE_TABLE=1` does not override an existing table whose
+  fingerprint still matches. Delete the rows first, then let it generate.
+
 ---
 
 # Blank Lines Between Speakers/Stage Directions Too Tall
