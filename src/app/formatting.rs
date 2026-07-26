@@ -657,10 +657,44 @@ fn ensure_block_typography_tags(state: &AppState) {
         }
     }
 
+    // Verse inside a PROSE work (e.g. LoJ, a prose_book quoting Virgil) would
+    // otherwise inherit the view-level prose leading that display_work sets from
+    // `config.line_spacing` (pixels_above + pixels_below on EVERY line), so each
+    // verse line got ~2*line_spacing of paragraph air between it and the next —
+    // verse must set tight per-line. A TextTag overrides the view default, so
+    // this cancels it for verse rows only; surrounding prose keeps its leading.
+    //
+    // ORDER MATTERS: GTK resolves competing values by tag priority, which
+    // defaults to tag-table insertion order (later-added wins). "verse-tight"
+    // is added BEFORE "verse-stanza-gap" so a stanza-opening line — which
+    // carries both tags — still gets the 12px gap above it.
+    if tag_table.lookup("verse-tight").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("verse-tight")
+            .pixels_above_lines(0)
+            .pixels_below_lines(0)
+            .build();
+        tag_table.add(&tag);
+    }
+
     if tag_table.lookup("verse-stanza-gap").is_none() {
         let tag = gtk4::TextTag::builder()
             .name("verse-stanza-gap")
             .pixels_above_lines(12)
+            .build();
+        tag_table.add(&tag);
+    }
+
+    // Closing half of the stanza gap. `verse-stanza-gap` sets pixels_ABOVE, so
+    // it can only open a block; without this the last verse line butts against
+    // the prose that follows with nothing but that prose line's own leading
+    // (measured 43px above a block vs 32px below it). Same 12px so a verse
+    // block is framed symmetrically. Added AFTER "verse-tight" for the same
+    // insertion-order/priority reason described above.
+    if tag_table.lookup("verse-stanza-gap-below").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("verse-stanza-gap-below")
+            .pixels_below_lines(12)
             .build();
         tag_table.add(&tag);
     }
@@ -703,7 +737,10 @@ pub fn apply_block_typography(state: &mut AppState) {
     ensure_block_typography_tags(state);
 
     let buffer_line_count = state.buffer.line_count() as usize;
-    let mut prev_src: Option<usize> = None;
+    // Whether the previous buffer line was a NON-EMPTY verse line. Drives the
+    // stanza gap: only the first verse line after a non-verse row (prose, a
+    // heading, or an empty verse separator) opens a stanza.
+    let mut prev_was_verse = false;
     for bl in 0..buffer_line_count.min(map.buffer_to_work.len()) {
         let Some(wi) = map.buffer_to_work[bl] else { continue };
         let Some(line) = work.lines.get(wi) else { continue };
@@ -734,8 +771,38 @@ pub fn apply_block_typography(state: &mut AppState) {
                 state
                     .buffer
                     .apply_tag_by_name(&format!("verse-indent-{tier}"), &start, &end);
-                if prev_src != Some(wi) {
+                // Cancel the view-level prose leading so verse sets tight,
+                // line-to-line (no-op on non-prose works, where it is already 0).
+                state.buffer.apply_tag_by_name("verse-tight", &start, &end);
+                // Gap ABOVE the first verse line of a block only — a verse line
+                // that follows another verse line is mid-stanza and must set
+                // tight against it. The old test (`prev_src != Some(wi)`) meant
+                // "this buffer line starts a new SOURCE line", which is
+                // true for every line of a work whose verse rows are 1:1 with
+                // buffer lines (LoJ: 2067 of 2067 rows took the gap), so the
+                // 12px landed between every pair of lines instead of between
+                // stanzas. Track whether the PREVIOUS buffer line was verse.
+                if !prev_was_verse {
                     state.buffer.apply_tag_by_name("verse-stanza-gap", &start, &end);
+                }
+                // ...and the matching gap BELOW the block's last verse line.
+                // pixels_above alone can only open a block, so without this the
+                // closing edge collapsed to the following prose line's own
+                // leading (43px above a block vs 32px below it, measured).
+                let next_is_verse = map
+                    .buffer_to_work
+                    .get(bl + 1)
+                    .copied()
+                    .flatten()
+                    .and_then(|nwi| work.lines.get(nwi))
+                    .is_some_and(|nl| {
+                        crate::db::line_types::is_verse_line(&nl.block_type)
+                            && !nl.text.trim().is_empty()
+                    });
+                if !next_is_verse {
+                    state
+                        .buffer
+                        .apply_tag_by_name("verse-stanza-gap-below", &start, &end);
                 }
             }
         } else if crate::db::line_types::is_heading_line(bt) {
@@ -746,7 +813,8 @@ pub fn apply_block_typography(state: &mut AppState) {
                 .buffer
                 .apply_tag_by_name("block-blockquote-indent", &start, &end);
         }
-        prev_src = Some(wi);
+        prev_was_verse =
+            crate::db::line_types::is_verse_line(bt) && !line.text.trim().is_empty();
     }
 }
 

@@ -487,6 +487,69 @@ for breathing room below the title rule / above the footer; the snap and clip
 work on top of these. They are NOT part of the clip mechanism — a surface can
 clip with or without them.
 
+## Inherited leading (cosmetic, separate from clipping)
+
+**Tell:** verse inside a PROSE work renders with a paragraph-sized gap between
+every line — the lines look double-spaced, and fewer of them fit per page — while
+the same verse in a play/poem work looks correct.
+
+**Root cause:** `display_work` (`src/app/mod.rs`) sets the VIEW-level
+`pixels_above_lines`/`pixels_below_lines` from `config.line_spacing` when
+`is_prose_work(work_type)` is true, and to 0 otherwise. That gate is per-WORK,
+but `block_type` is per-LINE: a `prose_book` such as LoJ (Boswell quoting
+Virgil's first eclogue) holds 2,067 `verse` rows, and each inherited
+`2 * line_spacing` of prose leading. `apply_block_typography` tagged those rows
+with `verse-indent-{tier}` (left_margin) and a per-STANZA 12px `verse-stanza-gap`,
+but nothing cancelled the view-level leading, so the gap appeared between every
+line rather than between stanzas.
+
+**Fix (2026-07-26):** a `verse-tight` TextTag (`pixels_above_lines(0)` +
+`pixels_below_lines(0)`) applied to every non-empty verse row in
+`apply_block_typography`. A TextTag overrides the view default, so verse sets
+tight while the surrounding prose keeps its configured leading.
+
+- **Tag-table insertion order IS priority.** GTK resolves competing values by
+  tag priority, which defaults to insertion order (later-added wins) — the same
+  rule behind the vocab-tag ordering bug. `verse-tight` is created BEFORE
+  `verse-stanza-gap` in `ensure_block_typography_tags` so a stanza-opening line,
+  which carries both, still gets its 12px gap. Reversing the two would silently
+  flatten every stanza break.
+- **Empty verse rows keep the gap tag only** — they ARE the stanza separator, so
+  tightening them would erase the break.
+- **A per-work gate cannot express per-line typography.** Whenever a work type
+  mixes block types, the class-wide default has to be cancellable per line;
+  reach for a tag rather than widening the `is_prose_work` branch.
+- **The stanza-gap guard was ALSO wrong, and hid behind the first fix.** The
+  `verse-tight` tag alone moved the pitch 44px → 38px, which looked like
+  progress but was only half the story: `verse-stanza-gap` (12px) was gated on
+  `prev_src != Some(wi)` — "this buffer line starts a new SOURCE line" — which
+  is true for EVERY line of a work whose verse rows are 1:1 with buffer lines.
+  Instrumenting the two tag counts proved it: **2067 verse-tight, 2067
+  stanza-gap** on a work with 2,067 verse rows and ZERO empty separator rows.
+  The guard is now `!prev_was_verse` (did the previous buffer line render as
+  non-empty verse?), which yields 413 real stanza openings and a 26px pitch.
+- **Anchor "correct" to a reference surface, not to a delta.** The target was
+  "render like Shakespeare verse in the two-column layout"; measuring Hamlet's
+  right column gave a hard number (26px) that turned a subjective "still looks
+  loose" into arithmetic: 26 base + 12 stanza gap = the observed 38. Without
+  that reference the half-fix would have shipped.
+- **Measure the pitch, don't eyeball it.** Pixel-measured ink-band pitch on the
+  same page at 1920x1200: 44px (broken) → 38px (verse-tight only) → 26px (both
+  fixes), matching Hamlet's two-column verse exactly. Glyph ink heights are
+  unchanged throughout (~15-20px), which is what proves the delta is spacing
+  rather than font size.
+- **`pixels_above_lines` can only OPEN a block.** A third pass was needed: with
+  the stanza gap correct, a verse block still closed with no gap below its last
+  line (measured 43px above the block vs 32px below), because the gap tag sets
+  `pixels_above` and nothing was tagging the closing edge — the following prose
+  line contributed only its own leading. Fixed with a `verse-stanza-gap-below`
+  tag (`pixels_below_lines(12)`) applied when the NEXT buffer line is not
+  non-empty verse, which needs a lookahead — tracking only the previous line
+  cannot see a block's last row. Now 44px on both edges.
+- **Blast radius is checkable in one query.** `block_type='verse'` exists on
+  exactly two works (LoJ, TT), both prose — plays and poems never enter
+  `apply_block_typography`, so their verse typography is untouched.
+
 ## The failure checklist (ordered by frequency)
 
 When a half line clips at the bottom edge of a scrolled surface:
