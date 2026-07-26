@@ -92,7 +92,21 @@ display rows by depth.
 ### 2. `src/ui/syntax_overlay.rs` — the Cairo surface
 
 A `DrawingArea` in its own overlay layer, following `keybinds_overlay.rs`'s
-structure, with two deliberate departures:
+structure.
+
+**Full-screen, not card-bound.** The diagram fills the window rather than
+sizing to the reading card. It is a study surface the reader stops on, not an
+annotation beside the text, and the extra width and height are what let a long
+prose selection stay legible — bands need horizontal room to hold their labels
+and vertical room to stack.
+
+This is exactly `keybinds_overlay`'s geometry, inherited wholesale:
+`hexpand`/`vexpand` with `Align::Fill`, a scrim covering the whole surface, and
+all drawing computed against the `widget_w`/`widget_h` passed to
+`set_draw_func`. No `main_card_rect` involvement, so the diagram is unaffected
+by column count, card margins, or whether a two-column play is open.
+
+Two deliberate departures from that precedent:
 
 - **Pango, not `cr.show_text`.** The diagram renders the work's own text —
   early modern English, italic stage directions. Cairo's toy text API has no
@@ -103,13 +117,20 @@ structure, with two deliberate departures:
   derive from the theme's accent ramp by depth. Reuse `theme.rs`'s existing
   contrast helpers so labels stay legible on every root variant.
 
-Layout, top to bottom:
+Layout, top to bottom, within a centered content column capped at a maximum
+width (the `panel_w = (widget_w - 2.0 * margin).min(1240.0)` pattern
+`keybinds_overlay` already uses) so text does not run edge to edge on a wide
+display:
 
-1. The selection text, Pango-wrapped to the card width.
+1. The selection text, Pango-wrapped to the content width.
 2. A POS row beneath the text.
 3. Band rows stacked by depth — outermost lowest, so nesting reads as a stack.
 
 A band spanning a line wrap breaks into segments, one per visual row.
+
+Deep nesting is bounded by the window height rather than the card's. If the
+stack still overflows, the diagram scales the row height down to fit; it never
+clips or scrolls, so the whole structure is always visible at once.
 
 ### 3. Band derivation
 
@@ -183,6 +204,10 @@ Two acceptance criteria, one per derivation path:
   (any of the other 301) draws a well-formed band stack. BH-Barrett is one of
   the five parsed works, so it exercises only the enriched path; both must be
   verified or the majority path ships untested.
+- **Full-screen geometry** — the diagram fills the window, not the card. Verify
+  on a two-column play, where a card-bound surface would visibly size to one
+  column. Pixel-measure the scrim's extent rather than judging by eye, per the
+  project's clipping rules.
 
 ## Non-goals
 
