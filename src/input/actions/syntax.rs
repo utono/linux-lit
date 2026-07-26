@@ -115,7 +115,7 @@ pub fn open_syntax_diagram(
         // no double borrow.
         s.syntax_return_mode = Some(s.input_mode);
         // Loading state BEFORE the request — run_claude_request's contract.
-        s.syntax_overlay.show_loading(&s.theme);
+        s.syntax_overlay.show_loading(&text, &s.theme);
         s.input_mode = crate::app::InputMode::SyntaxDiagram;
         s.config.claude_model.clone()
     };

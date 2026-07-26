@@ -60,6 +60,9 @@ const POS_ROW_H: f64 = 16.0;
 /// the identical offset or the stack silently overflows the line it belongs
 /// to.
 const STACK_TOP_OFFSET: f64 = POS_ROW_H + LABEL_H;
+/// Vertical space kept clear at the window bottom for the POS legend, so a
+/// deep band stack never grows into it. Two wrapped legend lines plus air.
+const LEGEND_RESERVE: f64 = 56.0;
 /// Window margin around the content column.
 const MARGIN: f64 = 48.0;
 /// Content column cap, so text does not run edge to edge on a wide display.
@@ -186,7 +189,10 @@ fn band_line_spans(
 
 /// What the surface is currently showing.
 enum View {
-    Loading,
+    /// Waiting on the API, holding the sentence being analyzed so the reader
+    /// can start reading it during the round-trip instead of staring at a
+    /// bare spinner. Mirrors `journal_overlay::show_loading(question, label)`.
+    Loading(String),
     Analysis(SyntaxAnalysis),
 }
 
@@ -217,7 +223,7 @@ impl SyntaxOverlay {
             .build();
 
         let inner = Rc::new(RefCell::new(Inner {
-            view: View::Loading,
+            view: View::Loading(String::new()),
             show_note: false,
             ink: (0.96, 0.94, 0.90),
             dim: (0.70, 0.68, 0.66),
@@ -242,10 +248,10 @@ impl SyntaxOverlay {
 
     /// Show the loading state. MUST be called before dispatching the Claude
     /// request — `run_claude_request`'s contract.
-    pub fn show_loading(&self, theme: &crate::theme::Theme) {
+    pub fn show_loading(&self, text: &str, theme: &crate::theme::Theme) {
         {
             let mut i = self.inner.borrow_mut();
-            i.view = View::Loading;
+            i.view = View::Loading(text.to_string());
             i.show_note = false;
             apply_theme(&mut i, theme);
         }
@@ -352,11 +358,22 @@ fn draw(area: &DrawingArea, cr: &gtk4::cairo::Context, inner: &Inner, w: f64, h:
     let x0 = (w - content_w) / 2.0;
 
     match &inner.view {
-        View::Loading => {
-            cr.set_source_rgb(inner.dim.0, inner.dim.1, inner.dim.2);
-            let (layout, tw, th) = layout_text(area, "Analyzing syntax…", "Sans 16", None);
-            cr.move_to((w - tw) / 2.0, (h - th) / 2.0);
+        View::Loading(text) => {
+            // The sentence, drawn at exactly the position, font and width
+            // `draw_analysis` will use — so it does not jump when the result
+            // lands, and the reader can start reading during the round-trip
+            // (a second or more; this is a stop-and-study surface).
+            cr.set_source_rgb(inner.ink.0, inner.ink.1, inner.ink.2);
+            let (layout, _tw, th) =
+                layout_text(area, text, "Serif 20", Some(content_w));
+            cr.move_to(x0, MARGIN);
             pangocairo::functions::show_layout(cr, &layout);
+
+            // Status under it, dimmed, so the wait is still legible as a wait.
+            cr.set_source_rgb(inner.dim.0, inner.dim.1, inner.dim.2);
+            let (status, _sw, _sh) = layout_text(area, "Analyzing syntax…", "Sans 12", None);
+            cr.move_to(x0, MARGIN + th + 24.0);
+            pangocairo::functions::show_layout(cr, &status);
         }
         View::Analysis(a) => draw_analysis(area, cr, inner, a, x0, content_w, h),
     }
@@ -491,7 +508,10 @@ fn draw_analysis(
     // row height is additionally capped by what actually remains on screen,
     // keeping the spec's "never clips or scrolls" promise.
     let note_reserve = if inner.show_note && a.note.is_some() { 160.0 } else { 40.0 };
-    let onscreen_budget = (h - (text_top + th) - note_reserve).max(MIN_BAND_ROW_H);
+    // `+ LEGEND_RESERVE` so a deep stack cannot grow down into the POS legend
+    // pinned at the bottom of the window.
+    let onscreen_budget =
+        (h - (text_top + th) - note_reserve - LEGEND_RESERVE).max(MIN_BAND_ROW_H);
     // `STACK_TOP_OFFSET` is part of the clearance now: the stack starts below
     // the POS row and its innermost label, so the gap it has to fit in is that
     // much smaller.
@@ -668,11 +688,116 @@ fn draw_analysis(
             pangocairo::functions::show_layout(cr, &nl);
         }
     }
+
+    // ── POS legend, pinned to the bottom of the window ──
+    //
+    // The tags are Universal Dependencies abbreviations (DET, PUNCT, ADP,
+    // SCONJ...) — standard to a linguist, opaque to a reader, which is who
+    // this surface is for. Only tags PRESENT in this analysis are listed, so
+    // the legend stays short and never explains something that is not on
+    // screen. Pinned to the window bottom rather than flowing after the
+    // diagram: the diagram's height varies with nesting, and a legend that
+    // moves is harder to consult than one that is always in the same place.
+    let legend = pos_legend(&a.pos);
+    if !legend.is_empty() {
+        cr.set_source_rgb(inner.dim.0, inner.dim.1, inner.dim.2);
+        let (ll, _lw, lh) = layout_text(area, &legend, "Sans 10", Some(content_w));
+        cr.move_to(x0, h - MARGIN - lh);
+        pangocairo::functions::show_layout(cr, &ll);
+    }
+}
+
+/// Expand a Universal Dependencies POS tag to a reader-facing word.
+///
+/// The full UD tag set, so an unexpected tag from the model still resolves
+/// rather than falling through to a bare abbreviation.
+fn pos_full_name(tag: &str) -> Option<&'static str> {
+    Some(match tag {
+        "ADJ" => "adjective",
+        "ADP" => "preposition",
+        "ADV" => "adverb",
+        "AUX" => "auxiliary verb",
+        "CCONJ" => "coordinating conjunction",
+        "DET" => "determiner",
+        "INTJ" => "interjection",
+        "NOUN" => "noun",
+        "NUM" => "numeral",
+        "PART" => "particle",
+        "PRON" => "pronoun",
+        "PROPN" => "proper noun",
+        "PUNCT" => "punctuation",
+        "SCONJ" => "subordinating conjunction",
+        "SYM" => "symbol",
+        "VERB" => "verb",
+        "X" => "other",
+        _ => return None,
+    })
+}
+
+/// Build the legend line for the tags actually used in `pos`, in first-seen
+/// order so it reads left-to-right the way the diagram does.
+///
+/// Pure (no Cairo/Pango), so the de-duplication and ordering are unit-testable
+/// without a display.
+fn pos_legend(pos: &[crate::syntax_diagram::PosTag]) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    for p in pos {
+        if !seen.contains(&p.pos.as_str()) {
+            seen.push(p.pos.as_str());
+        }
+    }
+    seen.iter()
+        .filter_map(|t| pos_full_name(t).map(|full| format!("{t} {full}")))
+        .collect::<Vec<_>>()
+        .join("   ·   ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tag(pos: &str) -> crate::syntax_diagram::PosTag {
+        crate::syntax_diagram::PosTag {
+            start_char: 0,
+            end_char: 1,
+            pos: pos.to_string(),
+        }
+    }
+
+    #[test]
+    fn legend_lists_each_tag_once_in_first_seen_order() {
+        let pos = vec![tag("DET"), tag("NOUN"), tag("DET"), tag("PUNCT")];
+        let legend = pos_legend(&pos);
+        assert_eq!(
+            legend,
+            "DET determiner   ·   NOUN noun   ·   PUNCT punctuation"
+        );
+    }
+
+    #[test]
+    fn legend_is_empty_when_there_are_no_tags() {
+        assert_eq!(pos_legend(&[]), "");
+    }
+
+    #[test]
+    fn legend_skips_tags_it_cannot_expand() {
+        // An unknown tag is dropped rather than printed bare — a legend entry
+        // that just repeats the abbreviation explains nothing.
+        let pos = vec![tag("NOUN"), tag("WAT")];
+        assert_eq!(pos_legend(&pos), "NOUN noun");
+    }
+
+    #[test]
+    fn every_universal_dependencies_tag_expands() {
+        // The 17 UD tags. A gap here means a real diagram can show an
+        // abbreviation the legend silently omits.
+        for t in [
+            "ADJ", "ADP", "ADV", "AUX", "CCONJ", "DET", "INTJ", "NOUN", "NUM", "PART", "PRON",
+            "PROPN", "PUNCT", "SCONJ", "SYM", "VERB", "X",
+        ] {
+            assert!(pos_full_name(t).is_some(), "{t} must have a full name");
+        }
+    }
 
     #[test]
     fn band_row_height_shrinks_to_fit_available_space() {
