@@ -33,6 +33,7 @@ pub mod keybinds_legend;
 pub mod gloss_keybinds_overlay;
 pub mod synopsis_keybinds_overlay;
 pub mod journal_keybinds_overlay;
+pub mod syntax_keybinds_overlay;
 pub mod chat_keybinds_overlay;
 pub mod vocab_popup;
 pub mod gamepad_overlay;

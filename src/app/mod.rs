@@ -191,6 +191,9 @@ pub enum InputMode {
     /// Full-screen Cairo syntax diagram of a visual-mode selection. Escape
     /// closes; `n` toggles the prose commentary. All other keys are swallowed.
     SyntaxDiagram,
+    /// Syntax-diagram Ctrl+/ keybind legend: modal card over the diagram. Esc
+    /// or Ctrl+/ closes it, restoring `SyntaxDiagram`.
+    SyntaxKeybindsOverlay,
 }
 
 /// Which of the two toggleable reader overlays (gloss / journal) was most
@@ -742,6 +745,7 @@ pub struct AppState {
     pub gloss_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub synopsis_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub journal_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
+    pub syntax_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub chat_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     /// InputMode to restore when the chat-panel Ctrl+/ legend closes — the
     /// panel context it was opened from (ChatTranscript or ChatPrompt).
@@ -1887,6 +1891,12 @@ pub fn build_window(
         Some(crate::ui::journal_keybinds_overlay::MRU),
     );
     journal_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
+    let syntax_keybinds_overlay = KeybindsLegend::new(
+        crate::ui::syntax_keybinds_overlay::TITLE,
+        crate::ui::syntax_keybinds_overlay::GROUPS,
+        None,
+    );
+    syntax_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let chat_keybinds_overlay = KeybindsLegend::new(
         crate::ui::chat_keybinds_overlay::TITLE,
         crate::ui::chat_keybinds_overlay::GROUPS,
@@ -2389,6 +2399,7 @@ pub fn build_window(
         gloss_keybinds_overlay,
         synopsis_keybinds_overlay,
         journal_keybinds_overlay,
+        syntax_keybinds_overlay,
         chat_keybinds_overlay,
         chat_keybinds_return_mode: InputMode::ChatTranscript,
         echo_add_turn_id: None,

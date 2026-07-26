@@ -328,7 +328,8 @@ pub fn handle_key(
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
             crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift, is_alt),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
-            crate::app::InputMode::SyntaxDiagram => handle_syntax_diagram_key(state, key_name),
+            crate::app::InputMode::SyntaxDiagram => handle_syntax_diagram_key(state, key_name, is_ctrl),
+            crate::app::InputMode::SyntaxKeybindsOverlay => handle_syntax_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -3285,6 +3286,22 @@ fn handle_block_visual_key(
             (cfg.set_hint)(&s.gloss_overlay);
             true
         }
+        // s: open the full-screen syntax diagram for the selected blocks.
+        // Overlay text has no line_mapping rows, so no parse enrichment.
+        "s" => {
+            let text = {
+                let s = state.borrow();
+                (cfg.yank_text)(&s.gloss_overlay)
+            };
+            {
+                let mut s = state.borrow_mut();
+                (cfg.escape_exit)(&s.gloss_overlay);
+                s.input_mode = cfg.return_mode;
+                (cfg.set_hint)(&s.gloss_overlay);
+            }
+            crate::input::actions::syntax::open_syntax_diagram(state, text, Vec::new());
+            true
+        }
         _ => true,
     }
 }
@@ -3348,6 +3365,22 @@ fn handle_journal_visual_key(
             s.journal_overlay.exit_visual_to_anchor();
             s.input_mode = crate::app::InputMode::JournalOverlay;
             s.journal_overlay.set_journal_hint();
+            true
+        }
+        // s: open the full-screen syntax diagram for the selected blocks.
+        // Overlay text has no line_mapping rows, so no parse enrichment.
+        "s" => {
+            let text = {
+                let s = state.borrow();
+                s.journal_overlay.visual_selection_text()
+            };
+            {
+                let mut s = state.borrow_mut();
+                s.journal_overlay.exit_visual_to_anchor();
+                s.input_mode = crate::app::InputMode::JournalOverlay;
+                s.journal_overlay.set_journal_hint();
+            }
+            crate::input::actions::syntax::open_syntax_diagram(state, text, Vec::new());
             true
         }
         _ => true,
@@ -3797,7 +3830,14 @@ fn handle_gamepad_key(
 fn handle_syntax_diagram_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
+    is_ctrl: bool,
 ) -> bool {
+    if is_ctrl && key_name == "slash" {
+        let mut s = state.borrow_mut();
+        s.syntax_keybinds_overlay.show();
+        s.input_mode = crate::app::InputMode::SyntaxKeybindsOverlay;
+        return true;
+    }
     match key_name {
         "Escape" => {
             let mut s = state.borrow_mut();
@@ -3811,6 +3851,22 @@ fn handle_syntax_diagram_key(
         }
         _ => true,
     }
+}
+
+/// Modal handler for the syntax-diagram Ctrl+/ keybind legend: Esc or Ctrl+/
+/// closes the legend and returns to the diagram; all other keys are swallowed.
+/// Mirrors `handle_echo_keybinds_key`.
+fn handle_syntax_keybinds_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+    is_ctrl: bool,
+) -> bool {
+    if key_name == "Escape" || (is_ctrl && key_name == "slash") {
+        let mut s = state.borrow_mut();
+        s.syntax_keybinds_overlay.hide();
+        s.input_mode = crate::app::InputMode::SyntaxDiagram;
+    }
+    true // consume all keys while the legend is up (modal)
 }
 
 fn handle_echo_keybinds_key(
