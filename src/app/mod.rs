@@ -188,6 +188,12 @@ pub enum InputMode {
     /// Ctrl+/ closes it, restoring `chat_keybinds_return_mode` (the transcript
     /// or prompt context it was opened from).
     ChatKeybindsOverlay,
+    /// Full-screen Cairo syntax diagram of a visual-mode selection. Escape
+    /// closes; `n` toggles the prose commentary. All other keys are swallowed.
+    SyntaxDiagram,
+    /// Syntax-diagram Ctrl+/ keybind legend: modal card over the diagram. Esc
+    /// or Ctrl+/ closes it, restoring `SyntaxDiagram`.
+    SyntaxKeybindsOverlay,
 }
 
 /// Which of the two toggleable reader overlays (gloss / journal) was most
@@ -678,6 +684,18 @@ pub struct AppState {
     /// Reader, either overlay, or the chat transcript).
     pub vocab_add_return_mode: Option<InputMode>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
+    /// Full-screen Cairo syntax diagram surface (`InputMode::SyntaxDiagram`).
+    /// Floats on the outer overlay beside the vocab popup and toasts.
+    pub syntax_overlay: crate::ui::syntax_overlay::SyntaxOverlay,
+    /// Mode to restore when the syntax diagram closes (Escape, bad-JSON, or
+    /// API-error path). The diagram opens from the reader's visual mode OR
+    /// from a gloss/synopsis/journal overlay's visual mode — by the time
+    /// `open_syntax_diagram` runs, the caller has already restored
+    /// `input_mode` to that origin mode, so it is captured there. `None`
+    /// falls back to `Reader` (should not happen in practice, but keeps a
+    /// coherent default if the diagram is ever opened before that mode is
+    /// set).
+    pub syntax_return_mode: Option<InputMode>,
     /// Word of the vocab journal Q&A request currently in flight (Ctrl+r).
     /// Guards duplicate paid asks for the same word — it must survive cursor
     /// moves and popup closes, unlike vocab_popup state — and is cleared by
@@ -736,6 +754,7 @@ pub struct AppState {
     pub gloss_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub synopsis_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub journal_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
+    pub syntax_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     pub chat_keybinds_overlay: crate::ui::keybinds_legend::KeybindsLegend,
     /// InputMode to restore when the chat-panel Ctrl+/ legend closes — the
     /// panel context it was opened from (ChatTranscript or ChatPrompt).
@@ -1672,6 +1691,9 @@ pub fn build_window(
     // Vocab popup (bottom-right, full window width)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
 
+    // Full-screen syntax diagram surface.
+    let syntax_overlay = crate::ui::syntax_overlay::SyntaxOverlay::new();
+
     // Library picker overlay
     let mut picker = LibraryPicker::new();
     if let Ok(conn) = crate::db::queries::open_db() {
@@ -1878,6 +1900,12 @@ pub fn build_window(
         Some(crate::ui::journal_keybinds_overlay::MRU),
     );
     journal_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
+    let syntax_keybinds_overlay = KeybindsLegend::new(
+        crate::ui::syntax_keybinds_overlay::TITLE,
+        crate::ui::syntax_keybinds_overlay::GROUPS,
+        None,
+    );
+    syntax_keybinds_overlay.attach_to(&corpus_search_popup.overlay);
     let chat_keybinds_overlay = KeybindsLegend::new(
         crate::ui::chat_keybinds_overlay::TITLE,
         crate::ui::chat_keybinds_overlay::GROUPS,
@@ -2053,6 +2081,7 @@ pub fn build_window(
     // placement math is identical to attaching on the inner overlay. Kept BELOW
     // the toasts so a transient status toast still paints over them.
     vocab_popup.attach_to(&outer_overlay);
+    syntax_overlay.attach_to(&outer_overlay);
     outer_overlay.add_overlay(vocab_add_card.container());
     // Action popup (Visual mode) also floats on the OUTER overlay, above the
     // chat panel: Tab moves focus to the reader without closing the panel
@@ -2358,6 +2387,8 @@ pub fn build_window(
             fade_gen: Rc::new(Cell::new(0)),
             chat_inline: false,
         },
+        syntax_overlay,
+        syntax_return_mode: None,
         vocab_qa_inflight: None,
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),
@@ -2378,6 +2409,7 @@ pub fn build_window(
         gloss_keybinds_overlay,
         synopsis_keybinds_overlay,
         journal_keybinds_overlay,
+        syntax_keybinds_overlay,
         chat_keybinds_overlay,
         chat_keybinds_return_mode: InputMode::ChatTranscript,
         echo_add_turn_id: None,

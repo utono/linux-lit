@@ -19,6 +19,7 @@ pub mod pickers;
 pub mod rewrite_history;
 pub mod segment_vim;
 pub mod settings;
+pub mod syntax;
 pub mod synopsis;
 pub(crate) mod vocab_add;
 pub(crate) mod vocab_journal;
@@ -185,6 +186,10 @@ pub enum Action {
     AskPassage,
     WordCycleCopy,
     WordCollectCopy,
+    /// Return: open the syntax diagram for the sentence containing the words
+    /// underlined by `-` / `_`. No-ops when nothing is underlined, so the key
+    /// is free for other uses in every other reader state.
+    OpenSyntaxDiagramForUnderlined,
     /// Open the cursor's segment (prose paragraph / verse line) in a read-only
     /// vim editor seeded in visual mode, for selecting text and copying it to
     /// the system clipboard. Nothing is ever saved back.
@@ -385,6 +390,7 @@ impl Action {
             | Action::AskPassage
             | Action::WordCycleCopy
             | Action::WordCollectCopy
+            | Action::OpenSyntaxDiagramForUnderlined
             | Action::OpenSegmentVim => Category::Selection,
 
             // Timestamps
@@ -502,6 +508,7 @@ impl Action {
             Action::AskPassage => "AskPassage",
             Action::WordCycleCopy => "WordCycleCopy",
             Action::WordCollectCopy => "WordCollectCopy",
+            Action::OpenSyntaxDiagramForUnderlined => "OpenSyntaxDiagramForUnderlined",
             Action::OpenSegmentVim => "OpenSegmentVim",
             Action::ToggleTranslations => "ToggleTranslations",
             Action::ToggleSynopsis => "ToggleSynopsis",

@@ -22,6 +22,7 @@ mod ui;
 mod vocab_lookup;
 mod vocab_scan;
 mod scansion;
+mod syntax_diagram;
 
 use gtk4::prelude::*;
 use libadwaita as adw;

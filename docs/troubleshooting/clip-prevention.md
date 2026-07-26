@@ -821,6 +821,106 @@ When a half line clips at the bottom edge of a scrolled surface:
       title + margins + scroll + footer == card_height.
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
 
+15. **A hand-drawn Cairo surface lays annotations out against the FIRST
+    wrapped line instead of the whole wrapped block (OVERSTRIKE, not
+    clipping).** The syntax diagram drew its POS row and band rules starting
+    from the passage's first line origin, so on any selection that wrapped to
+    two or more visual lines the annotation stack was painted straight
+    THROUGH the following lines of text. Nothing clips and nothing is
+    dropped — the glyphs and the rules simply occupy the same pixels.
+    - Tell: text and rules interleaved in one band of rows; the span
+      validator reports zero drops (`SYNTAX: N bands, M pos tags` with no
+      `dropped band` lines), so the data is fine and only the picture is
+      wrong. Pixel-scan confirms it: band rules at rows 123-158 with the
+      passage's second line at ~140.
+    - Root cause: a Pango layout's `pixel_size().1` (full wrapped height) was
+      available but the annotation origin used a single `line_h` instead.
+    - **Root cause (proven, and NOT what it first looked like):** the
+      annotation origin was already per-line and correct. The real defect was
+      that a legibility FLOOR (`MIN_BAND_ROW_H`) made deep stacks
+      structurally unable to fit the natural leading: with `line_h` 27,
+      clearance 18 and 5 rows, `interior_row_height` returns the 12px floor,
+      putting the outermost rule at (5-1)x12 = 48px — 21px into the next
+      line. No per-line arithmetic can fix that; the GAP is the only free
+      variable.
+    - Fix: `line_spacing_for(rows, natural_line_h, clearance)` computes the
+      height the text must be SET at (`layout.set_line_spacing`, a FACTOR of
+      natural height in Pango 1.44+), then annotations anchor at
+      `natural_line_h` below each line's top — the widening IS the gap they
+      occupy, so anchoring at the widened `line_h` just pushes the stack onto
+      the next line again.
+    - **Second-order trap:** after widening, an interior-vs-last-line row
+      height split becomes the bug. The last line kept a generous
+      budget-derived `rh` and painted 605px-wide rules exactly where line 2
+      had been laid out. Once the gap is uniform, use ONE row height for
+      every line.
+    - **Third-order trap:** the commentary below must clear
+      `max(stack_bottom, text_top + th)`. Widened leading can put the text
+      block's own bottom below the last rule, so keying off the band stack
+      alone puts the note back inside the diagram.
+    - Related, same surface: a label wider than the span it annotates needs
+      elision or suppression, or adjacent short spans smear together
+      (`PUNCTADJ`, `SCONJ DETNOUN`). Measure the label against its span width
+      before drawing it. Band-label collision needs a VERTICAL TOLERANCE
+      (~the label's text height), not exact `row_y` equality — labels float
+      above their rules, so adjacent DEPTHS overprint while comparing equal
+      rows reports no collision.
+    - Verification: pixel-scan for rows that are simultaneously text-heavy
+      and rule-heavy. Whole-band overstrike went from most of the annotation
+      band to 4 minor label grazes out of 15 rule rows on a 21-band,
+      5-wrapped-line paragraph.
+    (`syntax_overlay.rs`, 2026-07-26 — found by the mandatory headless check,
+    NOT by the build or the unit tests, both of which were green. Three
+    successive headless re-measures were needed; each fix exposed the next
+    layer, and none was visible from logs.)
+
+    **UPDATE, same day — cage PASSED this and the real GL renderer did not.**
+    The first real-renderer run of this surface showed the annotations
+    unreadable on a 10-band, 2-line sentence: labels printed on their own
+    rules and on each other, band rules struck through the POS row, rules
+    overran the text. Cage had reported "4 minor grazes". Every constant on
+    this surface had been tuned against software rendering. Four more layers,
+    each exposed by fixing the one before:
+    - **A hardcoded label offset against a smaller row floor.** Labels floated
+      a fixed 14px above their rules while `MIN_BAND_ROW_H` was 12px, so a
+      compressed stack put every label above its OWN rule and onto its
+      neighbour's. Any label offset MUST derive from the row height, and the
+      row floor from the label height — otherwise the two invert under
+      compression. Same for the collision tolerance: a constant 13px
+      under-reports once `rh` shrinks below it.
+    - **Pango draws from the text's TOP-left, not its baseline.** An offset of
+      `rh - 2` still left glyphs sitting on the rule. The label's own measured
+      HEIGHT is what must clear it (`layout_text` already returns it — the
+      draw site was discarding it as `_`). Measure, don't guess.
+    - **Two elements anchored at the same y.** The POS row and the outermost
+      band rule were both placed at `natural_line_h`, so the rule struck the
+      tags through BY CONSTRUCTION, not by drift. When two stacked elements
+      share an anchor, one of them needs the other's height added.
+    - **A width test is not a collision test.** A DEEP band sits high in the
+      stack, so its label lands in the POS row regardless of how wide the band
+      is. Test the actual geometry (does the label's top clear the POS row's
+      floor?) rather than a proxy. Corollary learned by over-correcting:
+      tightening the width proxy to `lw <= span` suppressed 5 of 6 labels —
+      "appositive noun phrase" is legitimately wider than the 2-3 word span it
+      names. A clean diagram missing most of its labels is WORSE than a
+      slightly overhanging one; overhang is cosmetic, a missing label is lost
+      meaning.
+    - **Reserve space for the innermost band's label.** With the stack
+      starting immediately below the POS row, the innermost band (depth =
+      rows-1, offset 0) has nowhere to put its label. Reserve one label height
+      (`STACK_TOP_OFFSET = POS_ROW_H + LABEL_H`) instead of suppressing it.
+    - **Name the shared offset once.** The spacing budget, the drawn `row_y`,
+      and `band_stack_bottom` must use an IDENTICAL offset; they drifted apart
+      twice while it was open-coded at each site.
+    - **Unit tests that pin superseded geometry are evidence, not obstacles.**
+      Two row-height tests failed on the raised floor. Both were updated, not
+      deleted: the new contract is that the legibility FLOOR wins over a tight
+      budget (`line_spacing_for` absorbs the overflow), and that a stack fits
+      the SET line height rather than the natural one.
+    (`syntax_overlay.rs`, 2026-07-26 — **the lesson is the renderer, not the
+    arithmetic**: a layout "verified" only in cage is unverified. Run the real
+    GL check before believing any pixel-level acceptance on this surface.)
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

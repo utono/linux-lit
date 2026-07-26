@@ -534,7 +534,7 @@ fn blend_colors(fg_hex: &str, bg_hex: &str, alpha: f64) -> String {
 }
 
 /// Parse a hex color to (r, g, b) floats in [0, 1].
-fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
+pub(crate) fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
     let h = hex.trim_start_matches('#');
     if h.len() < 6 {
         return (0.0, 0.0, 0.0);

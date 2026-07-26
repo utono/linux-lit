@@ -15,6 +15,7 @@ pub mod prose_pages;
 pub mod rewrite_diff;
 pub mod scroll;
 pub mod search;
+pub mod sentence;
 pub mod segments;
 pub mod timestamps;
 pub mod viewport;

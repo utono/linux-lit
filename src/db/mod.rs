@@ -13,3 +13,4 @@ pub mod prompts;
 pub mod journal;
 pub mod queries;
 pub mod stopwords;
+pub mod syntax;
