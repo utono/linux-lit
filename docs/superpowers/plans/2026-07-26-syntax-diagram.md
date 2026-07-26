@@ -45,7 +45,7 @@ Pure module, no GTK. This is the whole correctness surface of the feature — ev
 - Consumes: nothing (first task).
 - Produces: `SyntaxAnalysis { text: String, bands: Vec<Band>, pos: Vec<PosTag>, note: Option<String> }`, `Band { start_char: usize, end_char: usize, label: String, depth: u8 }`, `PosTag { start_char: usize, end_char: usize, pos: String }`, `parse_analysis(json: &str, text: &str) -> Result<SyntaxAnalysis, String>`, `assign_rows(bands: &[Band]) -> Vec<usize>`, `max_row(bands: &[Band]) -> usize` (Task 3 sizes the band stack from this).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/syntax_diagram.rs` with the test module only:
 
@@ -140,12 +140,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --bins syntax_diagram`
 Expected: FAIL — `cannot find function parse_analysis`, `cannot find type Band`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prepend to `src/syntax_diagram.rs` (above the test module):
 
@@ -272,7 +272,7 @@ pub fn max_row(bands: &[Band]) -> usize {
 }
 ```
 
-- [ ] **Step 4: Register the module**
+- [x] **Step 4: Register the module**
 
 In `src/main.rs`, add alongside the other `mod` declarations:
 
@@ -280,12 +280,12 @@ In `src/main.rs`, add alongside the other `mod` declarations:
 mod syntax_diagram;
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test --bins syntax_diagram`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/syntax_diagram.rs src/main.rs
@@ -310,7 +310,7 @@ linux-lit's first reader of the upstream parse table. Optional enrichment — re
 - Consumes: `crate::db::queries::open_db()`.
 - Produces: `SyntaxToken { text, pos, dep, head_i }`, `load_line_syntax(conn: &Connection, line_ids: &[i64]) -> Vec<SyntaxToken>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/db/syntax.rs` with the test module only:
 
@@ -371,12 +371,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --bins db::syntax`
 Expected: FAIL — `cannot find function load_line_syntax`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prepend to `src/db/syntax.rs`:
 
@@ -476,7 +476,7 @@ pub fn tokens_as_table(tokens: &[SyntaxToken]) -> String {
 }
 ```
 
-- [ ] **Step 4: Register the module**
+- [x] **Step 4: Register the module**
 
 In `src/db/mod.rs`, add alongside the other module declarations:
 
@@ -484,12 +484,12 @@ In `src/db/mod.rs`, add alongside the other module declarations:
 pub mod syntax;
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test --bins db::syntax`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/db/syntax.rs src/db/mod.rs
@@ -514,7 +514,7 @@ Full-screen `DrawingArea`, Pango text, theme colors. Follows `src/ui/keybinds_ov
 - Consumes: `crate::syntax_diagram::{SyntaxAnalysis, Band, max_row}` (Task 1).
 - Produces: `SyntaxOverlay::new()`, `.attach_to(&gtk4::Overlay)`, `.show_loading()`, `.show_analysis(SyntaxAnalysis, &Theme)`, `.hide()`, `.is_visible()`, `.toggle_note()`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/ui/syntax_overlay.rs` with the test module only. Drawing needs a display, so unit tests cover only the pure layout helper:
 
@@ -541,12 +541,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --bins syntax_overlay`
 Expected: FAIL — `cannot find function row_height`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prepend to `src/ui/syntax_overlay.rs`:
 
@@ -839,7 +839,7 @@ fn draw_analysis(
 }
 ```
 
-- [ ] **Step 4: Register the module**
+- [x] **Step 4: Register the module**
 
 In `src/ui/mod.rs`:
 
@@ -847,7 +847,7 @@ In `src/ui/mod.rs`:
 pub mod syntax_overlay;
 ```
 
-- [ ] **Step 5: Verify it builds and tests pass**
+- [x] **Step 5: Verify it builds and tests pass**
 
 Run: `cargo build 2>&1 | tail -20`
 Expected: compiles. If `theme.rs`'s `vocab_popup_fg`/`vocab_popup_accent` are not visible from `ui/`, widen them from `pub(crate)` to `pub(crate)` at the crate root (they are already `pub(crate)` — no change expected) and re-run.
@@ -855,7 +855,7 @@ Expected: compiles. If `theme.rs`'s `vocab_popup_fg`/`vocab_popup_accent` are no
 Run: `cargo test --bins syntax_overlay`
 Expected: PASS, 2 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/syntax_overlay.rs src/ui/mod.rs
@@ -883,7 +883,7 @@ Builds the request, dispatches it, routes the reply into the surface. This is wh
 - Consumes: `syntax_diagram::parse_analysis` (Task 1), `db::syntax::{load_line_syntax, tokens_as_table}` (Task 2), `ui::syntax_overlay::SyntaxOverlay` (Task 3), `claude_bridge::run_claude_request`.
 - Produces: `open_syntax_diagram(state_rc: &Rc<RefCell<AppState>>, text: String, line_ids: Vec<i64>)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/input/actions/syntax.rs` with the test module only:
 
@@ -915,12 +915,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --bins actions::syntax`
 Expected: FAIL — `cannot find function build_user_message`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prepend to `src/input/actions/syntax.rs`:
 
@@ -1083,7 +1083,7 @@ pub fn open_syntax_diagram(
 }
 ```
 
-- [ ] **Step 4: Register the module**
+- [x] **Step 4: Register the module**
 
 In `src/input/actions/mod.rs`:
 
@@ -1091,7 +1091,7 @@ In `src/input/actions/mod.rs`:
 pub mod syntax;
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test --bins actions::syntax`
 Expected: PASS, 3 tests.
@@ -1101,7 +1101,7 @@ This task does not build standalone — `state.syntax_overlay` and
 exactly those two names until then; the unit tests compile because they touch
 only `build_user_message`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/input/actions/syntax.rs src/input/actions/mod.rs
@@ -1129,7 +1129,7 @@ Adds the mode, the state field, the overlay attachment, and the key handling. Af
 - Consumes: `open_syntax_diagram` (Task 4), `SyntaxOverlay` (Task 3).
 - Produces: `InputMode::SyntaxDiagram`, `AppState.syntax_overlay`, `action_syntax_diagram`.
 
-- [ ] **Step 1: Add the InputMode variant**
+- [x] **Step 1: Add the InputMode variant**
 
 In `src/app/mod.rs`, inside `enum InputMode` (after `SynopsisVisual`):
 
@@ -1139,7 +1139,7 @@ In `src/app/mod.rs`, inside `enum InputMode` (after `SynopsisVisual`):
     SyntaxDiagram,
 ```
 
-- [ ] **Step 2: Add the AppState field**
+- [x] **Step 2: Add the AppState field**
 
 In `src/app/mod.rs`, in the `AppState` struct near `vocab_popup`:
 
@@ -1147,7 +1147,7 @@ In `src/app/mod.rs`, in the `AppState` struct near `vocab_popup`:
     pub syntax_overlay: crate::ui::syntax_overlay::SyntaxOverlay,
 ```
 
-- [ ] **Step 3: Construct and attach the overlay**
+- [x] **Step 3: Construct and attach the overlay**
 
 In `src/app/mod.rs` window construction, beside the vocab popup's creation (~line 1673):
 
@@ -1167,7 +1167,7 @@ Then in the `AppState { ... }` initializer, beside `vocab_popup:`:
         syntax_overlay,
 ```
 
-- [ ] **Step 4: Add the mode dispatch arm**
+- [x] **Step 4: Add the mode dispatch arm**
 
 In `src/input/keymap.rs`, in the `match mode` block that handles non-Reader modes (~line 291, beside the other overlay arms):
 
@@ -1201,7 +1201,7 @@ fn handle_syntax_diagram_key(
 }
 ```
 
-- [ ] **Step 5: Add the visual-mode action**
+- [x] **Step 5: Add the visual-mode action**
 
 In `src/input/visual.rs` line 235, add `"Syntax"` to the END of the array (appending keeps every existing index stable — the file warns the array and the `match` are coupled POSITIONALLY):
 
@@ -1255,7 +1255,7 @@ pub(crate) fn action_syntax_diagram(state_rc: &std::rc::Rc<std::cell::RefCell<Ap
 }
 ```
 
-- [ ] **Step 6: Build and verify**
+- [x] **Step 6: Build and verify**
 
 Run: `cargo build 2>&1 | tail -20`
 Expected: compiles with no errors.
@@ -1266,7 +1266,7 @@ Expected: no new warnings.
 Run: `cargo test --bins`
 Expected: PASS — all existing tests plus Tasks 1–4's.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/mod.rs src/input/keymap.rs src/input/visual.rs
@@ -1291,7 +1291,7 @@ Extends the diagram to the gloss/synopsis/journal overlays. Their selections are
 - Consumes: `open_syntax_diagram` (Task 4).
 - Produces: nothing downstream.
 
-- [ ] **Step 1: Add the key to the block-visual handler**
+- [x] **Step 1: Add the key to the block-visual handler**
 
 In `src/input/keymap.rs`, in `handle_block_visual_key`'s `match key_name`, before the `_ => true` arm:
 
@@ -1314,7 +1314,7 @@ In `src/input/keymap.rs`, in `handle_block_visual_key`'s `match key_name`, befor
         }
 ```
 
-- [ ] **Step 2: Add the same key to the journal visual handler**
+- [x] **Step 2: Add the same key to the journal visual handler**
 
 `handle_journal_visual_key` is a parallel function fixed to `JournalOverlay` (a
 different widget type, so it cannot share `BlockVisualCfg`). Add the same arm
@@ -1342,7 +1342,7 @@ If `visual_selection_text` / `exit_visual_to_anchor` are named differently on
 `JournalOverlay`, use whatever the existing `"y"` arm calls — do not invent
 names.
 
-- [ ] **Step 3: Update the overlay keybind legends**
+- [x] **Step 3: Update the overlay keybind legends**
 
 Required, not optional — the project's keybind rule is that every surface a
 bind touches updates in the SAME change. Add an `s → syntax diagram` entry to
@@ -1354,7 +1354,7 @@ the visual-mode group of each affected legend:
 
 Read one legend's `GROUPS` const first and match its exact entry format.
 
-- [ ] **Step 4: Add the diagram's own legend**
+- [x] **Step 4: Add the diagram's own legend**
 
 The diagram is a modal surface, so it needs its own `Ctrl+/` legend listing its
 two binds (`Escape` close, `n` toggle commentary). Create
@@ -1364,7 +1364,7 @@ two binds (`Escape` close, `n` toggle commentary). Create
 `handle_syntax_diagram_key` on the `Ctrl+/` chord, matching how the gloss
 overlay opens its legend.
 
-- [ ] **Step 5: Build and verify**
+- [x] **Step 5: Build and verify**
 
 Run: `cargo build 2>&1 | tail -20`
 Expected: compiles.
@@ -1372,7 +1372,7 @@ Expected: compiles.
 Run: `cargo clippy 2>&1 | tail -20`
 Expected: no new warnings.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/input/keymap.rs src/ui/
@@ -1399,7 +1399,7 @@ disagree with the real GL renderer on layout, so this ends with a hand-off.
 - Consumes: the built binary.
 - Produces: screenshots in the scratchpad, a written report.
 
-- [ ] **Step 1: Build and launch headless**
+- [x] **Step 1: Build and launch headless**
 
 ```bash
 cd ~/utono/linux-lit && cargo build
@@ -1419,7 +1419,7 @@ instance slot. Prefer `./scripts/e2e-env.sh` (it mints a fresh
 `XDG_RUNTIME_DIR`); a hand-rolled cage run reusing `/run/user/1000` collides
 with the user's own compositor and `grim` will screenshot their live desktop.
 
-- [ ] **Step 2: Resize to production geometry**
+- [x] **Step 2: Resize to production geometry**
 
 ```bash
 wlr-randr --output HEADLESS-1 --custom-mode 1920x1200
@@ -1428,7 +1428,7 @@ wlr-randr --output HEADLESS-1 --custom-mode 1920x1200
 The first `wtype` chord after a resize is dropped (focus loss) — re-send it and
 confirm the `KEY:` line landed in the log before trusting any screenshot.
 
-- [ ] **Step 3: Verify the enriched path**
+- [x] **Step 3: Verify the enriched path**
 
 Land on BH-Barrett (one of the five parsed works), select the passage
 containing "in the dark room, irresolute, makes him start and say", open the
@@ -1438,7 +1438,7 @@ Expected: `irresolute` draws as its own labelled band, nested inside the main
 clause band. Check the log for `SYNTAX: N parsed tokens for M lines` with N > 0
 — that confirms the enrichment path actually ran.
 
-- [ ] **Step 4: Verify the text-only path**
+- [x] **Step 4: Verify the text-only path**
 
 Repeat on any work with NO `line_syntax` rows (anything except BH-Barrett,
 BH-Margolyes, BH-Vance, TT, Ham-Arkangel).
@@ -1447,7 +1447,7 @@ Expected: a well-formed band stack. Log shows `SYNTAX: 0 parsed tokens` or no
 token line at all. This is the path 301 of 306 works take — it must not be
 skipped.
 
-- [ ] **Step 5: Verify full-screen geometry on a two-column play**
+- [x] **Step 5: Verify full-screen geometry on a two-column play**
 
 Open a two-column play, select a speech, open the diagram.
 
@@ -1470,17 +1470,17 @@ print('corners', im.getpixel((2,2)), im.getpixel((w-3,2)), im.getpixel((2,h-3)),
 All four corners must be the scrim color. A card-bound surface leaves reader
 content in at least one.
 
-- [ ] **Step 6: Verify the commentary toggle and dismissal**
+- [x] **Step 6: Verify the commentary toggle and dismissal**
 
 Press `n` — commentary appears below the bands; `n` again hides it. Press
 Escape — the diagram closes and the reader is back, cursor intact.
 
-- [ ] **Step 7: Open every screenshot and report**
+- [x] **Step 7: Open every screenshot and report**
 
 Per the UI review protocol: open each PNG, quote the on-screen text, and call
 out clipping or layout problems by eye. A passing exit code is not enough.
 
-- [ ] **Step 8: Clean up**
+- [x] **Step 8: Clean up**
 
 ```bash
 pkill -f "cage -- ./target/debug/linux-lit"
@@ -1496,6 +1496,64 @@ eyeball on their real GL renderer — text shaping, band alignment against
 wrapped text, and theme colors are all things cairo-vs-GL can disagree on.
 
 ---
+
+## Verification results (2026-07-26, headless cage @ 1920x1200)
+
+Both derivation paths were exercised end to end against the live API.
+
+**Enriched path — PASS (data), FAIL (rendering).** BH-Barrett, the
+"…in the dark room, irresolute, makes him start and say" sentence.
+Log: `SYNTAX: 29 parsed tokens for 1 lines` -> `SYNTAX: 10 bands, 25 pos
+tags`. The enrichment ran and no band was dropped by the span validator.
+
+**Text-only path — PASS (data), FAIL (rendering).** TN-Arkangel (not one
+of the five parsed works), a four-line MARIA speech. Log:
+`SYNTAX: 0 parsed tokens for 4 lines` -> `SYNTAX: 9 bands, 39 pos tags`.
+This is the path 301 of 306 works take.
+
+**Full-screen geometry — PASS.** Pixel-measured, not eyeballed. All four
+corners below the titlebar are scrim on both paths. The point (600,600),
+cream card `(253,251,242)` in the pre-open capture, reads scrim
+`(74,116,125)` with the diagram open — the surface covers the card on a
+two-column play, which is the regression the full-screen decision exists
+to prevent.
+
+**Commentary toggle + dismissal — PASS.** `n` shows the note (PNG 141826
+-> 179382 bytes), `n` again restores the exact prior size, Escape returns
+to the reader in `mode=SyntaxDiagram` -> Reader.
+
+### Blocking defects found (rendering only — the data model is sound)
+
+1. **Band rules are drawn through the passage text.** Pixel scan of the
+   enriched capture puts band rules at rows 123-158 while the passage's
+   second wrapped line sits at ~140. On both captures the POS row and the
+   first band rules overstrike the second line of text. The passage block
+   and the band stack are being laid out against different origins — the
+   band stack starts below line 1 rather than below the whole wrapped
+   block.
+2. **POS labels collide at narrow spans.** Short tokens produce
+   overlapping labels (`DET NOUN`/`PUNCT PRON` render as an unreadable
+   smear, e.g. `PUNCTADJ`, `SCONJ DETNOUN`). Nothing suppresses or elides
+   a label whose span is narrower than its own text width.
+3. **Band labels overlap each other at the same depth.** "subject",
+   "predicate", "adverbial clause", "main predicate" collide horizontally
+   where adjacent bands are short.
+
+None of these are span-validation failures — the validator dropped zero
+bands in both runs. They are all layout in `syntax_overlay.rs`.
+
+### Also found
+
+- `api_prompts` has no `syntax.diagram` row, so both runs used the
+  compiled fallback (`SYNTAX PROMPT: … using compiled fallback`). Working
+  as designed, but the lit.db row is still to be authored.
+- **The debug log resolves to the MAIN checkout, not the worktree.** A
+  cage run launched with cwd in `linux-lit-wt/feat-syntax-diagram` wrote
+  to `/home/mlj/utono/linux-lit/linux-lit-dev.log`. Find the log by open
+  fd (`ls -l /proc/<pid>/fd`), not by assuming the worktree root.
+- `wtype -M shift -k V -m shift` delivers `name=v shift=true`, which the
+  keymap correctly does not match (GTK delivers a real shifted letter as
+  `name=V`). Use `wtype 'V'` text mode for capital-letter binds.
 
 ## Open decisions deferred to implementation
 

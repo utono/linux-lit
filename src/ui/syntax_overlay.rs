@@ -34,7 +34,7 @@ fn row_height(rows: usize, available: f64) -> f64 {
         return BAND_ROW_H;
     }
     let fitted = available / rows as f64;
-    fitted.min(BAND_ROW_H).max(MIN_BAND_ROW_H)
+    fitted.clamp(MIN_BAND_ROW_H, BAND_ROW_H)
 }
 
 /// Height per band row for a line that has ANOTHER line of passage text
@@ -204,6 +204,9 @@ impl SyntaxOverlay {
         self.drawing_area.set_visible(false);
     }
 
+    /// Completes the show/hide/is_visible trio; the modal state machine tracks
+    /// visibility via `InputMode::SyntaxDiagram`, so nothing calls this yet.
+    #[allow(dead_code)]
     pub fn is_visible(&self) -> bool {
         self.drawing_area.is_visible()
     }

@@ -821,6 +821,32 @@ When a half line clips at the bottom edge of a scrolled surface:
       title + margins + scroll + footer == card_height.
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
 
+15. **A hand-drawn Cairo surface lays annotations out against the FIRST
+    wrapped line instead of the whole wrapped block (OVERSTRIKE, not
+    clipping).** The syntax diagram drew its POS row and band rules starting
+    from the passage's first line origin, so on any selection that wrapped to
+    two or more visual lines the annotation stack was painted straight
+    THROUGH the following lines of text. Nothing clips and nothing is
+    dropped — the glyphs and the rules simply occupy the same pixels.
+    - Tell: text and rules interleaved in one band of rows; the span
+      validator reports zero drops (`SYNTAX: N bands, M pos tags` with no
+      `dropped band` lines), so the data is fine and only the picture is
+      wrong. Pixel-scan confirms it: band rules at rows 123-158 with the
+      passage's second line at ~140.
+    - Root cause: a Pango layout's `pixel_size().1` (full wrapped height) was
+      available but the annotation origin used a single `line_h` instead.
+    - Rule: on a Cairo surface that both renders wrapped text AND draws
+      beneath it, the annotation origin is the layout's FULL height, never
+      one line height. Where an annotation must align to a specific visual
+      line, iterate `layout.iter()` / `line_yrange` per line rather than
+      assuming line 1.
+    - Related, same surface: a label wider than the span it annotates needs
+      elision or suppression, or adjacent short spans smear together
+      (`PUNCTADJ`, `SCONJ DETNOUN`). Measure the label against its span width
+      before drawing it.
+    (`syntax_overlay.rs`, 2026-07-26 — found by the mandatory headless check,
+    NOT by the build or the unit tests, both of which were green.)
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
