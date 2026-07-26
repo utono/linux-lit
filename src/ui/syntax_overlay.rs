@@ -57,6 +57,44 @@ fn interior_row_height(rows: usize, line_h: f64, clearance: f64) -> f64 {
     row_height(rows, available)
 }
 
+/// Bottom of the drawn band stack: the maximum `row_y` actually reached by
+/// any drawn segment, i.e. `max(line_bottoms[line_index] + depth_offset)`
+/// over every `(line_index, depth)` pair a band segment was drawn at.
+///
+/// Pure and Cairo/Pango-free — `line_bottoms[i]` is each visual line's own
+/// `line_y(i) + line_h` (already resolved to a plain number at the call
+/// site), `rows`/`last_line_index`/`rh`/`interior_rh` are the same values
+/// `draw_analysis` computes for row placement, and `entries` is one
+/// `(line_index, depth)` pair per segment actually drawn (mirrors
+/// `band_line_spans`' output, minus the byte range, which does not affect
+/// height).
+///
+/// Replaces the old `y += rows as f64 * rh + 16.0` global estimate, which
+/// was correct only when every line used the same (`rh`) row height — once
+/// interior lines switched to `interior_row_height`, that global model no
+/// longer matched what was actually drawn, and the commentary crept up over
+/// the diagram on wrapped text. Returns `f64::MIN` when `entries` is empty
+/// (no bands drawn at all) so the caller can fall back to a sane default
+/// rather than treating 0.0 as a real height.
+fn band_stack_bottom(
+    line_bottoms: &[f64],
+    entries: &[(usize, u8)],
+    rows: usize,
+    last_line_index: usize,
+    rh: f64,
+    interior_rh: f64,
+) -> f64 {
+    entries
+        .iter()
+        .filter_map(|&(line_index, depth)| {
+            let base = *line_bottoms.get(line_index)?;
+            let row_h = if line_index == last_line_index { rh } else { interior_rh };
+            let depth_offset = (rows as f64 - 1.0 - depth as f64) * row_h;
+            Some(base + depth_offset)
+        })
+        .fold(f64::MIN, f64::max)
+}
+
 /// Given a band's byte span `[band_start, band_end)` and the byte span of
 /// every visual line in the Pango layout (in line order, each
 /// `(start_byte, end_byte)` exclusive at the end — i.e. `lines[i].1 ==
@@ -340,6 +378,15 @@ fn draw_analysis(
     let row_h_for_line = |line_index: usize| -> f64 {
         if line_index == last_line_index { rh } else { interior_rh }
     };
+    // Each visual line's own bottom (`line_y(i) + line_h`), resolved to a
+    // plain number up front so the pure `band_stack_bottom` helper below
+    // never has to touch Pango types.
+    let line_bottoms: Vec<f64> = (0..pango_lines.len()).map(|i| line_y(i) + line_h).collect();
+    // One (line_index, depth) pair per segment actually drawn, fed to
+    // `band_stack_bottom` after the loop to find the real bottom of the
+    // stack — see the comment at that call site for why this replaced the
+    // old `rows as f64 * rh` global estimate.
+    let mut drawn_entries: Vec<(usize, u8)> = Vec::new();
 
     for b in &a.bands {
         // One triple per visual line the band touches — the fix for the
@@ -379,8 +426,33 @@ fn draw_analysis(
             cr.move_to(((lx0 + lx1) / 2.0 - lw / 2.0).max(x0), row_y - 14.0);
             pangocairo::functions::show_layout(cr, &ll);
         }
+
+        for &(line_index, _, _) in &spans {
+            drawn_entries.push((line_index, b.depth));
+        }
     }
-    y += rows as f64 * rh + 16.0;
+    // Advance past the ACTUAL bottom of the drawn band geometry, not a
+    // recomputed global estimate (`rows as f64 * rh`) — that global model
+    // was correct only when every line shared one row height; once interior
+    // lines switched to `interior_row_height` (per-line, generally smaller
+    // than `rh`), it no longer matched what was actually drawn and could
+    // leave the commentary overlapping the last band row on wrapped text.
+    // Falls back to the pre-loop `y` (top of the band area) plus one `rh`
+    // row when no band was drawn at all, so an analysis with an empty
+    // `bands` list still reserves sane space for the note.
+    let stack_bottom = band_stack_bottom(
+        &line_bottoms,
+        &drawn_entries,
+        rows,
+        last_line_index,
+        rh,
+        interior_rh,
+    );
+    y = if stack_bottom > f64::MIN {
+        stack_bottom + 16.0
+    } else {
+        y + rh + 16.0
+    };
 
     // ── Commentary (toggleable) ──
     if inner.show_note {
@@ -549,5 +621,71 @@ mod tests {
     fn empty_lines_list_yields_no_segments() {
         let spans = band_line_spans(0, 10, &[]);
         assert!(spans.is_empty());
+    }
+
+    // ── band_stack_bottom ──
+
+    #[test]
+    fn single_line_bottom_is_the_last_lines_outermost_row() {
+        // One visual line, 3 rows (rows=3), only the outermost band (depth 0)
+        // drawn on it — depth_offset for depth 0 is (rows - 1) * rh.
+        let line_bottoms = [100.0];
+        let entries = [(0usize, 0u8)];
+        let bottom = band_stack_bottom(&line_bottoms, &entries, 3, 0, 26.0, 20.0);
+        assert_eq!(bottom, 100.0 + 2.0 * 26.0);
+    }
+
+    #[test]
+    fn interior_line_uses_interior_row_height_not_last_line_rh() {
+        // Two visual lines; last_line_index = 1. A depth-0 band drawn on the
+        // INTERIOR line (index 0) must use `interior_rh`, not `rh` — this is
+        // exactly the composition defect: before the fix, the caller
+        // advanced `y` by `rows * rh`, which is wrong once interior lines use
+        // a different (smaller) row height.
+        let line_bottoms = [50.0, 150.0];
+        let entries = [(0usize, 0u8)]; // interior line, outermost band
+        let rh = 26.0;
+        let interior_rh = 10.0;
+        let bottom = band_stack_bottom(&line_bottoms, &entries, 3, 1, rh, interior_rh);
+        assert_eq!(bottom, 50.0 + 2.0 * interior_rh);
+        assert_ne!(
+            bottom,
+            50.0 + 2.0 * rh,
+            "must not fall back to the stale global rh model"
+        );
+    }
+
+    #[test]
+    fn bottom_is_the_max_across_multiple_drawn_segments() {
+        // A band spanning 2 lines plus a deeper band only on the last line:
+        // the max must win even though it's not the entry with the largest
+        // line_index.
+        let line_bottoms = [50.0, 150.0];
+        let rh = 26.0;
+        let interior_rh = 10.0;
+        let entries = [
+            (0usize, 0u8), // interior line, outermost: 50 + 2*10 = 70
+            (1usize, 0u8), // last line, outermost: 150 + 2*26 = 202 <- max
+            (1usize, 1u8), // last line, depth 1: 150 + 1*26 = 176
+        ];
+        let bottom = band_stack_bottom(&line_bottoms, &entries, 3, 1, rh, interior_rh);
+        assert_eq!(bottom, 202.0);
+    }
+
+    #[test]
+    fn no_entries_yields_f64_min_so_caller_can_fall_back() {
+        let bottom = band_stack_bottom(&[100.0], &[], 3, 0, 26.0, 20.0);
+        assert_eq!(bottom, f64::MIN);
+    }
+
+    #[test]
+    fn out_of_range_line_index_is_skipped_not_panicking() {
+        // Defensive: an entry referencing a line index past `line_bottoms`
+        // must be ignored rather than panic (should not happen in practice,
+        // since entries are derived from the same `pango_lines` the bottoms
+        // come from, but the helper must not blow up if it ever does).
+        let entries = [(5usize, 0u8)];
+        let bottom = band_stack_bottom(&[100.0], &entries, 3, 0, 26.0, 20.0);
+        assert_eq!(bottom, f64::MIN);
     }
 }

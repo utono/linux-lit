@@ -104,15 +104,20 @@ pub fn open_syntax_diagram(
     };
 
     let model = {
-        let s = state_rc.borrow();
+        let mut s = state_rc.borrow_mut();
+        // Capture the mode we're opening FROM (Reader, or whichever overlay
+        // mode the caller already restored before calling us) so every exit
+        // path — Escape, bad-JSON, API-error — returns here instead of
+        // hard-coding Reader. `SyntaxOverlay`'s methods are `&self` on their
+        // own interior `RefCell` and never touch `AppState`, so calling
+        // `show_loading` under this same `borrow_mut` is safe: single scope,
+        // no double borrow.
+        s.syntax_return_mode = Some(s.input_mode);
         // Loading state BEFORE the request — run_claude_request's contract.
         s.syntax_overlay.show_loading(&s.theme);
+        s.input_mode = crate::app::InputMode::SyntaxDiagram;
         s.config.claude_model.clone()
     };
-    {
-        let mut s = state_rc.borrow_mut();
-        s.input_mode = crate::app::InputMode::SyntaxDiagram;
-    }
 
     let user_msg = build_user_message(&text, &parse_table);
     let text_for_parse = text.clone();
@@ -137,7 +142,10 @@ pub fn open_syntax_diagram(
                     crate::logging::log(&format!("SYNTAX: {e}"));
                     let mut s = st.borrow_mut();
                     s.syntax_overlay.hide();
-                    s.input_mode = crate::app::InputMode::Reader;
+                    s.input_mode = s
+                        .syntax_return_mode
+                        .take()
+                        .unwrap_or(crate::app::InputMode::Reader);
                     crate::input::navigation::show_chapter_toast_secs(
                         &s,
                         "Could not analyze syntax",
@@ -149,7 +157,10 @@ pub fn open_syntax_diagram(
         move |st, msg| {
             let mut s = st.borrow_mut();
             s.syntax_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
+            s.input_mode = s
+                .syntax_return_mode
+                .take()
+                .unwrap_or(crate::app::InputMode::Reader);
             crate::input::navigation::show_chapter_toast_secs(&s, msg, 3);
         },
     );

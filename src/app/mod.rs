@@ -687,6 +687,15 @@ pub struct AppState {
     /// Full-screen Cairo syntax diagram surface (`InputMode::SyntaxDiagram`).
     /// Floats on the outer overlay beside the vocab popup and toasts.
     pub syntax_overlay: crate::ui::syntax_overlay::SyntaxOverlay,
+    /// Mode to restore when the syntax diagram closes (Escape, bad-JSON, or
+    /// API-error path). The diagram opens from the reader's visual mode OR
+    /// from a gloss/synopsis/journal overlay's visual mode — by the time
+    /// `open_syntax_diagram` runs, the caller has already restored
+    /// `input_mode` to that origin mode, so it is captured there. `None`
+    /// falls back to `Reader` (should not happen in practice, but keeps a
+    /// coherent default if the diagram is ever opened before that mode is
+    /// set).
+    pub syntax_return_mode: Option<InputMode>,
     /// Word of the vocab journal Q&A request currently in flight (Ctrl+r).
     /// Guards duplicate paid asks for the same word — it must survive cursor
     /// moves and popup closes, unlike vocab_popup state — and is cleared by
@@ -2379,6 +2388,7 @@ pub fn build_window(
             chat_inline: false,
         },
         syntax_overlay,
+        syntax_return_mode: None,
         vocab_qa_inflight: None,
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),

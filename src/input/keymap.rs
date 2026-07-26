@@ -3824,9 +3824,10 @@ fn handle_gamepad_key(
     }
 }
 
-/// Full-screen syntax diagram. Escape closes and returns to the reader; `n`
-/// toggles the prose commentary; every other key is swallowed so the diagram
-/// is fully modal.
+/// Full-screen syntax diagram. Escape closes and returns to whichever surface
+/// it was opened from (`syntax_return_mode` — Reader, or the gloss/synopsis/
+/// journal overlay it was opened over); `n` toggles the prose commentary;
+/// every other key is swallowed so the diagram is fully modal.
 fn handle_syntax_diagram_key(
     state: &Rc<RefCell<AppState>>,
     key_name: &str,
@@ -3842,7 +3843,14 @@ fn handle_syntax_diagram_key(
         "Escape" => {
             let mut s = state.borrow_mut();
             s.syntax_overlay.hide();
-            s.input_mode = crate::app::InputMode::Reader;
+            // Restore whichever surface the diagram was opened from (Reader,
+            // or the gloss/synopsis/journal overlay it was opened over) —
+            // never hard-code Reader, or that overlay stays painted while
+            // input_mode silently falls back to the (invisible) main card.
+            s.input_mode = s
+                .syntax_return_mode
+                .take()
+                .unwrap_or(crate::app::InputMode::Reader);
             true
         }
         "n" => {
