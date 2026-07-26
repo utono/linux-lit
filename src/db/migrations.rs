@@ -115,6 +115,54 @@ pub fn ensure_bookmarks_table(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
+/// `grammatical_terms`: definitions of grammatical structures (main clause,
+/// subject, predicate) used by syntax glosses.
+///
+/// Deliberately SEPARATE from `rhetorical_terms`, which holds rhetorical
+/// FIGURES (anaphora, chiasmus, zeugma). The two sets overlap at exactly one
+/// entry, "appositive"; filing "predicate" among rhetorical figures would
+/// mislead whoever reads that table next.
+///
+/// Seeded with the terms the existing saved syntax glosses actually used, so
+/// the first gloss after this migration finds a populated table.
+pub fn ensure_grammatical_terms_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS grammatical_terms (
+            id         INTEGER PRIMARY KEY,
+            term       TEXT UNIQUE NOT NULL,
+            definition TEXT NOT NULL,
+            source     TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_grammatical_terms_term
+         ON grammatical_terms(term)",
+        [],
+    )?;
+
+    const SEED: &[(&str, &str)] = &[
+        ("adverbial clause", "a subordinate clause that modifies the main clause by supplying a circumstance such as time, cause, or condition"),
+        ("adverbial phrase", "a phrase modifying a verb, saying how, when, or where the action happens"),
+        ("appositive", "a noun phrase set beside another noun to rename or redefine it"),
+        ("conjoined predicate", "two or more predicates sharing one subject, so the subject is stated once and governs all of them"),
+        ("main clause", "a clause that can stand alone as a complete sentence, containing a subject and a finite verb"),
+        ("participial modifier", "a participle and its dependents modifying a noun, as in \"staring down at his intrusion\""),
+        ("predicate", "the part of a clause that states what the subject does or undergoes, built around the verb"),
+        ("relative clause", "a subordinate clause introduced by a relative word such as who, whom, or which, modifying a preceding noun"),
+        ("subject", "the noun phrase naming what the clause is about, of which the predicate is asserted"),
+    ];
+    for (term, def) in SEED {
+        conn.execute(
+            "INSERT OR IGNORE INTO grammatical_terms (term, definition, source)
+             VALUES (?1, ?2, 'curated')",
+            rusqlite::params![term, def],
+        )?;
+    }
+    Ok(())
+}
+
 /// Ensure the characters table exists. Keyed by (work_abbrev, speaker) with
 /// speaker stored verbatim as it appears in line_mapping.speaker, so the
 /// TTS-time lookup joins exactly with no runtime normalization. Carries gender
