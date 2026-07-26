@@ -61,12 +61,17 @@ pub fn word_cycle_copy(state: &mut AppState) {
     state.word_cycle.cycle_line = Some(state.current_line);
     state.word_cycle.cycle_index = idx + 1;
 
-    // Clear multi-word collect state (w is single-word mode)
+    // `-` is single-word mode, but the ONE word it underlines must still be a
+    // valid diagram selection, so set the collection to exactly it rather than
+    // emptying it. `_` keeps appending from here.
     state.word_cycle.collect_words.clear();
+    state.word_cycle.collect_words.push(word.clone());
     state.word_cycle.collect_ranges.clear();
+    state.word_cycle.collect_ranges.push((char_start, char_end));
 
-    // Remove any previous underline tag, then apply to the current word
-    apply_word_underline(state, &[(char_start, char_end)]);
+    // Remove any previous underline tag, then apply to the current word.
+    // Persistent: cleared by Escape, by leaving the line, or by the next -/_.
+    apply_word_underline(state, &[(char_start, char_end)], true);
 }
 
 /// Collect words on the current line, accumulating across presses.
@@ -123,7 +128,8 @@ pub fn word_collect_copy(state: &mut AppState) {
 
     // Underline all collected words
     let ranges: Vec<(usize, usize)> = state.word_cycle.collect_ranges.clone();
-    apply_word_underline(state, &ranges);
+    // Persistent: cleared by Escape, by leaving the line, or by the next -/_.
+    apply_word_underline(state, &ranges, true);
 }
 
 /// Extract words from the current buffer line with their char offsets.
@@ -153,8 +159,13 @@ fn extract_buffer_line_words(state: &AppState) -> Vec<(String, usize, usize)> {
 }
 
 /// Apply the underline tag to the given char ranges on the current line,
-/// removing any previous underline first. Auto-removes after 2 seconds.
-fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)]) {
+/// removing any previous underline first.
+///
+/// `persist`: when true the 2-second auto-remove timer is NOT armed, so the
+/// underline stays until explicitly cleared (Escape, or a `-`/`_` that
+/// replaces it). `bold_gen` is still bumped either way, which invalidates any
+/// timer already in flight from an earlier non-persistent call.
+fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)], persist: bool) {
     let buf = &state.buffer;
     let tag = &state.word_bold_tag;
     let (buf_start, buf_end) = (buf.start_iter(), buf.end_iter());
@@ -169,9 +180,15 @@ fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)]) {
         buf.apply_tag(tag, &word_start, &word_end);
     }
 
-    // Auto-remove underline after 2 seconds
+    // Bump the generation counter unconditionally: it is what makes any timer
+    // still in flight a no-op.
     let gen = state.word_cycle.bold_gen.get() + 1;
     state.word_cycle.bold_gen.set(gen);
+    if persist {
+        return;
+    }
+
+    // Auto-remove underline after 2 seconds
     let gen_rc = state.word_cycle.bold_gen.clone();
     let buf_clone = buf.clone();
     let tag_clone = tag.clone();
@@ -181,4 +198,76 @@ fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)]) {
             buf_clone.remove_tag(&tag_clone, &s, &e);
         }
     });
+}
+
+/// Pure predicate behind `active_underline`, split out so it is testable
+/// without an `AppState`.
+///
+/// Clearing is LAZY, not event-driven: `current_line` has ~76 write sites
+/// across 14 modules, so hooking every cursor-move path would be
+/// unimplementable and would rot on the next navigation feature. Instead the
+/// underline carries the line it belongs to and is treated as absent once the
+/// cursor leaves.
+pub fn underline_is_active(
+    cycle_line: Option<usize>,
+    current_line: usize,
+    ranges_len: usize,
+) -> bool {
+    ranges_len > 0 && cycle_line == Some(current_line)
+}
+
+/// The underlined ranges, but ONLY while they still belong to the cursor's
+/// line. Single source of truth for the `Return` / `Escape` guards.
+///
+/// A tag that briefly outlives its line is cosmetic, not a correctness
+/// problem, because nothing can act on it — this returns empty and both
+/// guards fall through.
+pub fn active_underline(state: &AppState) -> &[(usize, usize)] {
+    if underline_is_active(
+        state.word_cycle.cycle_line,
+        state.current_line,
+        state.word_cycle.collect_ranges.len(),
+    ) {
+        &state.word_cycle.collect_ranges
+    } else {
+        &[]
+    }
+}
+
+/// Remove the underline tag and forget the collected words.
+pub fn clear_word_underline(state: &mut AppState) {
+    let (s, e) = (state.buffer.start_iter(), state.buffer.end_iter());
+    state.buffer.remove_tag(&state.word_bold_tag, &s, &e);
+    state.word_cycle.bold_gen.set(state.word_cycle.bold_gen.get() + 1);
+    state.word_cycle.collect_words.clear();
+    state.word_cycle.collect_ranges.clear();
+    state.word_cycle.cycle_line = None;
+    crate::logging::log("WORD_UNDERLINE: cleared");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn underline_active_on_its_own_line() {
+        assert!(underline_is_active(Some(42), 42, 2));
+    }
+
+    #[test]
+    fn underline_inactive_after_cursor_leaves_the_line() {
+        // Lazy clearing: the ranges are still in state, but they no longer
+        // belong to the cursor's line, so nothing may act on them.
+        assert!(!underline_is_active(Some(42), 43, 2));
+    }
+
+    #[test]
+    fn underline_inactive_when_no_ranges() {
+        assert!(!underline_is_active(Some(42), 42, 0));
+    }
+
+    #[test]
+    fn underline_inactive_when_never_cycled() {
+        assert!(!underline_is_active(None, 42, 2));
+    }
 }
