@@ -29,7 +29,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+n / Ctrl+p", "nav_page: next / prev Q&A in band"),
         ("Alt+n / Alt+p", "nav_scene: next / prev scene band"),
         ("Shift+V", "visual select (y yank → clipboard)"),
-        ("Shift+V, s", "syntax diagram of the selected blocks"),
     ]),
     ("TTS", &[
         ("Space", "restart cursor_block TTS (synthesizes on miss)"),

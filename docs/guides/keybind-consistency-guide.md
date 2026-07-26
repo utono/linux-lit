@@ -207,5 +207,34 @@ Record each deliberate consistency move here so future sweeps know the intent.
   ladder arbitrates. Spec:
   `docs/superpowers/specs/2026-07-26-word-underline-diagram-design.md`.
 
+  **Update, same day — the target is now a syntax gloss, not a diagram.**
+  `-`/`_` still underline; `Return` still opens the analysis for the
+  underlined sentence — the binds are unchanged. What it opens changed: the
+  full-screen Cairo diagram was retired in favor of `syntax-gloss`, a
+  grammatical-analysis gloss type rendered as prose by the existing gloss
+  overlay (spec: `docs/superpowers/specs/2026-07-26-syntax-gloss-design.md`).
+  Overlay visual-mode `s` (`Shift+V, s`, "syntax diagram of the selected
+  blocks") is NOT carried over to the syntax-gloss surface and is removed
+  outright — a gloss must key to a `passage_id`, and overlay prose has no
+  `line_mapping` rows to derive one from.
+
+  **The `\` overlay cycle grows a fourth stop: gloss → journal Q&A → syntax →
+  reader.** This reverses part of the 2026-07-21 decision (documented in
+  `src/input/actions/overlay_cycle.rs`'s module doc) that dropped synopsis
+  from the lap for being one stop too many — the count goes back up to four,
+  but with syntax replacing synopsis, not restoring it. **The synopsis
+  exclusion still stands**; synopsis remains a consumed no-op inside its own
+  overlay's `\` key, unchanged.
+
+  **Known inconsistency (documented, not fixed):** the three stops now handle
+  an empty result differently. The gloss stop toasts "No gloss on this line"
+  when nothing covers the cursor and the lap doesn't start; the journal stop
+  toasts and continues to the syntax stop regardless; the syntax stop misses
+  SILENTLY — no toast — when no syntax-gloss exists for the segment, and the
+  lap just ends in the reader at the anchor. This is a real gap (a user
+  advancing the lap can't tell "no syntax gloss here" from "the lap ended"),
+  left as-is deliberately — fixing it is a separate decision, not part of
+  this change. See `src/input/actions/overlay_cycle.rs` module doc.
+
 **Open candidates** (flagged, not yet scheduled): consolidate the echoes
 concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2).

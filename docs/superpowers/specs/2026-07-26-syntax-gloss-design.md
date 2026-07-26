@@ -151,3 +151,9 @@ makes no API call; the `\` cycle reaches it.
 - **No change to the other five gloss types.**
 - **The POS legend and the queued `PUNCT` removal are moot** — both belonged to
   the Cairo POS row, which no longer exists.
+- **Overlay visual-mode `s` is deliberately NOT carried over.** The Cairo
+  diagram's `Shift+V, s` bind (gloss/synopsis/journal overlays) built its
+  diagram straight from the selected on-screen blocks. A gloss must key to a
+  `passage_id`, and overlay prose has no `line_mapping` rows to derive one
+  from — there is no `passage_id` to attach a syntax-gloss to from an overlay
+  selection. The bind is removed outright, not rehomed.

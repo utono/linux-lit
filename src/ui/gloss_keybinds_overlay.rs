@@ -29,7 +29,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+n / Ctrl+p", "navigate_gloss_passage: next / prev"),
         ("Alt+n / Alt+p", "navigate_gloss: prev / next"),
         ("Shift+V", "visual select (y yank → clipboard)"),
-        ("Shift+V, s", "syntax diagram of the selected blocks"),
     ]),
     // L (pick_source_voice), v (voice_picker), Ctrl+v (cycle_active_voice)
     // are deliberately unlisted (2026-07-22) — the binds stay live in the
