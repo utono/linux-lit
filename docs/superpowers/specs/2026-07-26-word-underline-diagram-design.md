@@ -71,6 +71,23 @@ Persistent, not the current 2-second expiry:
 Persistence is implemented by NOT arming the timer, so `bold_gen` keeps its
 existing job of invalidating any timer still in flight.
 
+**Clearing is lazy, not event-driven.** `current_line` has ~76 write sites
+across 14 modules; hooking every cursor-move path would be unimplementable and
+would rot on the next navigation feature. Instead the underline state carries
+the line it belongs to — `WordCycleState.cycle_line` ALREADY records this — and
+is treated as empty whenever `cycle_line != current_line` or the work has
+changed. One helper,
+
+```rust
+fn active_underline(state: &AppState) -> &[(usize, usize)]
+```
+
+returns the ranges only when they still belong to the cursor's line and work,
+and is the single source of truth for the `Return`/`Escape` guards. The visible
+tag is removed opportunistically on the next `-`/`_`/`Escape`; a tag that
+briefly outlives its line is cosmetic, not a correctness problem, because
+nothing can act on it.
+
 ### `-` accumulates too
 
 Today `-` CLEARS `collect_ranges` (it is single-word mode). For diagramming, one
@@ -92,21 +109,27 @@ Pure, no GTK, unit-testable without a display. The piece most likely to be
 subtly wrong, so it carries the most tests.
 
 ```rust
-/// Expand `ranges` (char offsets on `line`) outward to sentence boundaries,
-/// crossing line breaks. Returns the char span of the whole sentence.
-pub fn sentence_span(
-    lines: &[String],
-    line: usize,
-    ranges: &[(usize, usize)],
-) -> Option<SentenceSpan>;
-
-pub struct SentenceSpan {
-    pub start_line: usize,
-    pub start_char: usize,
-    pub end_line: usize,
-    pub end_char: usize,
-}
+/// Expand `ranges` (char offsets into `text`) outward to sentence boundaries.
+/// `text` is the already-joined buffer region; the caller decides how much
+/// context to hand in, so this function never touches lines, the buffer, or
+/// GTK.
+pub fn sentence_span(text: &str, ranges: &[(usize, usize)]) -> Option<(usize, usize)>;
 ```
+
+**Char offsets into one joined string, not (line, char) pairs.** Two reasons
+found while reviewing:
+
+- A "line" is not a unit here. Buffer lines in a two-column play are short verse
+  lines, but a prose `line_mapping` row in BH-Barrett runs to 2,874 characters —
+  a whole paragraph holding many sentences. A `(start_line, end_line)` struct
+  implies a granularity the data does not have.
+- The consumer, `open_syntax_diagram`, wants a `String` and a `Vec<i64>` of line
+  ids. Char offsets into a joined region give both directly.
+
+The caller joins a bounded window (the cursor's line plus one line either side,
+which covers a sentence spanning a verse break without risking a whole-chapter
+scan), maps the resulting span back to the line ids it covers, and passes those
+along for `line_syntax` enrichment.
 
 Boundaries are `.`, `!`, `?`. Cases that must be handled, because the corpus is
 full of them:
@@ -146,20 +169,31 @@ inheriting both paths for free.
 
 ### 4. `keymap.rs` — two guarded reader arms
 
-- `"Return"` when `!collect_ranges.is_empty()` → `open_syntax_diagram_for_underlined`.
-- `"Escape"` when `!collect_ranges.is_empty()` → `clear_word_underline`.
+- `"Return"` when `!active_underline(state).is_empty()` →
+  `open_syntax_diagram_for_underlined`.
+- `"Escape"` when `!active_underline(state).is_empty()` →
+  `clear_word_underline`.
 
-Both fall through when the selection is empty, so neither key changes behavior
-for a reader with nothing underlined. Reader mode binds no `Escape` today, so
-this arm is purely additive.
+Both guards read `active_underline(state)`, so they fall through both when
+nothing is underlined AND when the underline belongs to a line the cursor has
+since left. Neither key changes behavior for a reader with nothing underlined,
+and reader mode binds no `Escape` today, so both arms are purely additive.
 
-Cursor-move and work-load paths call `clear_word_underline`.
+No cursor-move or work-load hooks are added — clearing is lazy (see "Underline
+lifetime").
 
 ## Error handling
 
 - **`Return` with nothing underlined** — falls through. Not an error; the bind
-  is simply not active, so no toast.
-- **Sentence span resolves empty or whitespace-only** — toast, do not open.
+  is simply not active, so no toast. This includes the lazy-clear case: ranges
+  belonging to a line the cursor has left are treated as absent.
+- **Sentence span resolves empty or whitespace-only** — `open_syntax_diagram`
+  ALREADY guards this (`if text.trim().is_empty()` → log, return), so the new
+  entry point adds no check of its own and simply does not open. Do not
+  duplicate the guard.
+- **No sentence boundary found in the window** — the whole joined window is the
+  span. Degrades to "diagram this paragraph", which is a reasonable answer, not
+  an error.
 - **Everything downstream** — inherits the diagram's existing three failure
   modes (API error, malformed JSON, invalid spans).
 
@@ -176,9 +210,15 @@ Per the project's keybind rule, the same change updates:
 
 ## Testing
 
-`sentence.rs` is pure: `cargo test --bins` covers boundary expansion,
-abbreviations, quoted speech, multi-line spans, two-sentence unions, and
-start/end-of-work edges.
+`sentence.rs` is pure — it takes a `&str` and returns offsets, so every case
+below is a `cargo test --bins` unit test with no display, buffer, or DB:
+boundary expansion, abbreviations (`Mr.`, initials), quoted speech (closing
+quote included), sentences spanning a line break inside the joined window,
+two-sentence unions, a window with NO boundary (whole window is the span), and
+window edges.
+
+`active_underline` is also pure enough to test directly: same line + same work
+returns the ranges; a different line or work returns empty.
 
 Headless on-screen check (mandatory, and the only way to see an underline):
 drive `-`, `_`, `Return`, `Escape` on BH-Barrett. Criteria:
