@@ -1162,6 +1162,59 @@ fn flag_unverified(line: &str) -> String {
     line.replace("</gloss>", " (unverified)</gloss>")
 }
 
+/// One band of a syntax gloss: a span of the passage and what it grammatically
+/// IS. `depth` is nesting depth, 0 = outermost.
+#[derive(Debug, Clone)]
+pub struct SyntaxBand {
+    pub start_char: usize,
+    pub end_char: usize,
+    pub label: String,
+    pub depth: u8,
+}
+
+/// Longest quoted span before the middle is elided, in characters.
+const SPAN_QUOTE_MAX: usize = 64;
+
+/// Render the Structure section of a syntax gloss: one line per band, indented
+/// by nesting depth, each quoting the words that band covers.
+///
+/// Quoting the span rather than pointing at a position is the whole reason
+/// this replaces the Cairo drawing — nothing has to align, so a line wrap is
+/// irrelevant and there is no geometry to get wrong.
+///
+/// Out-of-range spans are clamped, not rejected: a stale offset should degrade
+/// to a short quote, never panic in the middle of rendering a gloss.
+pub fn structure_section(text: &str, bands: &[SyntaxBand]) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    for b in bands {
+        let start = b.start_char.min(chars.len());
+        let end = b.end_char.min(chars.len()).max(start);
+        let span: String = chars[start..end].iter().collect();
+        let span = span.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        let quoted = if span.chars().count() > SPAN_QUOTE_MAX {
+            let head: String = span.chars().take(SPAN_QUOTE_MAX / 2).collect();
+            let tail: String = span
+                .chars()
+                .skip(span.chars().count() - SPAN_QUOTE_MAX / 2)
+                .collect();
+            format!("{}…{}", head.trim_end(), tail.trim_start())
+        } else {
+            span
+        };
+
+        for _ in 0..b.depth {
+            out.push_str("  ");
+        }
+        out.push_str(&b.label);
+        out.push_str(" — ");
+        out.push_str(&quoted);
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1479,6 +1532,59 @@ mod tests {
             ("Ham", "Hamlet", 4, 2, "Who's there"),
         ]);
         assert_eq!(lookup_citation(&conn, "Who's there", "Mac", 1, 1), None);
+    }
+
+    fn sb(start: usize, end: usize, depth: u8, label: &str) -> SyntaxBand {
+        SyntaxBand { start_char: start, end_char: end, label: label.to_string(), depth }
+    }
+
+    #[test]
+    fn structure_indents_by_depth() {
+        let text = "Alpha beta gamma delta.";
+        let bands = vec![
+            sb(0, 23, 0, "main clause"),
+            sb(6, 16, 1, "subject"),
+        ];
+        let out = structure_section(text, &bands);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "main clause — Alpha beta gamma delta.");
+        assert_eq!(lines[1], "  subject — beta gamma");
+    }
+
+    #[test]
+    fn structure_elides_the_middle_of_a_long_span() {
+        // 100+ chars: the quote keeps the head and tail so the reader can
+        // locate the span, and drops the middle so a row stays one line.
+        let text = "one two three four five six seven eight nine ten eleven twelve \
+thirteen fourteen fifteen sixteen seventeen eighteen.";
+        let bands = vec![sb(0, text.chars().count(), 0, "main clause")];
+        let out = structure_section(text, &bands);
+        assert!(out.contains('…'), "long span must elide: {out}");
+        assert!(out.starts_with("main clause — one two"), "keeps the head: {out}");
+        assert!(out.trim_end().ends_with("eighteen."), "keeps the tail: {out}");
+        assert!(out.lines().count() == 1, "stays one line: {out}");
+    }
+
+    #[test]
+    fn structure_is_empty_when_there_are_no_bands() {
+        assert_eq!(structure_section("Anything at all.", &[]), "");
+    }
+
+    #[test]
+    fn structure_clamps_an_out_of_range_span() {
+        // A stale or malformed span must not panic mid-render.
+        let text = "Short.";
+        let bands = vec![sb(3, 900, 0, "predicate")];
+        let out = structure_section(text, &bands);
+        assert!(out.starts_with("predicate — "), "{out}");
+    }
+
+    #[test]
+    fn structure_handles_multibyte_text_by_chars() {
+        let text = "Æsop wrote it. Naïve reader—café.";
+        let bands = vec![sb(15, 33, 0, "second sentence")];
+        let out = structure_section(text, &bands);
+        assert!(out.contains("Naïve"), "char offsets, not bytes: {out}");
     }
 }
 
