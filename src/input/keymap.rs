@@ -3286,22 +3286,12 @@ fn handle_block_visual_key(
             (cfg.set_hint)(&s.gloss_overlay);
             true
         }
-        // s: open the full-screen syntax diagram for the selected blocks.
-        // Overlay text has no line_mapping rows, so no parse enrichment.
-        "s" => {
-            let text = {
-                let s = state.borrow();
-                (cfg.yank_text)(&s.gloss_overlay)
-            };
-            {
-                let mut s = state.borrow_mut();
-                (cfg.escape_exit)(&s.gloss_overlay);
-                s.input_mode = cfg.return_mode;
-                (cfg.set_hint)(&s.gloss_overlay);
-            }
-            crate::input::actions::syntax::open_syntax_diagram(state, text, Vec::new());
-            true
-        }
+        // `s` is unbound here. It opened the full-screen syntax diagram for the
+        // selected blocks; a syntax gloss replaced that drawing, and a gloss is
+        // stored against citations. Overlay text is gloss/synopsis prose with no
+        // `line_mapping` rows, so it has no citations to key one by. The syntax
+        // gloss is reached from the reader instead — visual-mode "Syntax", or
+        // `-`/`_` then Return.
         _ => true,
     }
 }
@@ -3367,22 +3357,8 @@ fn handle_journal_visual_key(
             s.journal_overlay.set_journal_hint();
             true
         }
-        // s: open the full-screen syntax diagram for the selected blocks.
-        // Overlay text has no line_mapping rows, so no parse enrichment.
-        "s" => {
-            let text = {
-                let s = state.borrow();
-                s.journal_overlay.visual_selection_text()
-            };
-            {
-                let mut s = state.borrow_mut();
-                s.journal_overlay.exit_visual_to_anchor();
-                s.input_mode = crate::app::InputMode::JournalOverlay;
-                s.journal_overlay.set_journal_hint();
-            }
-            crate::input::actions::syntax::open_syntax_diagram(state, text, Vec::new());
-            true
-        }
+        // `s` is unbound here — see the note on the gloss/synopsis visual
+        // handler above: journal prose has no citations to key a gloss by.
         _ => true,
     }
 }
@@ -4496,7 +4472,7 @@ fn dispatch_action(
             let active =
                 !crate::input::actions::word_copy::active_underline(&state.borrow()).is_empty();
             if active {
-                crate::input::actions::syntax::open_syntax_diagram_for_underlined(state);
+                crate::input::actions::syntax::syntax_gloss_for_underlined(state);
             }
         }
         OpenSegmentVim => crate::input::actions::segment_vim::open(state),

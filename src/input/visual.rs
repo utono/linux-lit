@@ -296,7 +296,7 @@ pub fn execute_action(
             4 => action_copy(&mut state_rc.borrow_mut(), false),
             5 => action_copy(&mut state_rc.borrow_mut(), true),
             6 => {
-                action_syntax_diagram(state_rc);
+                action_syntax_gloss(state_rc);
                 return;
             }
             _ => {}
@@ -550,14 +550,17 @@ pub(crate) fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppSta
     crate::logging::log("JOURNAL-QA: opened ask card for visual passage");
 }
 
-/// Visual-mode "Syntax": open the full-screen diagram for the selection.
-/// Collects the selected buffer lines' text and their `line_mapping` row ids
-/// (the parse enrichment key); works with no `line_syntax` rows simply send
-/// the text alone.
-pub(crate) fn action_syntax_diagram(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (text, line_ids) = {
+/// Visual-mode "Syntax": build (or reuse) a `syntax-gloss` for the selection.
+///
+/// A parallel of `action_reader_gloss` below — same context build, same
+/// cache-then-fetch shape, same persist path. Differences: the gloss type, the
+/// prompt, the `line_syntax` enrichment appended to the user message, and no
+/// neighbor glosses (a grammatical analysis does not need what the adjacent
+/// passages were told).
+pub(crate) fn action_syntax_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let selected_lines: Vec<crate::db::models::Line> = {
         let state = state_rc.borrow();
-        let (start_buf, end_buf) = match &state.visual_selection {
+        let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
             None => return,
         };
@@ -565,22 +568,131 @@ pub(crate) fn action_syntax_diagram(state_rc: &std::rc::Rc<std::cell::RefCell<Ap
             Some(w) => w,
             None => return,
         };
-        let lines: Vec<crate::db::models::Line> = (start_buf..=end_buf)
+        (start..=end)
             .filter_map(|buf_line| {
                 state.work_line_for_buffer(buf_line)
                     .and_then(|wi| work.lines.get(wi).cloned())
             })
-            .collect();
-        let text = lines
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let ids = lines.iter().map(|l| l.id).collect::<Vec<i64>>();
-        (text, ids)
+            .collect()
     };
     exit_visual_mode(&mut state_rc.borrow_mut());
-    crate::input::actions::syntax::open_syntax_diagram(state_rc, text, line_ids);
+    syntax_gloss_for_lines(state_rc, selected_lines);
+}
+
+/// Build (or reuse) a `syntax-gloss` for an already-resolved passage.
+///
+/// The shared core behind both entry points: the visual-mode "Syntax" action
+/// above and the `-`/`_` + `Return` underline path in
+/// `crate::input::actions::syntax`. Callers resolve their own selection to
+/// work lines and must have left visual mode before calling.
+pub(crate) fn syntax_gloss_for_lines(
+    state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
+    selected_lines: Vec<crate::db::models::Line>,
+) {
+    let (ctx, model, tokio_handle, all_glosses, passage_doc, parse_table) = {
+        let state = state_rc.borrow();
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+
+        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "syntax-gloss") {
+            Some(c) => c,
+            None => return,
+        };
+
+        // `line_syntax` enrichment: sent where the work has a parse, omitted
+        // where it does not. 5 of 306 works are parsed, so the text-only path
+        // is the common one — it is a first-class path, not a fallback.
+        let line_ids: Vec<i64> = selected_lines.iter().map(|l| l.id).collect();
+        let all_glosses: Vec<crate::db::queries::SavedGloss>;
+        let parse_table: String;
+        match crate::db::queries::open_db() {
+            Ok(conn) => {
+                all_glosses = crate::db::queries::find_glosses_by_start(
+                    &conn, &ctx.work_abbrev, &ctx.start_citation, &["syntax-gloss"],
+                ).unwrap_or_default();
+                let toks = crate::db::syntax::load_line_syntax(&conn, &line_ids);
+                crate::logging::log(&format!(
+                    "SYNTAX-GLOSS: {} parsed tokens for {} lines", toks.len(), line_ids.len()
+                ));
+                parse_table = crate::db::syntax::tokens_as_table(&toks);
+            }
+            Err(_) => {
+                all_glosses = Vec::new();
+                parse_table = String::new();
+            }
+        }
+
+        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+        (ctx, state.config.claude_model.clone(), state.tokio_handle.clone(), all_glosses, passage_doc, parse_table)
+    };
+
+    // Cache hit: show the saved gloss, no API call.
+    if let Some(idx) = all_glosses.iter().position(|g| g.gloss_type == "syntax-gloss") {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        let pairs = ctx.source_line_pairs();
+        let gloss_text = &all_glosses[idx].gloss_text;
+        let card_width = s.content_hbox.width();
+        let card_height = crate::app::layout::overlay_card_height(&s);
+        let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+        s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
+        s.gloss_overlay.set_position(idx, all_glosses.len());
+        s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
+        s.gloss_list = all_glosses;
+        s.gloss_index = idx;
+        s.gloss_context = Some(ctx);
+        s.record_last_gloss("syntax-gloss");
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+        crate::logging::log("SYNTAX-GLOSS: showing cached gloss");
+        return;
+    }
+
+    {
+        let mut s = state_rc.borrow_mut();
+        s.gloss_original_text = Some(ctx.source_text.clone());
+        let cw = s.content_hbox.width();
+        let h = crate::app::layout::overlay_card_height(&s);
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        s.input_mode = crate::app::InputMode::GlossOverlay;
+    }
+
+    let mut user_msg = crate::gloss::build_user_message(&ctx, None, None, &[]);
+    if !parse_table.is_empty() {
+        user_msg.push_str("\n\nDependency parse for these lines:\n");
+        user_msg.push_str(&parse_table);
+    }
+    let state_for_result = std::rc::Rc::clone(state_rc);
+
+    glib::spawn_future_local(async move {
+        let model_for_db = model.clone();
+        let result = tokio_handle
+            .spawn(async move {
+                crate::gloss::call_claude_with_prompt(crate::gloss::syntax_gloss_prompt(), &user_msg, &model).await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(gloss_text)) => {
+                let mut s = state_for_result.borrow_mut();
+                crate::input::actions::gloss::persist_render_install_gloss(
+                    &mut s, ctx, &gloss_text, "syntax-gloss", &model_for_db,
+                    "SYNTAX-GLOSS: generated and saved new gloss",
+                );
+            }
+            Ok(Err(e)) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show(&format!("Error: {}", e), "");
+                crate::logging::log(&format!("SYNTAX-GLOSS: API error: {}", e));
+            }
+            Err(e) => {
+                let s = state_for_result.borrow();
+                s.gloss_overlay.show("Internal error \u{2014} try again.", "");
+                crate::logging::log(&format!("SYNTAX-GLOSS: tokio join error: {}", e));
+            }
+        }
+    });
 }
 
 fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
