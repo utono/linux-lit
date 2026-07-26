@@ -37,6 +37,32 @@ fn row_height(rows: usize, available: f64) -> f64 {
     fitted.min(BAND_ROW_H).max(MIN_BAND_ROW_H)
 }
 
+/// Given a band's byte span `[band_start, band_end)` and the byte span of
+/// every visual line in the Pango layout (in line order, each
+/// `(start_byte, end_byte)` exclusive at the end — i.e. `lines[i].1 ==
+/// lines[i + 1].0` for contiguous wrapped lines), return the `(line_index,
+/// seg_start_byte, seg_end_byte)` triple for every line the band touches,
+/// clipped to that line's own span.
+///
+/// Pure and Cairo/Pango-free so the segment-selection logic — the actual
+/// defect being fixed — is unit-testable without a display. A band spanning
+/// N visual lines yields exactly N triples, one per line, in line order.
+fn band_line_spans(
+    band_start: usize,
+    band_end: usize,
+    lines: &[(usize, usize)],
+) -> Vec<(usize, usize, usize)> {
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &(line_start, line_end))| {
+            let seg_start = band_start.max(line_start);
+            let seg_end = band_end.min(line_end);
+            (seg_start < seg_end).then_some((i, seg_start, seg_end))
+        })
+        .collect()
+}
+
 /// What the surface is currently showing.
 enum View {
     Loading,
@@ -221,6 +247,41 @@ fn draw_analysis(
         one_line_h
     };
 
+    // Per visual line: its own byte span (start..end, exclusive) and, for
+    // convenience, its baseline y (via `pos_of` at the line's own start
+    // byte) — everything `band_line_spans` and the segment-drawing loop
+    // below need, without either of them touching Pango types directly.
+    let pango_lines: Vec<(usize, usize)> = (0..layout.line_count())
+        .filter_map(|i| {
+            let l = layout.line(i)?;
+            let start = l.start_index() as usize;
+            let end = start + l.length() as usize;
+            Some((start, end))
+        })
+        .collect();
+    let line_y = |line_index: usize| -> f64 {
+        pango_lines
+            .get(line_index)
+            .map(|&(start, _)| pos_of(start).1)
+            .unwrap_or(text_top)
+    };
+    // x-pixel range of a byte span, clipped to one visual line, via Pango's
+    // own `x_ranges` (line-local pixel units — offset by the line's own x
+    // start, which for this left-aligned, non-indented layout is x0).
+    let line_x_range = |line_index: usize, seg_start: usize, seg_end: usize| -> (f64, f64) {
+        match layout.line(line_index as i32) {
+            Some(l) => {
+                let ranges = l.x_ranges(seg_start as i32, seg_end as i32);
+                let scale = gtk4::pango::SCALE as f64;
+                match ranges.as_slice() {
+                    [x0_px, x1_px, ..] => (x0 + *x0_px as f64 / scale, x0 + *x1_px as f64 / scale),
+                    _ => (x0, x0),
+                }
+            }
+            None => (x0, x0),
+        }
+    };
+
     y += th + 8.0;
 
     // ── POS row: each tag under its word ──
@@ -240,30 +301,41 @@ fn draw_analysis(
     let rh = row_height(rows, budget);
 
     for b in &a.bands {
-        let (sx, sy) = pos_of(b.start_char);
-        let (ex, ey) = pos_of(b.end_char);
-        // Deeper bands sit higher: row 0 (outermost) is the bottom rule.
-        let row_y = y + (rows as f64 - 1.0 - b.depth as f64) * rh;
-        // A band crossing a line wrap draws one segment per visual row.
-        let segments: Vec<(f64, f64)> = if (sy - ey).abs() < 1.0 {
-            vec![(sx, ex)]
-        } else {
-            vec![(sx, x0 + content_w), (x0, ex)]
-        };
-        // Tint by depth, from the theme accent.
+        // One triple per visual line the band touches — the fix for the
+        // "3+ wrapped lines lose their middle segments" defect. Each triple
+        // is a (line_index, seg_start_byte, seg_end_byte), already clipped
+        // to that line's own span by the pure helper.
+        let spans = band_line_spans(b.start_char, b.end_char, &pango_lines);
+        if spans.is_empty() {
+            continue;
+        }
+        // Deeper bands sit higher within their own line's row stack: row 0
+        // (outermost) is the bottom rule, same intent as before, just
+        // measured from each touched line's own baseline instead of one
+        // shared band-area origin.
+        let depth_offset = (rows as f64 - 1.0 - b.depth as f64) * rh;
         let fade = 1.0 - (b.depth as f64 * 0.15).min(0.6);
         cr.set_source_rgba(inner.accent.0, inner.accent.1, inner.accent.2, fade);
         cr.set_line_width(2.0);
-        for (a_x, b_x) in &segments {
-            cr.move_to(*a_x, row_y);
-            cr.line_to(*b_x, row_y);
+
+        let mut first_segment: Option<(f64, f64, f64)> = None; // (x0, x1, row_y)
+        for (line_index, seg_start, seg_end) in &spans {
+            let (sx, ex) = line_x_range(*line_index, *seg_start, *seg_end);
+            let row_y = line_y(*line_index) + line_h + depth_offset;
+            cr.move_to(sx, row_y);
+            cr.line_to(ex, row_y);
             let _ = cr.stroke();
+            if first_segment.is_none() {
+                first_segment = Some((sx, ex, row_y));
+            }
         }
-        // Label, centered on the first segment.
-        let (lx0, lx1) = segments[0];
-        let (ll, lw, _) = layout_text(area, &b.label, "Sans 10", None);
-        cr.move_to(((lx0 + lx1) / 2.0 - lw / 2.0).max(x0), row_y - 14.0);
-        pangocairo::functions::show_layout(cr, &ll);
+
+        // Label, centered on the first segment, drawn once per band.
+        if let Some((lx0, lx1, row_y)) = first_segment {
+            let (ll, lw, _) = layout_text(area, &b.label, "Sans 10", None);
+            cr.move_to(((lx0 + lx1) / 2.0 - lw / 2.0).max(x0), row_y - 14.0);
+            pangocairo::functions::show_layout(cr, &ll);
+        }
     }
     y += rows as f64 * rh + 16.0;
 
@@ -314,5 +386,68 @@ mod tests {
         // rather than shows unreadable 5px bands.
         let h = row_height(20, 100.0);
         assert_eq!(h, MIN_BAND_ROW_H, "floor must win when it can't also fit");
+    }
+
+    // ── band_line_spans ──
+    //
+    // Three lines of 10 bytes each: [0,10), [10,20), [20,30).
+    const THREE_LINES: [(usize, usize); 3] = [(0, 10), (10, 20), (20, 30)];
+
+    #[test]
+    fn single_line_band_yields_one_segment() {
+        let spans = band_line_spans(2, 8, &THREE_LINES);
+        assert_eq!(spans, vec![(0, 2, 8)]);
+    }
+
+    #[test]
+    fn two_line_band_yields_two_segments_clipped_to_each_line() {
+        // Band runs from mid-line-0 into mid-line-1.
+        let spans = band_line_spans(5, 15, &THREE_LINES);
+        assert_eq!(spans, vec![(0, 5, 10), (1, 10, 15)]);
+    }
+
+    #[test]
+    fn three_line_band_does_not_lose_the_middle_segment() {
+        // This is the defect under test: a band crossing 3 visual lines
+        // must draw all 3, not just the first and last.
+        let spans = band_line_spans(5, 25, &THREE_LINES);
+        assert_eq!(spans, vec![(0, 5, 10), (1, 10, 20), (2, 20, 25)]);
+    }
+
+    #[test]
+    fn many_line_band_yields_n_segments_for_every_n() {
+        let lines: Vec<(usize, usize)> = (0..7).map(|i| (i * 10, i * 10 + 10)).collect();
+        for n in 1..=7 {
+            let end = n * 10 - 3; // stop mid-way through the nth line
+            let spans = band_line_spans(0, end, &lines);
+            assert_eq!(spans.len(), n, "band to byte {end} should touch {n} lines");
+            // Every segment must land on the line it claims and lie inside
+            // that line's own byte span.
+            for &(line_index, seg_start, seg_end) in &spans {
+                let (line_start, line_end) = lines[line_index];
+                assert!(seg_start >= line_start && seg_end <= line_end);
+                assert!(seg_start < seg_end);
+            }
+        }
+    }
+
+    #[test]
+    fn band_exactly_covering_one_full_line() {
+        let spans = band_line_spans(10, 20, &THREE_LINES);
+        assert_eq!(spans, vec![(1, 10, 20)]);
+    }
+
+    #[test]
+    fn band_touching_line_boundary_does_not_spill_into_next_line() {
+        // end == a line boundary: the next line must not get a zero-width
+        // spurious segment.
+        let spans = band_line_spans(0, 10, &THREE_LINES);
+        assert_eq!(spans, vec![(0, 0, 10)]);
+    }
+
+    #[test]
+    fn empty_lines_list_yields_no_segments() {
+        let spans = band_line_spans(0, 10, &[]);
+        assert!(spans.is_empty());
     }
 }
