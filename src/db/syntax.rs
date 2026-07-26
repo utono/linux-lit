@@ -79,15 +79,15 @@ pub fn load_line_syntax(conn: &Connection, line_ids: &[i64]) -> Vec<SyntaxToken>
 /// Render tokens as the compact table the diagram prompt embeds. One token per
 /// line, tab-separated: `word<TAB>POS<TAB>dep<TAB>head_index`. Compact because
 /// a long prose selection can run to hundreds of tokens and every one costs
-/// prompt budget.
+/// prompt budget. Truncates at 600 data rows.
 pub fn tokens_as_table(tokens: &[SyntaxToken]) -> String {
     let mut out = String::from("word\tPOS\tdep\thead\n");
     for (i, t) in tokens.iter().enumerate() {
-        out.push_str(&format!("{}\t{}\t{}\t{}\n", t.text, t.pos, t.dep, t.head_i));
         if i >= 600 {
             out.push_str("… (truncated)\n");
             break;
         }
+        out.push_str(&format!("{}\t{}\t{}\t{}\n", t.text, t.pos, t.dep, t.head_i));
     }
     out
 }
@@ -150,5 +150,133 @@ mod tests {
     fn missing_table_is_empty_not_an_error() {
         let conn = Connection::open_in_memory().unwrap();
         assert!(load_line_syntax(&conn, &[7]).is_empty());
+    }
+
+    #[test]
+    fn stale_offset_end_past_text_length_is_dropped() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, canonical_text TEXT);
+             INSERT INTO line_mapping VALUES (1, 'hello');
+             CREATE TABLE line_syntax (
+               line_mapping_id INTEGER NOT NULL,
+               tok_i INTEGER NOT NULL,
+               start_char INTEGER NOT NULL,
+               end_char INTEGER NOT NULL,
+               pos TEXT NOT NULL,
+               tag TEXT,
+               dep TEXT NOT NULL,
+               head_i INTEGER NOT NULL,
+               lemma TEXT,
+               PRIMARY KEY (line_mapping_id, tok_i));
+             INSERT INTO line_syntax VALUES
+               (1, 0, 0, 5, 'NOUN', 'NN', 'ROOT', 0, 'hello'),
+               (1, 1, 6, 20, 'VERB', 'VB', 'dep', 0, 'overrun');",
+        )
+        .unwrap();
+
+        let toks = load_line_syntax(&conn, &[1]);
+        // Good token at 0–5 within 'hello' (length 5) should be present.
+        // Bad token at 6–20 past the 5-char length should be dropped.
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].text, "hello");
+    }
+
+    #[test]
+    fn stale_offset_mid_utf8_codepoint_is_dropped() {
+        let conn = Connection::open_in_memory().unwrap();
+        // "café" in UTF-8: c=1 byte, a=1, f=1, é=2 bytes → total 5 bytes
+        // Byte offset 3 is 'é''s first byte; offset 4 is 'é''s second byte (invalid boundary).
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, canonical_text TEXT);
+             INSERT INTO line_mapping VALUES (1, 'café au lait');
+             CREATE TABLE line_syntax (
+               line_mapping_id INTEGER NOT NULL,
+               tok_i INTEGER NOT NULL,
+               start_char INTEGER NOT NULL,
+               end_char INTEGER NOT NULL,
+               pos TEXT NOT NULL,
+               tag TEXT,
+               dep TEXT NOT NULL,
+               head_i INTEGER NOT NULL,
+               lemma TEXT,
+               PRIMARY KEY (line_mapping_id, tok_i));
+             INSERT INTO line_syntax VALUES
+               (1, 0, 0, 3, 'NOUN', 'NN', 'ROOT', 0, 'caf'),
+               (1, 1, 4, 5, 'LETTER', 'NN', 'dep', 0, 'bad'),
+               (1, 2, 5, 7, 'SPACE', 'SPACE', 'dep', 0, 'au');",
+        )
+        .unwrap();
+
+        let toks = load_line_syntax(&conn, &[1]);
+        // Token at 0–3 is valid (inside 'caf').
+        // Token at 4–5 crosses mid-UTF-8-codepoint (inside the 2-byte é).
+        // Token at 5–7 is valid (the space and 'a').
+        assert_eq!(toks.len(), 2);
+        assert_eq!(toks[0].text, "caf");
+        assert_eq!(toks[1].text, " a");
+    }
+
+    #[test]
+    fn stale_offset_negative_start_is_clamped() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, canonical_text TEXT);
+             INSERT INTO line_mapping VALUES (1, 'hello');
+             CREATE TABLE line_syntax (
+               line_mapping_id INTEGER NOT NULL,
+               tok_i INTEGER NOT NULL,
+               start_char INTEGER NOT NULL,
+               end_char INTEGER NOT NULL,
+               pos TEXT NOT NULL,
+               tag TEXT,
+               dep TEXT NOT NULL,
+               head_i INTEGER NOT NULL,
+               lemma TEXT,
+               PRIMARY KEY (line_mapping_id, tok_i));
+             INSERT INTO line_syntax VALUES
+               (1, 0, 0, 5, 'NOUN', 'NN', 'ROOT', 0, 'hello'),
+               (1, 1, -3, 4, 'VERB', 'VB', 'dep', 0, 'bad');",
+        )
+        .unwrap();
+
+        let toks = load_line_syntax(&conn, &[1]);
+        // Good token at 0–5 is present.
+        // Bad token at -3–4 is clamped to 0–4, which overlaps [0,5); must not panic.
+        // The clamped slice [0,4] is "hell", but it should be dropped because
+        // -3 < 0, triggering the guard (s < e requires start < end post-clamp;
+        // -3→0, 4→4 means 0 < 4, true, but end (4) <= len (5), true, and both
+        // boundaries valid, so it would be "hell").
+        // Actually, let me reconsider: the guard is `s < e && e <= canonical.len()`.
+        // After clamp: s=0, e=4. 0 < 4 (yes), 4 <= 5 (yes), boundaries OK (yes).
+        // So the slice succeeds and returns "hell". The guard doesn't reject
+        // negative starts; it clamps them. That is the intended behavior per
+        // line 60: `.max(0)`. So this token would NOT be dropped.
+        // Adjust test: the negative start is clamped, so it WILL produce a token.
+        assert_eq!(toks.len(), 2);
+        assert_eq!(toks[0].text, "hello");
+        assert_eq!(toks[1].text, "hell");
+    }
+
+    #[test]
+    fn tokens_as_table_truncates_at_600_rows() {
+        let mut toks = Vec::new();
+        for i in 0..610 {
+            toks.push(SyntaxToken {
+                text: format!("word{}", i),
+                pos: "NOUN".to_string(),
+                dep: "dep".to_string(),
+                head_i: 0,
+            });
+        }
+
+        let table = tokens_as_table(&toks);
+        let lines: Vec<&str> = table.lines().collect();
+        // Header (1) + 600 data rows + truncated marker (1) = 602 lines
+        assert_eq!(lines.len(), 602);
+        assert_eq!(lines[0], "word\tPOS\tdep\thead");
+        assert_eq!(lines[601], "… (truncated)");
+        // Verify the 600th row (index 600 in the table, since header is line 0)
+        assert_eq!(lines[600], "word599\tNOUN\tdep\t0");
     }
 }
