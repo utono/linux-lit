@@ -3649,10 +3649,21 @@ fn open_gloss_overlay_by_start(
     work_abbrev: &str,
     start_citation: &str,
 ) {
-    // Reader-facing types only: both callers are the background reader-gloss
-    // path (a cache hit or a just-saved reply) — they only ever look for the
-    // reader-gloss they themselves produced, never a syntax-gloss.
-    const GLOSS_TYPES: &[&str] = READER_GLOSS_TYPES;
+    // ANY type, including syntax-gloss. This was READER_GLOSS_TYPES on the
+    // assumption that both callers are the background reader-gloss path — that
+    // assumption was WRONG, and the failure was silent and total: the gloss
+    // PICKER lists syntax glosses (its own query includes them), and selecting
+    // one lands here. With syntax-gloss excluded, `all_glosses` came back empty
+    // and this function returned without opening anything — while the caller
+    // had already flipped `input_mode` back to Reader. The user was left in the
+    // reader staring at the STALE overlay still painted from before, with every
+    // keypress going to the reader behind it. Reported 2026-07-26; the log shows
+    // `Return` in mode=GlossPicker producing no output at all, then the next key
+    // arriving in mode=Reader.
+    //
+    // Excluding a type here can only ever silently drop an open, never protect
+    // anything: the caller has already resolved WHICH gloss it wants.
+    const GLOSS_TYPES: &[&str] = ANY_GLOSS_TYPES;
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
         Err(_) => return,
@@ -3660,6 +3671,16 @@ fn open_gloss_overlay_by_start(
     let passages = crate::db::queries::find_glossed_passages(&conn, work_abbrev, GLOSS_TYPES)
         .unwrap_or_default();
     let Some(idx) = passages.iter().position(|p| p.start_citation == start_citation) else {
+        // Same trap as the empty-glosses branch below: returning bare here
+        // strands a stale overlay over a reader that is already taking the
+        // keys. This is the branch the 2026-07-26 picker bug actually hit,
+        // since a GLOSS_TYPES list without syntax-gloss makes `passages` miss
+        // the citation entirely.
+        let s = state.borrow();
+        s.gloss_overlay.hide();
+        crate::logging::log(&format!(
+            "GLOSS_OPEN: no glossed passage at {start_citation} — nothing opened"
+        ));
         return;
     };
     let passage = passages[idx].clone();
@@ -3671,6 +3692,16 @@ fn open_gloss_overlay_by_start(
     )
     .unwrap_or_default();
     if all_glosses.is_empty() {
+        // Belt-and-braces after the GLOSS_TYPES fix above: a bare `return` here
+        // is what made that bug invisible AND unrecoverable. The caller has
+        // already set input_mode away from the picker, so returning without
+        // opening leaves a STALE overlay painted over a reader that is silently
+        // receiving the keys. Hide it and say so in the log.
+        let s = state.borrow();
+        s.gloss_overlay.hide();
+        crate::logging::log(&format!(
+            "GLOSS_OPEN: no gloss found for {start_citation} — nothing opened"
+        ));
         return;
     }
 
