@@ -882,6 +882,27 @@ pub(crate) fn work_type_is_play(work_type: &str) -> bool {
 }
 
 impl AppState {
+    /// Clear the per-buffer-line typography state that only the block-aware
+    /// buffer-fill branch populates (`block_indent_tiers`) and the inline-italic
+    /// fill populates (`italic_offset_map` / `italic_line_spans`).
+    ///
+    /// EVERY buffer-fill path must call this (or assign all three explicitly)
+    /// before the formatting passes run. These fields are keyed by buffer-line
+    /// index, so a vec left over from the PREVIOUS work indexes the new work's
+    /// buffer — and `apply_dialogue_formatting` early-returns outright on a
+    /// non-empty `block_indent_tiers`, silently dropping speaker gaps, small-caps
+    /// speaker names, and the dialogue indent for the whole work.
+    ///
+    /// That is not hypothetical: the off-thread text-file fast path in
+    /// `display_work_at_with_prepared` used to set only `buffer` + `line_map`, so
+    /// loading a block-aware prose work (BH-Barrett, LoJ) and then switching to a
+    /// text-file play left the play with no dialogue formatting at all.
+    pub(crate) fn clear_block_typography_state(&mut self) {
+        self.block_indent_tiers = Vec::new();
+        self.italic_offset_map.clear();
+        self.italic_line_spans.clear();
+    }
+
     /// Whether the current work is prose (true) or play/poetry (false).
     /// Returns true when no work is loaded — equivalent to pre-F9 behavior
     /// (trim_visible_range becomes a no-op on an empty buffer regardless).
@@ -3865,6 +3886,13 @@ pub fn display_work_at_with_prepared(
         let first_mapped = prep.line_map.buffer_to_work.iter().position(|o| o.is_some());
         state.buffer.set_text(&prep.filtered_contents);
         state.line_map = Some(prep.line_map);
+        // The text-file path is never block-aware (block typography is applied
+        // only in rebuild_buffer_text's block branch) and never strips inline
+        // italics, so all three are unconditionally empty here. Without this the
+        // PREVIOUS work's tiers survive and apply_dialogue_formatting's
+        // block-aware guard early-returns, dropping the play's dialogue
+        // formatting entirely. Mirrors the non-prepared text-file branch.
+        state.clear_block_typography_state();
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={} (prepared off-thread)",
             prep.abbrev,
@@ -4380,9 +4408,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
             }
         }
         state.line_map = Some(prep.line_map);
-        state.block_indent_tiers = Vec::new();
-        state.italic_offset_map.clear();
-        state.italic_line_spans.clear();
+        state.clear_block_typography_state();
         crate::logging::log(&format!(
             "TEXT_FILE: loaded '{}' work_type='{}' is_prose={} file_lines={} cleaned_lines={} work_lines={} mapped_buffer_lines={} first_mapped={:?} path={}",
             prep.abbrev,
@@ -4463,9 +4489,7 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
         );
         state.buffer.set_text(&buf_lines.join("\n"));
         state.line_map = Some(line_map);
-        state.block_indent_tiers = Vec::new();
-        state.italic_offset_map.clear();
-        state.italic_line_spans.clear();
+        state.clear_block_typography_state();
         return;
     }
 
@@ -4513,6 +4537,9 @@ pub(crate) fn rebuild_buffer_text(state: &mut AppState) {
 
     // Default: join work.lines
     state.line_map = None;
+    // Field-by-field rather than clear_block_typography_state(): `work` above is
+    // a live immutable borrow of `state`, so an `&mut self` method call here
+    // would conflict. These borrow disjoint fields and compile fine.
     state.block_indent_tiers = Vec::new();
     state.italic_offset_map.clear();
     state.italic_line_spans.clear();
@@ -5681,6 +5708,82 @@ mod known_scene_driver_tests {
         };
         assert_eq!(resolve_scene_start_line(&lines, Some(&lm), 1, 2), Some(7));
         assert_eq!(resolve_scene_start_line(&lines, Some(&lm), 1, 1), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod block_typography_reset_tests {
+    /// Every buffer-fill path must reset the per-buffer-line typography state
+    /// before the formatting passes run, or the PREVIOUS work's data indexes the
+    /// new work's buffer. The failure this guards is silent and load-order
+    /// dependent: `apply_dialogue_formatting` early-returns outright when
+    /// `block_indent_tiers` is non-empty, so loading a block-aware prose work
+    /// (BH-Barrett, LoJ) and then switching to a text-file play left the play
+    /// with no speaker gaps, no small-caps speaker names, and no dialogue indent
+    /// — while loading that same play first rendered it correctly.
+    ///
+    /// `AppState` owns GTK widgets and can't be built off the main loop, so this
+    /// asserts on the source of `rebuild_buffer_text` + the off-thread fast path
+    /// in `display_work_at_with_prepared`: each branch that fills the buffer must
+    /// also clear the three fields (via `clear_block_typography_state()` or
+    /// explicit assignment). A new fill branch that forgets fails here.
+    #[test]
+    fn every_buffer_fill_branch_resets_block_typography_state() {
+        let src = include_str!("mod.rs");
+
+        // Each buffer-fill branch, keyed by a unique line that anchors it. The
+        // reset may sit just before or just after the anchor, so the window spans
+        // both directions.
+        // Anchors are split across a `concat!` so this test's own source does not
+        // contain them verbatim — otherwise every anchor matches twice (once in
+        // the production branch, once here) and the uniqueness check trips.
+        let reset_call = concat!("clear_block_typography_state", "()");
+        let branches = [
+            // The off-thread fast path in display_work_at_with_prepared — the
+            // branch that regressed. Anchored on its unique log suffix.
+            (concat!("(prepared ", "off-thread)"), reset_call),
+            // rebuild_buffer_text's non-prepared text-file branch.
+            (concat!("state.scansion.label_starts", " = label_starts;"), reset_call),
+            // The BCP DB-join branch.
+            (concat!("build_line_map", "_bcp"), reset_call),
+            // The default DB-join branch (explicit assignment: `work` is a live
+            // immutable borrow there, so an &mut self call would not compile).
+            (
+                concat!("// Default: join", " work.lines"),
+                concat!("state.block_indent_tiers", " = Vec::new();"),
+            ),
+        ];
+
+        for (anchor, reset) in branches {
+            let at = src
+                .find(anchor)
+                .unwrap_or_else(|| panic!("buffer-fill anchor {anchor:?} not found — did the branch move?"));
+            assert!(
+                src[at..].find(anchor).is_some() && src[at + anchor.len()..].find(anchor).is_none(),
+                "anchor {anchor:?} is not unique — pick a more specific one"
+            );
+            let lo = at.saturating_sub(1200);
+            let hi = (at + 1200).min(src.len());
+            // Trim to char boundaries so slicing multi-byte source can't panic.
+            let window = src
+                .get(lo..hi)
+                .unwrap_or(&src[at..hi.max(at)]);
+            assert!(
+                window.contains(reset),
+                "buffer-fill branch at {anchor:?} does not reset block typography state \
+                 (expected {reset:?} nearby). A stale block_indent_tiers makes \
+                 apply_dialogue_formatting early-return and silently drops all \
+                 dialogue formatting for the next work loaded."
+            );
+        }
+
+        // The block-aware branch is the one path that legitimately POPULATES the
+        // tiers rather than clearing them; keep it distinct so the assertions
+        // above can't be satisfied by deleting it.
+        assert!(
+            src.contains("state.block_indent_tiers = bb.indent_tiers;"),
+            "block-aware branch must still populate indent tiers"
+        );
     }
 }
 
