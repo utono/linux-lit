@@ -328,8 +328,6 @@ pub fn handle_key(
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
             crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift, is_alt),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
-            crate::app::InputMode::SyntaxDiagram => handle_syntax_diagram_key(state, key_name, is_ctrl),
-            crate::app::InputMode::SyntaxKeybindsOverlay => handle_syntax_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -3798,59 +3796,6 @@ fn handle_gamepad_key(
         }
         _ => true,
     }
-}
-
-/// Full-screen syntax diagram. Escape closes and returns to whichever surface
-/// it was opened from (`syntax_return_mode` — Reader, or the gloss/synopsis/
-/// journal overlay it was opened over); `n` toggles the prose commentary;
-/// every other key is swallowed so the diagram is fully modal.
-fn handle_syntax_diagram_key(
-    state: &Rc<RefCell<AppState>>,
-    key_name: &str,
-    is_ctrl: bool,
-) -> bool {
-    if is_ctrl && key_name == "slash" {
-        let mut s = state.borrow_mut();
-        s.syntax_keybinds_overlay.show();
-        s.input_mode = crate::app::InputMode::SyntaxKeybindsOverlay;
-        return true;
-    }
-    match key_name {
-        "Escape" => {
-            let mut s = state.borrow_mut();
-            s.syntax_overlay.hide();
-            // Restore whichever surface the diagram was opened from (Reader,
-            // or the gloss/synopsis/journal overlay it was opened over) —
-            // never hard-code Reader, or that overlay stays painted while
-            // input_mode silently falls back to the (invisible) main card.
-            s.input_mode = s
-                .syntax_return_mode
-                .take()
-                .unwrap_or(crate::app::InputMode::Reader);
-            true
-        }
-        "n" => {
-            state.borrow().syntax_overlay.toggle_note();
-            true
-        }
-        _ => true,
-    }
-}
-
-/// Modal handler for the syntax-diagram Ctrl+/ keybind legend: Esc or Ctrl+/
-/// closes the legend and returns to the diagram; all other keys are swallowed.
-/// Mirrors `handle_echo_keybinds_key`.
-fn handle_syntax_keybinds_key(
-    state: &Rc<RefCell<AppState>>,
-    key_name: &str,
-    is_ctrl: bool,
-) -> bool {
-    if key_name == "Escape" || (is_ctrl && key_name == "slash") {
-        let mut s = state.borrow_mut();
-        s.syntax_keybinds_overlay.hide();
-        s.input_mode = crate::app::InputMode::SyntaxDiagram;
-    }
-    true // consume all keys while the legend is up (modal)
 }
 
 fn handle_echo_keybinds_key(
