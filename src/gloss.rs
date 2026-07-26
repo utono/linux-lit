@@ -572,8 +572,15 @@ achieves rhetorically — what the arrangement does that a plainer one would \
 not.
 
 4. A line reading `Terms:` followed by one <gloss>...</gloss> pair per \
-DISTINCT term you used in the Structure section, in the order they first \
-appear. Each reads `term: definition.` and defines the term GENERALLY — what a \
+DISTINCT grammatical term you used ANYWHERE ABOVE — in the Structure section \
+AND in the rhetorical note. If the note calls something an appositive, a \
+participial modifier, or a periodic sentence, that term needs a definition \
+here even though no Structure line is labelled with it. A reader who meets an \
+unfamiliar term in your prose and cannot find it below has been left stranded.
+
+Order the entries ALPHABETICALLY by term, not by where they appear.
+
+Each reads `term: definition.` and defines the term GENERALLY — what a \
 relative clause is in any sentence — not what this particular span does. If \
 you used the same term three times, define it once.
 
@@ -1410,6 +1417,32 @@ mod tests {
         assert!(p.contains("Terms"), "must ask for the terms section");
         // POS tags are dropped entirely.
         assert!(!p.to_lowercase().contains("part-of-speech"), "POS tags are dropped");
+    }
+
+    #[test]
+    fn syntax_gloss_prompt_glossary_covers_the_note_and_sorts_alphabetically() {
+        let p = syntax_gloss_prompt();
+        // Terms must cover every grammatical term used ANYWHERE above, not just
+        // the ones that label a Structure line. A gloss whose note said "an
+        // appositive" while Terms defined only the Structure labels left the
+        // reader with an undefined term on screen (reported 2026-07-26).
+        assert!(
+            p.contains("ANYWHERE ABOVE"),
+            "glossary must cover terms used in the note too, not only Structure"
+        );
+        assert!(
+            p.to_lowercase().contains("rhetorical note"),
+            "the note must be named as a source of glossary terms"
+        );
+        assert!(
+            p.contains("ALPHABETICALLY"),
+            "glossary entries must be ordered alphabetically"
+        );
+        // And the superseded ordering must be gone, or the model gets two rules.
+        assert!(
+            !p.contains("in the order they first"),
+            "first-appearance ordering was replaced by alphabetical"
+        );
     }
 
     // ---- lookup_citation hardening ----
