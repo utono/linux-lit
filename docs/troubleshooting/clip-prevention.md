@@ -874,6 +874,53 @@ When a half line clips at the bottom edge of a scrolled surface:
     successive headless re-measures were needed; each fix exposed the next
     layer, and none was visible from logs.)
 
+    **UPDATE, same day — cage PASSED this and the real GL renderer did not.**
+    The first real-renderer run of this surface showed the annotations
+    unreadable on a 10-band, 2-line sentence: labels printed on their own
+    rules and on each other, band rules struck through the POS row, rules
+    overran the text. Cage had reported "4 minor grazes". Every constant on
+    this surface had been tuned against software rendering. Four more layers,
+    each exposed by fixing the one before:
+    - **A hardcoded label offset against a smaller row floor.** Labels floated
+      a fixed 14px above their rules while `MIN_BAND_ROW_H` was 12px, so a
+      compressed stack put every label above its OWN rule and onto its
+      neighbour's. Any label offset MUST derive from the row height, and the
+      row floor from the label height — otherwise the two invert under
+      compression. Same for the collision tolerance: a constant 13px
+      under-reports once `rh` shrinks below it.
+    - **Pango draws from the text's TOP-left, not its baseline.** An offset of
+      `rh - 2` still left glyphs sitting on the rule. The label's own measured
+      HEIGHT is what must clear it (`layout_text` already returns it — the
+      draw site was discarding it as `_`). Measure, don't guess.
+    - **Two elements anchored at the same y.** The POS row and the outermost
+      band rule were both placed at `natural_line_h`, so the rule struck the
+      tags through BY CONSTRUCTION, not by drift. When two stacked elements
+      share an anchor, one of them needs the other's height added.
+    - **A width test is not a collision test.** A DEEP band sits high in the
+      stack, so its label lands in the POS row regardless of how wide the band
+      is. Test the actual geometry (does the label's top clear the POS row's
+      floor?) rather than a proxy. Corollary learned by over-correcting:
+      tightening the width proxy to `lw <= span` suppressed 5 of 6 labels —
+      "appositive noun phrase" is legitimately wider than the 2-3 word span it
+      names. A clean diagram missing most of its labels is WORSE than a
+      slightly overhanging one; overhang is cosmetic, a missing label is lost
+      meaning.
+    - **Reserve space for the innermost band's label.** With the stack
+      starting immediately below the POS row, the innermost band (depth =
+      rows-1, offset 0) has nowhere to put its label. Reserve one label height
+      (`STACK_TOP_OFFSET = POS_ROW_H + LABEL_H`) instead of suppressing it.
+    - **Name the shared offset once.** The spacing budget, the drawn `row_y`,
+      and `band_stack_bottom` must use an IDENTICAL offset; they drifted apart
+      twice while it was open-coded at each site.
+    - **Unit tests that pin superseded geometry are evidence, not obstacles.**
+      Two row-height tests failed on the raised floor. Both were updated, not
+      deleted: the new contract is that the legibility FLOOR wins over a tight
+      budget (`line_spacing_for` absorbs the overflow), and that a stack fits
+      the SET line height rather than the natural one.
+    (`syntax_overlay.rs`, 2026-07-26 — **the lesson is the renderer, not the
+    arithmetic**: a layout "verified" only in cage is unverified. Run the real
+    GL check before believing any pixel-level acceptance on this surface.)
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
