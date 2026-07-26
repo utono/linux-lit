@@ -743,3 +743,35 @@ git commit -m "docs: retire the Cairo diagram, record syntax-gloss"
 **Type consistency.** `SyntaxBand { start_char, end_char, label, depth }` and `structure_section(&str, &[SyntaxBand]) -> String` are defined in Task 1; Task 2's prompt describes the same output shape in prose. `syntax_gloss_prompt() -> &'static str` is defined in Task 2 and called in Task 3. `"syntax-gloss"` is the type string in Tasks 3 and 5 — one spelling throughout. `GlossPickerFilter::SyntaxGloss` is defined and tested in Task 5 only.
 
 **Known risk.** Task 4 deletes ~1,315 lines merged to master earlier today. The build is the safety net: the compiler names every dangling reference. The riskier part is Task 3's positional coupling in `BUILTIN_ACTIONS` — flagged in the step, because a silent off-by-one there fires the wrong visual-mode action rather than failing to compile.
+
+## Verification results (2026-07-26, headless cage @ 1920x1200)
+
+Driven on BH-Barrett 3.0. All checks pass.
+
+**The gloss renders.** `-` then `Return` resolved a 90-char sentence span, sent 327
+`line_syntax` tokens (the enriched path), and logged
+`SYNTAX-GLOSS: generated and saved new gloss`. The overlay shows all four parts: the
+passage in its standard `<segment>` treatment with vocab links live (`mysterious`,
+`peerage` — a capability the Cairo surface never had), a `Structure:` section of 10
+main clauses with elided spans, the rhetorical note, and `Terms:` defining "main
+clause" and "adverbial phrase" generally.
+
+**Paginated, not clipped.** The gloss runs to 2 pages ("1 / 2"); Structure sits below
+the fold on page 1. This is the existing overlay's own pagination — one of the
+capabilities the drawing could not have.
+
+**Saved and slotted correctly.** "Gloss 2 of 2" bottom-left confirms the new gloss
+joined the sibling list — the Task 3 review's IMPORTANT fix (the hardcoded reload list
+that excluded `syntax-gloss`) working in situ. DB: 2 rows, 2 distinct `passage_id`.
+
+**Cache hit confirmed — the payoff of the whole redesign.**
+`SYNTAX-GLOSS: showing cached gloss` at 144172ms against a lookup at 144168ms: **4ms,
+no API call**, versus ~20s to generate. Re-opening a syntax gloss is now free.
+
+Testing note: the first cache attempt appeared to fail, but the log showed the cursor
+had moved (944 -> 943) when Escape closed the overlay, so the second `Return` selected
+a DIFFERENT sentence (span 1124..1324 vs 844..934) — a correct miss on a new passage,
+not a cache defect. Returning the cursor to its original line produced the hit above.
+
+**Still required: real-renderer confirmation.** Cage is software rendering and
+disagreed with GL on every layout defect this feature hit while it was a drawing.
