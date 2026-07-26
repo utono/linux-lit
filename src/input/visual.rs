@@ -576,7 +576,9 @@ pub(crate) fn action_syntax_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppS
             .collect()
     };
     exit_visual_mode(&mut state_rc.borrow_mut());
-    syntax_gloss_for_lines(state_rc, selected_lines);
+    // Visual mode glosses the WHOLE selection — the user chose that range
+    // deliberately, so there is nothing to narrow.
+    syntax_gloss_for_lines(state_rc, selected_lines, None);
 }
 
 /// Build (or reuse) a `syntax-gloss` for an already-resolved passage.
@@ -585,9 +587,18 @@ pub(crate) fn action_syntax_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppS
 /// above and the `-`/`_` + `Return` underline path in
 /// `crate::input::actions::syntax`. Callers resolve their own selection to
 /// work lines and must have left visual mode before calling.
+/// `source_override`: the exact text to analyse, when it is NARROWER than the
+/// selected lines. The `-`/`_` underline path passes the single SENTENCE the
+/// underlined word sits in; visual mode passes `None` and glosses the whole
+/// selection.
+///
+/// The lines still drive the citation range, the `passage_id`, and the
+/// `line_syntax` lookup — only the text sent to the model narrows. A sentence
+/// inside line 368 still belongs to the passage keyed at line 368.
 pub(crate) fn syntax_gloss_for_lines(
     state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
     selected_lines: Vec<crate::db::models::Line>,
+    source_override: Option<String>,
 ) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc, parse_table) = {
         let state = state_rc.borrow();
@@ -596,10 +607,19 @@ pub(crate) fn syntax_gloss_for_lines(
             None => return,
         };
 
-        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "syntax-gloss") {
+        let mut ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "syntax-gloss") {
             Some(c) => c,
             None => return,
         };
+        // Narrow the analysed text BEFORE anything reads the context — the
+        // passage doc, the user message, and the stored gloss all derive from
+        // `source_text`. `source_line_pairs` zips against
+        // `source_line_numbers` and `zip` stops at the shorter side, so a
+        // one-sentence override yields one pair carrying the first line's
+        // number, which is the right citation for it.
+        if let Some(text) = source_override {
+            ctx.source_text = text;
+        }
 
         // `line_syntax` enrichment: sent where the work has a parse, omitted
         // where it does not. 5 of 306 works are parsed, so the text-only path
