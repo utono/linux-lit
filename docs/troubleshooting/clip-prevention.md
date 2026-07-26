@@ -538,6 +538,14 @@ tight while the surrounding prose keeps its configured leading.
   fixes), matching Hamlet's two-column verse exactly. Glyph ink heights are
   unchanged throughout (~15-20px), which is what proves the delta is spacing
   rather than font size.
+- **`pixels_above_lines` can only OPEN a block.** A third pass was needed: with
+  the stanza gap correct, a verse block still closed with no gap below its last
+  line (measured 43px above the block vs 32px below), because the gap tag sets
+  `pixels_above` and nothing was tagging the closing edge — the following prose
+  line contributed only its own leading. Fixed with a `verse-stanza-gap-below`
+  tag (`pixels_below_lines(12)`) applied when the NEXT buffer line is not
+  non-empty verse, which needs a lookahead — tracking only the previous line
+  cannot see a block's last row. Now 44px on both edges.
 - **Blast radius is checkable in one query.** `block_type='verse'` exists on
   exactly two works (LoJ, TT), both prose — plays and poems never enter
   `apply_block_typography`, so their verse typography is untouched.

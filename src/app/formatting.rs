@@ -685,6 +685,20 @@ fn ensure_block_typography_tags(state: &AppState) {
         tag_table.add(&tag);
     }
 
+    // Closing half of the stanza gap. `verse-stanza-gap` sets pixels_ABOVE, so
+    // it can only open a block; without this the last verse line butts against
+    // the prose that follows with nothing but that prose line's own leading
+    // (measured 43px above a block vs 32px below it). Same 12px so a verse
+    // block is framed symmetrically. Added AFTER "verse-tight" for the same
+    // insertion-order/priority reason described above.
+    if tag_table.lookup("verse-stanza-gap-below").is_none() {
+        let tag = gtk4::TextTag::builder()
+            .name("verse-stanza-gap-below")
+            .pixels_below_lines(12)
+            .build();
+        tag_table.add(&tag);
+    }
+
     // Centered small-caps heading. The small-caps property is copied verbatim
     // from the "speaker-name" tag above (`.variant(pango::Variant::SmallCaps)`)
     // — NOT a "font-features" string — plus centered justification, matching
@@ -770,6 +784,25 @@ pub fn apply_block_typography(state: &mut AppState) {
                 // stanzas. Track whether the PREVIOUS buffer line was verse.
                 if !prev_was_verse {
                     state.buffer.apply_tag_by_name("verse-stanza-gap", &start, &end);
+                }
+                // ...and the matching gap BELOW the block's last verse line.
+                // pixels_above alone can only open a block, so without this the
+                // closing edge collapsed to the following prose line's own
+                // leading (43px above a block vs 32px below it, measured).
+                let next_is_verse = map
+                    .buffer_to_work
+                    .get(bl + 1)
+                    .copied()
+                    .flatten()
+                    .and_then(|nwi| work.lines.get(nwi))
+                    .is_some_and(|nl| {
+                        crate::db::line_types::is_verse_line(&nl.block_type)
+                            && !nl.text.trim().is_empty()
+                    });
+                if !next_is_verse {
+                    state
+                        .buffer
+                        .apply_tag_by_name("verse-stanza-gap-below", &start, &end);
                 }
             }
         } else if crate::db::line_types::is_heading_line(bt) {
