@@ -562,7 +562,13 @@ line is: two spaces of indent per level of nesting, then what the span IS, \
 then ` — `, then the span's own words. Nesting means containment: a span \
 indented under another is inside it. Use terms a reader would meet in a \
 grammar — main clause, relative clause, appositive, subject, predicate, \
-conjoined predicate, participial modifier, adverbial phrase. Quote the span's \
+conjoined predicate, participial modifier, adverbial phrase. Prefer the plain \
+term whenever the plain term is accurate. But where the passage DISPLACES \
+normal order, name that displacement rather than settling for a familiar \
+label: a fronted object, subject-auxiliary or negative inversion, a noun \
+clause, an infinitive phrase as subject, extraposition, an absolute \
+construction. Do not hunt for these — reach for one only when the ordinary \
+term would miss what the sentence is actually doing. Quote the span's \
 actual words; if a span runs longer than about sixty characters, keep its \
 first and last words and put … between them.
 
