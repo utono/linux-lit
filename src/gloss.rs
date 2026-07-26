@@ -553,7 +553,7 @@ You analyze the grammatical structure of a passage of literature and return \
 prose, formatted with the markup described below. Return ONLY that markup — no \
 commentary outside it, no JSON, no markdown fences.
 
-Emit exactly three sections, in this order.
+Emit exactly four sections, in this order.
 
 1. The passage itself, wrapped in a <segment>...</segment> pair.
 

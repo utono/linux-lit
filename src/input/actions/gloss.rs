@@ -6,6 +6,23 @@ use gtk4::prelude::*;
 use crate::app::AppState;
 use crate::ui::gloss_block::BlockKind;
 
+/// The three READER-FACING gloss types: the ones a passage can be glossed as
+/// from plain reading (teacher-generic, inner-monologue, reader-gloss).
+/// Deliberately EXCLUDES `syntax-gloss`, which is a separate stop of its own
+/// in the `\` segment-overlay cycle — mixing it into this set would let the
+/// GLOSS stop of the cycle land on a syntax-gloss, collapsing the two stops
+/// the review confirmed must stay distinct. Use this set for anything that
+/// should behave as if syntax-gloss doesn't exist (e.g. `try_open_gloss_at_cursor`,
+/// the cycle's GLOSS stop).
+const READER_GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
+
+/// Every gloss type the user could plausibly have been looking at, including
+/// `syntax-gloss`. Use this set for anything that reopens "whatever gloss was
+/// last shown" without caring which stop of the cycle it belonged to (e.g.
+/// `open_last_gloss` — Ctrl+Shift+g must find a syntax-gloss it just recorded,
+/// or the passage is unfindable and the bind goes dead).
+const ANY_GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss", "syntax-gloss"];
+
 /// Jump the reader cursor to the first dialogue line of the glossed passage's
 /// source text (located by matching the gloss's first source line, then
 /// advanced to the first `is_dialogue` line at or after it). Returns true if
@@ -3330,7 +3347,10 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
 /// false (opening nothing) when no glossed passage covers the cursor, so the
 /// prose `-` path can fall through to background glossing instead of toasting.
 pub(crate) fn try_open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
-    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
+    // Reader-facing types only: this is the cycle's GLOSS stop, and a
+    // syntax-gloss is its own separate stop (`try_open_syntax_gloss_at_cursor`
+    // below) — mixing it in here would collapse the two stops.
+    const GLOSS_TYPES: &[&str] = READER_GLOSS_TYPES;
 
     // Resolve the cursor line -> its (work abbrev, (div1, div2, line_in_div)).
     let (work_abbrev, cur_triple) = {
@@ -3629,7 +3649,10 @@ fn open_gloss_overlay_by_start(
     work_abbrev: &str,
     start_citation: &str,
 ) {
-    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
+    // Reader-facing types only: both callers are the background reader-gloss
+    // path (a cache hit or a just-saved reply) — they only ever look for the
+    // reader-gloss they themselves produced, never a syntax-gloss.
+    const GLOSS_TYPES: &[&str] = READER_GLOSS_TYPES;
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
         Err(_) => return,
@@ -3692,7 +3715,14 @@ pub(crate) fn toggle_last_overlay(state: &Rc<RefCell<AppState>>) {
 /// last shown. Toasts "No recent gloss" when there is no usable reference
 /// (none recorded, passage gone, or no glosses remain).
 pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
-    const GLOSS_TYPES: &[&str] = &["teacher-generic", "inner-monologue", "reader-gloss"];
+    // ANY gloss type, including syntax-gloss: `config.last_gloss` records
+    // whatever gloss type the user actually viewed (visual.rs and
+    // persist_render_install_gloss both call record_last_gloss for
+    // syntax-gloss too), so the reload set here must be able to find it back
+    // — a narrower set would record-then-never-find a syntax-gloss reference,
+    // going dead or (via `find_glosses_by_start`'s unwrap_or(0) below)
+    // silently reopening a different gloss type than the one recorded.
+    const GLOSS_TYPES: &[&str] = ANY_GLOSS_TYPES;
 
     // Resolve current work + the stored reference, under a shared borrow.
     let (work_abbrev, start_citation, desired_type) = {

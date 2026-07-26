@@ -2658,6 +2658,23 @@ fn handle_gloss_key(
         // widget, so which stop this press ends depends on the gloss_type
         // currently shown: a syntax-gloss ends the lap (`cycle_from_syntax`),
         // anything else advances to the journal Q&A stop (`cycle_from_gloss`).
+        //
+        // KNOWN QUIRK (final review, 2026-07-26): this branches ONLY on the
+        // displayed gloss_type, not on how the overlay got here. If the user
+        // opened this syntax-gloss from the PICKER (Alt+g / gloss picker)
+        // rather than by cycling into it, `\` still ends the lap here instead
+        // of advancing to the journal stop — so `\` means two different
+        // things ("end the lap" vs "advance") depending on entry path. The
+        // cycle still terminates cleanly either way; nobody gets stranded, so
+        // this is left as-is. `AppState.gloss_opened_from_picker` exists but
+        // is unusable for this distinction as written: every cycle entry
+        // point (`cycle_from_*` in overlay_cycle.rs) resets it to `false`, so
+        // by the time `\` fires mid-cycle it reads the same as a picker open
+        // did NOT just happen. Gating on it cleanly would need a new flag
+        // (e.g. "this syntax-gloss view came from the cycle") set at
+        // `cycle_from_journal` and cleared alongside `gloss_opened_from_picker`
+        // — a reasonable follow-up, not done here since behavior must not
+        // change per this review's finding.
         "backslash" if !is_ctrl && !is_alt => {
             let showing_syntax = {
                 let s = state.borrow();
