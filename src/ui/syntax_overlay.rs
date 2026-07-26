@@ -21,11 +21,45 @@ use crate::syntax_diagram::SyntaxAnalysis;
 /// Natural height of one band row.
 const BAND_ROW_H: f64 = 26.0;
 /// Never shrink a band row below this — past it, labels stop being legible.
-const MIN_BAND_ROW_H: f64 = 12.0;
-/// Headroom the rule stack leaves above a line's own glyphs: the band label
-/// floats 14px above its topmost rule (`row_y - 14.0` in `draw_analysis`),
-/// plus breathing room so the label is not flush against the descenders.
-const LABEL_CLEARANCE: f64 = 18.0;
+///
+/// This is a LABEL-HEIGHT floor, not an arbitrary one: the draw site floats
+/// each label `lh + 2` above its own rule, so consecutive rules closer
+/// together than that leave every label overprinting the rule above it.
+/// `LABEL_H + 1` guarantees the gap always fits one label. Raised from 12
+/// after the 2026-07-26 GL check, where a 10-band stack compressed to the old
+/// floor and every label landed on a neighbouring rule.
+const MIN_BAND_ROW_H: f64 = LABEL_H + 1.0;
+/// Height a band label occupies above its own rule, used for RESERVING space
+/// (clearance and row-height floors).
+///
+/// The draw site measures the real label with `layout_text` and offsets by
+/// `lh + 2`; this is the budgeting counterpart, sized for a "Sans 10" label
+/// (~13px) plus that 2px gap. Kept as one named constant so the reserve and
+/// the draw can never drift apart silently again.
+const LABEL_H: f64 = 15.0;
+/// Headroom the rule stack leaves above a line's own glyphs: one label's
+/// height above the topmost rule (`draw_analysis` offsets by `lh + 2`), plus
+/// breathing room so the label is not flush against the descenders.
+const LABEL_CLEARANCE: f64 = LABEL_H + 6.0;
+/// Height of the POS-tag row that sits directly under each line's glyphs.
+///
+/// The band stack starts BELOW this, not at it. Both were anchored at
+/// `natural_line_h`, so the outermost band rule (depth = rows-1, offset 0)
+/// was drawn at exactly the POS row's baseline and struck the tags through —
+/// visible on the 2026-07-26 GL check as a rule crossing "PRON NOUN".
+///
+/// Sized for a "Sans 9" tag (~12px, drawn from its top-left) plus 4px so the
+/// first rule clears its descenders rather than underlining them.
+const POS_ROW_H: f64 = 16.0;
+/// Everything between a line's glyphs and its INNERMOST band rule: the POS
+/// tag row, plus one label's height so that innermost band's own label has
+/// somewhere to sit.
+///
+/// One name for the sum because the parts drifted apart twice: the spacing
+/// budget, the drawn `row_y`, and the stack-bottom calculation must all use
+/// the identical offset or the stack silently overflows the line it belongs
+/// to.
+const STACK_TOP_OFFSET: f64 = POS_ROW_H + LABEL_H;
 /// Window margin around the content column.
 const MARGIN: f64 = 48.0;
 /// Content column cap, so text does not run edge to edge on a wide display.
@@ -52,8 +86,8 @@ fn row_height(rows: usize, available: f64) -> f64 {
 ///
 /// `clearance` reserves headroom above the rule stack for the line's own
 /// descender and the band label floated above the topmost rule
-/// (`row_y - 14.0` at the call site), so the stack never starts flush against
-/// the glyphs. Shrinks like `row_height`, floored at `MIN_BAND_ROW_H` so deep
+/// (`lh + 2` above its rule at the call site), so the stack never starts
+/// flush against the glyphs. Shrinks like `row_height`, floored at `MIN_BAND_ROW_H` so deep
 /// nesting degrades (overflows slightly into the floor) rather than
 /// vanishing or clipping.
 fn interior_row_height(rows: usize, line_h: f64, clearance: f64) -> f64 {
@@ -350,7 +384,7 @@ fn draw_analysis(
         let (_, _, one_line_h) = layout_text(area, "X", "Serif 20", None);
         one_line_h
     };
-    let line_h = line_spacing_for(rows, natural_line_h, LABEL_CLEARANCE);
+    let line_h = line_spacing_for(rows, natural_line_h, LABEL_CLEARANCE + STACK_TOP_OFFSET);
 
     cr.set_source_rgb(inner.ink.0, inner.ink.1, inner.ink.2);
     let (layout, _tw, th) =
@@ -458,7 +492,10 @@ fn draw_analysis(
     // keeping the spec's "never clips or scrolls" promise.
     let note_reserve = if inner.show_note && a.note.is_some() { 160.0 } else { 40.0 };
     let onscreen_budget = (h - (text_top + th) - note_reserve).max(MIN_BAND_ROW_H);
-    let rh = interior_row_height(rows, line_h, LABEL_CLEARANCE)
+    // `STACK_TOP_OFFSET` is part of the clearance now: the stack starts below
+    // the POS row and its innermost label, so the gap it has to fit in is that
+    // much smaller.
+    let rh = interior_row_height(rows, line_h, LABEL_CLEARANCE + STACK_TOP_OFFSET)
         .min(row_height(rows, onscreen_budget));
     let last_line_index = pango_lines.len().saturating_sub(1);
     let interior_rh = rh;
@@ -466,8 +503,12 @@ fn draw_analysis(
     // Each visual line's own bottom (`line_y(i) + line_h`), resolved to a
     // plain number up front so the pure `band_stack_bottom` helper below
     // never has to touch Pango types.
-    let line_bottoms: Vec<f64> =
-        (0..pango_lines.len()).map(|i| line_y(i) + natural_line_h).collect();
+    // `+ STACK_TOP_OFFSET` so this matches the `row_y` the draw loop actually
+    // uses; otherwise `band_stack_bottom` under-reports and the commentary can
+    // be placed over the last rule.
+    let line_bottoms: Vec<f64> = (0..pango_lines.len())
+        .map(|i| line_y(i) + natural_line_h + STACK_TOP_OFFSET)
+        .collect();
     // One (line_index, depth) pair per segment actually drawn, fed to
     // `band_stack_bottom` after the loop to find the real bottom of the
     // stack — see the comment at that call site for why this replaced the
@@ -490,7 +531,9 @@ fn draw_analysis(
         cr.set_source_rgba(inner.accent.0, inner.accent.1, inner.accent.2, fade);
         cr.set_line_width(2.0);
 
-        let mut first_segment: Option<(f64, f64, f64)> = None; // (x0, x1, row_y)
+        // (x0, x1, row_y, line_index) — the line index is needed so the label
+        // can be tested against ITS OWN line's POS-row floor.
+        let mut first_segment: Option<(f64, f64, f64, usize)> = None;
         for (line_index, seg_start, seg_end) in &spans {
             let (sx, ex) = line_x_range(*line_index, *seg_start, *seg_end);
             // Deeper bands sit higher within their own line's row stack: row
@@ -503,13 +546,23 @@ fn draw_analysis(
             // Anchored `natural_line_h` below the line's top (just under its
             // glyphs), not the widened `line_h` — the widening IS the gap the
             // stack occupies, so anchoring at `line_h` would push the whole
-            // stack down onto the next line again.
-            let row_y = line_y(*line_index) + natural_line_h + depth_offset;
+            // stack down onto the next line again. Plus `STACK_TOP_OFFSET`,
+            // because the POS tags are drawn at exactly `natural_line_h` (the
+            // outermost rule would otherwise strike through them) and the
+            // innermost band needs one label's height of room below them.
+            // `+ LABEL_H` reserves one label's height between the POS row and
+            // the INNERMOST rule (depth = rows-1, offset 0). Without it that
+            // band's label has nowhere to go: it is drawn `lh + 2` above its
+            // own rule, which lands inside the POS row, and the only
+            // alternative would be suppressing the innermost label in every
+            // diagram — losing real information to avoid a collision.
+            let row_y =
+                line_y(*line_index) + natural_line_h + STACK_TOP_OFFSET + depth_offset;
             cr.move_to(sx, row_y);
             cr.line_to(ex, row_y);
             let _ = cr.stroke();
             if first_segment.is_none() {
-                first_segment = Some((sx, ex, row_y));
+                first_segment = Some((sx, ex, row_y, *line_index));
             }
         }
 
@@ -520,21 +573,54 @@ fn draw_analysis(
         // short bands at one depth otherwise overprint each other
         // ("subject"/"predicate"/"main predicate" in the 2026-07-26 run).
         // The band's rule is still drawn — only its name is dropped.
-        if let Some((lx0, lx1, row_y)) = first_segment {
-            let (ll, lw, _) = layout_text(area, &b.label, "Sans 10", None);
+        if let Some((lx0, lx1, row_y, seg_line)) = first_segment {
+            let (ll, lw, lh) = layout_text(area, &b.label, "Sans 10", None);
             let lx = ((lx0 + lx1) / 2.0 - lw / 2.0).max(x0);
-            // Vertical tolerance is the label's own text height, not exact
-            // row equality: labels float 14px above their rules, so two bands
-            // at ADJACENT depths sit close enough to overprint even though
-            // their `row_y` values differ by a full row. Comparing only exact
-            // matches let "predicate"/"adverbial clause"/"predicate adjective"
-            // pile up in the 2026-07-26 re-check.
-            const LABEL_V_TOLERANCE: f64 = 13.0;
+            // Vertical tolerance is the ROW HEIGHT, not a constant: labels
+            // float `label_offset(rh)` above their rules, so two bands at
+            // ADJACENT depths sit close enough to overprint even though their
+            // `row_y` values differ by a full row. A fixed 13px tolerance
+            // under-reported collisions once `rh` shrank below it, which is
+            // why "relative-clause"/"predicate" still overlapped on the
+            // 2026-07-26 GL check. Tying it to `rh` makes the test scale with
+            // the stack it is policing.
+            let label_v_tolerance = rh.max(13.0);
             let collides = label_extents.iter().any(|&(ry, ex0, ex1): &(f64, f64, f64)| {
-                (ry - row_y).abs() < LABEL_V_TOLERANCE && lx < ex1 && (lx + lw) > ex0
+                (ry - row_y).abs() < label_v_tolerance && lx < ex1 && (lx + lw) > ex0
             });
-            if !collides && lw <= (lx1 - lx0) + 8.0 {
-                cr.move_to(lx, row_y - 14.0);
+            // No overhang allowance. The old `+ 8.0` let a label exceed the
+            // span it names, and a 1-word band's label then rode up into the
+            // POS row — "adjective" printed over the "ADJ" tag on the
+            // 2026-07-26 re-check.
+            //
+            // Width alone is NOT sufficient, though: a DEEP band sits high in
+            // the stack, so `row_y - (lh + 2)` can land inside the POS row no
+            // matter how wide the band is ("compound modifier" over
+            // "NOUN PUNCT" on the re-check after the width fix). The floor
+            // test is the real invariant — a label may never be drawn above
+            // the bottom of its own line's POS row.
+            // The innermost band now has `LABEL_H` of reserved room below the
+            // POS row (see `row_y`), so this guard no longer fires for it —
+            // it is a backstop for a label taller than the reserve.
+            let label_top = row_y - (lh + 2.0);
+            let pos_floor = line_y(seg_line) + natural_line_h + POS_ROW_H;
+            let clears_pos_row = label_top >= pos_floor - 1.0;
+            // Width tolerance is generous again. The strict `lw <= span` test
+            // was a PROXY for the POS-row collision, and once `clears_pos_row`
+            // checks that directly the proxy only did harm: "appositive noun
+            // phrase" is legitimately wider than the 2-3 word span it names,
+            // so strictness suppressed 5 of 6 labels and produced a clean
+            // diagram that omitted most of its own information. Overhang is
+            // cosmetic; a missing label is lost meaning.
+            if !collides && clears_pos_row && lw <= (lx1 - lx0) + 60.0 {
+                // Pango draws from the text's TOP-left, not its baseline, so
+                // the label's own height is what must clear the rule — an
+                // offset smaller than `lh` leaves the glyphs sitting ON the
+                // line (the 2026-07-26 GL defect, and still visible after the
+                // first `label_offset` attempt used `rh - 2`). Measure the
+                // label instead of guessing: `lh + 2` puts its BOTTOM 2px
+                // above the rule at any font size.
+                cr.move_to(lx, row_y - (lh + 2.0));
                 pangocairo::functions::show_layout(cr, &ll);
                 label_extents.push((row_y, lx, lx + lw + 6.0));
             }
@@ -592,15 +678,24 @@ mod tests {
     fn band_row_height_shrinks_to_fit_available_space() {
         // 3 rows in generous space keeps the natural height.
         assert_eq!(row_height(3, 400.0), BAND_ROW_H);
-        // 8 rows in 100px must shrink rather than overflow, while still
-        // fitting comfortably above the legibility floor (100/8 = 12.5,
-        // between MIN_BAND_ROW_H=12 and BAND_ROW_H=26 — both constraints are
+        // 5 rows in 100px must shrink rather than overflow, while still
+        // fitting above the legibility floor (100/5 = 20, between
+        // MIN_BAND_ROW_H=16 and BAND_ROW_H=26 — both constraints are
         // simultaneously satisfiable here, unlike the 20-row/100px case
         // below).
-        let h = row_height(8, 100.0);
+        let h = row_height(5, 100.0);
         assert!(h < BAND_ROW_H, "expected shrink, got {h}");
-        assert!(h * 8.0 <= 100.0 + f64::EPSILON, "must fit the budget");
+        assert!(h * 5.0 <= 100.0 + f64::EPSILON, "must fit the budget");
         assert!(h >= MIN_BAND_ROW_H, "must not shrink below legibility floor");
+
+        // Past the point where both are satisfiable, the FLOOR wins and the
+        // budget overflows — deliberate. An illegible 12px row (labels
+        // overprinting their own rules, the 2026-07-26 GL defect) is worse
+        // than a stack that runs slightly long; `line_spacing_for` is what
+        // then widens the line to absorb it.
+        let tight = row_height(8, 100.0);
+        assert_eq!(tight, MIN_BAND_ROW_H, "floor must win over the budget");
+        assert!(tight * 8.0 > 100.0, "and is expected to overflow it");
     }
 
     #[test]
@@ -634,13 +729,25 @@ mod tests {
         // for the outermost row is `(rows - 1) * interior_rh` — within the
         // gap to the next line.
         let rows = 3;
-        let line_h = 27.0;
-        let clearance = 18.0;
+        let natural_line_h = 27.0;
+        let clearance = LABEL_CLEARANCE + STACK_TOP_OFFSET;
+        // At the raised 16px floor a 3-row stack can NO LONGER fit under a
+        // natural 27px line — 2 * 16 = 32 > 27. That is not a regression:
+        // it is precisely the case `line_spacing_for` exists to absorb, by
+        // widening the line until the stack fits. Assert the real invariant
+        // (the stack fits the SET line height), not the old one (it fits the
+        // natural height), which the legibility floor made unsatisfiable.
+        let line_h = line_spacing_for(rows, natural_line_h, clearance);
         let interior_rh = interior_row_height(rows, line_h, clearance);
         let max_depth_offset = (rows as f64 - 1.0) * interior_rh;
         assert!(
-            max_depth_offset < line_h,
-            "stack of {max_depth_offset} must fit under a {line_h}px line, got interior_rh={interior_rh}"
+            max_depth_offset + POS_ROW_H <= line_h,
+            "stack of {max_depth_offset} (+{POS_ROW_H} POS row) must fit the \
+             SET line height {line_h}, got interior_rh={interior_rh}"
+        );
+        assert!(
+            interior_rh >= MIN_BAND_ROW_H,
+            "and must stay legible: {interior_rh} < {MIN_BAND_ROW_H}"
         );
     }
 
