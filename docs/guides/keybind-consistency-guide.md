@@ -189,5 +189,23 @@ Record each deliberate consistency move here so future sweeps know the intent.
   jump-back, so it reads more naturally on `j` than on `a`. Spec:
   `docs/superpowers/specs/2026-07-23-journal-bind-reshuffle-design.md`.
 
+- **2026-07-26 — `-` / `_` gain a second meaning.** They still copy to the
+  clipboard, unchanged. They now ALSO leave a persistent underline that
+  `Return` turns into a syntax diagram of the containing sentence. This keeps
+  "`-`/`_` = word selection" as one concept with two consumers (clipboard and
+  diagram) rather than spending a fresh cap on the diagram.
+
+  Decision: no new `InputMode`. The state distinguishing "words are underlined"
+  already exists (`WordCycleState.collect_ranges`), so the reader stays in
+  `InputMode::Reader` and `Return` is a guarded arm. A mode would have forced
+  every unrelated reader bind to stop working or grow a passthrough arm.
+
+  `Return` was unbound in reader mode, so nothing was displaced. `Escape` is
+  NOT a new bind — reader `Escape` is already `EscapeReaderMode`, and the
+  underline clear is a new rung at the BOTTOM of that existing priority ladder
+  (below search), because an underline is the least modal of the states the
+  ladder arbitrates. Spec:
+  `docs/superpowers/specs/2026-07-26-word-underline-diagram-design.md`.
+
 **Open candidates** (flagged, not yet scheduled): consolidate the echoes
 concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2).

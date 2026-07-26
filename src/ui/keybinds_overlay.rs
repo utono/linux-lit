@@ -79,6 +79,10 @@ const HOME_ROW: &[KeyDef] = &[
     key("-", "_", "copy word", "_: collect words", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
+/// `Return` has no cap of its own in the strip (the strip mirrors the physical
+/// letter rows), so it rides on the `-`/`_` descriptions: those keys leave the
+/// underline that Return acts on.
+const RETURN_KEY: KeyDef = bare("Ret", "", "diagram sentence");
 
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "cursor \u{2193}"),
@@ -132,7 +136,10 @@ fn row_keys(idx: usize) -> Vec<&'static KeyDef> {
     match idx {
         0 => NUMBER_ROW.iter().chain(std::iter::once(&BACKSPACE)).collect(),
         1 => std::iter::once(&TAB_KEY).chain(UPPER_ROW.iter()).collect(),
-        2 => std::iter::once(&ESC_KEY).chain(HOME_ROW.iter()).collect(),
+        2 => std::iter::once(&ESC_KEY)
+            .chain(HOME_ROW.iter())
+            .chain(std::iter::once(&RETURN_KEY))
+            .collect(),
         3 => std::iter::once(&SHIFT_KEY)
             .chain(BOTTOM_ROW.iter())
             .chain(std::iter::once(&SPACE_KEY))
@@ -337,10 +344,16 @@ the entry; stored answers open immediately) — src/input/actions/vocab_journal.
 
         // ── Word copy / visual ──
         "copy word" => "Action::WordCycleCopy (plain `-`; cycles one word at a \
-time to the clipboard) — src/input/actions/word_copy.rs",
+time to the clipboard, and leaves it underlined for Return) \
+— src/input/actions/word_copy.rs",
         "copy id" => "Action::CopyLineMappingId — src/input/keymap.rs",
         "collect words" => "Action::WordCollectCopy (`_`, Shift+-; collects the \
-whole line) — src/input/actions/word_copy.rs",
+whole line, and leaves the words underlined for Return) \
+— src/input/actions/word_copy.rs",
+        "diagram sentence" => "Action::OpenSyntaxDiagramForUnderlined (Return; \
+opens the syntax diagram for the sentence containing the words underlined by \
+-/_. Does nothing when no words are underlined) \
+— src/input/actions/syntax.rs",
         "visual mode" => "Action::EnterVisualMode -> InputMode::Visual \
 — src/input/visual.rs",
 
@@ -390,7 +403,9 @@ Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
         "play from ts" => "Space intercept -> timestamps::play_current_line \
 — src/input/timestamps.rs. Plays from the cursor line for all work types; \
 `a` is the pause toggle.",
-        "clear AB" => "escape::escape_reader_mode — src/input/actions/escape.rs",
+        "clear AB" => "escape::escape_reader_mode — src/input/actions/escape.rs. \
+Priority ladder: vocab popup, toasts, translations, concordance, AB loop, \
+search, then the -/_ word underline.",
 
         // ── Fonts ──
         "font +" => "Action::AdjustFontSizeUp — src/app.rs",
@@ -480,8 +495,9 @@ fn expand_action(label: &str) -> String {
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
         "annot tint" => "toggle gloss/journal line tint",
-        "copy word" => "copy word (cycles one at a time)",
-        "collect words" => "collect line words to clipboard",
+        "copy word" => "copy + underline word (cycles one at a time)",
+        "collect words" => "collect + underline line words",
+        "diagram sentence" => "syntax diagram of the underlined sentence",
         "gloss chat" => "reader-gloss chat at cursor (disabled)",
         "gloss pick" => "gloss picker",
         "last gloss" => "reopen last gloss",
