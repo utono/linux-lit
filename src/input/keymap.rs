@@ -4490,6 +4490,15 @@ fn dispatch_action(
         AskPassage => crate::input::visual::enter_visual_block_mode(&mut state.borrow_mut()),
         WordCycleCopy => crate::input::actions::word_copy::word_cycle_copy(&mut state.borrow_mut()),
         WordCollectCopy => crate::input::actions::word_copy::word_collect_copy(&mut state.borrow_mut()),
+        OpenSyntaxDiagramForUnderlined => {
+            // Guarded: falls through silently when nothing is underlined, or
+            // when the underline belongs to a line the cursor has left.
+            let active =
+                !crate::input::actions::word_copy::active_underline(&state.borrow()).is_empty();
+            if active {
+                crate::input::actions::syntax::open_syntax_diagram_for_underlined(state);
+            }
+        }
         OpenSegmentVim => crate::input::actions::segment_vim::open(state),
         AddVocabWord => crate::input::actions::vocab_add::open(state),
 

@@ -117,10 +117,7 @@ fn is_boundary(chars: &[char], i: usize) -> bool {
     while j < chars.len() && (chars[j].is_whitespace() || TRAILERS.contains(&chars[j])) {
         j += 1;
     }
-    match chars.get(j) {
-        Some(c) if c.is_lowercase() => false,
-        _ => true,
-    }
+    !matches!(chars.get(j), Some(c) if c.is_lowercase())
 }
 
 #[cfg(test)]
