@@ -4,6 +4,7 @@ pub mod chunks;
 pub mod concordance;
 pub mod echo_channel;
 pub mod echoes;
+pub mod grammatical_terms;
 pub mod line_types;
 pub mod migrations;
 pub mod models;

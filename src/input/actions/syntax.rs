@@ -30,7 +30,7 @@ use std::rc::Rc;
 /// sub-line span has nothing to key by. Selecting the lines the sentence sits
 /// in is the same passage granularity the visual-mode action uses.
 pub fn syntax_gloss_for_underlined(state_rc: &Rc<RefCell<AppState>>) {
-    let selected_lines: Vec<crate::db::models::Line> = {
+    let (selected_lines, sentence): (Vec<crate::db::models::Line>, String) = {
         let state = state_rc.borrow();
 
         let ranges: Vec<(usize, usize)> =
@@ -88,15 +88,34 @@ pub fn syntax_gloss_for_underlined(state_rc: &Rc<RefCell<AppState>>) {
             })
             .collect();
 
+        // The SENTENCE, sliced by CHARS — `span` indexes chars, and the corpus
+        // is full of multibyte text where byte-slicing would panic on a UTF-8
+        // boundary.
+        //
+        // This slice is the whole point of the function and used to be thrown
+        // away: `span` appeared only in the log line while the full 3-line
+        // window went to the model. On a prose work that meant three entire
+        // paragraphs sent to analyse one sentence (reported 2026-07-26 — the
+        // Glossing card showed a wall of text while the gloss covered a single
+        // sentence).
+        let sentence: String = window
+            .chars()
+            .skip(span.0)
+            .take(span.1.saturating_sub(span.0))
+            .collect();
+
         crate::logging::log(&format!(
-            "SYNTAX_UNDERLINE: {} range(s) -> span {}..{} over {} line(s)",
+            "SYNTAX_UNDERLINE: {} range(s) -> span {}..{} ({} chars) over {} line(s)",
             ranges.len(),
             span.0,
             span.1,
+            sentence.chars().count(),
             lines.len()
         ));
-        lines
+        (lines, sentence)
     };
 
-    crate::input::visual::syntax_gloss_for_lines(state_rc, selected_lines);
+    // The lines still carry the citation range and the `line_syntax` lookup;
+    // only the analysed TEXT narrows to the sentence.
+    crate::input::visual::syntax_gloss_for_lines(state_rc, selected_lines, Some(sentence));
 }

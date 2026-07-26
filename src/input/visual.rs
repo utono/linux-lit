@@ -576,7 +576,9 @@ pub(crate) fn action_syntax_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppS
             .collect()
     };
     exit_visual_mode(&mut state_rc.borrow_mut());
-    syntax_gloss_for_lines(state_rc, selected_lines);
+    // Visual mode glosses the WHOLE selection — the user chose that range
+    // deliberately, so there is nothing to narrow.
+    syntax_gloss_for_lines(state_rc, selected_lines, None);
 }
 
 /// Build (or reuse) a `syntax-gloss` for an already-resolved passage.
@@ -585,9 +587,18 @@ pub(crate) fn action_syntax_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppS
 /// above and the `-`/`_` + `Return` underline path in
 /// `crate::input::actions::syntax`. Callers resolve their own selection to
 /// work lines and must have left visual mode before calling.
+/// `source_override`: the exact text to analyse, when it is NARROWER than the
+/// selected lines. The `-`/`_` underline path passes the single SENTENCE the
+/// underlined word sits in; visual mode passes `None` and glosses the whole
+/// selection.
+///
+/// The lines still drive the citation range, the `passage_id`, and the
+/// `line_syntax` lookup — only the text sent to the model narrows. A sentence
+/// inside line 368 still belongs to the passage keyed at line 368.
 pub(crate) fn syntax_gloss_for_lines(
     state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>,
     selected_lines: Vec<crate::db::models::Line>,
+    source_override: Option<String>,
 ) {
     let (ctx, model, tokio_handle, all_glosses, passage_doc, parse_table) = {
         let state = state_rc.borrow();
@@ -596,10 +607,19 @@ pub(crate) fn syntax_gloss_for_lines(
             None => return,
         };
 
-        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "syntax-gloss") {
+        let mut ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "syntax-gloss") {
             Some(c) => c,
             None => return,
         };
+        // Narrow the analysed text BEFORE anything reads the context — the
+        // passage doc, the user message, and the stored gloss all derive from
+        // `source_text`. `source_line_pairs` zips against
+        // `source_line_numbers` and `zip` stops at the shorter side, so a
+        // one-sentence override yields one pair carrying the first line's
+        // number, which is the right citation for it.
+        if let Some(text) = source_override {
+            ctx.source_text = text;
+        }
 
         // `line_syntax` enrichment: sent where the work has a parse, omitted
         // where it does not. 5 of 306 works are parsed, so the text-only path
@@ -663,21 +683,72 @@ pub(crate) fn syntax_gloss_for_lines(
         user_msg.push_str("\n\nDependency parse for these lines:\n");
         user_msg.push_str(&parse_table);
     }
+    // Send only the term NAMES. The definitions live in lit.db and are
+    // appended at save; sending them here would reintroduce the tokens this
+    // whole change removes.
+    let known_terms: Vec<(String, String)> = match crate::db::queries::open_db() {
+        Ok(conn) => crate::db::grammatical_terms::load_all(&conn),
+        Err(_) => Vec::new(),
+    };
+    if !known_terms.is_empty() {
+        let names: Vec<&str> = known_terms.iter().map(|(t, _)| t.as_str()).collect();
+        user_msg.push_str("\n\nKnown grammatical terms (do not redefine these):\n");
+        user_msg.push_str(&names.join(", "));
+    }
     let state_for_result = std::rc::Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {
         let model_for_db = model.clone();
         let result = tokio_handle
             .spawn(async move {
-                crate::gloss::call_claude_with_prompt(crate::gloss::syntax_gloss_prompt(), &user_msg, &model).await
+                crate::gloss::call_claude_with_prompt(&crate::gloss::syntax_gloss_prompt(), &user_msg, &model).await
             })
             .await;
 
         match result {
             Ok(Ok(gloss_text)) => {
+                // Definitions come from lit.db, not from the reply. Insert any
+                // genuinely new terms the model supplied, then append a Terms
+                // section built from the table — alphabetical, consistent
+                // across every gloss, and covering terms used ONLY in the
+                // rhetorical note (the 2026-07-26 gap).
+                //
+                // Baked into gloss_text at save, not joined at display, so the
+                // stored row stays self-contained for export/search/TTS.
+                //
+                // open_db_rw, NOT open_db: the shared open_db is opened
+                // SQLITE_OPEN_READ_ONLY, under which insert_missing would
+                // silently insert nothing and every new term would be lost.
+                let body = crate::gloss::strip_new_terms(&gloss_text);
+                let assembled = match crate::db::queries::open_db_rw() {
+                    Ok(conn) => {
+                        let new_terms = crate::gloss::parse_new_terms(&gloss_text);
+                        if !new_terms.is_empty() {
+                            let n = crate::db::grammatical_terms::insert_missing(&conn, &new_terms);
+                            crate::logging::log(&format!(
+                                "GRAMMATICAL_TERMS: {n} new term(s) inserted"
+                            ));
+                        }
+                        let known = crate::db::grammatical_terms::load_all(&conn);
+                        let used = crate::gloss::scan_terms_used(&body, &known);
+                        crate::logging::log(&format!(
+                            "GRAMMATICAL_TERMS: {} term(s) used in this gloss",
+                            used.len()
+                        ));
+                        format!("{body}{}", crate::gloss::build_terms_section(&used))
+                    }
+                    // A definitions table being unreadable must not cost the
+                    // reader their analysis — save the gloss without Terms.
+                    Err(e) => {
+                        crate::logging::log(&format!(
+                            "GRAMMATICAL_TERMS: db unavailable ({e}) — no Terms section"
+                        ));
+                        body
+                    }
+                };
                 let mut s = state_for_result.borrow_mut();
                 crate::input::actions::gloss::persist_render_install_gloss(
-                    &mut s, ctx, &gloss_text, "syntax-gloss", &model_for_db,
+                    &mut s, ctx, &assembled, "syntax-gloss", &model_for_db,
                     "SYNTAX-GLOSS: generated and saved new gloss",
                 );
             }

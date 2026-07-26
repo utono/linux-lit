@@ -547,13 +547,15 @@ pub fn reader_gloss_edit_prompt(work_type: &str) -> &'static str {
 /// Returns markup rather than JSON because a syntax gloss is stored and drawn
 /// like every other gloss type. Per-word POS tags are deliberately absent —
 /// they existed to fill the old Cairo tag row, and in prose they are noise.
-pub fn syntax_gloss_prompt() -> &'static str {
-    "\
+/// Seed / v1 text for `syntax.gloss`. Only renders when the lit.db row is
+/// missing or the DB is unreachable — the ACTIVE prompt lives in
+/// `api_prompts` and may have been edited past this, which is expected.
+const SYNTAX_GLOSS_FALLBACK: &str = "\
 You analyze the grammatical structure of a passage of literature and return \
 prose, formatted with the markup described below. Return ONLY that markup — no \
 commentary outside it, no JSON, no markdown fences.
 
-Emit exactly four sections, in this order.
+Emit exactly three sections, in this order, plus an optional fourth.
 
 1. The passage itself, wrapped in a <segment>...</segment> pair.
 
@@ -562,7 +564,13 @@ line is: two spaces of indent per level of nesting, then what the span IS, \
 then ` — `, then the span's own words. Nesting means containment: a span \
 indented under another is inside it. Use terms a reader would meet in a \
 grammar — main clause, relative clause, appositive, subject, predicate, \
-conjoined predicate, participial modifier, adverbial phrase. Quote the span's \
+conjoined predicate, participial modifier, adverbial phrase. Prefer the plain \
+term whenever the plain term is accurate. But where the passage DISPLACES \
+normal order, name that displacement rather than settling for a familiar \
+label: a fronted object, subject-auxiliary or negative inversion, a noun \
+clause, an infinitive phrase as subject, extraposition, an absolute \
+construction. Do not hunt for these — reach for one only when the ordinary \
+term would miss what the sentence is actually doing. Quote the span's \
 actual words; if a span runs longer than about sixty characters, keep its \
 first and last words and put … between them.
 
@@ -571,25 +579,29 @@ sentences, wrapped in a <gloss>...</gloss> pair, on what the structure \
 achieves rhetorically — what the arrangement does that a plainer one would \
 not.
 
-4. A line reading `Terms:` followed by one <gloss>...</gloss> pair per \
-DISTINCT grammatical term you used ANYWHERE ABOVE — in the Structure section \
-AND in the rhetorical note. If the note calls something an appositive, a \
-participial modifier, or a periodic sentence, that term needs a definition \
-here even though no Structure line is labelled with it. A reader who meets an \
-unfamiliar term in your prose and cannot find it below has been left stranded.
-
-Order the entries ALPHABETICALLY by term, not by where they appear.
-
-Each reads `term: definition.` and defines the term GENERALLY — what a \
-relative clause is in any sentence — not what this particular span does. If \
-you used the same term three times, define it once.
+4. If — and only if — you used a grammatical term that was NOT in the list of \
+known terms supplied with the passage, add a line reading `New terms:` and \
+under it one line per such term, reading `term: definition`. Define it \
+generally, as a grammar would. Omit this section entirely when every term you \
+used was already known, which is the usual case. Do NOT write a glossary of \
+the known terms — those are supplied from a database and adding them here \
+would duplicate them.
 
 Do not list parts of speech for individual words.
 
 Where a dependency parse is supplied, anchor your analysis on it. Where it is \
 absent, analyze the text directly — the parse is an enrichment, never a \
 requirement. The passage is early modern or nineteenth-century English; \
-analyze the grammar as written, not as it would be phrased today."
+analyze the grammar as written, not as it would be phrased today.";
+
+/// System prompt for a `syntax-gloss`, from lit.db `api_prompts` under
+/// `syntax.gloss`, falling back to the compiled seed.
+///
+/// Read per call like every other prompt here, so editing the DB row takes
+/// effect on the next gloss without a rebuild — which is the point of keeping
+/// prompts in lit.db rather than in the binary.
+pub fn syntax_gloss_prompt() -> String {
+    template_or("syntax.gloss", SYNTAX_GLOSS_FALLBACK)
 }
 
 pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
@@ -1213,6 +1225,120 @@ fn flag_unverified(line: &str) -> String {
     line.replace("</gloss>", " (unverified)</gloss>")
 }
 
+/// Which of `known`'s terms appear in `body`, alphabetical, no duplicates.
+///
+/// Matching is whole-term and case-insensitive, and LONGEST-FIRST: "main
+/// clause" must not also report the bare "clause" inside it, or the glossary
+/// defines a word the reader never saw on its own. A matched span is blanked
+/// so a shorter term cannot match inside it.
+pub fn scan_terms_used(body: &str, known: &[(String, String)]) -> Vec<(String, String)> {
+    let mut hay = body.to_lowercase();
+    // Longest first so "main clause" is consumed before "clause" can match it.
+    let mut by_len: Vec<&(String, String)> = known.iter().collect();
+    by_len.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (term, def) in by_len {
+        let needle = term.to_lowercase();
+        if needle.is_empty() {
+            continue;
+        }
+        if hay.contains(&needle) {
+            found.push((term.clone(), def.clone()));
+            // Blank every occurrence so a shorter term cannot match inside it.
+            // The blank is byte-for-byte the same length as the needle, so no
+            // later `find` offset can shift; `needle` is already lowercased and
+            // may be multi-byte, hence `len()` (bytes), not `chars().count()`.
+            let blank = " ".repeat(needle.len());
+            hay = hay.replace(&needle, &blank);
+        }
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+/// Parse a `New terms:` section into `(term, definition)` pairs.
+///
+/// Each line under the heading reads `term: definition`. Absent section, or a
+/// heading with nothing under it, yields an empty vec — the common case, since
+/// most glosses use only terms lit.db already knows.
+pub fn parse_new_terms(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut in_section = false;
+    for line in reply.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("New terms:") {
+            in_section = true;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+        // A new heading ends the section: a line ending in ':' that carries
+        // no "term: definition" pair of its own.
+        if t.ends_with(':') && t.split_once(": ").is_none() {
+            break;
+        }
+        if let Some((term, def)) = t.split_once(": ") {
+            let term = term.trim().trim_start_matches(['-', '*', ' ']).trim();
+            let def = def.trim().trim_end_matches('.').trim();
+            if !term.is_empty() && !def.is_empty() {
+                out.push((term.to_string(), def.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// The reply with any `New terms:` section removed.
+///
+/// That section is instruction-plumbing between the model and lit.db; it must
+/// never reach the stored gloss, where it would render as stray prose under
+/// the note.
+pub fn strip_new_terms(reply: &str) -> String {
+    let mut out = String::new();
+    let mut in_section = false;
+    for line in reply.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("New terms:") {
+            in_section = true;
+            continue;
+        }
+        if in_section {
+            // A blank line does not end it (definitions may be spaced); a new
+            // heading does.
+            if t.ends_with(':') && t.split_once(": ").is_none() {
+                in_section = false;
+            } else {
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim_end().to_string()
+}
+
+/// The `Terms:` section, alphabetical, in the markup the renderer already
+/// handles. Empty string for no terms — not a bare heading.
+pub fn build_terms_section(terms: &[(String, String)]) -> String {
+    if terms.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&(String, String)> = terms.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = String::from("\n\nTerms:\n\n");
+    for (term, def) in sorted {
+        let def = def.trim().trim_end_matches('.');
+        out.push_str(&format!("<gloss>{term}: {def}.</gloss>\n\n"));
+    }
+    out.trim_end().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1414,34 +1540,57 @@ mod tests {
         assert!(!p.contains("\"bands\""), "must NOT ask for the old JSON schema");
         // The three body sections the spec requires.
         assert!(p.contains("Structure"), "must ask for the structure section");
-        assert!(p.contains("Terms"), "must ask for the terms section");
+        assert!(p.contains("New terms:"), "must ask for the new-terms section");
         // POS tags are dropped entirely.
         assert!(!p.to_lowercase().contains("part-of-speech"), "POS tags are dropped");
     }
 
     #[test]
-    fn syntax_gloss_prompt_glossary_covers_the_note_and_sorts_alphabetically() {
+    fn syntax_gloss_prompt_reads_lit_db_with_a_compiled_fallback() {
+        // Every other prompt in this file is versioned in lit.db api_prompts
+        // and read per call, so editing a row takes effect without a rebuild.
+        // syntax-gloss was the odd one out: a hardcoded &'static str with no
+        // lookup at all. It now goes through template_or like its siblings.
         let p = syntax_gloss_prompt();
-        // Terms must cover every grammatical term used ANYWHERE above, not just
-        // the ones that label a Structure line. A gloss whose note said "an
-        // appositive" while Terms defined only the Structure labels left the
-        // reader with an undefined term on screen (reported 2026-07-26).
+        assert!(!p.is_empty());
+        // The compiled seed must still be a usable prompt on its own, since it
+        // renders whenever the DB row is missing or lit.db is unreachable.
+        assert!(SYNTAX_GLOSS_FALLBACK.contains("<segment>"));
+        assert!(SYNTAX_GLOSS_FALLBACK.contains("Structure:"));
+    }
+
+    #[test]
+    fn syntax_gloss_prompt_asks_only_for_new_terms() {
+        let p = syntax_gloss_prompt();
+        // The glossary now comes from lit.db, not from the reply. The prompt
+        // must ask for definitions of UNKNOWN terms only — asking for all of
+        // them is the token cost (and the drift between glosses) this change
+        // exists to remove.
         assert!(
-            p.contains("ANYWHERE ABOVE"),
-            "glossary must cover terms used in the note too, not only Structure"
+            p.contains("New terms:"),
+            "must name the New terms: heading the parser looks for"
         );
         assert!(
-            p.to_lowercase().contains("rhetorical note"),
-            "the note must be named as a source of glossary terms"
+            p.to_lowercase().contains("known terms"),
+            "must tell the model a list of known terms accompanies the passage"
         );
         assert!(
-            p.contains("ALPHABETICALLY"),
-            "glossary entries must be ordered alphabetically"
+            p.contains("Omit this section entirely"),
+            "the section must be optional — most glosses meet no new term"
         );
-        // And the superseded ordering must be gone, or the model gets two rules.
+        // The superseded full-glossary instructions must be gone, or the model
+        // re-emits the definitions lit.db already holds.
         assert!(
-            !p.contains("in the order they first"),
-            "first-appearance ordering was replaced by alphabetical"
+            !p.contains("ANYWHERE ABOVE"),
+            "the exhaustive-glossary instruction was replaced by New terms:"
+        );
+        assert!(
+            !p.contains("ALPHABETICALLY"),
+            "ordering is now the Terms builder's job, not the model's"
+        );
+        assert!(
+            !p.contains("A line reading `Terms:`"),
+            "the model must not emit a Terms: section at all"
         );
     }
 
@@ -1726,5 +1875,111 @@ mod scene_budget_tests {
         assert!(msg.contains(&format!("{:060}", 200)), "middle line present");
         assert!(msg.contains("scene continues above"));
         assert!(msg.contains("scene continues below"));
+    }
+
+    // ---- grammatical terms: scan / parse / build ----
+
+    fn known() -> Vec<(String, String)> {
+        vec![
+            ("appositive".into(), "a noun phrase set beside another noun".into()),
+            ("clause".into(), "a group of words with a subject and verb".into()),
+            ("main clause".into(), "a clause that can stand alone".into()),
+            ("subject".into(), "the noun phrase the clause is about".into()),
+        ]
+    }
+
+    #[test]
+    fn scan_finds_multiword_terms_not_their_fragments() {
+        // "main clause" must match as itself. A naive contains() would ALSO
+        // report the bare "clause" inside it, producing a glossary that
+        // defines a word the reader never saw on its own.
+        let body = "The main clause carries the assertion.";
+        let found = scan_terms_used(body, &known());
+        let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(terms.contains(&"main clause"), "{terms:?}");
+        assert!(!terms.contains(&"clause"), "must not report the fragment: {terms:?}");
+    }
+
+    #[test]
+    fn scan_reports_a_repeated_term_once() {
+        let body = "An appositive here, an appositive there, and a third appositive.";
+        let found = scan_terms_used(body, &known());
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn scan_covers_the_note_not_only_structure() {
+        // The 2026-07-26 bug: a term used ONLY in the rhetorical note got no
+        // definition. The scan takes the whole body, so prose counts.
+        let body = "Structure:\nmain clause — X\n\nWhat the structure is doing:\n\
+                    Boswell hangs an appositive off the name.";
+        let found = scan_terms_used(body, &known());
+        let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(terms.contains(&"appositive"), "note terms must be found: {terms:?}");
+    }
+
+    #[test]
+    fn scan_is_case_insensitive_at_a_sentence_start() {
+        let body = "Appositive constructions abound.";
+        let found = scan_terms_used(body, &known());
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn scan_returns_alphabetical_order() {
+        let body = "The subject precedes the main clause; an appositive follows.";
+        let found = scan_terms_used(body, &known());
+        let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(terms, vec!["appositive", "main clause", "subject"]);
+    }
+
+    #[test]
+    fn build_terms_section_is_empty_for_no_terms() {
+        // Not an empty heading — no section at all, or the gloss ends with a
+        // bare "Terms:" and nothing under it.
+        assert_eq!(build_terms_section(&[]), "");
+    }
+
+    #[test]
+    fn build_terms_section_wraps_each_entry_in_gloss_markup() {
+        let out = build_terms_section(&[
+            ("appositive".into(), "a noun phrase set beside another noun".into()),
+        ]);
+        assert!(out.contains("Terms:"), "{out}");
+        assert!(out.contains("<gloss>appositive: a noun phrase set beside another noun.</gloss>"), "{out}");
+    }
+
+    #[test]
+    fn build_terms_section_does_not_double_the_final_period() {
+        let out = build_terms_section(&[("subject".into(), "the noun phrase.".into())]);
+        assert!(!out.contains(".."), "definition already ended in a period: {out}");
+    }
+
+    #[test]
+    fn parse_new_terms_reads_the_section() {
+        let reply = "What the structure is doing:\n<gloss>It piles modifiers.</gloss>\n\n\
+                     New terms:\n\
+                     periodic sentence: a sentence whose main clause is withheld until the end\n\
+                     zeugma: one verb governing two objects in different senses\n";
+        let got = parse_new_terms(reply);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0].0, "periodic sentence");
+        assert!(got[0].1.starts_with("a sentence whose main clause"), "{got:?}");
+    }
+
+    #[test]
+    fn parse_new_terms_is_empty_when_absent() {
+        // The common case: every term the model used was already known.
+        assert!(parse_new_terms("Structure:\nmain clause — X\n").is_empty());
+    }
+
+    #[test]
+    fn strip_new_terms_removes_the_section_from_the_stored_gloss() {
+        let reply = "What the structure is doing:\n<gloss>Note.</gloss>\n\n\
+                     New terms:\nperiodic sentence: withheld until the end\n";
+        let out = strip_new_terms(reply);
+        assert!(!out.contains("New terms:"), "{out}");
+        assert!(!out.contains("periodic sentence:"), "{out}");
+        assert!(out.contains("<gloss>Note.</gloss>"), "must keep the note: {out}");
     }
 }
