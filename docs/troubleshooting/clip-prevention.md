@@ -519,12 +519,28 @@ tight while the surrounding prose keeps its configured leading.
 - **A per-work gate cannot express per-line typography.** Whenever a work type
   mixes block types, the class-wide default has to be cancellable per line;
   reach for a tag rather than widening the `is_prose_work` branch.
-- **Measure the pitch, don't eyeball it.** Verified by pixel-measuring ink-band
-  pitch on the same page at 1920x1200 before and after: 44px → 38px (exactly the
-  6px `line_spacing`), one more verse line per page. Note verse still sits looser
-  than prose's 26px wrapped-line pitch — that residual is the font's natural line
-  height, NOT injected spacing, so "verse pitch > prose pitch" is not by itself
-  evidence the tag failed.
+- **The stanza-gap guard was ALSO wrong, and hid behind the first fix.** The
+  `verse-tight` tag alone moved the pitch 44px → 38px, which looked like
+  progress but was only half the story: `verse-stanza-gap` (12px) was gated on
+  `prev_src != Some(wi)` — "this buffer line starts a new SOURCE line" — which
+  is true for EVERY line of a work whose verse rows are 1:1 with buffer lines.
+  Instrumenting the two tag counts proved it: **2067 verse-tight, 2067
+  stanza-gap** on a work with 2,067 verse rows and ZERO empty separator rows.
+  The guard is now `!prev_was_verse` (did the previous buffer line render as
+  non-empty verse?), which yields 413 real stanza openings and a 26px pitch.
+- **Anchor "correct" to a reference surface, not to a delta.** The target was
+  "render like Shakespeare verse in the two-column layout"; measuring Hamlet's
+  right column gave a hard number (26px) that turned a subjective "still looks
+  loose" into arithmetic: 26 base + 12 stanza gap = the observed 38. Without
+  that reference the half-fix would have shipped.
+- **Measure the pitch, don't eyeball it.** Pixel-measured ink-band pitch on the
+  same page at 1920x1200: 44px (broken) → 38px (verse-tight only) → 26px (both
+  fixes), matching Hamlet's two-column verse exactly. Glyph ink heights are
+  unchanged throughout (~15-20px), which is what proves the delta is spacing
+  rather than font size.
+- **Blast radius is checkable in one query.** `block_type='verse'` exists on
+  exactly two works (LoJ, TT), both prose — plays and poems never enter
+  `apply_block_typography`, so their verse typography is untouched.
 
 ## The failure checklist (ordered by frequency)
 
