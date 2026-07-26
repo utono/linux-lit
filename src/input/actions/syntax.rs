@@ -6,6 +6,7 @@
 //! section. There is no second code path and no coverage gate.
 
 use crate::app::AppState;
+use gtk4::prelude::TextBufferExt;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -164,6 +165,96 @@ pub fn open_syntax_diagram(
             crate::input::navigation::show_chapter_toast_secs(&s, msg, 3);
         },
     );
+}
+
+/// Open the diagram for the sentence containing the currently underlined
+/// words (`-` / `_` then `Return`).
+///
+/// Window: the cursor's buffer line plus one either side. That covers a
+/// sentence spanning a verse break without risking a whole-chapter scan.
+///
+/// The window is joined from BUFFER text, not `work.lines[..].text`, because
+/// `collect_ranges` are char offsets into the BUFFER line (see
+/// `extract_buffer_line_words`). Phase B's inline italics delete `_`
+/// delimiters from the buffer, so on a work with italics the buffer and DB
+/// strings differ in length and the offsets do not transfer. Work lines are
+/// consulted ONLY for `line_mapping` ids, which feed `line_syntax` enrichment.
+pub fn open_syntax_diagram_for_underlined(state_rc: &Rc<RefCell<AppState>>) {
+    let (text, line_ids) = {
+        let state = state_rc.borrow();
+
+        let ranges: Vec<(usize, usize)> =
+            crate::input::actions::word_copy::active_underline(&state).to_vec();
+        if ranges.is_empty() {
+            return;
+        }
+
+        let cursor = state.current_line;
+        let last_line = (state.buffer.line_count().max(1) as usize) - 1;
+        let first = cursor.saturating_sub(1);
+        let last = (cursor + 1).min(last_line);
+
+        // Join the window from buffer text, recording where the cursor's own
+        // line starts so the underline offsets can be rebased into it.
+        let mut window = String::new();
+        let mut cursor_line_offset = 0usize;
+        for bl in first..=last {
+            if bl == cursor {
+                cursor_line_offset = window.chars().count();
+            }
+            let start = match state.buffer.iter_at_line(bl as i32) {
+                Some(it) => it,
+                None => continue,
+            };
+            let mut end = start;
+            if !end.ends_line() {
+                end.forward_to_line_end();
+            }
+            window.push_str(state.buffer.text(&start, &end, false).as_str());
+            if bl != last {
+                window.push('\n');
+            }
+        }
+
+        let rebased: Vec<(usize, usize)> = ranges
+            .iter()
+            .map(|&(s, e)| (s + cursor_line_offset, e + cursor_line_offset))
+            .collect();
+
+        let span = match crate::input::sentence::sentence_span(&window, &rebased) {
+            Some(sp) => sp,
+            None => return,
+        };
+        let text: String = window.chars().skip(span.0).take(span.1 - span.0).collect();
+
+        // Ids for enrichment. The sentence can only touch lines inside the
+        // window, so mapping the whole window is correct and cheap.
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        let ids: Vec<i64> = (first..=last)
+            .filter_map(|bl| {
+                state
+                    .work_line_for_buffer(bl)
+                    .and_then(|wi| work.lines.get(wi))
+                    .map(|l| l.id)
+            })
+            .collect();
+
+        crate::logging::log(&format!(
+            "SYNTAX_UNDERLINE: {} range(s) -> span {}..{} over {} line(s)",
+            ranges.len(),
+            span.0,
+            span.1,
+            ids.len()
+        ));
+        (text, ids)
+    };
+
+    // `open_syntax_diagram` already guards empty/whitespace-only text
+    // (`if text.trim().is_empty()` → log, return), so do not duplicate it here.
+    open_syntax_diagram(state_rc, text, line_ids);
 }
 
 #[cfg(test)]
