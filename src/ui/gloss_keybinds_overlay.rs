@@ -18,7 +18,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles · r next word)"),
     ("Alt+g", "gloss_picker"),
-    ("\\", "cycle_from_gloss: → journal Q&A (same segment)"),
+    ("\\", "cycle_from_gloss: → journal Q&A (same segment); on a syntax gloss, closes instead"),
 ]);
 
 /// Grouped (key, action) rows. Matches handle_gloss_key + the gloss visual mode.

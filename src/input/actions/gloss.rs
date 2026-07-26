@@ -3399,6 +3399,73 @@ pub(crate) fn try_open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
     true
 }
 
+/// Open the gloss overlay filtered to `syntax-gloss`, for the passage
+/// covering the reader cursor line — the syntax stop of the `\` segment-
+/// overlay cycle (`cycle_from_journal` in `overlay_cycle.rs`). A parallel of
+/// `try_open_gloss_at_cursor` scoped to one gloss type instead of the three
+/// reader-facing ones: a syntax gloss is created from an explicit selection
+/// (visual-mode "Syntax" or the `-`/`_` underline path), never from the
+/// cursor line alone, so this can only ever show one that already exists.
+/// Returns false (opening nothing) when no syntax-gloss covers the cursor.
+pub(crate) fn try_open_syntax_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
+    const GLOSS_TYPES: &[&str] = &["syntax-gloss"];
+
+    let (work_abbrev, cur_triple) = {
+        let s = state.borrow();
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => return false,
+        };
+        let wl = match s.work_line_for_buffer(s.current_line) {
+            Some(wl) => wl,
+            None => return false,
+        };
+        let line = match work.lines.get(wl) {
+            Some(l) => l,
+            None => return false,
+        };
+        (
+            work.canonical_abbrev.clone(),
+            (line.div1, line.div2, line.line_in_div),
+        )
+    };
+
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, GLOSS_TYPES)
+        .unwrap_or_default();
+
+    let covering = passages.iter().enumerate().find(|(_, p)| {
+        match (crate::app::parse_citation(&p.start_citation), crate::app::parse_citation(&p.end_citation)) {
+            (Some(start), Some(end)) => passage_covers(start, end, cur_triple),
+            _ => false,
+        }
+    });
+    let (passage_index, passage) = match covering {
+        Some((i, p)) => (i, p.clone()),
+        None => return false,
+    };
+
+    let all_glosses = crate::db::queries::find_glosses_by_start(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+        GLOSS_TYPES,
+    )
+    .unwrap_or_default();
+
+    if all_glosses.is_empty() {
+        return false;
+    }
+
+    let mut s = state.borrow_mut();
+    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
+    true
+}
+
 /// Prose `-` (`ReaderGlossChatAtCursor` routed here by
 /// `visual::reader_gloss_chat_at_cursor`): open the gloss overlay on the
 /// gloss covering the cursor. When none exists, gloss the cursor paragraph in

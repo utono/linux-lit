@@ -20,7 +20,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles \u{b7} r next word)"),
     ("Ctrl+r", "vocab_add_card: add a vocab word"),
-    ("\\", "cycle_from_journal: → close (reading card)"),
+    ("\\", "cycle_from_journal: → syntax gloss (same segment)"),
 ]);
 
 /// Grouped (key, action) rows. Matches handle_journal_key + journal visual mode.

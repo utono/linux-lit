@@ -2653,11 +2653,24 @@ fn handle_gloss_key(
             }
             true
         }
-        // `\`: advance the segment-overlay cycle → synopsis for the lap's
-        // entry segment (restores the pre-open page, unlike Escape's
-        // jump-to-source close).
+        // `\`: advance the segment-overlay cycle. The gloss overlay is TWO
+        // stops in the lap (gloss, then syntax further round) sharing one
+        // widget, so which stop this press ends depends on the gloss_type
+        // currently shown: a syntax-gloss ends the lap (`cycle_from_syntax`),
+        // anything else advances to the journal Q&A stop (`cycle_from_gloss`).
         "backslash" if !is_ctrl && !is_alt => {
-            crate::input::actions::overlay_cycle::cycle_from_gloss(state);
+            let showing_syntax = {
+                let s = state.borrow();
+                s.gloss_list
+                    .get(s.gloss_index)
+                    .map(|g| g.gloss_type == "syntax-gloss")
+                    .unwrap_or(false)
+            };
+            if showing_syntax {
+                crate::input::actions::overlay_cycle::cycle_from_syntax(state);
+            } else {
+                crate::input::actions::overlay_cycle::cycle_from_gloss(state);
+            }
             true
         }
         // `/`: open the search bar to type a regex for the CURRENT gloss buffer
