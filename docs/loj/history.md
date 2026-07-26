@@ -207,25 +207,37 @@ exercised by **Bleak House**, not LoJ.
 
 Italics reach the DB as `_…_` in `canonical_text` — the direct
 transliteration of the reference's `<i>…</i>`. LoJ carries **45,113**
-underscores. The parser is strictly **paired and per-line**:
-`parse_italic_spans` (`src/app/italics.rs:35`) collects every `_` position and
-bails when the count is odd:
+underscores.
 
-```rust
-if underscores.is_empty() || underscores.len() % 2 != 0 {
-    return None;
-}
+**Orphans are now repaired at both layers (2026-07-26).** Previously
+`parse_italic_spans` bailed on an odd count and the row rendered **verbatim**,
+putting a literal `_` on screen with no italics at all. That was deliberate —
+the alternative of guessing where a span ends risked italicising the wrong
+range — but it meant 131 LoJ rows, including the title page, shipped a visible
+stray delimiter.
+
+Both layers now give the orphan the sibling it lacks:
+
+- **litdb, at import** (`pair_orphan_underscores` in `parse_loj_html.py`,
+  commit `e4b0691`) — so no new row is imported with an odd count.
+- **linux-lit, at render** (`repair_orphan` in `src/app/italics.rs`, commit
+  `13fe03a2`) — so rows already in lit.db display correctly without a
+  reimport.
+
+The repair is deliberately **local**: it italicises only the word run adjacent
+to the orphan and never spans a space, so a stray delimiter can never
+italicise the rest of a line. That constraint comes straight from the data —
+see the 1,535-char case below.
+
+**Logging is retained by design.** `ITALIC_UNPAIRED` still fires per repaired
+line, now reading `orphan repaired` rather than `rendered literal`:
+
+```
+ITALIC_UNPAIRED: line {i} odd `_` count, orphan repaired: "…"
 ```
 
-On `None` the row is pushed through **verbatim** and logged:
-
-```
-ITALIC_UNPAIRED: line {i} odd `_` count, rendered literal: "…"
-```
-
-So an orphaned underscore is **visible on screen as a literal `_`, and the
-row is not italicised at all**. This is deliberate: the alternative — guessing
-where the span ends — would silently italicise the wrong range.
+That log is how you find works still carrying the defect upstream. A LoJ load
+emits **131** of them, matching the 131 odd-count rows in lit.db exactly.
 
 **131 LoJ rows are affected**, spread across volumes:
 
@@ -279,16 +291,24 @@ That last point cuts the other way and is worth stating plainly: for the `_d_`
 / `_s_` currency italics, **litdb is more faithful than the reference HTML** —
 the DB has the italic, the reference lost it.
 
-### Consequences for fixing
+### How each cause is handled
 
-- **Cause B is not fixable in the reader.** It is upstream Gutenberg data. It
-  could be patched at import with a curated fix-list, but nothing can infer
-  the intended span in general.
-- **Cause A is a model question, not a bug.** The per-line parser is correct
-  within its contract (documented in `italics.rs`); spanning rows is outside
-  it. Fixing it means either rejoining split spans at import, or teaching the
-  reader a cross-row continuation state.
-- Either way the tell is the same: grep the debug log for `ITALIC_UNPAIRED`.
+- **Cause A is rejoined at import.** litdb's pass 1 detects an unclosed opener
+  on row *i* and a dangling closer on row *i+1* and reunites them, restoring
+  the author's intent exactly. This only applies WITHIN a block — the title
+  page's rows are separate `<h3>`/`<h5>` elements, not one `<p>` split by
+  `<br>`, so they fall through to the local repair (`_INCLUDING_ …`,
+  `… _WALES_`) rather than the parser guessing across element boundaries.
+- **Cause B cannot be reconstructed, only contained.** Nothing can infer the
+  intended span from corrupt source, so the orphan is paired against its own
+  word run — one word wrongly italicised at worst, versus a whole line.
+- **Under-italicising is the accepted trade.** A cross-row span that the
+  reader repairs locally (rather than litdb rejoining at import) italicises
+  only the adjacent word. That is deliberate: the opposite error —
+  over-italicising to end-of-line — is what makes LoJ 1.1316 catastrophic.
+- **The tell is unchanged:** grep the debug log for `ITALIC_UNPAIRED`. It now
+  reports repairs rather than literal renders, so a non-zero count means the
+  DB still holds odd rows and the work is a reimport candidate.
 
 ---
 
