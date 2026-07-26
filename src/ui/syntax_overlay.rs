@@ -305,8 +305,12 @@ fn layout_text_spaced(
 }
 
 fn draw(area: &DrawingArea, cr: &gtk4::cairo::Context, inner: &Inner, w: f64, h: f64) {
-    // Full-window scrim.
-    cr.set_source_rgba(inner.scrim.0, inner.scrim.1, inner.scrim.2, 0.97);
+    // Full-window scrim. OPAQUE, not 0.97: the 3% that showed through was the
+    // reading card, and cream (~250) against this dark root (~70) stays
+    // legible at 3%, so the passage bled up through the diagram. This is a
+    // study surface the reader stops on, not an annotation over the text —
+    // nothing behind it needs to read through.
+    cr.set_source_rgb(inner.scrim.0, inner.scrim.1, inner.scrim.2);
     cr.rectangle(0.0, 0.0, w, h);
     let _ = cr.fill();
 
