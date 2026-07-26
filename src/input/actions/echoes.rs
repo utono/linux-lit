@@ -659,13 +659,28 @@ fn first_sentence(passage: &str) -> String {
 /// gloss is being generated uses the same `<speaker>`/`<segment>` markup (and thus
 /// the same single-column formatting) as the original passage in the result.
 pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
+    // `line.text` is the DB text, which still carries Gutenberg's `_italic_`
+    // delimiters. The reader strips them when filling its own buffer (Phase B
+    // inline italics), but this path builds a document straight from the DB —
+    // so without stripping, the "Glossing…" card shows literal underscores
+    // (`Reverend _Thomas Warton_`) where the reader shows italics. Reported
+    // 2026-07-26 on LoJ, which is dense with them.
+    //
+    // Strip only; the overlay has no italic markup to re-apply them with, so
+    // the card shows clean roman text rather than wrong text.
+    let clean = |s: &str| -> String {
+        match crate::app::italics::parse_italic_spans(s) {
+            Some(p) => p.stripped_text,
+            None => s.to_string(),
+        }
+    };
     let mut doc = String::new();
     let mut current: Option<String> = None;
     for line in turn {
         // Stage directions render as their own italic line in the overlay; they
         // carry no speaker and must not reset the current speaker run.
         if crate::db::line_types::is_stage_direction(&line.text) {
-            doc.push_str(&format!("<stage>{}</stage>\n", line.text));
+            doc.push_str(&format!("<stage>{}</stage>\n", clean(&line.text)));
             continue;
         }
         let label = line.speaker.as_deref().unwrap_or(speaker).to_uppercase();
@@ -678,7 +693,7 @@ pub(crate) fn build_source_header(turn: &[Line], speaker: &str) -> String {
             doc.push_str(&format!("<speaker>{}</speaker>\n", label));
             current = Some(label);
         }
-        doc.push_str(&format!("<segment>{}</segment>\n", line.text));
+        doc.push_str(&format!("<segment>{}</segment>\n", clean(&line.text)));
     }
     doc
 }
@@ -1670,6 +1685,22 @@ pub(crate) fn confirm_echo_turns_pick(
 mod tests {
     use super::*;
     use crate::db::models::Line;
+
+    #[test]
+    fn source_header_strips_gutenberg_italic_underscores() {
+        // The "Glossing..." card is built straight from the DB, whose text
+        // still carries Gutenberg's `_italic_` delimiters. Without stripping,
+        // the card showed literal underscores where the reader shows italics —
+        // reported 2026-07-26 on LoJ, which is dense with them.
+        let turn = vec![line(
+            1, None, 1, 0, 134,
+            "Let me particularly lament the Reverend _Thomas Warton_, and the Reverend Dr. _Adams_.",
+        )];
+        let doc = super::build_source_header(&turn, "UNKNOWN");
+        assert!(!doc.contains('_'), "underscores must be stripped: {doc}");
+        assert!(doc.contains("Reverend Thomas Warton,"), "text must survive intact: {doc}");
+        assert!(doc.contains("Dr. Adams."), "trailing pair too: {doc}");
+    }
 
     fn line(id: i64, speaker: Option<&str>, div1: i64, div2: i64, line_in_div: i64, text: &str) -> Line {
         Line {
