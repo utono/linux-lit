@@ -47,6 +47,7 @@ pub mod picker_nav;
 pub mod pagination;
 pub mod search_bar;
 pub mod settings_overlay;
+pub mod syntax_overlay;
 pub mod toast;
 pub mod translation_overlay;
 pub mod voice_picker;
