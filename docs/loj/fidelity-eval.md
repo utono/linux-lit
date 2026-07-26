@@ -2,6 +2,9 @@
 
 _Evaluated 2026-07-26 (US Central). Read-only assessment; no code or data changed._
 
+Companion document: [`history.md`](history.md) — what has been built for LoJ
+across linux-lit and litdb, the HTML-import transition, and the skills chain.
+
 ## Scope and method
 
 Compares linux-lit's rendering of **LoJ** (Boswell, _The Life of Samuel
