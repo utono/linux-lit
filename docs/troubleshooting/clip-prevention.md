@@ -487,6 +487,45 @@ for breathing room below the title rule / above the footer; the snap and clip
 work on top of these. They are NOT part of the clip mechanism — a surface can
 clip with or without them.
 
+## Inherited leading (cosmetic, separate from clipping)
+
+**Tell:** verse inside a PROSE work renders with a paragraph-sized gap between
+every line — the lines look double-spaced, and fewer of them fit per page — while
+the same verse in a play/poem work looks correct.
+
+**Root cause:** `display_work` (`src/app/mod.rs`) sets the VIEW-level
+`pixels_above_lines`/`pixels_below_lines` from `config.line_spacing` when
+`is_prose_work(work_type)` is true, and to 0 otherwise. That gate is per-WORK,
+but `block_type` is per-LINE: a `prose_book` such as LoJ (Boswell quoting
+Virgil's first eclogue) holds 2,067 `verse` rows, and each inherited
+`2 * line_spacing` of prose leading. `apply_block_typography` tagged those rows
+with `verse-indent-{tier}` (left_margin) and a per-STANZA 12px `verse-stanza-gap`,
+but nothing cancelled the view-level leading, so the gap appeared between every
+line rather than between stanzas.
+
+**Fix (2026-07-26):** a `verse-tight` TextTag (`pixels_above_lines(0)` +
+`pixels_below_lines(0)`) applied to every non-empty verse row in
+`apply_block_typography`. A TextTag overrides the view default, so verse sets
+tight while the surrounding prose keeps its configured leading.
+
+- **Tag-table insertion order IS priority.** GTK resolves competing values by
+  tag priority, which defaults to insertion order (later-added wins) — the same
+  rule behind the vocab-tag ordering bug. `verse-tight` is created BEFORE
+  `verse-stanza-gap` in `ensure_block_typography_tags` so a stanza-opening line,
+  which carries both, still gets its 12px gap. Reversing the two would silently
+  flatten every stanza break.
+- **Empty verse rows keep the gap tag only** — they ARE the stanza separator, so
+  tightening them would erase the break.
+- **A per-work gate cannot express per-line typography.** Whenever a work type
+  mixes block types, the class-wide default has to be cancellable per line;
+  reach for a tag rather than widening the `is_prose_work` branch.
+- **Measure the pitch, don't eyeball it.** Verified by pixel-measuring ink-band
+  pitch on the same page at 1920x1200 before and after: 44px → 38px (exactly the
+  6px `line_spacing`), one more verse line per page. Note verse still sits looser
+  than prose's 26px wrapped-line pitch — that residual is the font's natural line
+  height, NOT injected spacing, so "verse pitch > prose pitch" is not by itself
+  evidence the tag failed.
+
 ## The failure checklist (ordered by frequency)
 
 When a half line clips at the bottom edge of a scrolled surface:
