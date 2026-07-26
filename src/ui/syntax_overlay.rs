@@ -37,6 +37,26 @@ fn row_height(rows: usize, available: f64) -> f64 {
     fitted.min(BAND_ROW_H).max(MIN_BAND_ROW_H)
 }
 
+/// Height per band row for a line that has ANOTHER line of passage text
+/// directly beneath it — i.e. every wrapped line except the last.
+///
+/// The depth stack drawn under such a line must fit inside the real gap to
+/// the next line's own text (`line_h`), never `budget` (leftover space below
+/// the whole passage block, which is unrelated to inter-line spacing and was
+/// the root cause: `(rows - 1) * rh` derived from `budget` could exceed
+/// `line_h` and push a shallow band's rule into the following line of text).
+///
+/// `clearance` reserves headroom above the rule stack for the line's own
+/// descender and the band label floated above the topmost rule
+/// (`row_y - 14.0` at the call site), so the stack never starts flush against
+/// the glyphs. Shrinks like `row_height`, floored at `MIN_BAND_ROW_H` so deep
+/// nesting degrades (overflows slightly into the floor) rather than
+/// vanishing or clipping.
+fn interior_row_height(rows: usize, line_h: f64, clearance: f64) -> f64 {
+    let available = (line_h - clearance).max(0.0);
+    row_height(rows, available)
+}
+
 /// Given a band's byte span `[band_start, band_end)` and the byte span of
 /// every visual line in the Pango layout (in line order, each
 /// `(start_byte, end_byte)` exclusive at the end — i.e. `lines[i].1 ==
@@ -298,7 +318,28 @@ fn draw_analysis(
     let rows = crate::syntax_diagram::max_row(&a.bands) + 1;
     let note_reserve = if inner.show_note && a.note.is_some() { 160.0 } else { 40.0 };
     let budget = (h - y - note_reserve).max(MIN_BAND_ROW_H);
+    // `rh` is the generous, budget-derived row height: correct ONLY for the
+    // passage's last visual line, which has nothing but the note/margin
+    // beneath it. Every interior line (one with another line of text right
+    // under it) must instead use `interior_row_height`, fitted to the real
+    // gap to that next line (`line_h`) — see its doc comment for why `rh`
+    // alone was the defect.
     let rh = row_height(rows, budget);
+    let last_line_index = pango_lines.len().saturating_sub(1);
+    // Headroom the rule stack must leave above the line's own glyphs: the
+    // band label floats 14px above its topmost rule (see `row_y - 14.0`
+    // below), plus a little breathing room so the label isn't flush against
+    // the line's descenders.
+    const LABEL_CLEARANCE: f64 = 18.0;
+    let interior_rh = interior_row_height(rows, line_h, LABEL_CLEARANCE);
+    // Per-line row height: the last visual line keeps the generous
+    // below-passage spacing; every other line uses the fitted interior
+    // spacing so a shallow band's rule can never reach into the next line's
+    // text. Same value for every interior line, so the stack still reads as
+    // one coherent ladder rather than jittering line to line.
+    let row_h_for_line = |line_index: usize| -> f64 {
+        if line_index == last_line_index { rh } else { interior_rh }
+    };
 
     for b in &a.bands {
         // One triple per visual line the band touches — the fix for the
@@ -309,11 +350,6 @@ fn draw_analysis(
         if spans.is_empty() {
             continue;
         }
-        // Deeper bands sit higher within their own line's row stack: row 0
-        // (outermost) is the bottom rule, same intent as before, just
-        // measured from each touched line's own baseline instead of one
-        // shared band-area origin.
-        let depth_offset = (rows as f64 - 1.0 - b.depth as f64) * rh;
         let fade = 1.0 - (b.depth as f64 * 0.15).min(0.6);
         cr.set_source_rgba(inner.accent.0, inner.accent.1, inner.accent.2, fade);
         cr.set_line_width(2.0);
@@ -321,6 +357,13 @@ fn draw_analysis(
         let mut first_segment: Option<(f64, f64, f64)> = None; // (x0, x1, row_y)
         for (line_index, seg_start, seg_end) in &spans {
             let (sx, ex) = line_x_range(*line_index, *seg_start, *seg_end);
+            // Deeper bands sit higher within their own line's row stack: row
+            // 0 (outermost) is the bottom rule, same intent as before, just
+            // measured from each touched line's own baseline and its own
+            // (interior-vs-last) row height instead of one shared band-area
+            // origin.
+            let depth_offset =
+                (rows as f64 - 1.0 - b.depth as f64) * row_h_for_line(*line_index);
             let row_y = line_y(*line_index) + line_h + depth_offset;
             cr.move_to(sx, row_y);
             cr.line_to(ex, row_y);
@@ -386,6 +429,63 @@ mod tests {
         // rather than shows unreadable 5px bands.
         let h = row_height(20, 100.0);
         assert_eq!(h, MIN_BAND_ROW_H, "floor must win when it can't also fit");
+    }
+
+    // ── interior_row_height ──
+
+    #[test]
+    fn interior_row_height_fits_the_reported_regression() {
+        // The exact numbers from the defect report: 1920x1200, "Serif 20"
+        // line_h ~= 27px, BAND_ROW_H = 26.0, 3 nested bands (rows = 3). The
+        // naive `(rows - 1) * rh` with `rh` sourced from `budget` could reach
+        // BAND_ROW_H (26.0), so 2 * 26.0 = 52.0 — well past a 27px line_h.
+        // The fitted interior height must keep the WHOLE stack — depth_offset
+        // for the outermost row is `(rows - 1) * interior_rh` — within the
+        // gap to the next line.
+        let rows = 3;
+        let line_h = 27.0;
+        let clearance = 18.0;
+        let interior_rh = interior_row_height(rows, line_h, clearance);
+        let max_depth_offset = (rows as f64 - 1.0) * interior_rh;
+        assert!(
+            max_depth_offset < line_h,
+            "stack of {max_depth_offset} must fit under a {line_h}px line, got interior_rh={interior_rh}"
+        );
+    }
+
+    #[test]
+    fn interior_row_height_single_visual_line_is_moot_but_safe() {
+        // rows == 1 (no nesting): depth_offset is always 0 regardless of the
+        // row height value, but the helper must still return something sane
+        // (no div-by-zero, no NaN).
+        let h = interior_row_height(1, 27.0, 18.0);
+        assert!(h.is_finite() && h > 0.0);
+    }
+
+    #[test]
+    fn interior_row_height_zero_rows_matches_row_height_contract() {
+        // Mirrors `zero_rows_is_safe` for `row_height`: 0 rows is the "no
+        // bands" case and must return the natural height, not 0 or NaN.
+        assert_eq!(interior_row_height(0, 27.0, 18.0), BAND_ROW_H);
+    }
+
+    #[test]
+    fn interior_row_height_pathological_rows_floors_rather_than_negative() {
+        // A huge nesting depth against a normal line_h: `line_h - clearance`
+        // is small (or the rows count alone demands sub-floor spacing), so
+        // the legibility floor must win, exactly like `row_height`'s own
+        // pathological case — never 0, never negative, never NaN.
+        let h = interior_row_height(20, 27.0, 18.0);
+        assert_eq!(h, MIN_BAND_ROW_H);
+    }
+
+    #[test]
+    fn interior_row_height_clearance_exceeding_line_h_still_floors() {
+        // A short line_h (tight wrap) with generous clearance can drive
+        // `line_h - clearance` negative; the helper must clamp to a sane
+        // floor rather than propagate a negative/NaN available space.
+        let h = interior_row_height(3, 10.0, 18.0);
+        assert_eq!(h, MIN_BAND_ROW_H);
     }
 
     // ── band_line_spans ──
