@@ -48,3 +48,91 @@ pub fn insert_missing(conn: &Connection, terms: &[(String, String)]) -> usize {
     }
     added
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A table with the real shape, in memory — no lit.db, no display.
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute(
+            "CREATE TABLE grammatical_terms (
+                id INTEGER PRIMARY KEY,
+                term TEXT UNIQUE NOT NULL,
+                definition TEXT NOT NULL,
+                source TEXT,
+                created_at TEXT DEFAULT (datetime('now')))",
+            [],
+        )
+        .expect("create");
+        conn
+    }
+
+    #[test]
+    fn insert_missing_adds_new_terms_and_reports_the_count() {
+        // The path that had never executed in a real run: every gloss so far
+        // used only seeded terms, so a broken insert would have stayed
+        // invisible. `open_db` is READ-ONLY in this codebase, and
+        // `unwrap_or(0)` swallows the resulting error — a caller using the
+        // wrong opener logs "0 inserted" and looks healthy forever.
+        let conn = db();
+        let added = insert_missing(
+            &conn,
+            &[("periodic sentence".into(), "a sentence whose main clause is withheld".into())],
+        );
+        assert_eq!(added, 1);
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM grammatical_terms", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn insert_missing_keeps_the_stored_definition_on_a_duplicate() {
+        // Consistency beats recency: two glosses of the same passage must not
+        // disagree because the second one re-defined a term.
+        let conn = db();
+        insert_missing(&conn, &[("main clause".into(), "the original".into())]);
+        let added = insert_missing(&conn, &[("main clause".into(), "a rewrite".into())]);
+        assert_eq!(added, 0, "duplicate must not insert");
+        let def: String = conn
+            .query_row("SELECT definition FROM grammatical_terms WHERE term='main clause'", [], |r| r.get(0))
+            .expect("definition");
+        assert_eq!(def, "the original", "stored definition must win");
+    }
+
+    #[test]
+    fn insert_missing_skips_blank_terms_and_definitions() {
+        let conn = db();
+        let added = insert_missing(
+            &conn,
+            &[("".into(), "no term".into()), ("no definition".into(), "   ".into())],
+        );
+        assert_eq!(added, 0);
+    }
+
+    #[test]
+    fn load_all_returns_terms_alphabetically() {
+        let conn = db();
+        insert_missing(
+            &conn,
+            &[
+                ("subject".into(), "s".into()),
+                ("appositive".into(), "a".into()),
+                ("main clause".into(), "m".into()),
+            ],
+        );
+        let got = load_all(&conn);
+        let terms: Vec<&str> = got.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(terms, vec!["appositive", "main clause", "subject"]);
+    }
+
+    #[test]
+    fn load_all_is_empty_when_the_table_is_missing() {
+        // A definitions table being unreadable must not cost the reader their
+        // analysis — the caller degrades to a gloss with no Terms section.
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        assert!(load_all(&conn).is_empty());
+    }
+}

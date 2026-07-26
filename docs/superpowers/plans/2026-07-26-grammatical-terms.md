@@ -656,3 +656,41 @@ The user is away and asked for no review gates, so DO NOT merge on their behalf.
 **Type consistency.** `load_all(&Connection) -> Vec<(String, String)>` and `insert_missing(&Connection, &[(String, String)]) -> usize` are defined in Task 1 and called in Task 3 with matching types. `scan_terms_used`, `parse_new_terms`, `strip_new_terms`, `build_terms_section` are defined in Task 2 and called in Task 3 with matching signatures. Every one takes and returns `(String, String)` pairs — one shape throughout.
 
 **Known risk.** `scan_terms_used` blanks matched spans to prevent "clause" matching inside "main clause". If a definition itself contains another term, the scan does not recurse into definitions — deliberate, since only the BODY is scanned, not the appended Terms section. Task 4 Step 4's count check is what catches term-text drift.
+
+## Verification results (2026-07-26, headless cage @ 1920x1200)
+
+**Migration self-applies.** The table did not exist on the live lit.db before
+this branch; on first headless launch it was created and seeded with all 9
+terms. No litdb migration was needed — the reader's own `ensure_*_table`
+pattern handles it.
+
+**Definitions come from the table, alphabetically.** A generated gloss rendered
+`adverbial clause`, `adverbial phrase`, `conjoined predicate`, `main clause`,
+`participial modifier`, `predicate` — the exact seeded wording, in order. Log:
+`GRAMMATICAL_TERMS: 7 term(s) used in this gloss`.
+
+**The note's terms are covered.** The note named "participial modifiers" and
+"main clause"; both appear below. That is the 2026-07-26 gap closed at its
+source rather than by widening the prompt.
+
+**No stray `New terms:` heading** in the rendered gloss — `strip_new_terms`
+works.
+
+**Cache path intact.** Re-requesting the same passage logged
+`SYNTAX-GLOSS: showing cached gloss` with no API call and no term work.
+
+**The insert path could not be triggered from a real run**, and this is worth
+recording. Three generated glosses all used ONLY terms already in the table
+(counts: 7 used / 0 new, then 5 used / 0 new), which is the designed steady
+state — but it means the branch shipped with its riskiest path unexercised.
+Covered instead by five direct unit tests against an in-memory table
+(`src/db/grammatical_terms.rs`), including the duplicate case (stored
+definition wins) and the missing-table case (empty, no panic).
+
+Those tests were verified NON-VACUOUS: reverting `insert_missing` to swallow
+its result — exactly what the plan's original `open_db()` (read-only) would
+have caused — fails `insert_missing_adds_new_terms_and_reports_the_count`. A
+caller using the wrong opener would otherwise log "0 new term(s) inserted"
+and look healthy while the table stayed frozen forever.
+
+**Final state:** 1144 tests pass, clippy 180 (at baseline), build clean.
