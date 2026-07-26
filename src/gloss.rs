@@ -1213,6 +1213,120 @@ fn flag_unverified(line: &str) -> String {
     line.replace("</gloss>", " (unverified)</gloss>")
 }
 
+/// Which of `known`'s terms appear in `body`, alphabetical, no duplicates.
+///
+/// Matching is whole-term and case-insensitive, and LONGEST-FIRST: "main
+/// clause" must not also report the bare "clause" inside it, or the glossary
+/// defines a word the reader never saw on its own. A matched span is blanked
+/// so a shorter term cannot match inside it.
+pub fn scan_terms_used(body: &str, known: &[(String, String)]) -> Vec<(String, String)> {
+    let mut hay = body.to_lowercase();
+    // Longest first so "main clause" is consumed before "clause" can match it.
+    let mut by_len: Vec<&(String, String)> = known.iter().collect();
+    by_len.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (term, def) in by_len {
+        let needle = term.to_lowercase();
+        if needle.is_empty() {
+            continue;
+        }
+        if hay.contains(&needle) {
+            found.push((term.clone(), def.clone()));
+            // Blank every occurrence so a shorter term cannot match inside it.
+            // The blank is byte-for-byte the same length as the needle, so no
+            // later `find` offset can shift; `needle` is already lowercased and
+            // may be multi-byte, hence `len()` (bytes), not `chars().count()`.
+            let blank = " ".repeat(needle.len());
+            hay = hay.replace(&needle, &blank);
+        }
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+/// Parse a `New terms:` section into `(term, definition)` pairs.
+///
+/// Each line under the heading reads `term: definition`. Absent section, or a
+/// heading with nothing under it, yields an empty vec — the common case, since
+/// most glosses use only terms lit.db already knows.
+pub fn parse_new_terms(reply: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut in_section = false;
+    for line in reply.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("New terms:") {
+            in_section = true;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+        // A new heading ends the section: a line ending in ':' that carries
+        // no "term: definition" pair of its own.
+        if t.ends_with(':') && t.split_once(": ").is_none() {
+            break;
+        }
+        if let Some((term, def)) = t.split_once(": ") {
+            let term = term.trim().trim_start_matches(['-', '*', ' ']).trim();
+            let def = def.trim().trim_end_matches('.').trim();
+            if !term.is_empty() && !def.is_empty() {
+                out.push((term.to_string(), def.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// The reply with any `New terms:` section removed.
+///
+/// That section is instruction-plumbing between the model and lit.db; it must
+/// never reach the stored gloss, where it would render as stray prose under
+/// the note.
+pub fn strip_new_terms(reply: &str) -> String {
+    let mut out = String::new();
+    let mut in_section = false;
+    for line in reply.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("New terms:") {
+            in_section = true;
+            continue;
+        }
+        if in_section {
+            // A blank line does not end it (definitions may be spaced); a new
+            // heading does.
+            if t.ends_with(':') && t.split_once(": ").is_none() {
+                in_section = false;
+            } else {
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim_end().to_string()
+}
+
+/// The `Terms:` section, alphabetical, in the markup the renderer already
+/// handles. Empty string for no terms — not a bare heading.
+pub fn build_terms_section(terms: &[(String, String)]) -> String {
+    if terms.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&(String, String)> = terms.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = String::from("\n\nTerms:\n\n");
+    for (term, def) in sorted {
+        let def = def.trim().trim_end_matches('.');
+        out.push_str(&format!("<gloss>{term}: {def}.</gloss>\n\n"));
+    }
+    out.trim_end().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1726,5 +1840,111 @@ mod scene_budget_tests {
         assert!(msg.contains(&format!("{:060}", 200)), "middle line present");
         assert!(msg.contains("scene continues above"));
         assert!(msg.contains("scene continues below"));
+    }
+
+    // ---- grammatical terms: scan / parse / build ----
+
+    fn known() -> Vec<(String, String)> {
+        vec![
+            ("appositive".into(), "a noun phrase set beside another noun".into()),
+            ("clause".into(), "a group of words with a subject and verb".into()),
+            ("main clause".into(), "a clause that can stand alone".into()),
+            ("subject".into(), "the noun phrase the clause is about".into()),
+        ]
+    }
+
+    #[test]
+    fn scan_finds_multiword_terms_not_their_fragments() {
+        // "main clause" must match as itself. A naive contains() would ALSO
+        // report the bare "clause" inside it, producing a glossary that
+        // defines a word the reader never saw on its own.
+        let body = "The main clause carries the assertion.";
+        let found = scan_terms_used(body, &known());
+        let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(terms.contains(&"main clause"), "{terms:?}");
+        assert!(!terms.contains(&"clause"), "must not report the fragment: {terms:?}");
+    }
+
+    #[test]
+    fn scan_reports_a_repeated_term_once() {
+        let body = "An appositive here, an appositive there, and a third appositive.";
+        let found = scan_terms_used(body, &known());
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn scan_covers_the_note_not_only_structure() {
+        // The 2026-07-26 bug: a term used ONLY in the rhetorical note got no
+        // definition. The scan takes the whole body, so prose counts.
+        let body = "Structure:\nmain clause — X\n\nWhat the structure is doing:\n\
+                    Boswell hangs an appositive off the name.";
+        let found = scan_terms_used(body, &known());
+        let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(terms.contains(&"appositive"), "note terms must be found: {terms:?}");
+    }
+
+    #[test]
+    fn scan_is_case_insensitive_at_a_sentence_start() {
+        let body = "Appositive constructions abound.";
+        let found = scan_terms_used(body, &known());
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn scan_returns_alphabetical_order() {
+        let body = "The subject precedes the main clause; an appositive follows.";
+        let found = scan_terms_used(body, &known());
+        let terms: Vec<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(terms, vec!["appositive", "main clause", "subject"]);
+    }
+
+    #[test]
+    fn build_terms_section_is_empty_for_no_terms() {
+        // Not an empty heading — no section at all, or the gloss ends with a
+        // bare "Terms:" and nothing under it.
+        assert_eq!(build_terms_section(&[]), "");
+    }
+
+    #[test]
+    fn build_terms_section_wraps_each_entry_in_gloss_markup() {
+        let out = build_terms_section(&[
+            ("appositive".into(), "a noun phrase set beside another noun".into()),
+        ]);
+        assert!(out.contains("Terms:"), "{out}");
+        assert!(out.contains("<gloss>appositive: a noun phrase set beside another noun.</gloss>"), "{out}");
+    }
+
+    #[test]
+    fn build_terms_section_does_not_double_the_final_period() {
+        let out = build_terms_section(&[("subject".into(), "the noun phrase.".into())]);
+        assert!(!out.contains(".."), "definition already ended in a period: {out}");
+    }
+
+    #[test]
+    fn parse_new_terms_reads_the_section() {
+        let reply = "What the structure is doing:\n<gloss>It piles modifiers.</gloss>\n\n\
+                     New terms:\n\
+                     periodic sentence: a sentence whose main clause is withheld until the end\n\
+                     zeugma: one verb governing two objects in different senses\n";
+        let got = parse_new_terms(reply);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0].0, "periodic sentence");
+        assert!(got[0].1.starts_with("a sentence whose main clause"), "{got:?}");
+    }
+
+    #[test]
+    fn parse_new_terms_is_empty_when_absent() {
+        // The common case: every term the model used was already known.
+        assert!(parse_new_terms("Structure:\nmain clause — X\n").is_empty());
+    }
+
+    #[test]
+    fn strip_new_terms_removes_the_section_from_the_stored_gloss() {
+        let reply = "What the structure is doing:\n<gloss>Note.</gloss>\n\n\
+                     New terms:\nperiodic sentence: withheld until the end\n";
+        let out = strip_new_terms(reply);
+        assert!(!out.contains("New terms:"), "{out}");
+        assert!(!out.contains("periodic sentence:"), "{out}");
+        assert!(out.contains("<gloss>Note.</gloss>"), "must keep the note: {out}");
     }
 }
