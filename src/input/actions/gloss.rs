@@ -1501,12 +1501,20 @@ pub(crate) fn persist_render_install_gloss(
         }
     }
 
+    // The reload list must always include the type just persisted, or the
+    // `position()` lookup below finds nothing and falls through to
+    // `unwrap_or(0)`, leaving gloss_list/gloss_index/the overlay's position
+    // counter describing a different set than the gloss text on screen.
+    let mut reload_types = vec!["teacher-generic", "inner-monologue", "reader-gloss"];
+    if !reload_types.contains(&gloss_type) {
+        reload_types.push(gloss_type);
+    }
     let all = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| {
             crate::db::queries::find_glosses_by_start(
                 &conn, &ctx.work_abbrev, &ctx.start_citation,
-                &["teacher-generic", "inner-monologue", "reader-gloss"],
+                &reload_types,
             ).ok()
         })
         .unwrap_or_default();
