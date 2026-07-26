@@ -547,8 +547,10 @@ pub fn reader_gloss_edit_prompt(work_type: &str) -> &'static str {
 /// Returns markup rather than JSON because a syntax gloss is stored and drawn
 /// like every other gloss type. Per-word POS tags are deliberately absent —
 /// they existed to fill the old Cairo tag row, and in prose they are noise.
-pub fn syntax_gloss_prompt() -> &'static str {
-    "\
+/// Seed / v1 text for `syntax.gloss`. Only renders when the lit.db row is
+/// missing or the DB is unreachable — the ACTIVE prompt lives in
+/// `api_prompts` and may have been edited past this, which is expected.
+const SYNTAX_GLOSS_FALLBACK: &str = "\
 You analyze the grammatical structure of a passage of literature and return \
 prose, formatted with the markup described below. Return ONLY that markup — no \
 commentary outside it, no JSON, no markdown fences.
@@ -590,7 +592,16 @@ Do not list parts of speech for individual words.
 Where a dependency parse is supplied, anchor your analysis on it. Where it is \
 absent, analyze the text directly — the parse is an enrichment, never a \
 requirement. The passage is early modern or nineteenth-century English; \
-analyze the grammar as written, not as it would be phrased today."
+analyze the grammar as written, not as it would be phrased today.";
+
+/// System prompt for a `syntax-gloss`, from lit.db `api_prompts` under
+/// `syntax.gloss`, falling back to the compiled seed.
+///
+/// Read per call like every other prompt here, so editing the DB row takes
+/// effect on the next gloss without a rebuild — which is the point of keeping
+/// prompts in lit.db rather than in the binary.
+pub fn syntax_gloss_prompt() -> String {
+    template_or("syntax.gloss", SYNTAX_GLOSS_FALLBACK)
 }
 
 pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
@@ -1532,6 +1543,20 @@ mod tests {
         assert!(p.contains("New terms:"), "must ask for the new-terms section");
         // POS tags are dropped entirely.
         assert!(!p.to_lowercase().contains("part-of-speech"), "POS tags are dropped");
+    }
+
+    #[test]
+    fn syntax_gloss_prompt_reads_lit_db_with_a_compiled_fallback() {
+        // Every other prompt in this file is versioned in lit.db api_prompts
+        // and read per call, so editing a row takes effect without a rebuild.
+        // syntax-gloss was the odd one out: a hardcoded &'static str with no
+        // lookup at all. It now goes through template_or like its siblings.
+        let p = syntax_gloss_prompt();
+        assert!(!p.is_empty());
+        // The compiled seed must still be a usable prompt on its own, since it
+        // renders whenever the DB row is missing or lit.db is unreachable.
+        assert!(SYNTAX_GLOSS_FALLBACK.contains("<segment>"));
+        assert!(SYNTAX_GLOSS_FALLBACK.contains("Structure:"));
     }
 
     #[test]

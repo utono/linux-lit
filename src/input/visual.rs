@@ -701,7 +701,7 @@ pub(crate) fn syntax_gloss_for_lines(
         let model_for_db = model.clone();
         let result = tokio_handle
             .spawn(async move {
-                crate::gloss::call_claude_with_prompt(crate::gloss::syntax_gloss_prompt(), &user_msg, &model).await
+                crate::gloss::call_claude_with_prompt(&crate::gloss::syntax_gloss_prompt(), &user_msg, &model).await
             })
             .await;
 
