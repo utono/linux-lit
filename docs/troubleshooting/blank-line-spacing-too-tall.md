@@ -1,3 +1,84 @@
+# Dialogue Spacing Failures (plays)
+
+Frequency-ordered. Check #1 first — it presents as "spacing is gone" rather
+than "spacing is wrong", and it is load-order dependent, so it does NOT
+reproduce when you open the affected play directly.
+
+---
+
+## 1. NO dialogue formatting at all — stale `block_indent_tiers` (2026-07-25)
+
+### Tell
+
+A two-column play renders with **every** dialogue affordance missing at once:
+speaker labels (KING, LAERTES) in plain body text instead of small-caps, no
+gap above speakers, dialogue not indented, stage directions upright instead
+of italic, act/scene headers not bold, blank lines at full height.
+
+"All of it missing" is the diagnostic signature. When gaps are merely too
+tall or too short, see the sections below instead — that is a tuning problem,
+this is a total no-op.
+
+**Confirm from the log before touching any code:**
+
+```bash
+rg -n "TEXT_FILE:|FORMATTING:|TIMING: apply_dialogue" linux-lit-dev.log
+```
+
+- Healthy: `FORMATTING: applied dialogue formatting (N lines)` is present and
+  `TIMING: apply_dialogue_formatting` is non-zero (~40ms for Hamlet).
+- Broken: **no `FORMATTING:` line at all** and `TIMING: apply_dialogue_formatting 0ms`
+  for a multi-thousand-line play — the function early-returned without
+  touching the buffer.
+
+### Root cause
+
+`state.block_indent_tiers` left over from the PREVIOUSLY loaded work.
+
+`apply_dialogue_formatting` (`src/app/formatting.rs`) early-returns outright
+when that vec is non-empty — the guard added in `6cdc8490` so block-aware
+verse typography isn't clobbered:
+
+```rust
+if !state.block_indent_tiers.is_empty() { return; }
+```
+
+The off-thread text-file fast path in `display_work_at_with_prepared`
+(`src/app/mod.rs`) set `buffer` + `line_map` but never cleared the field, so
+tiers from a block-aware work survived into the next work. Every branch in
+`rebuild_buffer_text` cleared it; that one path did not.
+
+Reproduction is a **work switch**, not a single load:
+
+1. Load a block-aware work — one with non-prose `line_mapping.block_type`
+   rows (BH-Barrett has 135 `heading` + 20 `blockquote`; LoJ likewise). This
+   populates the tiers.
+2. Switch to a text-file play (Ham-Arkangel) via the library picker.
+3. The play loads through the off-thread fast path with the tiers still set.
+
+Launching straight into the play formats correctly — which is why this
+survived testing and why "it works when I open it directly" is not evidence
+against it.
+
+### Fix
+
+`state.clear_block_typography_state()` in the off-thread fast path, alongside
+the `line_map` assignment. The helper resets all three fields that are keyed
+by buffer-line index and therefore must never outlive a work:
+`block_indent_tiers`, `italic_offset_map`, `italic_line_spans`.
+
+Guarded by `block_typography_reset_tests` in `src/app/mod.rs`, which asserts
+every buffer-fill branch performs the reset.
+
+### General rule
+
+Any state keyed by **buffer-line index** must be reset by **every**
+buffer-fill path. A guard that reads such state is only as safe as the least
+careful fill branch. When adding a new fill path, reset all three fields —
+the test will fail if you forget.
+
+---
+
 # Blank Lines Between Speakers/Stage Directions Too Tall
 
 ## Symptom
