@@ -188,6 +188,9 @@ pub enum InputMode {
     /// Ctrl+/ closes it, restoring `chat_keybinds_return_mode` (the transcript
     /// or prompt context it was opened from).
     ChatKeybindsOverlay,
+    /// Full-screen Cairo syntax diagram of a visual-mode selection. Escape
+    /// closes; `n` toggles the prose commentary. All other keys are swallowed.
+    SyntaxDiagram,
 }
 
 /// Which of the two toggleable reader overlays (gloss / journal) was most
@@ -678,6 +681,9 @@ pub struct AppState {
     /// Reader, either overlay, or the chat transcript).
     pub vocab_add_return_mode: Option<InputMode>,
     pub vocab_popup: crate::app::vocab_popup::VocabPopupState,
+    /// Full-screen Cairo syntax diagram surface (`InputMode::SyntaxDiagram`).
+    /// Floats on the outer overlay beside the vocab popup and toasts.
+    pub syntax_overlay: crate::ui::syntax_overlay::SyntaxOverlay,
     /// Word of the vocab journal Q&A request currently in flight (Ctrl+r).
     /// Guards duplicate paid asks for the same word — it must survive cursor
     /// moves and popup closes, unlike vocab_popup state — and is cleared by
@@ -1672,6 +1678,9 @@ pub fn build_window(
     // Vocab popup (bottom-right, full window width)
     let vocab_popup = crate::ui::vocab_popup::VocabPopup::new();
 
+    // Full-screen syntax diagram surface.
+    let syntax_overlay = crate::ui::syntax_overlay::SyntaxOverlay::new();
+
     // Library picker overlay
     let mut picker = LibraryPicker::new();
     if let Ok(conn) = crate::db::queries::open_db() {
@@ -2053,6 +2062,7 @@ pub fn build_window(
     // placement math is identical to attaching on the inner overlay. Kept BELOW
     // the toasts so a transient status toast still paints over them.
     vocab_popup.attach_to(&outer_overlay);
+    syntax_overlay.attach_to(&outer_overlay);
     outer_overlay.add_overlay(vocab_add_card.container());
     // Action popup (Visual mode) also floats on the OUTER overlay, above the
     // chat panel: Tab moves focus to the reader without closing the panel
@@ -2358,6 +2368,7 @@ pub fn build_window(
             fade_gen: Rc::new(Cell::new(0)),
             chat_inline: false,
         },
+        syntax_overlay,
         vocab_qa_inflight: None,
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),

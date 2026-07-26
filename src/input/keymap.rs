@@ -328,6 +328,7 @@ pub fn handle_key(
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
             crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift, is_alt),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
+            crate::app::InputMode::SyntaxDiagram => handle_syntax_diagram_key(state, key_name),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -3784,6 +3785,28 @@ fn handle_gamepad_key(
             s.keybinds_overlay.show_last_row();
             drop(s);
             state.borrow_mut().input_mode = crate::app::InputMode::KeybindsOverlay;
+            true
+        }
+        _ => true,
+    }
+}
+
+/// Full-screen syntax diagram. Escape closes and returns to the reader; `n`
+/// toggles the prose commentary; every other key is swallowed so the diagram
+/// is fully modal.
+fn handle_syntax_diagram_key(
+    state: &Rc<RefCell<AppState>>,
+    key_name: &str,
+) -> bool {
+    match key_name {
+        "Escape" => {
+            let mut s = state.borrow_mut();
+            s.syntax_overlay.hide();
+            s.input_mode = crate::app::InputMode::Reader;
+            true
+        }
+        "n" => {
+            state.borrow().syntax_overlay.toggle_note();
             true
         }
         _ => true,

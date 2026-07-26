@@ -232,7 +232,7 @@ pub struct ActionPopupState {
 /// Built-in action names, in display order. The `match index` in
 /// `execute_action` maps these POSITIONALLY — reorder both together or an item
 /// fires the wrong action.
-pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Journal Q&A", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata"];
+pub const BUILTIN_ACTIONS: &[&str] = &["Reader Gloss", "Journal Q&A", "Gloss with Claude", "Inner Monologue", "Copy", "Copy with metadata", "Syntax"];
 
 /// Determine which built-in actions are available for the current work.
 pub fn available_builtin_actions(_state: &AppState) -> Vec<&'static str> {
@@ -295,6 +295,10 @@ pub fn execute_action(
             }
             4 => action_copy(&mut state_rc.borrow_mut(), false),
             5 => action_copy(&mut state_rc.borrow_mut(), true),
+            6 => {
+                action_syntax_diagram(state_rc);
+                return;
+            }
             _ => {}
         }
     } else {
@@ -544,6 +548,39 @@ pub(crate) fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppSta
     exit_visual_mode(&mut state_rc.borrow_mut());
     crate::input::actions::journal::begin_passage_ask(state_rc, div1, div2, start, end, source_text);
     crate::logging::log("JOURNAL-QA: opened ask card for visual passage");
+}
+
+/// Visual-mode "Syntax": open the full-screen diagram for the selection.
+/// Collects the selected buffer lines' text and their `line_mapping` row ids
+/// (the parse enrichment key); works with no `line_syntax` rows simply send
+/// the text alone.
+pub(crate) fn action_syntax_diagram(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (text, line_ids) = {
+        let state = state_rc.borrow();
+        let (start_buf, end_buf) = match &state.visual_selection {
+            Some(s) => s.range(),
+            None => return,
+        };
+        let work = match &state.current_work {
+            Some(w) => w,
+            None => return,
+        };
+        let lines: Vec<crate::db::models::Line> = (start_buf..=end_buf)
+            .filter_map(|buf_line| {
+                state.work_line_for_buffer(buf_line)
+                    .and_then(|wi| work.lines.get(wi).cloned())
+            })
+            .collect();
+        let text = lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ids = lines.iter().map(|l| l.id).collect::<Vec<i64>>();
+        (text, ids)
+    };
+    exit_visual_mode(&mut state_rc.borrow_mut());
+    crate::input::actions::syntax::open_syntax_diagram(state_rc, text, line_ids);
 }
 
 fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
