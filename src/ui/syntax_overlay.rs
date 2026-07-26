@@ -23,7 +23,7 @@ const BAND_ROW_H: f64 = 26.0;
 /// Never shrink a band row below this — past it, labels stop being legible.
 ///
 /// This is a LABEL-HEIGHT floor, not an arbitrary one: the draw site floats
-/// each label `lh + 2` above its own rule, so consecutive rules closer
+/// each label `lh + LABEL_GAP` above its own rule, so consecutive rules closer
 /// together than that leave every label overprinting the rule above it.
 /// `LABEL_H + 1` guarantees the gap always fits one label. Raised from 12
 /// after the 2026-07-26 GL check, where a 10-band stack compressed to the old
@@ -33,12 +33,16 @@ const MIN_BAND_ROW_H: f64 = LABEL_H + 1.0;
 /// (clearance and row-height floors).
 ///
 /// The draw site measures the real label with `layout_text` and offsets by
-/// `lh + 2`; this is the budgeting counterpart, sized for a "Sans 10" label
-/// (~13px) plus that 2px gap. Kept as one named constant so the reserve and
+/// `lh + LABEL_GAP`; this is the budgeting counterpart, sized for a "Sans 10"
+/// label (~13px) plus that gap. Kept as one named constant so the reserve and
 /// the draw can never drift apart silently again.
-const LABEL_H: f64 = 15.0;
+const LABEL_H: f64 = 13.0 + LABEL_GAP;
+/// Gap between a label's bottom and the rule it names. 2px was arithmetically
+/// correct but READ as flush on GL — the innermost band's label looked like it
+/// was sitting on its own rule. Visual clearance, not just non-overlap.
+const LABEL_GAP: f64 = 5.0;
 /// Headroom the rule stack leaves above a line's own glyphs: one label's
-/// height above the topmost rule (`draw_analysis` offsets by `lh + 2`), plus
+/// height above the topmost rule (`draw_analysis` offsets by `lh + LABEL_GAP`), plus
 /// breathing room so the label is not flush against the descenders.
 const LABEL_CLEARANCE: f64 = LABEL_H + 6.0;
 /// Height of the POS-tag row that sits directly under each line's glyphs.
@@ -89,8 +93,9 @@ fn row_height(rows: usize, available: f64) -> f64 {
 ///
 /// `clearance` reserves headroom above the rule stack for the line's own
 /// descender and the band label floated above the topmost rule
-/// (`lh + 2` above its rule at the call site), so the stack never starts
-/// flush against the glyphs. Shrinks like `row_height`, floored at `MIN_BAND_ROW_H` so deep
+/// (`lh + LABEL_GAP` above its rule at the call site), so the stack never
+/// starts flush against the glyphs. Shrinks like `row_height`, floored at
+/// `MIN_BAND_ROW_H` so deep
 /// nesting degrades (overflows slightly into the floor) rather than
 /// vanishing or clipping.
 fn interior_row_height(rows: usize, line_h: f64, clearance: f64) -> f64 {
@@ -622,7 +627,7 @@ fn draw_analysis(
             // The innermost band now has `LABEL_H` of reserved room below the
             // POS row (see `row_y`), so this guard no longer fires for it —
             // it is a backstop for a label taller than the reserve.
-            let label_top = row_y - (lh + 2.0);
+            let label_top = row_y - (lh + LABEL_GAP);
             let pos_floor = line_y(seg_line) + natural_line_h + POS_ROW_H;
             let clears_pos_row = label_top >= pos_floor - 1.0;
             // Width tolerance is generous again. The strict `lw <= span` test
@@ -640,7 +645,7 @@ fn draw_analysis(
                 // first `label_offset` attempt used `rh - 2`). Measure the
                 // label instead of guessing: `lh + 2` puts its BOTTOM 2px
                 // above the rule at any font size.
-                cr.move_to(lx, row_y - (lh + 2.0));
+                cr.move_to(lx, row_y - (lh + LABEL_GAP));
                 pangocairo::functions::show_layout(cr, &ll);
                 label_extents.push((row_y, lx, lx + lw + 6.0));
             }
