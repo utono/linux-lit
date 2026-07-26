@@ -553,7 +553,7 @@ You analyze the grammatical structure of a passage of literature and return \
 prose, formatted with the markup described below. Return ONLY that markup — no \
 commentary outside it, no JSON, no markdown fences.
 
-Emit exactly four sections, in this order.
+Emit exactly three sections, in this order, plus an optional fourth.
 
 1. The passage itself, wrapped in a <segment>...</segment> pair.
 
@@ -571,18 +571,13 @@ sentences, wrapped in a <gloss>...</gloss> pair, on what the structure \
 achieves rhetorically — what the arrangement does that a plainer one would \
 not.
 
-4. A line reading `Terms:` followed by one <gloss>...</gloss> pair per \
-DISTINCT grammatical term you used ANYWHERE ABOVE — in the Structure section \
-AND in the rhetorical note. If the note calls something an appositive, a \
-participial modifier, or a periodic sentence, that term needs a definition \
-here even though no Structure line is labelled with it. A reader who meets an \
-unfamiliar term in your prose and cannot find it below has been left stranded.
-
-Order the entries ALPHABETICALLY by term, not by where they appear.
-
-Each reads `term: definition.` and defines the term GENERALLY — what a \
-relative clause is in any sentence — not what this particular span does. If \
-you used the same term three times, define it once.
+4. If — and only if — you used a grammatical term that was NOT in the list of \
+known terms supplied with the passage, add a line reading `New terms:` and \
+under it one line per such term, reading `term: definition`. Define it \
+generally, as a grammar would. Omit this section entirely when every term you \
+used was already known, which is the usual case. Do NOT write a glossary of \
+the known terms — those are supplied from a database and adding them here \
+would duplicate them.
 
 Do not list parts of speech for individual words.
 
@@ -1528,34 +1523,43 @@ mod tests {
         assert!(!p.contains("\"bands\""), "must NOT ask for the old JSON schema");
         // The three body sections the spec requires.
         assert!(p.contains("Structure"), "must ask for the structure section");
-        assert!(p.contains("Terms"), "must ask for the terms section");
+        assert!(p.contains("New terms:"), "must ask for the new-terms section");
         // POS tags are dropped entirely.
         assert!(!p.to_lowercase().contains("part-of-speech"), "POS tags are dropped");
     }
 
     #[test]
-    fn syntax_gloss_prompt_glossary_covers_the_note_and_sorts_alphabetically() {
+    fn syntax_gloss_prompt_asks_only_for_new_terms() {
         let p = syntax_gloss_prompt();
-        // Terms must cover every grammatical term used ANYWHERE above, not just
-        // the ones that label a Structure line. A gloss whose note said "an
-        // appositive" while Terms defined only the Structure labels left the
-        // reader with an undefined term on screen (reported 2026-07-26).
+        // The glossary now comes from lit.db, not from the reply. The prompt
+        // must ask for definitions of UNKNOWN terms only — asking for all of
+        // them is the token cost (and the drift between glosses) this change
+        // exists to remove.
         assert!(
-            p.contains("ANYWHERE ABOVE"),
-            "glossary must cover terms used in the note too, not only Structure"
+            p.contains("New terms:"),
+            "must name the New terms: heading the parser looks for"
         );
         assert!(
-            p.to_lowercase().contains("rhetorical note"),
-            "the note must be named as a source of glossary terms"
+            p.to_lowercase().contains("known terms"),
+            "must tell the model a list of known terms accompanies the passage"
         );
         assert!(
-            p.contains("ALPHABETICALLY"),
-            "glossary entries must be ordered alphabetically"
+            p.contains("Omit this section entirely"),
+            "the section must be optional — most glosses meet no new term"
         );
-        // And the superseded ordering must be gone, or the model gets two rules.
+        // The superseded full-glossary instructions must be gone, or the model
+        // re-emits the definitions lit.db already holds.
         assert!(
-            !p.contains("in the order they first"),
-            "first-appearance ordering was replaced by alphabetical"
+            !p.contains("ANYWHERE ABOVE"),
+            "the exhaustive-glossary instruction was replaced by New terms:"
+        );
+        assert!(
+            !p.contains("ALPHABETICALLY"),
+            "ordering is now the Terms builder's job, not the model's"
+        );
+        assert!(
+            !p.contains("A line reading `Terms:`"),
+            "the model must not emit a Terms: section at all"
         );
     }
 

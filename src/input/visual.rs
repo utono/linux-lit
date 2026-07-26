@@ -663,6 +663,18 @@ pub(crate) fn syntax_gloss_for_lines(
         user_msg.push_str("\n\nDependency parse for these lines:\n");
         user_msg.push_str(&parse_table);
     }
+    // Send only the term NAMES. The definitions live in lit.db and are
+    // appended at save; sending them here would reintroduce the tokens this
+    // whole change removes.
+    let known_terms: Vec<(String, String)> = match crate::db::queries::open_db() {
+        Ok(conn) => crate::db::grammatical_terms::load_all(&conn),
+        Err(_) => Vec::new(),
+    };
+    if !known_terms.is_empty() {
+        let names: Vec<&str> = known_terms.iter().map(|(t, _)| t.as_str()).collect();
+        user_msg.push_str("\n\nKnown grammatical terms (do not redefine these):\n");
+        user_msg.push_str(&names.join(", "));
+    }
     let state_for_result = std::rc::Rc::clone(state_rc);
 
     glib::spawn_future_local(async move {
@@ -675,9 +687,48 @@ pub(crate) fn syntax_gloss_for_lines(
 
         match result {
             Ok(Ok(gloss_text)) => {
+                // Definitions come from lit.db, not from the reply. Insert any
+                // genuinely new terms the model supplied, then append a Terms
+                // section built from the table — alphabetical, consistent
+                // across every gloss, and covering terms used ONLY in the
+                // rhetorical note (the 2026-07-26 gap).
+                //
+                // Baked into gloss_text at save, not joined at display, so the
+                // stored row stays self-contained for export/search/TTS.
+                //
+                // open_db_rw, NOT open_db: the shared open_db is opened
+                // SQLITE_OPEN_READ_ONLY, under which insert_missing would
+                // silently insert nothing and every new term would be lost.
+                let body = crate::gloss::strip_new_terms(&gloss_text);
+                let assembled = match crate::db::queries::open_db_rw() {
+                    Ok(conn) => {
+                        let new_terms = crate::gloss::parse_new_terms(&gloss_text);
+                        if !new_terms.is_empty() {
+                            let n = crate::db::grammatical_terms::insert_missing(&conn, &new_terms);
+                            crate::logging::log(&format!(
+                                "GRAMMATICAL_TERMS: {n} new term(s) inserted"
+                            ));
+                        }
+                        let known = crate::db::grammatical_terms::load_all(&conn);
+                        let used = crate::gloss::scan_terms_used(&body, &known);
+                        crate::logging::log(&format!(
+                            "GRAMMATICAL_TERMS: {} term(s) used in this gloss",
+                            used.len()
+                        ));
+                        format!("{body}{}", crate::gloss::build_terms_section(&used))
+                    }
+                    // A definitions table being unreadable must not cost the
+                    // reader their analysis — save the gloss without Terms.
+                    Err(e) => {
+                        crate::logging::log(&format!(
+                            "GRAMMATICAL_TERMS: db unavailable ({e}) — no Terms section"
+                        ));
+                        body
+                    }
+                };
                 let mut s = state_for_result.borrow_mut();
                 crate::input::actions::gloss::persist_render_install_gloss(
-                    &mut s, ctx, &gloss_text, "syntax-gloss", &model_for_db,
+                    &mut s, ctx, &assembled, "syntax-gloss", &model_for_db,
                     "SYNTAX-GLOSS: generated and saved new gloss",
                 );
             }
