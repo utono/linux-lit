@@ -14,10 +14,24 @@ pub struct ItalicParse {
 /// subtracting the number of removed `_` at-or-before it. Identity when
 /// `removed` is empty (non-italic line → zero cost, no shift).
 /// `removed` must be sorted ascending (as `ItalicParse.removed_positions` is).
+///
+/// Saturates at 0. The count of removed `_` at-or-before an offset CAN exceed
+/// that offset — a line beginning `___foo` has `removed = [0, 1, 2]`, so a
+/// span starting at char 1 counts 2 removals and `1 - 2` underflows. In a
+/// debug build that is an immediate panic, and because the caller is a GTK
+/// key-press callback the panic cannot cross the C FFI boundary, so the
+/// process ABORTS (`panic_cannot_unwind`). Reported twice on 2026-07-26
+/// during LoJ karaoke playback; recovered from
+/// `linux-lit-dev-stderr-2.log:10`. A release build would silently wrap to a
+/// huge `usize` and mis-tint instead of crashing, which is worse to diagnose.
+///
+/// Saturating is the CORRECT answer, not a papering-over: every removed `_`
+/// at-or-before the offset sits inside the text preceding it, so once they
+/// outnumber that text the display offset is the line start.
 pub fn translate_offset(removed: &[usize], source_offset: usize) -> usize {
     // `removed` is sorted ascending; count entries <= source_offset.
     let n = removed.partition_point(|&p| p <= source_offset);
-    source_offset - n
+    source_offset.saturating_sub(n)
 }
 
 /// Give an odd-count line's orphan `_` the sibling it lacks, returning the
@@ -372,6 +386,20 @@ mod tests {
         // a `_` exactly AT the offset is at-or-before -> counted
         assert_eq!(translate_offset(&[9, 16], 9), 8);   // one removed <= 9
         assert_eq!(translate_offset(&[9, 16], 16), 14); // two removed <= 16
+    }
+
+    #[test]
+    fn translate_offset_saturates_when_removals_outnumber_the_offset() {
+        // A line beginning `___foo` removes chars 0,1,2. An offset of 1 counts
+        // TWO removals at-or-before it, so the naive `offset - n` underflows.
+        // In a debug build that panicked inside a GTK key callback, which
+        // cannot unwind across the C FFI boundary — so the process ABORTED.
+        // Crashed twice on 2026-07-26 during LoJ karaoke playback.
+        assert_eq!(translate_offset(&[0, 1, 2], 1), 0);
+        assert_eq!(translate_offset(&[0, 1, 2], 0), 0);
+        assert_eq!(translate_offset(&[0, 1, 2], 2), 0);
+        // Past the run of leading removals it resumes shifting normally.
+        assert_eq!(translate_offset(&[0, 1, 2], 5), 2);
     }
 
     #[test]
