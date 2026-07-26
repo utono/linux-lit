@@ -93,6 +93,19 @@ pub(crate) fn escape_reader_mode(state: &Rc<RefCell<AppState>>) {
             // match line stays highlighted after the search tags are gone
             // (otherwise the line renders with no highlight at all).
             crate::input::highlight::update_highlight(&mut s);
+            return;
+        }
+    }
+    // Word underline (`-` / `_`) is LAST on the ladder: it is the least modal
+    // of these states, so a reader with both a toast and an underline expects
+    // Escape to take the toast first — exactly how the rungs above order every
+    // other pair. Guarded on `active_underline`, so an underline the cursor
+    // has already left falls through and Escape does nothing.
+    {
+        let has_underline =
+            !crate::input::actions::word_copy::active_underline(&state.borrow()).is_empty();
+        if has_underline {
+            crate::input::actions::word_copy::clear_word_underline(&mut state.borrow_mut());
         }
     }
 }
