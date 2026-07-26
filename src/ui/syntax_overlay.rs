@@ -22,6 +22,10 @@ use crate::syntax_diagram::SyntaxAnalysis;
 const BAND_ROW_H: f64 = 26.0;
 /// Never shrink a band row below this — past it, labels stop being legible.
 const MIN_BAND_ROW_H: f64 = 12.0;
+/// Headroom the rule stack leaves above a line's own glyphs: the band label
+/// floats 14px above its topmost rule (`row_y - 14.0` in `draw_analysis`),
+/// plus breathing room so the label is not flush against the descenders.
+const LABEL_CLEARANCE: f64 = 18.0;
 /// Window margin around the content column.
 const MARGIN: f64 = 48.0;
 /// Content column cap, so text does not run edge to edge on a wide display.
@@ -55,6 +59,31 @@ fn row_height(rows: usize, available: f64) -> f64 {
 fn interior_row_height(rows: usize, line_h: f64, clearance: f64) -> f64 {
     let available = (line_h - clearance).max(0.0);
     row_height(rows, available)
+}
+
+/// Line spacing to ask Pango for so every interior line's band stack fits in
+/// the gap BELOW it instead of overstriking the next line of text.
+///
+/// `interior_row_height` alone cannot deliver this. It shrinks rows to fit
+/// the gap, but stops at `MIN_BAND_ROW_H` — a legibility floor that must not
+/// be lowered. Once `rows` is large enough that even floor-height rows
+/// overflow (`(rows-1) * MIN_BAND_ROW_H > line_h - clearance`), the stack is
+/// painted straight through the following line. That was the 2026-07-26
+/// headless finding: 5 rows under a 27px line put the outermost rule 48px
+/// down, 21px into the next line.
+///
+/// The gap is the only free variable left, so this returns the height the
+/// text must be SET at: enough for the deepest stack plus its label
+/// clearance, and never tighter than the font's own natural line height.
+fn line_spacing_for(rows: usize, natural_line_h: f64, clearance: f64) -> f64 {
+    if rows <= 1 {
+        return natural_line_h;
+    }
+    // What the stack needs at its natural row height, capped by what the
+    // floor would demand — asking for more than BAND_ROW_H per row is never
+    // necessary, and the floor is what makes deep nesting overflow.
+    let needed = (rows as f64 - 1.0) * BAND_ROW_H + clearance;
+    natural_line_h.max(needed)
 }
 
 /// Bottom of the drawn band stack: the maximum `row_y` actually reached by
@@ -252,6 +281,29 @@ fn layout_text(
     (layout, pw as f64, ph as f64)
 }
 
+/// `layout_text`, but with an explicit line height so wrapped lines are set
+/// far enough apart to host their band stacks. `set_line_spacing` takes a
+/// FACTOR of the natural line height (Pango 1.44+), so the caller's absolute
+/// target is converted here.
+fn layout_text_spaced(
+    area: &DrawingArea,
+    text: &str,
+    font: &str,
+    width: Option<f64>,
+    line_h: f64,
+) -> (gtk4::pango::Layout, f64, f64) {
+    let (layout, pw, _) = layout_text(area, text, font, width);
+    let natural = {
+        let (_, _, h) = layout_text(area, "X", font, None);
+        h
+    };
+    if natural > 0.0 && line_h > natural {
+        layout.set_line_spacing((line_h / natural) as f32);
+    }
+    let (_, ph) = layout.pixel_size();
+    (layout, pw, ph as f64)
+}
+
 fn draw(area: &DrawingArea, cr: &gtk4::cairo::Context, inner: &Inner, w: f64, h: f64) {
     // Full-window scrim.
     cr.set_source_rgba(inner.scrim.0, inner.scrim.1, inner.scrim.2, 0.97);
@@ -284,8 +336,21 @@ fn draw_analysis(
     let mut y = MARGIN;
 
     // ── The selection text ──
+    //
+    // Set at a spacing wide enough to host the band stack UNDER each wrapped
+    // line. Without this the stack overstrikes the following line whenever
+    // nesting is deep enough that even floor-height rows overflow the natural
+    // leading (the 2026-07-26 headless finding) — see `line_spacing_for`.
+    let rows = crate::syntax_diagram::max_row(&a.bands) + 1;
+    let natural_line_h = {
+        let (_, _, one_line_h) = layout_text(area, "X", "Serif 20", None);
+        one_line_h
+    };
+    let line_h = line_spacing_for(rows, natural_line_h, LABEL_CLEARANCE);
+
     cr.set_source_rgb(inner.ink.0, inner.ink.1, inner.ink.2);
-    let (layout, _tw, th) = layout_text(area, &a.text, "Serif 20", Some(content_w));
+    let (layout, _tw, th) =
+        layout_text_spaced(area, &a.text, "Serif 20", Some(content_w), line_h);
     cr.move_to(x0, y);
     pangocairo::functions::show_layout(cr, &layout);
 
@@ -303,11 +368,6 @@ fn draw_analysis(
             text_top + rect.y() as f64 / gtk4::pango::SCALE as f64,
         )
     };
-    let line_h = {
-        let (_, _, one_line_h) = layout_text(area, "X", "Serif 20", None);
-        one_line_h
-    };
-
     // Per visual line: its own byte span (start..end, exclusive) and, for
     // convenience, its baseline y (via `pos_of` at the line's own start
     // byte) — everything `band_line_spans` and the segment-drawing loop
@@ -346,50 +406,72 @@ fn draw_analysis(
     y += th + 8.0;
 
     // ── POS row: each tag under its word ──
+    //
+    // Offset by `natural_line_h` (just below the glyphs), NOT the widened
+    // `line_h` — the extra spacing is the gap the band stack lives in, so
+    // adding it here would float the tags away from their own words.
+    // Labels wider than the span they annotate are skipped: at narrow spans
+    // adjacent tags otherwise smear into each other ("PUNCTADJ",
+    // "SCONJ DETNOUN" in the 2026-07-26 run). A dropped tag is recoverable
+    // from the word itself; an unreadable smear is not.
     cr.set_source_rgb(inner.dim.0, inner.dim.1, inner.dim.2);
+    let mut last_pos_right: Option<(usize, f64)> = None;
     for p in &a.pos {
         let (px, py) = pos_of(p.start_char);
-        let (pl, _, _) = layout_text(area, &p.pos, "Sans 9", None);
-        cr.move_to(px, py + line_h);
+        let (pl, plw, _) = layout_text(area, &p.pos, "Sans 9", None);
+        // Which visual line this tag sits on, so the collision check never
+        // compares tags across a wrap.
+        let tag_line = pango_lines
+            .iter()
+            .position(|&(s, e)| p.start_char >= s && p.start_char < e)
+            .unwrap_or(0);
+        if let Some((prev_line, prev_right)) = last_pos_right {
+            if prev_line == tag_line && px < prev_right {
+                continue;
+            }
+        }
+        cr.move_to(px, py + natural_line_h);
         pangocairo::functions::show_layout(cr, &pl);
+        last_pos_right = Some((tag_line, px + plw + 4.0));
     }
     y += 16.0;
 
     // ── Band rows, stacked by depth ──
-    let rows = crate::syntax_diagram::max_row(&a.bands) + 1;
+    //
+    // ONE row height for every visual line, interior or last. `line_h` was
+    // widened by `line_spacing_for` so the full stack fits under EVERY line,
+    // so the old interior-vs-last split is not just unnecessary — it is the
+    // bug: the last line used a generous budget-derived `rh` that, on a
+    // wrapped passage, placed its rules exactly where the next line of text
+    // had been laid out. (Measured 2026-07-26: 605px-wide rules crossing
+    // line 2 at y=133 and y=163 while every interior rule sat correctly in
+    // the 114-121 gap.) A single fitted height also keeps the ladder
+    // consistent line to line.
+    //
+    // `h` (the widget height) is still a real constraint: widened leading
+    // makes a long passage taller, so on a many-line selection the fitted
+    // row height is additionally capped by what actually remains on screen,
+    // keeping the spec's "never clips or scrolls" promise.
     let note_reserve = if inner.show_note && a.note.is_some() { 160.0 } else { 40.0 };
-    let budget = (h - y - note_reserve).max(MIN_BAND_ROW_H);
-    // `rh` is the generous, budget-derived row height: correct ONLY for the
-    // passage's last visual line, which has nothing but the note/margin
-    // beneath it. Every interior line (one with another line of text right
-    // under it) must instead use `interior_row_height`, fitted to the real
-    // gap to that next line (`line_h`) — see its doc comment for why `rh`
-    // alone was the defect.
-    let rh = row_height(rows, budget);
+    let onscreen_budget = (h - (text_top + th) - note_reserve).max(MIN_BAND_ROW_H);
+    let rh = interior_row_height(rows, line_h, LABEL_CLEARANCE)
+        .min(row_height(rows, onscreen_budget));
     let last_line_index = pango_lines.len().saturating_sub(1);
-    // Headroom the rule stack must leave above the line's own glyphs: the
-    // band label floats 14px above its topmost rule (see `row_y - 14.0`
-    // below), plus a little breathing room so the label isn't flush against
-    // the line's descenders.
-    const LABEL_CLEARANCE: f64 = 18.0;
-    let interior_rh = interior_row_height(rows, line_h, LABEL_CLEARANCE);
-    // Per-line row height: the last visual line keeps the generous
-    // below-passage spacing; every other line uses the fitted interior
-    // spacing so a shallow band's rule can never reach into the next line's
-    // text. Same value for every interior line, so the stack still reads as
-    // one coherent ladder rather than jittering line to line.
-    let row_h_for_line = |line_index: usize| -> f64 {
-        if line_index == last_line_index { rh } else { interior_rh }
-    };
+    let interior_rh = rh;
+    let row_h_for_line = |_line_index: usize| -> f64 { rh };
     // Each visual line's own bottom (`line_y(i) + line_h`), resolved to a
     // plain number up front so the pure `band_stack_bottom` helper below
     // never has to touch Pango types.
-    let line_bottoms: Vec<f64> = (0..pango_lines.len()).map(|i| line_y(i) + line_h).collect();
+    let line_bottoms: Vec<f64> =
+        (0..pango_lines.len()).map(|i| line_y(i) + natural_line_h).collect();
     // One (line_index, depth) pair per segment actually drawn, fed to
     // `band_stack_bottom` after the loop to find the real bottom of the
     // stack — see the comment at that call site for why this replaced the
     // old `rows as f64 * rh` global estimate.
     let mut drawn_entries: Vec<(usize, u8)> = Vec::new();
+    // (row_y, x_start, x_end) per band label actually drawn, so a later band
+    // at the same row can detect an overlap and suppress its own label.
+    let mut label_extents: Vec<(f64, f64, f64)> = Vec::new();
 
     for b in &a.bands {
         // One triple per visual line the band touches — the fix for the
@@ -414,7 +496,11 @@ fn draw_analysis(
             // origin.
             let depth_offset =
                 (rows as f64 - 1.0 - b.depth as f64) * row_h_for_line(*line_index);
-            let row_y = line_y(*line_index) + line_h + depth_offset;
+            // Anchored `natural_line_h` below the line's top (just under its
+            // glyphs), not the widened `line_h` — the widening IS the gap the
+            // stack occupies, so anchoring at `line_h` would push the whole
+            // stack down onto the next line again.
+            let row_y = line_y(*line_index) + natural_line_h + depth_offset;
             cr.move_to(sx, row_y);
             cr.line_to(ex, row_y);
             let _ = cr.stroke();
@@ -424,10 +510,30 @@ fn draw_analysis(
         }
 
         // Label, centered on the first segment, drawn once per band.
+        //
+        // Suppressed when it would collide with a label already drawn at the
+        // same row_y, or when it is wider than the band it names. Adjacent
+        // short bands at one depth otherwise overprint each other
+        // ("subject"/"predicate"/"main predicate" in the 2026-07-26 run).
+        // The band's rule is still drawn — only its name is dropped.
         if let Some((lx0, lx1, row_y)) = first_segment {
             let (ll, lw, _) = layout_text(area, &b.label, "Sans 10", None);
-            cr.move_to(((lx0 + lx1) / 2.0 - lw / 2.0).max(x0), row_y - 14.0);
-            pangocairo::functions::show_layout(cr, &ll);
+            let lx = ((lx0 + lx1) / 2.0 - lw / 2.0).max(x0);
+            // Vertical tolerance is the label's own text height, not exact
+            // row equality: labels float 14px above their rules, so two bands
+            // at ADJACENT depths sit close enough to overprint even though
+            // their `row_y` values differ by a full row. Comparing only exact
+            // matches let "predicate"/"adverbial clause"/"predicate adjective"
+            // pile up in the 2026-07-26 re-check.
+            const LABEL_V_TOLERANCE: f64 = 13.0;
+            let collides = label_extents.iter().any(|&(ry, ex0, ex1): &(f64, f64, f64)| {
+                (ry - row_y).abs() < LABEL_V_TOLERANCE && lx < ex1 && (lx + lw) > ex0
+            });
+            if !collides && lw <= (lx1 - lx0) + 8.0 {
+                cr.move_to(lx, row_y - 14.0);
+                pangocairo::functions::show_layout(cr, &ll);
+                label_extents.push((row_y, lx, lx + lw + 6.0));
+            }
         }
 
         for &(line_index, _, _) in &spans {
@@ -451,10 +557,16 @@ fn draw_analysis(
         rh,
         interior_rh,
     );
+    // The note must clear BOTH the deepest band rule and the text block
+    // itself. With `line_spacing_for` widening the leading, the passage's
+    // own bottom (`text_top + th`) can sit below the last line's rules, so
+    // taking `stack_bottom` alone put the commentary back inside the diagram
+    // (measured 2026-07-26: note at y=186 against line-2 rules at y=163).
+    let text_bottom = text_top + th;
     y = if stack_bottom > f64::MIN {
-        stack_bottom + 16.0
+        stack_bottom.max(text_bottom) + 20.0
     } else {
-        y + rh + 16.0
+        text_bottom.max(y) + rh + 16.0
     };
 
     // ── Commentary (toggleable) ──
@@ -561,6 +673,50 @@ mod tests {
         // floor rather than propagate a negative/NaN available space.
         let h = interior_row_height(3, 10.0, 18.0);
         assert_eq!(h, MIN_BAND_ROW_H);
+    }
+
+    // ── line_spacing_for: the overstrike fix ──
+    //
+    // The headless run (2026-07-26) showed band rules painted THROUGH the
+    // passage's second and later wrapped lines. `interior_row_height` alone
+    // cannot prevent this: with the observed geometry (line_h ~= 27,
+    // clearance 18, rows 5) it returns `row_height(5, 9)` = the 12px floor,
+    // so the outermost row lands at (5-1)*12 = 48px below the line — 21px
+    // INTO the next line of text. The floor is a legibility guarantee, so it
+    // must not be lowered; the gap has to grow instead.
+
+    #[test]
+    fn line_spacing_leaves_room_for_the_deepest_stack() {
+        // The exact enriched-path case from the headless run: 5 band rows
+        // under a 27px line. Whatever spacing we ask Pango for, the full
+        // stack plus its label clearance must fit inside it.
+        let rows = 5;
+        let line_h = 27.0;
+        let spacing = line_spacing_for(rows, line_h, LABEL_CLEARANCE);
+        let rh = interior_row_height(rows, spacing, LABEL_CLEARANCE);
+        let deepest = (rows as f64 - 1.0) * rh;
+        assert!(
+            deepest + LABEL_CLEARANCE <= spacing,
+            "stack {deepest} + clearance {LABEL_CLEARANCE} must fit in spacing {spacing}"
+        );
+    }
+
+    #[test]
+    fn line_spacing_never_shrinks_below_the_natural_line() {
+        // No bands, or a single row: the text must still be set at its
+        // natural leading — never tighter than Pango's own line height.
+        assert!(line_spacing_for(0, 27.0, LABEL_CLEARANCE) >= 27.0);
+        assert!(line_spacing_for(1, 27.0, LABEL_CLEARANCE) >= 27.0);
+    }
+
+    #[test]
+    fn line_spacing_grows_with_nesting_depth() {
+        // Deeper nesting needs a taller gap; the relationship must be
+        // monotonic so a complex sentence never gets a tighter setting than
+        // a simple one.
+        let shallow = line_spacing_for(2, 27.0, LABEL_CLEARANCE);
+        let deep = line_spacing_for(6, 27.0, LABEL_CLEARANCE);
+        assert!(deep > shallow, "deep {deep} must exceed shallow {shallow}");
     }
 
     // ── band_line_spans ──

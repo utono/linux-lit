@@ -835,17 +835,44 @@ When a half line clips at the bottom edge of a scrolled surface:
       passage's second line at ~140.
     - Root cause: a Pango layout's `pixel_size().1` (full wrapped height) was
       available but the annotation origin used a single `line_h` instead.
-    - Rule: on a Cairo surface that both renders wrapped text AND draws
-      beneath it, the annotation origin is the layout's FULL height, never
-      one line height. Where an annotation must align to a specific visual
-      line, iterate `layout.iter()` / `line_yrange` per line rather than
-      assuming line 1.
+    - **Root cause (proven, and NOT what it first looked like):** the
+      annotation origin was already per-line and correct. The real defect was
+      that a legibility FLOOR (`MIN_BAND_ROW_H`) made deep stacks
+      structurally unable to fit the natural leading: with `line_h` 27,
+      clearance 18 and 5 rows, `interior_row_height` returns the 12px floor,
+      putting the outermost rule at (5-1)x12 = 48px — 21px into the next
+      line. No per-line arithmetic can fix that; the GAP is the only free
+      variable.
+    - Fix: `line_spacing_for(rows, natural_line_h, clearance)` computes the
+      height the text must be SET at (`layout.set_line_spacing`, a FACTOR of
+      natural height in Pango 1.44+), then annotations anchor at
+      `natural_line_h` below each line's top — the widening IS the gap they
+      occupy, so anchoring at the widened `line_h` just pushes the stack onto
+      the next line again.
+    - **Second-order trap:** after widening, an interior-vs-last-line row
+      height split becomes the bug. The last line kept a generous
+      budget-derived `rh` and painted 605px-wide rules exactly where line 2
+      had been laid out. Once the gap is uniform, use ONE row height for
+      every line.
+    - **Third-order trap:** the commentary below must clear
+      `max(stack_bottom, text_top + th)`. Widened leading can put the text
+      block's own bottom below the last rule, so keying off the band stack
+      alone puts the note back inside the diagram.
     - Related, same surface: a label wider than the span it annotates needs
       elision or suppression, or adjacent short spans smear together
       (`PUNCTADJ`, `SCONJ DETNOUN`). Measure the label against its span width
-      before drawing it.
+      before drawing it. Band-label collision needs a VERTICAL TOLERANCE
+      (~the label's text height), not exact `row_y` equality — labels float
+      above their rules, so adjacent DEPTHS overprint while comparing equal
+      rows reports no collision.
+    - Verification: pixel-scan for rows that are simultaneously text-heavy
+      and rule-heavy. Whole-band overstrike went from most of the annotation
+      band to 4 minor label grazes out of 15 rule rows on a 21-band,
+      5-wrapped-line paragraph.
     (`syntax_overlay.rs`, 2026-07-26 — found by the mandatory headless check,
-    NOT by the build or the unit tests, both of which were green.)
+    NOT by the build or the unit tests, both of which were green. Three
+    successive headless re-measures were needed; each fix exposed the next
+    layer, and none was visible from logs.)
 
 ## The CLIP_WARN tripwire (grep this FIRST)
 
