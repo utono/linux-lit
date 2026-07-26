@@ -56,9 +56,10 @@ pub fn load_line_syntax(conn: &Connection, line_ids: &[i64]) -> Vec<SyntaxToken>
         let head_i: i64 = row.get(4)?;
         let canonical: String = row.get(5)?;
         // Offsets index canonical_text exactly (guaranteed by the upstream
-        // backfill), but clamp anyway: a stale parse must not panic the reader.
-        let (s, e) = (start.max(0) as usize, end.max(0) as usize);
-        let text = if s < e && e <= canonical.len()
+        // backfill), but guard against stale parses: a negative or out-of-range
+        // offset means the parse is broken and the token should be dropped.
+        let (s, e) = (start as usize, end as usize);
+        let text = if start >= 0 && end >= 0 && s < e && e <= canonical.len()
             && canonical.is_char_boundary(s) && canonical.is_char_boundary(e)
         {
             canonical[s..e].to_string()
@@ -218,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_offset_negative_start_is_clamped() {
+    fn stale_offset_negative_start_is_dropped() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE line_mapping (id INTEGER PRIMARY KEY, canonical_text TEXT);
@@ -242,20 +243,9 @@ mod tests {
 
         let toks = load_line_syntax(&conn, &[1]);
         // Good token at 0–5 is present.
-        // Bad token at -3–4 is clamped to 0–4, which overlaps [0,5); must not panic.
-        // The clamped slice [0,4] is "hell", but it should be dropped because
-        // -3 < 0, triggering the guard (s < e requires start < end post-clamp;
-        // -3→0, 4→4 means 0 < 4, true, but end (4) <= len (5), true, and both
-        // boundaries valid, so it would be "hell").
-        // Actually, let me reconsider: the guard is `s < e && e <= canonical.len()`.
-        // After clamp: s=0, e=4. 0 < 4 (yes), 4 <= 5 (yes), boundaries OK (yes).
-        // So the slice succeeds and returns "hell". The guard doesn't reject
-        // negative starts; it clamps them. That is the intended behavior per
-        // line 60: `.max(0)`. So this token would NOT be dropped.
-        // Adjust test: the negative start is clamped, so it WILL produce a token.
-        assert_eq!(toks.len(), 2);
+        // Bad token at -3–4 has a negative start, so it is dropped (not clamped).
+        assert_eq!(toks.len(), 1);
         assert_eq!(toks[0].text, "hello");
-        assert_eq!(toks[1].text, "hell");
     }
 
     #[test]
