@@ -291,6 +291,18 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         let old = state.prev_highlight_line.get();
         let new = Some(state.current_line);
         if old != new {
+            // The `-`/`_` word underline belongs to the line it was made on.
+            // `active_underline` already treats it as absent once the cursor
+            // leaves, so nothing can ACT on a stale one — but the tag stays
+            // painted until something removes it. This is that something: one
+            // funnel every cursor move already passes through, rather than the
+            // ~76 `current_line` write sites hooking it individually.
+            if state.word_cycle.cycle_line.is_some()
+                && state.word_cycle.cycle_line != new
+                && !state.word_cycle.collect_ranges.is_empty()
+            {
+                crate::input::actions::word_copy::clear_word_underline(state);
+            }
             let lb = state.left_clip_boundary.get();
             let rb = state.right_clip_boundary.get();
             if lb.is_some() && (old == lb || new == lb) {
