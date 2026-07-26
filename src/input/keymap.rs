@@ -328,8 +328,6 @@ pub fn handle_key(
             crate::app::InputMode::ChatPrompt => handle_chat_prompt_key(state, key_name, key_char, is_ctrl),
             crate::app::InputMode::ChatTranscript => handle_chat_transcript_key(state, key_state, key_name, is_ctrl, is_shift, is_alt),
             crate::app::InputMode::CorpusSearch => handle_corpus_search_key(state, key_name, is_ctrl, is_shift),
-            crate::app::InputMode::SyntaxDiagram => handle_syntax_diagram_key(state, key_name, is_ctrl),
-            crate::app::InputMode::SyntaxKeybindsOverlay => handle_syntax_keybinds_key(state, key_name, is_ctrl),
             crate::app::InputMode::Reader => unreachable!(),
         };
     }
@@ -2655,11 +2653,41 @@ fn handle_gloss_key(
             }
             true
         }
-        // `\`: advance the segment-overlay cycle → synopsis for the lap's
-        // entry segment (restores the pre-open page, unlike Escape's
-        // jump-to-source close).
+        // `\`: advance the segment-overlay cycle. The gloss overlay is TWO
+        // stops in the lap (gloss, then syntax further round) sharing one
+        // widget, so which stop this press ends depends on the gloss_type
+        // currently shown: a syntax-gloss ends the lap (`cycle_from_syntax`),
+        // anything else advances to the journal Q&A stop (`cycle_from_gloss`).
+        //
+        // KNOWN QUIRK (final review, 2026-07-26): this branches ONLY on the
+        // displayed gloss_type, not on how the overlay got here. If the user
+        // opened this syntax-gloss from the PICKER (Alt+g / gloss picker)
+        // rather than by cycling into it, `\` still ends the lap here instead
+        // of advancing to the journal stop — so `\` means two different
+        // things ("end the lap" vs "advance") depending on entry path. The
+        // cycle still terminates cleanly either way; nobody gets stranded, so
+        // this is left as-is. `AppState.gloss_opened_from_picker` exists but
+        // is unusable for this distinction as written: every cycle entry
+        // point (`cycle_from_*` in overlay_cycle.rs) resets it to `false`, so
+        // by the time `\` fires mid-cycle it reads the same as a picker open
+        // did NOT just happen. Gating on it cleanly would need a new flag
+        // (e.g. "this syntax-gloss view came from the cycle") set at
+        // `cycle_from_journal` and cleared alongside `gloss_opened_from_picker`
+        // — a reasonable follow-up, not done here since behavior must not
+        // change per this review's finding.
         "backslash" if !is_ctrl && !is_alt => {
-            crate::input::actions::overlay_cycle::cycle_from_gloss(state);
+            let showing_syntax = {
+                let s = state.borrow();
+                s.gloss_list
+                    .get(s.gloss_index)
+                    .map(|g| g.gloss_type == "syntax-gloss")
+                    .unwrap_or(false)
+            };
+            if showing_syntax {
+                crate::input::actions::overlay_cycle::cycle_from_syntax(state);
+            } else {
+                crate::input::actions::overlay_cycle::cycle_from_gloss(state);
+            }
             true
         }
         // `/`: open the search bar to type a regex for the CURRENT gloss buffer
@@ -3286,22 +3314,12 @@ fn handle_block_visual_key(
             (cfg.set_hint)(&s.gloss_overlay);
             true
         }
-        // s: open the full-screen syntax diagram for the selected blocks.
-        // Overlay text has no line_mapping rows, so no parse enrichment.
-        "s" => {
-            let text = {
-                let s = state.borrow();
-                (cfg.yank_text)(&s.gloss_overlay)
-            };
-            {
-                let mut s = state.borrow_mut();
-                (cfg.escape_exit)(&s.gloss_overlay);
-                s.input_mode = cfg.return_mode;
-                (cfg.set_hint)(&s.gloss_overlay);
-            }
-            crate::input::actions::syntax::open_syntax_diagram(state, text, Vec::new());
-            true
-        }
+        // `s` is unbound here. It opened the full-screen syntax diagram for the
+        // selected blocks; a syntax gloss replaced that drawing, and a gloss is
+        // stored against citations. Overlay text is gloss/synopsis prose with no
+        // `line_mapping` rows, so it has no citations to key one by. The syntax
+        // gloss is reached from the reader instead — visual-mode "Syntax", or
+        // `-`/`_` then Return.
         _ => true,
     }
 }
@@ -3367,22 +3385,8 @@ fn handle_journal_visual_key(
             s.journal_overlay.set_journal_hint();
             true
         }
-        // s: open the full-screen syntax diagram for the selected blocks.
-        // Overlay text has no line_mapping rows, so no parse enrichment.
-        "s" => {
-            let text = {
-                let s = state.borrow();
-                s.journal_overlay.visual_selection_text()
-            };
-            {
-                let mut s = state.borrow_mut();
-                s.journal_overlay.exit_visual_to_anchor();
-                s.input_mode = crate::app::InputMode::JournalOverlay;
-                s.journal_overlay.set_journal_hint();
-            }
-            crate::input::actions::syntax::open_syntax_diagram(state, text, Vec::new());
-            true
-        }
+        // `s` is unbound here — see the note on the gloss/synopsis visual
+        // handler above: journal prose has no citations to key a gloss by.
         _ => true,
     }
 }
@@ -3822,59 +3826,6 @@ fn handle_gamepad_key(
         }
         _ => true,
     }
-}
-
-/// Full-screen syntax diagram. Escape closes and returns to whichever surface
-/// it was opened from (`syntax_return_mode` — Reader, or the gloss/synopsis/
-/// journal overlay it was opened over); `n` toggles the prose commentary;
-/// every other key is swallowed so the diagram is fully modal.
-fn handle_syntax_diagram_key(
-    state: &Rc<RefCell<AppState>>,
-    key_name: &str,
-    is_ctrl: bool,
-) -> bool {
-    if is_ctrl && key_name == "slash" {
-        let mut s = state.borrow_mut();
-        s.syntax_keybinds_overlay.show();
-        s.input_mode = crate::app::InputMode::SyntaxKeybindsOverlay;
-        return true;
-    }
-    match key_name {
-        "Escape" => {
-            let mut s = state.borrow_mut();
-            s.syntax_overlay.hide();
-            // Restore whichever surface the diagram was opened from (Reader,
-            // or the gloss/synopsis/journal overlay it was opened over) —
-            // never hard-code Reader, or that overlay stays painted while
-            // input_mode silently falls back to the (invisible) main card.
-            s.input_mode = s
-                .syntax_return_mode
-                .take()
-                .unwrap_or(crate::app::InputMode::Reader);
-            true
-        }
-        "n" => {
-            state.borrow().syntax_overlay.toggle_note();
-            true
-        }
-        _ => true,
-    }
-}
-
-/// Modal handler for the syntax-diagram Ctrl+/ keybind legend: Esc or Ctrl+/
-/// closes the legend and returns to the diagram; all other keys are swallowed.
-/// Mirrors `handle_echo_keybinds_key`.
-fn handle_syntax_keybinds_key(
-    state: &Rc<RefCell<AppState>>,
-    key_name: &str,
-    is_ctrl: bool,
-) -> bool {
-    if key_name == "Escape" || (is_ctrl && key_name == "slash") {
-        let mut s = state.borrow_mut();
-        s.syntax_keybinds_overlay.hide();
-        s.input_mode = crate::app::InputMode::SyntaxDiagram;
-    }
-    true // consume all keys while the legend is up (modal)
 }
 
 fn handle_echo_keybinds_key(
@@ -4496,7 +4447,7 @@ fn dispatch_action(
             let active =
                 !crate::input::actions::word_copy::active_underline(&state.borrow()).is_empty();
             if active {
-                crate::input::actions::syntax::open_syntax_diagram_for_underlined(state);
+                crate::input::actions::syntax::syntax_gloss_for_underlined(state);
             }
         }
         OpenSegmentVim => crate::input::actions::segment_vim::open(state),

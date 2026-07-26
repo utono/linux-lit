@@ -17,6 +17,7 @@ pub(crate) fn open_picker_mode(s: &mut AppState, mode: crate::app::InputMode) {
 pub(crate) enum GlossPickerFilter {
     TeacherGeneric,
     InnerMonologue,
+    SyntaxGloss,
     #[default]
     ReaderGloss,
 }
@@ -26,6 +27,7 @@ impl GlossPickerFilter {
         match self {
             GlossPickerFilter::TeacherGeneric => "teacher-generic",
             GlossPickerFilter::InnerMonologue => "inner-monologue",
+            GlossPickerFilter::SyntaxGloss => "syntax-gloss",
             GlossPickerFilter::ReaderGloss => "reader-gloss",
         }
     }
@@ -33,7 +35,8 @@ impl GlossPickerFilter {
     pub(crate) fn next(self) -> Self {
         match self {
             GlossPickerFilter::TeacherGeneric => GlossPickerFilter::InnerMonologue,
-            GlossPickerFilter::InnerMonologue => GlossPickerFilter::ReaderGloss,
+            GlossPickerFilter::InnerMonologue => GlossPickerFilter::SyntaxGloss,
+            GlossPickerFilter::SyntaxGloss => GlossPickerFilter::ReaderGloss,
             GlossPickerFilter::ReaderGloss => GlossPickerFilter::TeacherGeneric,
         }
     }
@@ -1052,5 +1055,28 @@ pub(crate) fn delete_bookmark(
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picker_filter_cycles_through_every_type_including_syntax() {
+        // Alt+t must reach syntax-gloss, and the cycle must return to its
+        // start — a filter that cannot be cycled back to is unreachable.
+        let start = GlossPickerFilter::default();
+        let mut seen = vec![start.gloss_type()];
+        let mut f = start.next();
+        while f != start {
+            seen.push(f.gloss_type());
+            f = f.next();
+        }
+        assert!(seen.contains(&"syntax-gloss"), "cycle must reach it: {seen:?}");
+        assert!(seen.contains(&"reader-gloss"));
+        assert!(seen.contains(&"teacher-generic"));
+        assert!(seen.contains(&"inner-monologue"));
+        assert_eq!(seen.len(), 4, "one entry per type, no duplicates: {seen:?}");
     }
 }

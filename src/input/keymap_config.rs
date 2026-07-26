@@ -487,7 +487,8 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         // reader-gloss chat panel (ReaderGlossChatAtCursor). Restore that bind
         // (and Ctrl+l ChatPanelFlipSide in display_bindings) to re-enable it.
         (KeyCombo::plain("minus"), Action::WordCycleCopy),
-        // Return diagrams the sentence containing the `-`/`_` underlined
+        // Return opens a syntax gloss (grammatical analysis, rendered by the
+        // gloss overlay) for the sentence containing the `-`/`_` underlined
         // words. Reader mode binds no Return today, so this is additive; the
         // dispatch arm no-ops when nothing is underlined.
         (KeyCombo::plain("Return"), Action::OpenSyntaxDiagramForUnderlined),

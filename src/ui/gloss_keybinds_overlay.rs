@@ -18,7 +18,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles · r next word)"),
     ("Alt+g", "gloss_picker"),
-    ("\\", "cycle_from_gloss: → journal Q&A (same segment)"),
+    ("\\", "cycle_from_gloss: → journal Q&A (same segment); on a syntax gloss, closes instead"),
 ]);
 
 /// Grouped (key, action) rows. Matches handle_gloss_key + the gloss visual mode.
@@ -29,7 +29,6 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Ctrl+n / Ctrl+p", "navigate_gloss_passage: next / prev"),
         ("Alt+n / Alt+p", "navigate_gloss: prev / next"),
         ("Shift+V", "visual select (y yank → clipboard)"),
-        ("Shift+V, s", "syntax diagram of the selected blocks"),
     ]),
     // L (pick_source_voice), v (voice_picker), Ctrl+v (cycle_active_voice)
     // are deliberately unlisted (2026-07-22) — the binds stay live in the

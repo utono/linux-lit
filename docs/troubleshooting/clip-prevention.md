@@ -984,6 +984,18 @@ When a half line clips at the bottom edge of a scrolled surface:
     arithmetic**: a layout "verified" only in cage is unverified. Run the real
     GL check before believing any pixel-level acceptance on this surface.)
 
+    **RETIRED (2026-07-26).** The surface this entry describes no longer
+    exists. After four rounds of layout fixes in one day — each exposing the
+    next, with cage passing layouts the real GL renderer rejected — the Cairo
+    diagram was replaced by `syntax-gloss`, a prose gloss type rendered by the
+    existing overlay (spec:
+    `docs/superpowers/specs/2026-07-26-syntax-gloss-design.md`). The entry is
+    kept because its LESSONS generalize to any annotation layer drawn over
+    text: derive offsets from measured content rather than constants, never
+    anchor two stacked elements at the same origin, and test the real renderer
+    before believing a headless pass. The specific fix history is now
+    archaeology.
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

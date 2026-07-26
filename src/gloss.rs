@@ -541,6 +541,50 @@ pub fn reader_gloss_edit_prompt(work_type: &str) -> &'static str {
     }
 }
 
+/// System prompt for a `syntax-gloss`: the passage's grammatical structure as
+/// prose, in the block markup the gloss overlay already renders.
+///
+/// Returns markup rather than JSON because a syntax gloss is stored and drawn
+/// like every other gloss type. Per-word POS tags are deliberately absent —
+/// they existed to fill the old Cairo tag row, and in prose they are noise.
+pub fn syntax_gloss_prompt() -> &'static str {
+    "\
+You analyze the grammatical structure of a passage of literature and return \
+prose, formatted with the markup described below. Return ONLY that markup — no \
+commentary outside it, no JSON, no markdown fences.
+
+Emit exactly four sections, in this order.
+
+1. The passage itself, wrapped in a <segment>...</segment> pair.
+
+2. A line reading `Structure:` followed by one line per grammatical span. Each \
+line is: two spaces of indent per level of nesting, then what the span IS, \
+then ` — `, then the span's own words. Nesting means containment: a span \
+indented under another is inside it. Use terms a reader would meet in a \
+grammar — main clause, relative clause, appositive, subject, predicate, \
+conjoined predicate, participial modifier, adverbial phrase. Quote the span's \
+actual words; if a span runs longer than about sixty characters, keep its \
+first and last words and put … between them.
+
+3. A line reading `What the structure is doing:` followed by two or three \
+sentences, wrapped in a <gloss>...</gloss> pair, on what the structure \
+achieves rhetorically — what the arrangement does that a plainer one would \
+not.
+
+4. A line reading `Terms:` followed by one <gloss>...</gloss> pair per \
+DISTINCT term you used in the Structure section, in the order they first \
+appear. Each reads `term: definition.` and defines the term GENERALLY — what a \
+relative clause is in any sentence — not what this particular span does. If \
+you used the same term three times, define it once.
+
+Do not list parts of speech for individual words.
+
+Where a dependency parse is supplied, anchor your analysis on it. Where it is \
+absent, analyze the text directly — the parse is an enrichment, never a \
+requirement. The passage is early modern or nineteenth-century English; \
+analyze the grammar as written, not as it would be phrased today."
+}
+
 pub static FIX_IPA_PROMPT: LazyLock<String> = LazyLock::new(|| {
     if APPEND_IPA {
         "\
@@ -1353,6 +1397,21 @@ mod tests {
         assert_eq!(reader_gloss_prompt("prose_book"), prose);
     }
 
+    #[test]
+    fn syntax_gloss_prompt_asks_for_markup_not_json() {
+        let p = syntax_gloss_prompt();
+        assert!(!p.is_empty());
+        // Prose markup, not the JSON the Cairo diagram used.
+        assert!(p.contains("<segment>"), "must ask for segment markup");
+        assert!(p.contains("<gloss>"), "must ask for gloss markup");
+        assert!(!p.contains("\"bands\""), "must NOT ask for the old JSON schema");
+        // The three body sections the spec requires.
+        assert!(p.contains("Structure"), "must ask for the structure section");
+        assert!(p.contains("Terms"), "must ask for the terms section");
+        // POS tags are dropped entirely.
+        assert!(!p.to_lowercase().contains("part-of-speech"), "POS tags are dropped");
+    }
+
     // ---- lookup_citation hardening ----
 
     /// Build a tiny in-memory lit.db subset: `works(abbrev,title,author,
@@ -1480,6 +1539,7 @@ mod tests {
         ]);
         assert_eq!(lookup_citation(&conn, "Who's there", "Mac", 1, 1), None);
     }
+
 }
 
 #[cfg(test)]
