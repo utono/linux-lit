@@ -19,5 +19,13 @@ Interpretation:
   on the next load of that play at the pinned layout.
 
 The fingerprint string is human-readable
-(`v1|family|size|ascent|descent|charw|WxH|spacing|margins|cols`), so when a
-table is unexpectedly missing you can see which layout input moved.
+(`v5|family|size|ascent|descent|charw|WxH|spacing|margins|cols|top_spacer|view_h`),
+so when a table is unexpectedly missing you can see which layout input moved.
+`WxH` is the toplevel WINDOW size; `view_h` is the CARD's `text_view.height()`,
+which is what the fit check validates against (added in `v5`, 2026-07-27 — see
+clip-prevention.md #12).
+
+**PASS does not mean "fits".** This script checks STRUCTURE (coverage,
+ordering, overlaps), not whether a column fits the CURRENT card. A table can
+report PASS and still render a clipped last line; the decisive tell for that is
+a `BOTTOM_CLIP_EXACT` log line whose `total` exceeds `widget_h` with `clip=0`.

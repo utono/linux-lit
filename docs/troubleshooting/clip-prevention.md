@@ -695,18 +695,22 @@ When a half line clips at the bottom edge of a scrolled surface:
     step is NOT the cause, just how you first land there. **Root cause:** the
     pinned table stored a left-column `split` that fit at the geometry it was
     GENERATED at, but the current reader **card** height is smaller, so the split
-    now overflows. The layout fingerprint
-    (`v1|family|size|ascent|descent|charw|WxH|spacing|margins|cols`) keys on the
-    **toplevel WINDOW** size (`state.window.width()/height()`), NOT the card's
-    `text_view.height()` — so a change that shrinks the CARD without moving any
+    now overflows. Historically the layout fingerprint keyed on the **toplevel
+    WINDOW** size (`state.window.width()/height()`), NOT the card's
+    `text_view.height()` — so a change that shrank the CARD without moving any
     fingerprint input (a reader-clip/margin/spacing tweak whose effect on the
     card isn't a fingerprint field, or a table generated before the card settled
-    to its final height) leaves the stale table a valid `table hit`. Confirm by
+    to its final height) left the stale table a valid `table hit`. **As of `v5`
+    the view height IS fingerprinted** (see "durable fix" below), so this
+    root cause is closed for new tables. Confirm by
     comparing the stored table's `end` against a LIVE `column_split` at the real
     card height: a fresh `column_split` fits (`total < usable`, `clip > 0`) while
-    the stored `end` is one line too far. **Fix: regenerate the table** (the data
-    IS the bug — do NOT patch the reader). Close nothing; deleting the rows is
-    safe (`DELETE FROM play_pages WHERE work_abbrev='<ABBR>'; DELETE FROM
+    the stored `end` is one line too far. **Fix: FIRST check whether a derived
+    layout input is missing from the fingerprint** (that is the real bug — a
+    table that can go stale while still matching); regenerating by hand only
+    clears the symptom for one work and it will come back. The data IS the bug
+    either way — do NOT patch the reader. To clear it for one work, deleting the
+    rows is safe (`DELETE FROM play_pages WHERE work_abbrev='<ABBR>'; DELETE FROM
     play_pages_meta WHERE work_abbrev='<ABBR>';`) and the app regenerates at the
     true current geometry on next load — `record_spreads`→`column_split` respects
     `usable = widget_h − guard − BASE_BOTTOM_MARGIN` and `validate_spreads` fit-
