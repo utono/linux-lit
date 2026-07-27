@@ -495,7 +495,15 @@ pub fn load_for_prose_work(state: &crate::app::AppState) {
 
 /// Drop a loaded/generated prose table whose fingerprint no longer matches the
 /// CURRENT layout, then try `load_for_prose_work` once. Mirror of
-/// `page_table::revalidate_on_resize`: never (re)generates on resize.
+/// `page_table::revalidate_on_resize`: this function itself never
+/// (re)generates — it only drops and retries a LOAD.
+///
+/// Its CALLER (the resize tick in `app/mod.rs`) does regenerate as of
+/// 2026-07-27, by clearing `prose_page_table_gen_attempted` when this drops a
+/// table that no stored fingerprint replaces. Before that, a resize left the
+/// reader on the live engine for the rest of the session — the generation
+/// latch resets only on work load — which silently lost pinned pagination and
+/// the chapter-at-top rule baked into the stored grid.
 pub fn revalidate_prose_on_resize(state: &crate::app::AppState) {
     if state.prose_page_table.borrow().is_none() {
         return;

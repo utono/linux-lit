@@ -1064,6 +1064,52 @@ When a half line clips at the bottom edge of a scrolled surface:
     before believing a headless pass. The specific fix history is now
     archaeology.
 
+19. **The INVERSE of a clip: single-column PROSE paints content the page was
+    supposed to END before — a chapter heading (and the next chapter's opening
+    paragraph) rendering below the end of the previous chapter.** Nothing is
+    sliced; too much is shown. The stored `prose_pages` grid is CORRECT and the
+    page top is CANONICAL, so both usual suspects check out and the diagnosis
+    stalls (see page-turning-mechanics.md for the two off-grid variants that
+    look identical on screen).
+    - Tell: the clip line reads `BOTTOM_CLIP_ROWFILL … row_clip=0` on a page
+      whose stored end is EARLIER than where the rows stop fitting. An
+      `exact_end`-governed page logs `BOTTOM_CLIP_EXACT` instead — so
+      **`ROWFILL` on a page that should end early is the signature.**
+      Confirm by querying the active table: `SELECT start_line_id,
+      end_line_id FROM prose_pages WHERE …` — if `end_line_id` is the chapter
+      heading's line, the pagination did its job and the clip ignored it.
+    - Root cause: the single-column prose bottom clip was purely GEOMETRIC. It
+      covers from the last visual row that fits `usable_height` to the card
+      edge and never consulted the stored page. Correct when a page ends
+      because it ran out of room; wrong when it ends EARLY BY RULE — which is
+      what the chapter clamp does. The two-column path never had this bug
+      because it always passes the stored split as `exact_end`.
+    - Fix: `scroll::prose_exact_end_for_current_page` supplies the exclusive
+      `exact_end` for single-column prose from
+      `prose_table_last_line_for_top`. **Both clip-scheduling sites must use
+      it** — `refresh_bottom_clip` gated `exact_end` on `column_count() == 2`,
+      so fixing only the render path left a second live route to the bug.
+    - The `+ 1` (inclusive last rendered line → exclusive end) is load-bearing:
+      an off-by-one there paints exactly one line too many, which IS this bug.
+      `prose_pages::last_rendered_line` is the pure conversion, with a
+      regression test built from real BH-Barrett page-82 values
+      (`(686,0)..(697,0)`, buffer 697 = the "CHAPTER VIII" line).
+    - **Reproducing it under cage needs TWO things** (both fixed/verified
+      2026-07-27, and it was reproducible neither way before):
+      1. `wlr-randr --output HEADLESS-1 --custom-mode 1920x1236` — **1236, not
+         1200.** Pagination keys on the TEXT VIEW height; 1236 yields the
+         production `text_view.height = 1098`, while 1200 yields 1062, a 36px
+         miss that changes the grid and hides the bug.
+      2. Wait for the table to REGENERATE after that resize. The resize lands
+         after the app maps, so the first table is built at 720p and dropped;
+         until the resize tick learned to regenerate, the run had no table at
+         all and table mode never engaged (the geometric clip is then
+         correct, so nothing looked wrong).
+      Confirm both from the log: `RESIZE_TICK: text_view.height changed … ->
+      1098`, then `PAGES_PROSE: page N/M`. The fix's own tell is
+      `BOTTOM_CLIP_EXACT … clip=389 page_top=686` where it previously read
+      `BOTTOM_CLIP_ROWFILL … row_clip=0`.
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

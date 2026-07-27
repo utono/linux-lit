@@ -29,7 +29,23 @@ Compositor + capture + input (the launch stack):
 - **`wtype`** (pkg `wtype`) — injects keystrokes over the virtual-keyboard
   protocol.
 - **`wlr-randr`** (pkg `wlr-randr`) — resizes cage's headless output to
-  production geometry (1920×1200); pagination differs at cage's 720p default.
+  production geometry; pagination differs at cage's 720p default.
+  **Use `1920x1236`, not `1920x1200`** (2026-07-27): what pagination actually
+  keys on is the TEXT VIEW height, and the user's real window is 1236px tall,
+  yielding `text_view.height = 1098`. A 1920×1200 output yields 1062 — a 36px
+  miss that changes the page grid, so a pagination/clipping bug reproducible
+  on the real renderer may be invisible headlessly. Confirm from the log:
+  `RESIZE_TICK: text_view.height changed … -> 1098`.
+
+  Note the resize lands AFTER the app maps, so the first table is generated at
+  cage's 720p default and then dropped (`PAGES_PROSE: dropped table (layout
+  changed)`). Give the settled-layout hook time to regenerate before driving,
+  or the run has no table at all and table-mode bugs cannot appear.
+
+  The regenerated fingerprint still differs from production in its WINDOW
+  token (`1920x1236` vs `1920x1200`) — harmless: every layout-derived field
+  (`view_h`, `uh`, `cw`) matches, so the harness reproduces the real LAYOUT
+  and simply keeps its own table rows.
 - **`dbus-run-session`** (pkg `dbus`) — `e2e-env.sh` wraps the run in a private
   session bus so AT-SPI/portals activate. Without it the app logs only
   `STARTUP: main entry` and never fully initializes.
