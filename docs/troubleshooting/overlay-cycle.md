@@ -121,6 +121,33 @@ cursor's `line_in_div` before concluding the cycle is broken** — the reader's
 glossed-passage TINT covers the whole 424–437 span, so a screenshot showing a
 highlighted "Most probable" does NOT mean the cursor is on line 424.
 
+## 3b. Stale `gloss_context` after a work switch (fixed 2026-07-27)
+
+**Tell.** After switching works (library picker, concordance hit, echo jump,
+recent-Q&A jump), `\` tears the current overlay down and lands you in the
+READER with NO toast — the #1 symptom, but on a work you just arrived at.
+
+**Root cause.** `gloss_context` was set on every gloss open and cleared
+NOWHERE — not by `close_gloss_to_reader`, not by `overlay_cycle::close_current`,
+not by `display_work`. `gloss_covers_cursor`'s displayed-span branch (see #2b)
+reads `ctx.work_abbrev` and **returns from that branch**, never reaching the
+current-work fallback, so it answered about the OLD work while
+`try_open_syntax_gloss_at_cursor` opened against `work.canonical_abbrev` — the
+NEW one. Probe true, open nothing.
+
+**Fix, two layers.** Root: `display_work_at_with_prepared` clears
+`state.gloss_context` alongside the other old-work resets (`phrase_cache`,
+`pending_prose_cross`, the vocab loop) — all seven work-switch call sites
+funnel through it. Belt: `gloss_covers_cursor` trusts the displayed span only
+when `displayed_span_is_current_work(current, &ctx.work_abbrev)`, so a future
+path that resurrects a stale context cannot re-open this hole. Tests:
+`displayed_span_guard_tests`.
+
+**Not affected: `Ctrl+Shift+g` (last gloss).** It reads
+`config.last_gloss`, which is keyed by work abbrev and written by
+`record_last_gloss` at DISPLAY time — clearing the in-memory context does not
+disturb it. Verify that before assuming a clear is safe.
+
 ## 4. Verifying headlessly
 
 The whole rotation drives under cage. Land on the work, step the cursor onto a
