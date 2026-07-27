@@ -396,18 +396,23 @@ Whatever this prints is what `\` must open. Re-run it rather than trusting the i
 
 - [ ] **Step 2: Drive synopsis → journal → synopsis**
 
-The synopsis opens with `h` from the reader. Run through the env wrapper:
+The synopsis overlay opens with **`Ctrl+h`** (`ShowSynopsisOverlay`,
+`keymap_config.rs:307`) — NOT plain `h`, and not `Ctrl+h`'s old `ToggleSynopsis`
+side panel, which is unbound. Run through the env wrapper:
 
 ```bash
 ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-headless-test.sh \
   --label synopsis-toggle --no-clip --settle 1200 \
   --start-work BH-Barrett --start-pos 944 \
-  --setup "h" --step "backslash" --step "backslash"
+  --setup "+ctrl:h" --step "backslash" --step "backslash"
 ```
 
 Captures: `_0` synopsis, `_1` journal entry, `_2` synopsis again.
 
-Confirm the binds first — `rg -n 'ToggleSynopsis|"h"' src/input/keymap_config.rs` — key names drift, and front matter has no synopsis.
+If `_0` is not a synopsis, the setup chord was dropped (the documented
+first-chord-after-startup gotcha) — re-send it and confirm the mode change
+landed in the log before trusting the later captures. Front matter has no
+synopsis, so the start position must be inside a real chapter.
 
 - [ ] **Step 3: Open all three PNGs and report what you see**
 
