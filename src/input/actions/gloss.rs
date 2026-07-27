@@ -1572,7 +1572,9 @@ pub(crate) fn add_gloss(state_rc: &Rc<RefCell<AppState>>, prompt: &str) {
     {
         let s = state_rc.borrow();
         let (cw, h) = crate::app::layout::overlay_card_size(&s);
-        s.gloss_overlay.show_glossing(&ctx.passage_doc(), cw, h, Some(&s.theme.root_color));
+        s.gloss_overlay.show_glossing(
+            &ctx.passage_doc(), cw, h, Some(&s.theme.root_color), Some(&ctx.gloss_type),
+        );
     }
 
     let prompt_owned = prompt.to_string();
@@ -1658,7 +1660,9 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
     {
         let s = state_rc.borrow();
         let (cw, h) = crate::app::layout::overlay_card_size(&s);
-        s.gloss_overlay.show_glossing(&ctx.passage_doc(), cw, h, Some(&s.theme.root_color));
+        s.gloss_overlay.show_glossing(
+            &ctx.passage_doc(), cw, h, Some(&s.theme.root_color), Some(&ctx.gloss_type),
+        );
     }
 
     let pasted_owned = pasted_lines.to_string();

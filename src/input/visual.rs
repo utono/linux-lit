@@ -656,8 +656,11 @@ pub(crate) fn syntax_gloss_for_lines(
         s.gloss_original_text = Some(ctx.source_text.clone());
         let pairs = ctx.source_line_pairs();
         let gloss_text = &all_glosses[idx].gloss_text;
-        let card_width = s.content_hbox.width();
-        let card_height = crate::app::layout::overlay_card_height(&s);
+        // 1-col-invariant overlay width (NOT `content_hbox.width()`): in a
+        // 2-column layout the hbox spans both columns, so the syntax overlay
+        // rendered wider than the gloss/journal overlays, which already size
+        // from `overlay_card_size`.
+        let (card_width, card_height) = crate::app::layout::overlay_card_size(&s);
         let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
         s.gloss_overlay.set_position(idx, all_glosses.len());
@@ -674,9 +677,10 @@ pub(crate) fn syntax_gloss_for_lines(
     {
         let mut s = state_rc.borrow_mut();
         s.gloss_original_text = Some(ctx.source_text.clone());
-        let cw = s.content_hbox.width();
-        let h = crate::app::layout::overlay_card_height(&s);
-        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        // Same 1-col-invariant sizing as the cache-hit branch above, so the
+        // loading card and the result card are the same width.
+        let (cw, h) = crate::app::layout::overlay_card_size(&s);
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("syntax-gloss"));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
@@ -839,7 +843,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         // the gloss result, so it looks identical before and after the gloss.
         let cw = s.content_hbox.width();
         let h = crate::app::layout::overlay_card_height(&s);
-        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("reader-gloss"));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
@@ -1098,7 +1102,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         // the gloss result, so it looks identical before and after the gloss.
         let cw = s.content_hbox.width();
         let h = crate::app::layout::overlay_card_height(&s);
-        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("teacher-generic"));
         s.input_mode = crate::app::InputMode::GlossOverlay;
     }
 
@@ -1215,7 +1219,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         // rather than a bare "Glossing…" label.
         let cw = s.content_hbox.width();
         let h = crate::app::layout::overlay_card_height(&s);
-        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+        s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("inner-monologue"));
         s.input_mode = crate::app::InputMode::GlossOverlay;
         s.pending_echo_context = Some(ctx.clone());
         s.pending_echo_scene_lines = scene_lines.clone();
@@ -1332,7 +1336,7 @@ fn run_pending_inner_monologue_blocking(
         if passage_doc.is_empty() {
             s.gloss_overlay.show_loading();
         } else {
-            s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color));
+            s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("inner-monologue"));
         }
         s.input_mode = crate::app::InputMode::GlossOverlay;
         let titles = crate::db::queries::load_work_titles_or_default();

@@ -712,6 +712,20 @@ impl GlossContext {
     }
 }
 
+/// Human-readable name for a `gloss_type` DB value, used in UI chrome (the
+/// "Glossing <type>…" loading card). An unknown type falls back to the raw
+/// value so a newly-added gloss_type still reads sensibly rather than
+/// silently rendering as one of the known kinds.
+pub fn gloss_type_label(gloss_type: &str) -> &str {
+    match gloss_type {
+        "reader-gloss" => "reader gloss",
+        "teacher-generic" => "teacher gloss",
+        "inner-monologue" => "inner monologue",
+        "syntax-gloss" => "syntax gloss",
+        other => other,
+    }
+}
+
 pub fn build_context(work: &Work, lines: &[Line]) -> Option<GlossContext> {
     if lines.is_empty() {
         return None;

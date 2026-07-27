@@ -1814,7 +1814,18 @@ impl GlossOverlay {
         }
     }
 
-    pub fn show_glossing(&self, passage_doc: &str, card_width: i32, card_height: i32, root_color: Option<&str>) {
+    /// `gloss_type` is the DB `gloss_type` of the request in flight; the title
+    /// reports it ("Glossing reader gloss…") so the loading card says WHICH
+    /// kind of gloss is being generated. Pass `None` when the kind is not known
+    /// at the call site (bare "Glossing…").
+    pub fn show_glossing(
+        &self,
+        passage_doc: &str,
+        card_width: i32,
+        card_height: i32,
+        root_color: Option<&str>,
+        gloss_type: Option<&str>,
+    ) {
         self.loading_animator.stop();
         // Same prose segment-merge as `show_gloss_with_color`, so the loading
         // card's passage reads identically to the result card's source block.
@@ -1835,9 +1846,13 @@ impl GlossOverlay {
         self.last_card_size.set((card_width, card_height));
         self.ask_host.card().close();
 
-        // "Glossing…" as a top header (not the centered label of
+        // "Glossing <type>…" as a top header (not the centered label of
         // `show_loading_message`), matching the gloss result's title placement.
-        self.title.set_text("Glossing\u{2026}");
+        let title_text = match gloss_type {
+            Some(t) => format!("Glossing {}\u{2026}", crate::gloss::gloss_type_label(t)),
+            None => "Glossing\u{2026}".to_string(),
+        };
+        self.title.set_text(&title_text);
         self.set_gloss_title_style();
         self.title.set_visible(true);
         self.title.set_vexpand(false);
@@ -3626,7 +3641,7 @@ mod apply_font_priority_tests {
                    <segment>Lay hands upon these traitors and their trash.</segment>\n\
                    <stage>[To Jourdain.]</stage>\n\
                    <segment>Beldam, I think we watched you at an</segment>";
-        overlay.show_glossing(doc, 1660, 1000, Some("#88aabb"));
+        overlay.show_glossing(doc, 1660, 1000, Some("#88aabb"), Some("reader-gloss"));
 
         let table = overlay.gloss_view.buffer().tag_table();
         let stage = table
