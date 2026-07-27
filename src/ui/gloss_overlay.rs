@@ -216,6 +216,9 @@ pub struct GlossOverlay {
     rewrite_diff_tag: gtk4::TextTag,
     /// Underline tag for the overlay `-` family (`overlay_word_copy`).
     word_underline_tag: gtk4::TextTag,
+    /// gloss_type named by the footer counter ("Reader gloss 1 of 2"); `None`
+    /// falls back to a bare "Gloss 1 of 2". See `set_footer_gloss_type`.
+    footer_gloss_type: RefCell<Option<String>>,
     /// True while a rewrite diff highlight is currently applied (empty ranges
     /// count as inactive). Read by Task 7 to decide whether to clear on next edit.
     rewrite_diff_active: std::cell::Cell<bool>,
@@ -776,6 +779,7 @@ impl GlossOverlay {
             vocab_tag,
             rewrite_diff_tag,
             word_underline_tag,
+            footer_gloss_type: RefCell::new(None),
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
             rewrite_diff_shown: std::rc::Rc::new(std::cell::Cell::new(false)),
@@ -3459,15 +3463,54 @@ impl GlossOverlay {
         self.clear_word_underline();
     }
 
+    /// Record which gloss_type the footer counter should name ("Reader gloss 1
+    /// of 2" rather than a bare "Gloss 1 of 2"). Set by `record_last_gloss`,
+    /// which every display path already calls with the type. Cleared with
+    /// `None` for surfaces that are not a typed gloss (e.g. synopsis).
+    ///
+    /// Stored on the overlay rather than threaded through `set_position`
+    /// because that has ~10 callers, most of which would only be passing the
+    /// value through.
+    pub fn set_footer_gloss_type(&self, gloss_type: Option<&str>) {
+        *self.footer_gloss_type.borrow_mut() = gloss_type.map(|t| t.to_string());
+        // Re-render the counter in place so a type learned AFTER set_position
+        // (the usual order) still reaches the footer.
+        let (index, total) = self.gloss_pos.get();
+        if total > 0 {
+            self.citation_label.set_text(&self.footer_counter_text(index, total));
+        }
+    }
+
+    /// "Reader gloss 1 of 2" — the type label (when known) + the cross-gloss
+    /// counter. Falls back to the bare "Gloss N of M" when no type is set.
+    fn footer_counter_text(&self, index: usize, total: usize) -> String {
+        let n = index + 1;
+        match self.footer_gloss_type.borrow().as_deref() {
+            Some(t) => {
+                let label = crate::gloss::gloss_type_label(t);
+                // Sentence-case the label: it reads as a leading noun phrase
+                // here ("Reader gloss 1 of 2"), unlike mid-sentence in the
+                // "Glossing reader gloss…" title.
+                let mut c = label.chars();
+                let cased = match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => label.to_string(),
+                };
+                format!("{cased} {n} of {total}")
+            }
+            None => format!("Gloss {n} of {total}"),
+        }
+    }
+
     pub fn set_position(&self, index: usize, total: usize) {
         self.gloss_pos.set((index, total));
-        // Footer-LEFT label: the cross-gloss counter "Gloss N of M" for the
-        // current passage, mirroring the journal Q&A footer's "Q&A n of m".
-        // Kept visible (blank when total is 0) so its hexpand pins the
-        // right-aligned page counter to the right.
+        // Footer-LEFT label: the cross-gloss counter for the current passage,
+        // named by gloss type when known ("Reader gloss N of M"), mirroring the
+        // journal Q&A footer's "Q&A n of m". Kept visible (blank when total is
+        // 0) so its hexpand pins the right-aligned page counter to the right.
         if total > 0 {
             self.citation_label
-                .set_text(&format!("Gloss {} of {}", index + 1, total));
+                .set_text(&self.footer_counter_text(index, total));
         } else {
             self.citation_label.set_text("");
         }
