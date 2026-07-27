@@ -466,6 +466,21 @@ pub(crate) fn redirect_to_final_spread(state: &AppState, candidate: usize) -> Op
 /// took a `target` argument historically; that made the walk's start point
 /// `target`-relative and broke idempotency — see the two-column branch comment.)
 pub(crate) fn last_page_top(state: &AppState) -> usize {
+    // TABLE MODE IS AUTHORITATIVE (2026-07-27). The live walk below can land on
+    // a top that is NOT a stored `left_start`; the render path then finds no
+    // spread for it (`spread_for_top` is an exact-top match) and silently falls
+    // back to the live `column_split`. That pairs the snapped top with a
+    // DIFFERENT engine's end, producing a column wider than either engine would
+    // choose on its own — measured 1102px into a 1098px viewport on
+    // Ant-Arkangel, clipping the left column's last line with `clip=0` because
+    // `paged_bottom_clip` cannot size a negative box. Read the table's own last
+    // spread instead, so the startup snap always lands on the grid the renderer
+    // will use. See docs/troubleshooting/clip-prevention.md #12.
+    if let Some(table) = crate::input::page_table::active_page_table(state) {
+        if let Some(last) = table.last() {
+            return last.left_start;
+        }
+    }
     let line_count = state.effective_line_count();
     let widget_height = state.text_view.height();
     let columns = state.column_count() as i32;

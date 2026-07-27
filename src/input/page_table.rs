@@ -704,6 +704,29 @@ mod tests {
         ]
     }
 
+    /// Regression (2026-07-27): a top that is NOT a stored `left_start` must
+    /// still resolve to the spread CONTAINING it, so table mode never pairs a
+    /// table-chosen top with a live-engine end.
+    ///
+    /// `spread_for_top` is an exact-top match by design (page tops are
+    /// canonical). The render path used to fall straight through to the live
+    /// `column_split` when it returned None — which is how a startup snap onto
+    /// a non-canonical top produced a left column WIDER than either engine
+    /// would choose alone (1102px into a 1098px viewport on Ant-Arkangel,
+    /// clipping its last line). `page_for_line` is the containment fallback.
+    #[test]
+    fn a_top_inside_a_spread_resolves_to_that_spread() {
+        let s = ok_spreads();
+        // Exact tops still match exactly.
+        assert_eq!(spread_for_top(&s, 0).map(|x| x.end), Some(5));
+        assert_eq!(spread_for_top(&s, 6).map(|x| x.end), Some(9));
+        // A top INSIDE the first spread has no exact match…
+        assert!(spread_for_top(&s, 3).is_none());
+        // …but is contained by it, which is what the render path now uses.
+        let contained = page_for_line(&s, 3).and_then(|i| s.get(i)).copied();
+        assert_eq!(contained.map(|x| (x.left_start, x.end)), Some((0, 5)));
+    }
+
     #[test]
     fn valid_table_passes() {
         let h = vec![10; 10];

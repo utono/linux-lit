@@ -608,8 +608,19 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
     // past the split and duplicate the right column's top lines).
     let two_col = state.column_count() == 2;
     let table = crate::input::page_table::active_page_table(state);
-    let table_spread = table.as_ref().and_then(|t|
-        crate::input::page_table::spread_for_top(t, effective_top).copied());
+    // A top that is not a stored `left_start` used to fall straight through to
+    // the live engine, pairing a table-chosen top with a live-chosen end and
+    // over-filling the column (see `last_page_top`). Prefer the spread that
+    // CONTAINS the top, so table mode stays on its own grid; only a top the
+    // table does not cover at all falls back to the live split.
+    let table_spread = table.as_ref().and_then(|t| {
+        crate::input::page_table::spread_for_top(t, effective_top)
+            .copied()
+            .or_else(|| {
+                crate::input::page_table::page_for_line(t, effective_top)
+                    .and_then(|i| t.get(i).copied())
+            })
+    });
     let cs = if two_col {
         if let Some(s) = table_spread {
             // Synthesize the ColumnSplit the downstream code expects from the
