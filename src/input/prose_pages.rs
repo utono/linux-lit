@@ -596,6 +596,35 @@ pub(crate) fn last_rendered_line(p: &ProsePage) -> usize {
     }
 }
 
+/// True when buffer line `line` is RENDERED on stored page `p` — i.e. it lies
+/// in `[start_line, last_rendered_line(p)]`.
+///
+/// The table, not the viewport geometry, is the authority for "is it on this
+/// page". On a page whose stored span overflows the viewport (CLIP_WARN #12)
+/// the renderer still clips at the STORED end, so a line can be painted on
+/// screen while a geometric fit-walk calls it invisible. Navigation checks that
+/// re-walk the live geometry then disagree with what the user can see. Same
+/// lesson as `page_table::table_end_for_top`: read the table, never re-walk.
+pub(crate) fn line_on_stored_page(p: &ProsePage, line: usize) -> bool {
+    line >= p.start_line && line <= last_rendered_line(p)
+}
+
+/// True when `line` is rendered on the CURRENT prose page (matched by
+/// `(page_top_line, page_top_offset)`). `None` = no prose table active or the
+/// current top is off-grid: the caller falls back to the live geometry walk.
+pub fn prose_table_line_on_current_page(
+    state: &crate::app::AppState,
+    line: usize,
+) -> Option<bool> {
+    let table = active_prose_page_table(state)?;
+    let i = prose_page_for_position(&table, state.page_top_line, state.page_top_offset)?;
+    let p = &table[i];
+    if p.start_line != state.page_top_line || p.start_off != state.page_top_offset {
+        return None; // not a canonical page top — live path
+    }
+    Some(line_on_stored_page(p, line))
+}
+
 /// Last buffer line shown WHOLE on the stored page whose top is
 /// `(top_line, top_off)` — for a clip check ("does the bottom line fit?"). A
 /// prose row-fill page can END mid-line (`end_off < end_line`'s full height):
@@ -727,6 +756,50 @@ mod tests {
         // Degenerate page at the document start must not underflow.
         let z = ProsePage { start_line: 0, start_off: 0, end_line: 0, end_off: 0 };
         assert_eq!(last_rendered_line(&z), 0);
+    }
+
+    /// A dialogue/segment jump (`q` `,` `;` `'` `j` `k`) must count a target as
+    /// "on this page" when the STORED page renders it — even when the page
+    /// overflows the viewport and the target's rows fall past where rows stop
+    /// fitting. Geometry and the table disagree on an overflowing page; the
+    /// renderer clips at the stored end (`d2696b1f`), so navigation must read
+    /// the same authority or the cursor is trapped.
+    ///
+    /// Real BH-Barrett case (2026-07-27): page top 931, stored end 936,
+    /// `total=1175 > widget_h=1098` (CLIP_WARN #12). Pressing `q` at line 934
+    /// computed target 935 — inside the stored page — but the geometric check
+    /// said "not visible", so `keep_jump_if_on_page` reverted 935 -> 934 and
+    /// `q` did nothing, forever.
+    #[test]
+    fn line_within_stored_page_is_on_page_even_when_page_overflows() {
+        // (931,0)..(936,80): end_off > 0, so 936 is the last RENDERED line.
+        let p = ProsePage { start_line: 931, start_off: 0, end_line: 936, end_off: 80 };
+        assert_eq!(last_rendered_line(&p), 936);
+
+        // The trapped target: strictly inside the stored span.
+        assert!(
+            line_on_stored_page(&p, 935),
+            "935 is rendered on the stored page 931..=936"
+        );
+        // The page top and the last rendered line are both on-page.
+        assert!(line_on_stored_page(&p, 931), "page top is on-page");
+        assert!(line_on_stored_page(&p, 936), "last rendered line is on-page");
+        // Neighbours outside the stored span are NOT — a jump there needs a turn,
+        // which the no-page-turn rule must still refuse.
+        assert!(!line_on_stored_page(&p, 930), "line above the page top");
+        assert!(!line_on_stored_page(&p, 937), "line past the stored end");
+    }
+
+    /// The exclusive-end form must not claim a line the page does not render.
+    /// `end_off == 0` means `end_line` starts the NEXT page.
+    #[test]
+    fn line_on_stored_page_respects_exclusive_end() {
+        let p = ProsePage { start_line: 686, start_off: 0, end_line: 697, end_off: 0 };
+        assert!(line_on_stored_page(&p, 696), "last rendered line");
+        assert!(
+            !line_on_stored_page(&p, 697),
+            "697 starts the next page (the CHAPTER VIII line)"
+        );
     }
 
     /// A chapter heading must never render mid-page (the printed-book rule).

@@ -97,6 +97,55 @@ ultimately want"), which is why it lives in one guard rather than spread
 through each bind — relaxing or re-scoping it means editing
 `jump_stays_on_page`, not eleven call sites.
 
+### FAILURE MODE 1 — `q` dead on an overflowing prose page (fixed 2026-07-27)
+
+**Tell:** a dialogue/segment bind stops working on ONE page while the target
+paragraph is plainly visible on screen. The log repeats the SAME transition
+with no follow-up:
+
+```
+ACTION: JumpToNextSpeaker
+PARAGRAPH_NEXT: 934 -> 935      <- repeats forever, cursor never moves
+```
+
+A working press is followed by `CURSOR_LINE: applied tag to line N` and
+`SEEK:`; the dead ones have neither. That "computed a target, then bailed" pair
+is the signature of `keep_jump_if_on_page` reverting the cursor.
+
+**Root cause:** `jump_stays_on_page` re-walked LIVE geometry
+(`is_line_start_visible`) while the renderer clipped at the STORED page end
+(`d2696b1f`). On a page whose stored span OVERFLOWS the viewport the two
+disagree — look for the overflow warning on the same page:
+
+```
+BOTTOM_CLIP_EXACT: widget_h=1098 total=1175 clip=0 page_top=931 end=936
+CLIP_WARN: main-card two-col OVERFLOW total=1175 > widget_h=1098 (clip-prevention.md #12)
+```
+
+Lines past the geometric fit point are still PAINTED (the table decides the
+clip), but the fit-walk called them invisible, so every jump into that band was
+reverted. The cursor was trapped at 934 with 935 and 936 on screen.
+
+**Fix:** make the guard table-authoritative —
+`prose_pages::prose_table_line_on_current_page` (built on the pure
+`line_on_stored_page`) answers from the stored page; the live walk is only the
+fallback when no table is active or the top is off-grid. NOTE the two-column
+branch needed NO change: `is_line_fully_visible` already consults
+`table_end_for_top`. Only single-column prose's `is_line_start_visible` was a
+pure geometry walk — that asymmetry is why the bug was prose-only.
+
+**Generalized lesson (the recurring one):** every consumer that asks "is this
+line on the current page?" must read the TABLE in table mode, never re-walk
+live geometry. Same class as the `table_end_for_top` doc note (playback sync
+and j-navigation walking past the rendered page end). When a nav bind dies but
+the text is visible, suspect a geometry/table disagreement before suspecting
+the bind.
+
+**Repro:** `scripts/land-on.sh BH-Barrett 10.0`, resize to 1920x1236 (text_view
+must log `-> 1098`), then `q` from line 931. Pre-fix the cursor sticks at 934;
+post-fix it advances 935, 936, then correctly refuses (937 is off the stored
+page — the no-page-turn rule still holds).
+
 **How a spread's extent is decided** (inside `column_split`):
 
 1. Fill the left column by pixel height (`visible_range` + a descender guard),
