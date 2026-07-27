@@ -8,9 +8,8 @@ pub const TITLE: &str = "Synopsis keybinds";
 /// Most-used binds, pinned to the legend's upper-right column. Rows here are
 /// MOVED out of the groups below (not duplicated). Every MRU bind must actually
 /// work in this overlay's handler — of the shared MRU set Alt+g and Ctrl+r do
-/// (r, Ctrl+Shift+n/p/r, Ctrl+a, Ctrl+f, and `\` are consumed no-ops in
-/// handle_synopsis_overlay_key; the synopsis left the `\` cycle lap), so only
-/// those are listed. Ctrl+r = add vocab word.
+/// (r, Ctrl+Shift+n/p/r, Ctrl+a, Ctrl+f are consumed no-ops in
+/// handle_synopsis_overlay_key), so only those are listed. Ctrl+r = add vocab word.
 pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Alt+g", "gloss_picker (work glosses)"),
     ("Ctrl+r", "vocab_add_card: add a vocab word"),
@@ -23,6 +22,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("Ctrl+d / Ctrl+u", "next / prev page"),
         ("Ctrl+n / Ctrl+p", "cycle_synopsis fwd / back"),
+        ("\\", "newest scene Q&A for this chapter/scene (\\ returns)"),
         ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     ("TTS", &[
