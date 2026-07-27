@@ -90,14 +90,21 @@ The probe drops its fallback entirely. Both resolve the line through the shared
 Reach them with `Ctrl+j` or the picker.
 
 **`scope` is assigned by the BAND YOU ASKED FROM, not by content**
-(`journal.rs`, the `save_journal_page`/`save_passage_page` match on
-`JournalBand`): asking from `JournalBand::Scene` stores `'scene'`, from
-`JournalBand::Passage` stores `'passage'`. So a question asked via Ctrl+j → ask
-is `'scene'` even when its citation names a single line. If `\` skips the
-journal stop on a work whose entries look segment-anchored, check
-`SELECT scope FROM journal_entries` before suspecting the cycle code — the
-entries are probably `'scene'`, and the fix is a lit.db re-scope (upstream),
-not a reader change.
+(`journal.rs` ~2841, the `save_journal_page`/`save_passage_page` match on
+`JournalBand`, reading `s.journal_band` via `ask_claude`). The three producers:
+
+- **Ctrl+j → ask** (scene band) → `JournalBand::Scene` → `scope='scene'`
+- **Ctrl+a in the GLOSS overlay** → `open_passage_qa_float` (`gloss.rs:3301`)
+  builds `JournalBand::Passage` from the glossed passage's own span → `'passage'`
+- **Ctrl+a block-select in the reader** → `'passage'`
+
+So two of the three paths already produce exactly what `\` needs; only the
+Ctrl+j route stores `'scene'`, and it does so even when the citation names a
+single line. If `\` skips the journal stop on a work whose entries look
+segment-anchored, check `SELECT scope FROM journal_entries` before suspecting
+the cycle code — the entries are probably `'scene'` from the Ctrl+j route, and
+the fix is a lit.db re-scope (upstream), not a reader change. New entries made
+via either Ctrl+a path need no migration.
 
 ## 3. The reader-gloss and syntax-gloss sit on DIFFERENT passages
 
