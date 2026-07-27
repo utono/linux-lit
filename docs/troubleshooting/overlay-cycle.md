@@ -64,6 +64,41 @@ and `non_overlapping_passages_are_not_matched`.
 **If you touch either function, change BOTH.** They encode one rule in two
 places; a mismatch is silent and reproduces #1.
 
+## 2c. The journal stop opens a Q&A from ANOTHER passage (fixed 2026-07-27)
+
+**Tell.** `\` from the gloss stop opens a journal Q&A whose quoted passage is
+plainly not the one on screen, often tens of lines away. The overlay footer
+reads `Q&A 1 of N` with N > 1, and the log shows a `JOURNAL-PAGINATE:` line
+with a long `heights=[…]` list plus `JOURNAL-TIMING: band_query=…`.
+
+**Root cause.** `open_journal_scene` and `journal_has_content_at_cursor` each
+had TWO tiers: a `scope='passage'` citation-span lookup, then a fallback to
+`find_scene_band_pages`, which filters on `(div1, div2)` equality only —
+the cursor's line appears nowhere in it. `ORDER BY timestamp ASC` then landed
+page 0 on the chapter's OLDEST entry. Reported case: cursor at BH-Barrett line
+979, entry anchored at 944, i.e. the band reached 35 lines away. The gloss stop
+has no such tier, which is why only the journal stop misbehaved.
+
+**Fix.** `open_journal_scene` takes a `JournalOpenScope`. The `\` cycle passes
+`SegmentOnly` — tier 1 only, and a miss returns `false` SILENTLY (no toast, no
+state mutation) so `advance()` skips the stop. `Ctrl+j` passes
+`SegmentElseBand` and keeps the band fallback, which is its whole purpose.
+The probe drops its fallback entirely. Both resolve the line through the shared
+`lap_anchor_for` helper — see the warning under #2b: probe and open must agree.
+
+**Consequence, deliberate.** `scope='scene'` entries are unreachable by `\`.
+Reach them with `Ctrl+j` or the picker.
+
+**`scope` is assigned by the BAND YOU ASKED FROM, not by content**
+(`journal.rs`, the `save_journal_page`/`save_passage_page` match on
+`JournalBand`): asking from `JournalBand::Scene` stores `'scene'`, from
+`JournalBand::Passage` stores `'passage'`. So a question asked via Ctrl+j → ask
+is `'scene'` even when its citation names a single line. If `\` skips the
+journal stop on a work whose entries look segment-anchored, check
+`SELECT scope FROM journal_entries` before suspecting the cycle code — the
+entries are probably `'scene'`, and the fix is a lit.db re-scope (upstream),
+not a reader change.
+
 ## 3. The reader-gloss and syntax-gloss sit on DIFFERENT passages
 
 Not a bug — expected, and the reason #2 and #2b bite. A syntax gloss is created from
