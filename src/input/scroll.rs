@@ -1288,11 +1288,15 @@ pub(crate) fn scroll_to_cursor(state: &mut AppState) {
 /// new page (continuity — last line of old page = first line of new page).
 /// Whether a dialogue/segment jump may TURN THE PAGE (2026-07-27).
 ///
-/// User rule: the dialogue/segment binds (`;` `'` `,` `q` `j` `k`) never
-/// effect a page turn — on any work type. They move the cursor within what is
-/// already on screen; crossing to another page is the job of the explicit
-/// page binds (`x` `y` `[` `{`). When one of these binds would need a turn,
-/// the caller holds the cursor where it was instead.
+/// User rule (revised 2026-07-27): only the BACKWARD segment binds (`,` `;`
+/// `k`, prev-speaker) are barred from turning the page — they move the cursor
+/// within what is already on screen, and crossing backward is the job of the
+/// explicit page binds (`y` `{`). The FORWARD binds (`q` `'` `j`,
+/// next-speaker) MAY turn, so reading forward never dead-ends at a page edge.
+///
+/// Consequently `keep_jump_if_on_page` short-circuits to true for
+/// `Direction::Next` and never reaches this function; every caller that does
+/// reach it is asking a backward question.
 ///
 /// Returns true when the cursor's new line is already on the current page, i.e.
 /// the jump needs no turn. In table mode the STORED page decides (see the body);

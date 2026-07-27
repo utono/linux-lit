@@ -1497,23 +1497,36 @@ pub fn page_backward_bottom(state: &mut AppState) {
 
 /// Previous dialogue line (`,` key).
 /// If cursor is at the top line of the page, just page backward (don't move cursor).
-/// Commit a dialogue/segment cursor jump, but ONLY if it stays on the current
-/// page (2026-07-27).
+/// Commit a dialogue/segment cursor jump. FORWARD jumps may turn the page;
+/// BACKWARD jumps may not (2026-07-27, revised).
 ///
-/// User rule: the dialogue/segment binds (`;` `'` `,` `q` `j` `k`) never
-/// effect a page turn, on any work type. Crossing pages is the job of the
-/// explicit page binds (`x` `y` `[` `{`).
+/// User rule: the segment binds that move to the NEXT segment (`q` `'` `j`, and
+/// the next-speaker jumps) ARE allowed to effect a page turn — reading forward
+/// through a work should never dead-end at a page edge. The binds that move to
+/// the PREVIOUS segment (`,` `;` `k`, and the prev-speaker jumps) keep the
+/// original prohibition: they move the cursor within what is already on screen,
+/// and crossing backward is the job of the explicit page binds (`y` `{`).
+///
+/// The asymmetry is deliberate. Reading is forward-biased: a forward bind that
+/// stops at the page edge blocks progress and forces an `x`, whereas a backward
+/// bind that stops there is merely declining to leave the page the reader is
+/// looking at.
 ///
 /// `state.current_line` must ALREADY be set to the target when this is called
 /// (the callers compute their own targets). Returns true when the jump was
-/// kept; false when it was reverted to `prev_line` because landing there would
-/// have required a page turn — the caller then skips its scroll/after-page
-/// work, leaving the reader exactly where they were.
+/// kept — ALWAYS true for `Direction::Next`. Returns false only for a backward
+/// jump that was reverted to `prev_line`; the caller then skips its
+/// scroll/after-page work, leaving the reader exactly where they were.
 ///
 /// Deliberately does NOT cover the scene/act jumps (`jump_to_next_scene` and
 /// friends): those exist to move between divisions, so turning the page is
 /// their whole purpose.
-fn keep_jump_if_on_page(state: &mut AppState, prev_line: usize) -> bool {
+fn keep_jump_if_on_page(state: &mut AppState, prev_line: usize, dir: Direction) -> bool {
+    // Forward: always keep the jump. The caller's `scroll_after_jump_forward`
+    // turns the page when the target is off it.
+    if matches!(dir, Direction::Next) {
+        return true;
+    }
     if crate::input::scroll::jump_stays_on_page(state) {
         return true;
     }
@@ -1539,7 +1552,7 @@ pub fn jump_to_prev_dialogue(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
             return;
         }
         scroll_after_jump_backward(state);
@@ -1566,7 +1579,7 @@ pub fn jump_to_next_dialogue(state: &mut AppState) {
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Next) {
             return;
         }
         scroll_after_jump_forward(state, prev_line);
@@ -1596,7 +1609,7 @@ pub fn cursor_prev_dialogue_no_seek(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
             return;
         }
         scroll_after_jump_backward(state);
@@ -1624,7 +1637,7 @@ pub fn cursor_next_dialogue_no_seek(state: &mut AppState) {
         state.current_line = target;
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Next) {
             return;
         }
         scroll_after_jump_forward(state, prev_line);
@@ -1671,7 +1684,7 @@ pub fn cursor_prev_dialogue(state: &mut AppState) {
         seek_to_current_line(state);
         return;
     }
-    if !keep_jump_if_on_page(state, prev_line) {
+    if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
         return;
     }
     scroll_after_jump_backward(state);
@@ -1713,7 +1726,7 @@ pub fn cursor_next_dialogue(state: &mut AppState) {
             seek_to_current_line(state);
             return;
         }
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Next) {
             return;
         }
         scroll_after_jump_forward(state, prev_line);
@@ -2322,7 +2335,7 @@ pub fn jump_to_next_speaker(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             log_fmt!("PARAGRAPH_NEXT: {} -> {}", prev_line, target);
-            if !keep_jump_if_on_page(state, prev_line) {
+            if !keep_jump_if_on_page(state, prev_line, Direction::Next) {
                 return;
             }
             scroll_after_jump_forward(state, prev_line);
@@ -2350,7 +2363,7 @@ pub fn jump_to_next_speaker(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         log_fmt!("SPEAKER_NEXT: {} -> {}", prev_line, target);
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Next) {
             return;
         }
         scroll_after_jump_forward(state, prev_line);
@@ -2378,7 +2391,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
             state.pending_advance_ignore_bl = None;
             state.prev_highlight_line.set(None);
             log_fmt!("PARAGRAPH_PREV: {} -> {}", prev_line, target);
-            if !keep_jump_if_on_page(state, prev_line) {
+            if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
                 return;
             }
             scroll_after_jump_backward(state);
@@ -2410,7 +2423,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             state.prev_highlight_line.set(None);
-            if !keep_jump_if_on_page(state, prev_line) {
+            if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
                 return;
             }
             scroll_after_jump_backward(state);
@@ -2438,7 +2451,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
-        if !keep_jump_if_on_page(state, prev_line) {
+        if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
             return;
         }
         scroll_after_jump_backward(state);
