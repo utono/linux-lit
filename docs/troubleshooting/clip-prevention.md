@@ -567,6 +567,24 @@ When a half line clips at the bottom edge of a scrolled surface:
 2. **Uniform row-step instead of per-row geometry.** The surface sized its clip
    from `line_yrange` or a fixed `step` on a multi-row prose buffer → descenders
    cut. Fix: route through `recompute_overlay_bottom_clip` / `display_rows`.
+2b. **A straddling line charged its FULL height (prose row-fill).** A prose page
+   can start AND end mid-paragraph, and each straddling line is only partly on
+   the card. Charging the full height breaks BOTH edges, with two different
+   tells:
+   - overstating the TOP (`top_off` ignored) makes the clip too SHORT → the page
+     OVER-RENDERS past its stored end. Tell: content that belongs to the next
+     page is visible, classically a chapter heading trailing the previous
+     chapter (BH-Barrett page 112 at `(924,188)` revealed 188px = "CHAPTER X" +
+     its subtitle).
+   - overstating the BOTTOM (`bottom_head` ignored) makes the page read as
+     OVERFULL → `paged_bottom_clip` floors to 0 and the last line is sliced with
+     nothing masking it, plus a spurious `CLIP_WARN … OVERFLOW` (page 113 at
+     `(931,0)..(935,317)` measured 1175 vs 1098; true height 1065).
+   Fix: `exact_page_content_height` charges the first line `h - top_off` and the
+   last line `min(bottom_head, h)`. Both are 0/None for two-column/play pages,
+   so those are unaffected. Mirrors `viewport::is_line_start_visible` (top) and
+   `prose_pages::page_px` (both edges) — when the render-side measurement and
+   `page_px` disagree, the render side is wrong.
 3. **`display_rows` not adding `top_margin`** → both edges clip at once
    (coordinate-space gotcha above).
 4. **Recompute runs against unsettled geometry on open** (0-height viewport) and
@@ -1129,8 +1147,34 @@ surface and the checklist item. Three sites, all gated on `logging::debug_mode()
   `CLIP_WARN: overlay clip_h=… >= viewport_h=…` when the clip would blank the
   surface (#7).
 - **Main reading card** (`input/scroll.rs`, `update_bottom_clip`):
-  `CLIP_WARN: main-card two-col OVERFLOW total=… > widget_h=…` (#12) and
-  `CLIP_WARN: main-card single-col clip=… >= widget_h=…` (#7).
+  `CLIP_WARN: main-card {prose-1col|two-col} OVERFLOW total=… > widget_h=…`
+  (#12) and `CLIP_WARN: main-card single-col clip=… >= widget_h=…` (#7).
+  **The surface label was hardcoded `two-col` until 2026-07-27** even though the
+  exact-clip path also serves single-column prose row-fill pages — a prose
+  overflow therefore read as a play-pagination problem and sent one
+  investigation to the wrong engine. The line now also carries `top_off=` and
+  `bottom_head=`, which is usually enough to classify the failure without
+  reading any code (see below).
+
+### A `total > widget_h` OVERFLOW is not always an overfull page
+
+Before hunting for a stale/overfull stored page, check whether `total` is
+simply being MEASURED wrong. A prose row-fill page may straddle a paragraph at
+either edge, and each straddling line contributes only its on-page part:
+
+- `top_off=N` — the page starts N px INTO its first line.
+- `bottom_head=Some(N)` — the page ends N px into its LAST line.
+
+`exact_page_content_height` (scroll.rs) subtracts both. When it did not, page
+113 of BH-Barrett measured 1175px against a 1098px widget and fired this
+warning, while its TRUE occupied height was 1065 — comfortably inside
+`usable=1071`. The stored page was fine all along; `validate_prose_pages`
+accepted it correctly because its `page_px` already measured it this way.
+
+**The decisive check:** compare the clip's `total` against `page_px` for the
+same stored row. If `page_px` fits `usable` but `total` does not, the bug is in
+the RENDER-side measurement, not the page table. Chasing the table instead
+costs a session — that is exactly what happened here.
 
 ## Verifying
 

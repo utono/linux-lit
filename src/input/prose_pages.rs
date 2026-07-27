@@ -558,6 +558,25 @@ pub fn prose_table_page_end(state: &crate::app::AppState) -> Option<(usize, i32)
         .then_some((p.end_line, p.end_off))
 }
 
+/// Stored `end_off` of the page whose top is exactly `(top_line, top_off)`.
+/// Companion to `prose_table_last_line_for_top`: that gives the last rendered
+/// LINE, this gives how much of that line is actually on the page. The clip
+/// needs both or it charges a straddling last line its full height and the page
+/// reads as overfull. `None` = no table, or not a canonical page top.
+pub fn prose_table_end_off_for_top(
+    state: &crate::app::AppState,
+    top_line: usize,
+    top_off: i32,
+) -> Option<i32> {
+    let table = active_prose_page_table(state)?;
+    let i = prose_page_for_position(&table, top_line, top_off)?;
+    let p = &table[i];
+    if p.start_line != top_line || p.start_off != top_off {
+        return None; // not a canonical page top — live path
+    }
+    Some(p.end_off)
+}
+
 /// Last buffer line RENDERED on the stored page whose top is
 /// `(top_line, top_off)` — the prose analogue of `page_table::table_end_for_top`
 /// (the "read the table, never re-walk live" lesson). The page interval is
