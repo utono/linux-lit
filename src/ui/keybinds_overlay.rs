@@ -36,7 +36,7 @@ const NUMBER_ROW: &[KeyDef] = &[
     key("+", "1", "copy work+div", "1: copy work info", &[]),
     key("[", "2", "prev scene", "", &[("C-[", "set track mark"), ("M-[", "col layout")]),
     key("{", "3", "next scene", "", &[]),
-    ub("(", "4"),
+    key("(", "4", "2-col translation", "", &[("C-(", "page image"), ("C-M-(", "inline translation")]),
     ub("&", "5"),
     key("=", "6", "", "", &[("C-=", "vocab drill"), ("S-C-=", "drill back")]),
     ub(")", "7"),
@@ -69,8 +69,8 @@ const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
     key("o", "O", "seek \u{2212}3.5", "O: \u{2212}60", &[]),
     key("e", "E", "seek +3.5", "E: +60", &[("C-e", "BCP echoes"), ("S-C-e", "reopen BCP echoes"), ("M-e", "BCP echo turns")]),
-    key("u", "U", "", "U: undo ts", &[("M-u", "scansion")]),
-    key("i", "I", "2-col translation", "", &[("C-M-i", "inline translation"), ("C-i", "page image"), ("S-C-i", "calibrate pages")]),
+    key("u", "U", "cycle overlays", "U: undo ts", &[("C-u", "lib picker"), ("M-u", "scansion")]),
+    key("i", "I", "copy next word", "I: copy prev word", &[("M-i", "collect words"), ("C-i", "next sentence"), ("S-C-i", "calibrate pages")]),
     key("d", "D", "", "", &[("C-M-d", "debug log"), ("M-d", "dim tog")]),
     key("h", "", "dlg fwd", "", &[("C-h", "synopsis")]),
     key("t", "T", "dlg back", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
@@ -80,8 +80,8 @@ const HOME_ROW: &[KeyDef] = &[
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 /// `Return` has no cap of its own in the strip (the strip mirrors the physical
-/// letter rows), so it rides on the `-`/`_`/`Ctrl+-` descriptions: those keys
-/// leave the underline that Return acts on.
+/// letter rows), so it rides on the `-` and `i` cap descriptions: those caps'
+/// binds leave the underline that Return acts on.
 const RETURN_KEY: KeyDef = bare("Ret", "", "syntax gloss");
 
 const BOTTOM_ROW: &[KeyDef] = &[
@@ -248,7 +248,7 @@ fn describe(label: &str) -> Option<&'static str> {
         "pg fwd" => "Action::PageForward — src/input/navigation.rs",
         "pg back" => "Action::PageBackward — src/input/navigation.rs",
         "cursor ↓" | "cursor down" => "Action::CursorNextDialogue — src/input/navigation.rs",
-        "cursor ↑" | "cursor up" => "Action::CursorPrevLine — src/input/navigation.rs",
+        "cursor ↑" | "cursor up" => "Action::CursorPrevDialogue — src/input/navigation.rs",
         "prev dlg" => "Action::JumpToPrevDialogue — src/input/navigation.rs",
         "next dlg" => "Action::JumpToNextDialogue — src/input/navigation.rs",
         "dlg fwd" => "Action::CursorNextDialogueNoSeek — src/input/navigation.rs",
@@ -360,8 +360,9 @@ sentence per press and wrapping at the end. Writes the SAME underline set as \
 -/_, so Return glosses it) — src/input/actions/word_copy.rs",
         "syntax gloss" => "Action::OpenSyntaxDiagramForUnderlined (Return; opens \
 a syntax-gloss — grammatical analysis rendered by the gloss overlay — for the \
-sentence containing the words underlined by -/_/Alt+-/Ctrl+-. Does nothing \
-when no words are underlined) — src/input/actions/syntax.rs",
+sentence containing the words underlined by the minus-cap family or its \
+i-cap dupes. Does nothing when no words are underlined) \
+— src/input/actions/syntax.rs",
         "visual mode" => "Action::EnterVisualMode -> InputMode::Visual \
 — src/input/visual.rs",
 
@@ -439,9 +440,19 @@ search, then the -/_ word underline.",
         "theme prev" => "Action::ThemePrev — src/input/actions/settings.rs",
         "theme info" => "Action::ShowThemeInfo — src/input/actions/settings.rs",
         "scansion" => "Action::CycleScansion — src/input/keymap.rs",
-        "2-col translation" => "Action::ShowTranslationOverlay — src/app.rs",
-        "inline translation" => "Action::ToggleTranslations — src/app.rs",
-        "page image" => "Action::ToggleImageView — src/app.rs",
+        // The `i` cap duplicates the `-` cap's underline family on EVERY work
+        // type (2026-07-26); the translation/page-image pair it used to hold
+        // moved to the `(` cap. `describe()` keys on the LABEL, and the `-`
+        // cap already owns every underline label ("copy next word",
+        // "copy prev word", "collect words", "next sentence"), so those arms
+        // serve both caps and none are repeated here.
+        "2-col translation" => "Action::ShowTranslationOverlay (plain `(`, \
+moved off plain `i` 2026-07-26 so the `i` cap could duplicate `-`) \
+— src/app.rs",
+        "inline translation" => "Action::ToggleTranslations (Ctrl+Alt+(, moved \
+off Ctrl+Alt+i) — src/app.rs",
+        "page image" => "Action::ToggleImageView (Ctrl+(, moved off Ctrl+i) \
+— src/app.rs",
         "calibrate pages" => "Action::EnterPageCalibration — src/app.rs",
         "dim tog" => "Action::ToggleDim — src/input/keymap.rs",
         "save+quit" => "Action::SaveAndQuit — src/input/keymap.rs",

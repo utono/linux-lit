@@ -121,13 +121,13 @@ pub enum InputMode {
     /// nothing is written back to the reading buffer or lit.db.
     SegmentVim,
     /// Typing a word into the empty vim-input card to add a vocab word
-    /// (Ctrl+Alt+\). All keys route to the gloss_overlay edit buffer; the
-    /// save verb (:w) submits (lookup + insert), :q/Esc cancels.
+    /// (Ctrl+r on every surface). All keys route to the gloss_overlay edit
+    /// buffer; the save verb (:w) submits (lookup + insert), :q/Esc cancels.
     AddVocab,
-    /// Fully modal vocab-sentence drill loop (Ctrl+-; requires phrase data
+    /// Fully modal vocab-sentence drill loop (Ctrl+=; requires phrase data
     /// for the playing media, else the entry toasts the reason): the sentence
     /// under review repeats via MPV ab-loop; n/p step between vocab
-    /// sentences, a/Space toggles pause, Escape (or Ctrl+-, legacy Ctrl+r)
+    /// sentences, a/Space toggles pause, Escape (or Ctrl+=, legacy Ctrl+r)
     /// exits. All other keys are swallowed.
     VocabLoop,
     SynopsisOverlay,
@@ -670,7 +670,7 @@ pub struct AppState {
     /// Word currently awaiting a Claude definition fallback (add-vocab). Guards
     /// against a duplicate paid request / double insert on repeat submit.
     pub vocab_add_pending: Option<String>,
-    /// Compact floating add-vocab input (Ctrl+Alt+\). Its own AskCard so it
+    /// Compact floating add-vocab input (Ctrl+r). Its own AskCard so it
     /// can open OVER the gloss/journal overlays (the old gloss-overlay reuse
     /// couldn't — the gloss overlay was either busy or below the journal).
     pub vocab_add_card: crate::ui::ask_card::AskCard,
@@ -2013,7 +2013,7 @@ pub fn build_window(
     search_bar.container.set_margin_top(120);
     corpus_search_popup.overlay.add_overlay(&search_bar.container);
 
-    // Dedicated add-vocab input card (Ctrl+Alt+\). A compact floating AskCard
+    // Dedicated add-vocab input card (Ctrl+r). A compact floating AskCard
     // attached to the SAME layer as the vocab popup — above the whole overlay
     // chain AND above the chat panel — so it can open OVER the gloss/journal
     // overlays and the chat transcript, unlike the old gloss-overlay reuse.

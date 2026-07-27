@@ -129,7 +129,7 @@ pub fn handle_key(
         return handle_segment_vim_key(state, key_name, key_char, is_ctrl);
     }
 
-    // AddVocab (Ctrl+Alt+\ input card) owns ALL keys, like SegmentVim.
+    // AddVocab (the Ctrl+r input card) owns ALL keys, like SegmentVim.
     if state.borrow().input_mode == crate::app::InputMode::AddVocab {
         return handle_add_vocab_key(state, key_name, key_char, is_ctrl);
     }
@@ -1994,9 +1994,10 @@ fn handle_journal_key(
         }
     }
 
-    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the journal overlay.
     // Ctrl+\: open the work-wide Q&A picker. Checked BEFORE the plain Alt/Ctrl
     // blocks so the chord wins over any single-modifier meaning of `\`.
+    // (Add-vocab is Ctrl+r here like every surface — the old Ctrl+Alt+\
+    // chord now falls through to this same picker arm, which ignores alt.)
     // Lists every page in the work; confirm lands on the chosen page's band,
     // Escape returns to the journal overlay.
     if is_ctrl && key_name == "backslash" {
@@ -2925,7 +2926,7 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         "comma" => { overlay_nav(state, navigation::jump_to_prev_dialogue); true }
         "q" => { overlay_nav(state, navigation::jump_to_next_dialogue); true }
         "j" => { overlay_nav(state, navigation::cursor_next_dialogue); true }
-        "k" => { overlay_nav(state, navigation::cursor_prev_line); true }
+        "k" => { overlay_nav(state, navigation::cursor_prev_dialogue); true }
         // x / y turn the OVERLAY page forward / backward (same roles as the main
         // reading card), moving the reader cursor onto the first dialogue line of
         // the new page so the highlight + MPV sync follow.
@@ -4338,7 +4339,7 @@ fn dispatch_action(
 
         // Cursor / dialogue
         CursorNextDialogue => navigation::cursor_next_dialogue(&mut state.borrow_mut()),
-        CursorPrevLine => navigation::cursor_prev_line(&mut state.borrow_mut()),
+        CursorPrevDialogue => navigation::cursor_prev_dialogue(&mut state.borrow_mut()),
         CursorToPageBottom => navigation::cursor_to_page_bottom(&mut state.borrow_mut()),
         JumpToNextDialogue => navigation::jump_to_next_dialogue(&mut state.borrow_mut()),
         JumpToPrevDialogue => navigation::jump_to_prev_dialogue(&mut state.borrow_mut()),
@@ -5023,4 +5024,3 @@ fn activate_chunk(s: &mut AppState, idx: usize) {
         }
     }
 }
-

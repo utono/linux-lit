@@ -97,12 +97,12 @@ fn word_cycle_step(state: &mut AppState, delta: i32) {
     state.word_cycle.collect_ranges.push((char_start, char_end));
 
     // Remove any previous underline tag, then apply to the current word.
-    // Persistent: cleared by Escape, by leaving the line, or by the next -/_.
+    // Persistent: cleared by Escape, by leaving the line, or by the next underline bind.
     apply_word_underline(state, &[(char_start, char_end)], true);
 }
 
 /// Collect words on the current line, accumulating across presses.
-/// Each W press advances to the next word, appends it to the collection,
+/// Each press (Alt+- / Alt+i) advances to the next word, appends it to the collection,
 /// and copies all collected words (space-separated) to the clipboard.
 /// Underlines all collected words. Resets on line change.
 ///
@@ -158,17 +158,17 @@ pub fn word_collect_copy(state: &mut AppState) {
 
     // Underline all collected words
     let ranges: Vec<(usize, usize)> = state.word_cycle.collect_ranges.clone();
-    // Persistent: cleared by Escape, by leaving the line, or by the next -/_.
+    // Persistent: cleared by Escape, by leaving the line, or by the next underline bind.
     apply_word_underline(state, &ranges, true);
 }
 
-/// Underline the FIRST WORD of the NEXT sentence (Ctrl+-).
+/// Underline the FIRST WORD of the NEXT sentence (Ctrl+-; dup Ctrl+i).
 ///
 /// Steps sentence by sentence through the cursor's buffer line, writing the
-/// same `collect_ranges` the `-`/`_` binds write — so `Return`
+/// same `collect_ranges` the other underline binds write — so `Return`
 /// (`OpenSyntaxDiagramForUnderlined`) opens a syntax gloss for the sentence
-/// this marked, with no separate plumbing. The three binds are three ways to
-/// build ONE underline set.
+/// this marked, with no separate plumbing. Every bind in the family builds
+/// ONE shared underline set.
 ///
 /// Scope is the cursor's own line, matching the rest of this module: the
 /// underline ranges are char offsets into `current_line` and
@@ -338,9 +338,10 @@ fn extract_buffer_line_words(state: &AppState) -> Vec<(String, usize, usize)> {
 /// removing any previous underline first.
 ///
 /// `persist`: when true the 2-second auto-remove timer is NOT armed, so the
-/// underline stays until explicitly cleared (Escape, or a `-`/`_` that
-/// replaces it). `bold_gen` is still bumped either way, which invalidates any
-/// timer already in flight from an earlier non-persistent call.
+/// underline stays until explicitly cleared (Escape, or another underline
+/// bind that replaces it). `bold_gen` is still bumped either way, which
+/// invalidates any timer already in flight from an earlier non-persistent
+/// call.
 fn apply_word_underline(state: &mut AppState, ranges: &[(usize, usize)], persist: bool) {
     let buf = &state.buffer;
     let tag = &state.word_bold_tag;

@@ -1579,8 +1579,9 @@ pub fn cursor_next_dialogue_no_seek(state: &mut AppState) {
     }
 }
 
-/// Move cursor to previous dialogue line and seek media to it (`k` key).
-pub fn cursor_prev_line(state: &mut AppState) {
+/// Move cursor to previous dialogue line and seek media to it (reader `;` /
+/// Up; the translation overlay's `k` routes here via `overlay_nav`).
+pub fn cursor_prev_dialogue(state: &mut AppState) {
     if state.current_line == 0 {
         return;
     }
@@ -1620,14 +1621,15 @@ pub fn cursor_prev_line(state: &mut AppState) {
     after_page_change(state, PageChangeReason::Dialogue);
 }
 
-/// Move cursor to next dialogue line and seek media to it (`j` key).
+/// Move cursor to next dialogue line and seek media to it (reader `'` /
+/// Down; the translation overlay's `j` routes here via `overlay_nav`).
 pub fn cursor_next_dialogue(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {
         return;
     }
     let target = if state.is_prose() {
-        // Prose: step one plain buffer line (see cursor_prev_line). Lands on
+        // Prose: step one plain buffer line (see cursor_prev_dialogue). Lands on
         // every line incl. headings; plays keep dialogue-skipping below. Skip
         // past any empty verse row (stanza-gap separator, never a cursor stop).
         (state.current_line + 1 < line_count)
