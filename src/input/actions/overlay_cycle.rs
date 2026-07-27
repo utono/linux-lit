@@ -214,6 +214,44 @@ mod tests {
         assert_eq!(Stop::Syntax.next(), Stop::Gloss);
     }
 
+    /// Inclusive span overlap — the rule `gloss_covers_cursor` and
+    /// `try_open_syntax_gloss_at_cursor` share.
+    fn overlaps(a: (i64, i64, i64), b: (i64, i64, i64), c: (i64, i64, i64), d: (i64, i64, i64)) -> bool {
+        c <= b && a <= d
+    }
+
+    /// Regression (2026-07-27, second occurrence). The `\` cycle asked "is
+    /// there a syntax gloss AT THE ANCHOR LINE" when it should have asked "…for
+    /// the passage I am LOOKING AT". The stops sit on passages of different
+    /// widths — a reader-gloss over a whole speech (Ant.5.2.424-437) vs a
+    /// syntax gloss over the one sentence it was created from (424-425) — so an
+    /// anchor at line 437 missed, and `\` reported "nothing else to cycle to"
+    /// on a passage that visibly had a syntax gloss.
+    #[test]
+    fn wider_displayed_passage_overlaps_a_narrower_syntax_gloss() {
+        let displayed = ((5, 2, 424), (5, 2, 437)); // reader-gloss: whole speech
+        let syntax = ((5, 2, 424), (5, 2, 425)); // syntax gloss: one sentence
+        assert!(
+            overlaps(displayed.0, displayed.1, syntax.0, syntax.1),
+            "the narrower syntax span must be found from the wider displayed span"
+        );
+        // The old line-anchored rule: the anchor sat at the END of the
+        // displayed passage, outside the syntax span — this is what failed.
+        let anchor = (5, 2, 437);
+        assert!(
+            !(syntax.0 <= anchor && anchor <= syntax.1),
+            "line 437 is genuinely outside 424-425 — why the anchor rule missed"
+        );
+    }
+
+    #[test]
+    fn non_overlapping_passages_are_not_matched() {
+        // A syntax gloss belonging to a DIFFERENT speech must not be pulled in.
+        let displayed = ((5, 2, 424), (5, 2, 437));
+        let elsewhere = ((5, 2, 500), (5, 2, 505));
+        assert!(!overlaps(displayed.0, displayed.1, elsewhere.0, elsewhere.1));
+    }
+
     #[test]
     fn two_probes_cover_every_other_stop() {
         // `advance` probes exactly twice; from any stop those two candidates
