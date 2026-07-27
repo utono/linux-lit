@@ -37,9 +37,36 @@ entirely.
 `gloss_return_pos.or(journal.return_pos)` — falling back to `current_line`
 only when no overlay is open.
 
+## 2b. Probing the anchor LINE instead of the displayed PASSAGE (fixed 2026-07-27)
+
+**Tell.** `\` in an open gloss overlay toasts "Nothing else to cycle to for
+this passage" even though the passage on screen visibly HAS another stop. The
+probe log reports a `cur=` triple equal to the END of the displayed passage,
+and a `spans=` list whose only entry does not contain it — e.g.
+`cur=(5, 2, 437) passages=1 hit=false spans=[("Ant.5.2.424", "Ant.5.2.425")]`.
+
+**Root cause.** Fixing #2 (anchor vs. live cursor) was not enough, because the
+anchor itself is a single LINE. The stops sit on passages of different widths
+(see #3), so the reader-gloss anchor — the cursor line where the lap started,
+often the end of a long speech — falls outside a narrow syntax passage. The
+question the cycle actually needs to ask is *"does another stop cover the
+passage I am LOOKING AT"*, not *"…this one line"*.
+
+**Fix.** When an overlay is open, `gloss_covers_cursor` tests inclusive SPAN
+OVERLAP between `gloss_context`'s citation range and each candidate passage,
+falling back to the line rule only when no overlay is open.
+`try_open_syntax_gloss_at_cursor` gained the same fallback — **probe and open
+must agree**, or the cycle advances into a stop that then opens nothing and
+dumps the reader out (exactly the symptom of #1). Regression tests:
+`overlay_cycle::tests::wider_displayed_passage_overlaps_a_narrower_syntax_gloss`
+and `non_overlapping_passages_are_not_matched`.
+
+**If you touch either function, change BOTH.** They encode one rule in two
+places; a mismatch is silent and reproduces #1.
+
 ## 3. The reader-gloss and syntax-gloss sit on DIFFERENT passages
 
-Not a bug — expected, and the reason #2 bites. A syntax gloss is created from
+Not a bug — expected, and the reason #2 and #2b bite. A syntax gloss is created from
 an explicit narrower selection (visual-mode "Syntax", or `-`/`_` + `Return`),
 so it gets its OWN `passages` row with its own span. Example (Ant 5.2):
 

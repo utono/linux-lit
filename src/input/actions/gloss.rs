@@ -3356,6 +3356,40 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
 /// so that a lap with no reachable stop can leave the current overlay up and
 /// toast instead of dumping the reader out of an overlay it can't replace.
 pub(crate) fn gloss_covers_cursor(state: &Rc<RefCell<AppState>>, gloss_types: &[&str]) -> bool {
+    // When an overlay is already open, the question the cycle is really asking
+    // is "does another stop cover the passage I am LOOKING AT", not "…the
+    // single anchor line". Those differ whenever the stops sit on passages of
+    // different widths — which is the norm: a reader-gloss spans a whole speech
+    // (Ant.5.2.424-437) while a syntax gloss spans the one sentence it was
+    // created from (424-425). Anchoring on line 437 found no syntax gloss and
+    // reported "nothing else to cycle to" even though the displayed passage
+    // plainly has one. Test SPAN OVERLAP against the displayed passage first.
+    let displayed_span = {
+        let s = state.borrow();
+        s.gloss_context.as_ref().and_then(|ctx| {
+            let start = crate::app::parse_citation(&ctx.start_citation)?;
+            let end = crate::app::parse_citation(&ctx.end_citation)?;
+            Some((ctx.work_abbrev.clone(), start, end))
+        })
+    };
+    if let Some((abbrev, dstart, dend)) = displayed_span {
+        if let Ok(conn) = crate::db::queries::open_db() {
+            let passages =
+                crate::db::queries::find_glossed_passages(&conn, &abbrev, gloss_types)
+                    .unwrap_or_default();
+            return passages.iter().any(|p| {
+                match (
+                    crate::app::parse_citation(&p.start_citation),
+                    crate::app::parse_citation(&p.end_citation),
+                ) {
+                    // Inclusive overlap of [dstart, dend] and [start, end].
+                    (Some(start), Some(end)) => start <= dend && dstart <= end,
+                    _ => false,
+                }
+            });
+        }
+    }
+
     let (work_abbrev, cur_triple) = {
         let s = state.borrow();
         let Some(work) = s.current_work.as_ref() else {
@@ -3530,8 +3564,34 @@ pub(crate) fn try_open_syntax_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> 
             _ => false,
         }
     });
+    // Cursor-line miss: fall back to a passage OVERLAPPING the displayed one.
+    // The `\` cycle reaches this stop from another overlay whose passage is
+    // usually WIDER (a reader-gloss over a whole speech vs a syntax gloss over
+    // one sentence), so the anchor line often sits outside the narrower span
+    // even though both describe the same passage — the "`\` won't cycle to the
+    // syntax gloss" bug. `gloss_covers_cursor` probes with this same rule;
+    // probe and open MUST agree or the cycle advances into an empty stop.
+    let covering = covering.map(|(i, p)| (i, p.clone())).or_else(|| {
+        let s = state.borrow();
+        let ctx = s.gloss_context.as_ref()?;
+        let dstart = crate::app::parse_citation(&ctx.start_citation)?;
+        let dend = crate::app::parse_citation(&ctx.end_citation)?;
+        passages
+            .iter()
+            .enumerate()
+            .find(|(_, p)| {
+                match (
+                    crate::app::parse_citation(&p.start_citation),
+                    crate::app::parse_citation(&p.end_citation),
+                ) {
+                    (Some(start), Some(end)) => start <= dend && dstart <= end,
+                    _ => false,
+                }
+            })
+            .map(|(i, p)| (i, p.clone()))
+    });
     let (passage_index, passage) = match covering {
-        Some((i, p)) => (i, p.clone()),
+        Some((i, p)) => (i, p),
         None => return false,
     };
 
