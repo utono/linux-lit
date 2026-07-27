@@ -713,15 +713,26 @@ When a half line clips at the bottom edge of a scrolled surface:
     checks each left column, so a fresh table cannot overflow. `validate-play-pages`
     reports **PASS** for this bug (it checks structure — overlaps/gaps/ordering —
     not fit against the CURRENT card), so a PASS does not rule it out; the
-    `total > widget_h` log line is the decisive tell. **Latent recurrence:** the
-    fingerprint not distinguishing card height from window height means this can
-    reappear for any play whose table predates a card-height change under an
-    unchanged fingerprint — if it recurs across many works at once, the durable
-    fix is to fold the card's `text_view.height()` (or the `usable` it derives)
-    into `layout_fingerprint` so a card-height change invalidates stale tables
-    automatically. (`Cym-Arkangel`, 2026-07-13: table generated 2026-07-04 with
-    `end=3941`/`total=1148`; regenerated to `end=3937`/`total=1034`/`clip=73` at
-    the same `1920x1200` fingerprint.)
+    `total > widget_h` log line is the decisive tell. (`Cym-Arkangel`,
+    2026-07-13: table generated 2026-07-04 with `end=3941`/`total=1148`;
+    regenerated to `end=3937`/`total=1034`/`clip=73` at the same `1920x1200`
+    fingerprint.)
+
+    **DURABLE FIX LANDED 2026-07-27 (fingerprint `v5`).** The recurrence this
+    entry predicted happened (`Ant-Arkangel` page 89: a 1102px left column in a
+    1071px usable height, cutting "A simple countryman that brought her figs.";
+    `validate-play-pages` reported PASS, as documented above). The card's
+    `text_view.height()` is now a `layout_fingerprint` field
+    (`FingerprintParts::view_height`), so a table baked at a different CARD
+    height no longer matches and is regenerated automatically — no manual
+    DELETE, and the `PASS`-but-overflowing state is unreachable. The version
+    bump `v4`→`v5` invalidated all ~200 stored tables at once; they regenerate
+    on next load of each work. Regression test:
+    `page_table::tests::view_height_change_invalidates_the_fingerprint` (same
+    window size, different view height ⇒ different fingerprint). **If this
+    signature EVER reappears, the fingerprint is missing another derived input —
+    check what changed the card height without moving a fingerprint field, and
+    add it, rather than regenerating by hand.**
 
 13. **A PAGINATED overlay (translation overlay) squeezes a whole page into a thin
     band at the top on a page turn — the first line half-cut, the rest of the card

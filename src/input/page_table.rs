@@ -218,6 +218,21 @@ pub struct FingerprintParts {
     /// height must be invalidated and regenerated. Included so the app
     /// self-heals when the strip height changes (no manual LIT_GEN_PAGE_TABLE).
     pub top_spacer_height: i32,
+    /// The TEXT VIEW's height — the value the fit check actually validates
+    /// against (`usable = view_height - guard - TWO_COLUMN_BOTTOM_MARGIN`).
+    ///
+    /// Added 2026-07-27. Every other size here is an INPUT to the layout;
+    /// `width`/`height` above are the WINDOW's. The view's height is DERIVED
+    /// from the window minus surrounding chrome, and it can differ between
+    /// generation and load even when the window size is identical. Without it
+    /// in the fingerprint, a table generated at a taller view kept matching and
+    /// rendered a column TALLER than the viewport — `paged_bottom_clip` returns
+    /// 0 on overflow (it cannot size a negative clip box), so the last row
+    /// showed clipped with nothing masking it. Observed on Ant-Arkangel page 89:
+    /// a 1102px left column in a 1071px usable height, cutting "A simple
+    /// countryman that brought her figs." See
+    /// docs/troubleshooting/clip-prevention.md checklist #12.
+    pub view_height: i32,
 }
 
 /// "v1|" + the parts, pipe-joined. Human-readable on purpose: the
@@ -225,10 +240,10 @@ pub struct FingerprintParts {
 /// self-explaining (you can see WHICH input moved).
 pub fn fingerprint_string(p: &FingerprintParts) -> String {
     format!(
-        "v4|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}|{}",
+        "v5|{}|{}|{}|{}|{}|{}x{}|{}|{}|{}|{}|{}",
         p.font_family, p.font_size, p.ascent, p.descent, p.char_width,
         p.width, p.height, p.line_spacing, p.text_margins, p.columns,
-        p.top_spacer_height
+        p.top_spacer_height, p.view_height
     )
 }
 
@@ -257,6 +272,8 @@ pub fn layout_fingerprint(state: &crate::app::AppState) -> String {
         text_margins: state.config.text_margins,
         columns: state.column_count(),
         top_spacer_height: crate::app::TOP_SPACER_HEIGHT,
+        // The height the fit check validates against — see the field's doc.
+        view_height: state.text_view.height(),
     };
     fingerprint_string(&parts)
 }
@@ -866,17 +883,41 @@ mod tests {
             font_family: "Charter".into(), font_size: 17,
             ascent: 16, descent: 5, char_width: 9,
             width: 1920, height: 1200, line_spacing: 6, text_margins: 24,
-            columns: 2, top_spacer_height: 64,
+            columns: 2, top_spacer_height: 64, view_height: 1098,
         };
         let a = fingerprint_string(&p);
         assert_eq!(a, fingerprint_string(&p), "must be deterministic");
-        assert!(a.starts_with("v4|"), "schema-versioned: {a}");
+        assert!(a.starts_with("v5|"), "schema-versioned: {a}");
         let mut q = FingerprintParts { font_size: 18, ..p.clone() };
         assert_ne!(a, fingerprint_string(&q));
         q = FingerprintParts { descent: 6, font_size: 17, ..q };
         assert_ne!(a, fingerprint_string(&q));
         // top_spacer_height is fingerprinted: changing it must invalidate.
-        let taller = FingerprintParts { top_spacer_height: 80, ..p };
+        let taller = FingerprintParts { top_spacer_height: 80, ..p.clone() };
         assert_ne!(a, fingerprint_string(&taller), "spacer height must affect fp");
+    }
+
+    /// Regression (2026-07-27): the view height is what the fit check validates
+    /// against, so a table baked at a DIFFERENT view height must not keep
+    /// matching. It previously did — the fingerprint carried only the WINDOW
+    /// size — and Ant-Arkangel page 89 rendered a 1102px column into a 1071px
+    /// usable height, clipping its last line with no clip box to mask it
+    /// (`paged_bottom_clip` returns 0 on overflow).
+    #[test]
+    fn view_height_change_invalidates_the_fingerprint() {
+        let p = FingerprintParts {
+            font_family: "Charter".into(), font_size: 16,
+            ascent: 20, descent: 5, char_width: 9,
+            width: 1920, height: 1200, line_spacing: 6, text_margins: 40,
+            columns: 2, top_spacer_height: 74, view_height: 1098,
+        };
+        // Same WINDOW size, different TEXT VIEW height — the exact shape that
+        // slipped through before.
+        let shorter = FingerprintParts { view_height: 1071, ..p.clone() };
+        assert_ne!(
+            fingerprint_string(&p),
+            fingerprint_string(&shorter),
+            "a different view height must invalidate the stored table"
+        );
     }
 }
