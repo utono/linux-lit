@@ -464,36 +464,71 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
-        // Both vocab-drill entries live on the minus cap: Ctrl+- forward,
-        // Ctrl+Shift+- backward (InputMode::VocabLoop); when the mode can't
-        // start the reason is toasted — no jump fallback. Shifted minus can
-        // arrive as "underscore" or as "minus"+shift depending on layout
-        // path, so the backward entry binds both (same defensive dual as
-        // slash/question).
-        (KeyCombo::ctrl("minus"), Action::JumpToNextVocab),
-        (KeyCombo::ctrl_shift("underscore"), Action::JumpToPrevVocab),
-        (KeyCombo::ctrl_shift("minus"), Action::JumpToPrevVocab),
+        // Both vocab-drill entries live on the `=` cap: Ctrl+= forward,
+        // Ctrl+Shift+= backward (InputMode::VocabLoop); when the mode can't
+        // start the reason is toasted — no jump fallback.
+        //
+        // Moved off the minus cap 2026-07-26: Ctrl+- became
+        // UnderlineNextSentence (below), and the `-` cap was already carrying
+        // the whole word-copy family at its plain/shift levels. `=` is a free
+        // cap — nothing else binds it.
+        //
+        // On RPD `=` and `+` are DIFFERENT physical keys, not two levels of
+        // one cap: xkb has `<AE06> { [ equal, 6, ... ] }` and
+        // `<AE01> { [ plus, 1 ] }`. `equal` is therefore a LEVEL-1 (unshifted)
+        // symbol, so Ctrl+= and Ctrl+Shift+= are distinct chords that both
+        // deliver key_name "equal" with the shift flag selecting direction —
+        // the same shape the `$` cap uses. No "plus" alternate is needed here
+        // (that is a different key, already bound to CopyWorkDivision).
+        (KeyCombo::ctrl("equal"), Action::JumpToNextVocab),
+        (KeyCombo::ctrl_shift("equal"), Action::JumpToPrevVocab),
         // Word-copy family on the `-` cap (2026-07-23; chat panel disabled).
-        // Plain `-` cycles one word at a time to the clipboard; `_` (Shift+-)
-        // collects the whole line. CONFIRMED FROM THE LOG: GTK delivers `_` as
-        // ("underscore", shift=TRUE) — not shift=false — so shift("underscore")
-        // is the bind that actually fires. `_` is a symbol, so lookup() keeps
-        // the shift flag significant (effective_shift only strips shift for bare
-        // uppercase letters), which is why plain("underscore") never matched.
-        // shift("minus") is kept defensively for a layout path that reports the
-        // shifted cap as ("minus", shift=true) instead.
+        // THE MINUS CAP = the underline/selection family. All four levels feed
+        // ONE underline set (`WordCycleState`), which `Return` turns into a
+        // syntax gloss:
+        //
+        //   -        next word in the line, wraps       (WordCycleCopy)
+        //   Shift+-  PREV word in the line, wraps       (WordCyclePrevCopy)
+        //   Alt+-    collect the whole line             (WordCollectCopy)
+        //   Ctrl+-   first word of the NEXT sentence    (UnderlineNextSentence)
+        //
+        // `-`/`Shift+-` are LINE-scoped and wrap at their own end (forward past
+        // the last word -> first; back from the first -> last). A sentence-
+        // scoped `-` was tried and reverted on 2026-07-26: `Ctrl+-` is the
+        // sentence-level bind on this cap, the plain/shift pair steps words.
+        //
+        // RPD: `<AC11> { [ minus, underscore ] }` — `minus` is level 1, so the
+        // UNSHIFTED chords (plain, Ctrl, Alt) all deliver key_name "minus",
+        // while the SHIFTED one delivers the level-2 glyph as
+        // ("underscore", shift=TRUE) — confirmed from the debug log, and the
+        // reason plain("underscore") never matches (`_` is a symbol, so
+        // effective_shift keeps the shift flag significant). shift("minus") is
+        // kept defensively for a layout path reporting the shifted cap as
+        // ("minus", shift=true) instead.
         //
         // Chat panel disabled 2026-07-23: plain `-` previously opened/closed the
         // reader-gloss chat panel (ReaderGlossChatAtCursor). Restore that bind
         // (and Ctrl+l ChatPanelFlipSide in display_bindings) to re-enable it.
         (KeyCombo::plain("minus"), Action::WordCycleCopy),
+        // Shift+- steps BACKWARD through the same sentence `-` walks forward,
+        // wrapping to the sentence's LAST word when already on its first
+        // (2026-07-26). Took the chord vacated by the line-collect, which moved
+        // to Alt+-.
+        (KeyCombo::shift("underscore"), Action::WordCyclePrevCopy),
+        (KeyCombo::shift("minus"), Action::WordCyclePrevCopy),
+        // Alt+-: collect the whole LINE (moved off Shift+- 2026-07-26). Stays
+        // line-scoped on purpose — `_`'s job is grabbing a full line, which a
+        // sentence limit would defeat.
+        (KeyCombo::alt("minus"), Action::WordCollectCopy),
+        // Ctrl+-: underline the FIRST WORD of the next sentence, stepping
+        // sentence by sentence, and hand that sentence to `-`/`Shift+-` as the
+        // one they walk.
+        (KeyCombo::ctrl("minus"), Action::UnderlineNextSentence),
         // Return opens a syntax gloss (grammatical analysis, rendered by the
-        // gloss overlay) for the sentence containing the `-`/`_` underlined
-        // words. Reader mode binds no Return today, so this is additive; the
-        // dispatch arm no-ops when nothing is underlined.
+        // gloss overlay) for the sentence containing the underlined words.
+        // Reader mode binds no Return today, so this is additive; the dispatch
+        // arm no-ops when nothing is underlined.
         (KeyCombo::plain("Return"), Action::OpenSyntaxDiagramForUnderlined),
-        (KeyCombo::shift("underscore"), Action::WordCollectCopy),
-        (KeyCombo::shift("minus"), Action::WordCollectCopy),
         (KeyCombo::ctrl("m"), Action::OpenMediaPicker),
         (KeyCombo::ctrl("slash"), Action::OpenKeybindsOverlay),
         (KeyCombo::plain("slash"), Action::OpenSearch),
@@ -565,11 +600,11 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("r")), Some(&Action::VocabPopupTap));
         // Chat panel disabled 2026-07-23: plain `-` no longer opens the
-        // reader-gloss chat. The `-` cap now carries the word-copy family —
-        // plain `-` = WordCycleCopy, `_` (Shift+-) = WordCollectCopy (bound
-        // both delivery forms). The `r` key stays the vocab hub: Ctrl+r adds a
-        // vocab word, Ctrl+Shift+r asks the vocab journal Q&A, Alt+r toggles the
-        // per-work vocab highlight. Shift+r / Ctrl+Alt+r are now unbound.
+        // reader-gloss chat. The `-` cap now carries the whole underline family
+        // — `-` next word, Shift+- prev word, Alt+- collect line, Ctrl+- next
+        // sentence. The `r` key stays the vocab hub: Ctrl+r adds a vocab word,
+        // Ctrl+Shift+r asks the vocab journal Q&A, Alt+r toggles the per-work
+        // vocab highlight. Shift+r / Ctrl+Alt+r are now unbound.
         assert_eq!(
             m.get(&KeyCombo::plain("minus")),
             Some(&Action::WordCycleCopy)
@@ -579,10 +614,16 @@ mod tests {
         // a defensive alternate. plain("underscore") never matches.
         assert_eq!(
             m.get(&KeyCombo::shift("underscore")),
-            Some(&Action::WordCollectCopy)
+            Some(&Action::WordCyclePrevCopy)
         );
         assert_eq!(
             m.get(&KeyCombo::shift("minus")),
+            Some(&Action::WordCyclePrevCopy)
+        );
+        // Line-collect moved to Alt+- (2026-07-26) to free Shift+- for the
+        // backward word step.
+        assert_eq!(
+            m.get(&KeyCombo::alt("minus")),
             Some(&Action::WordCollectCopy)
         );
         assert_eq!(m.get(&KeyCombo::plain("underscore")), None);
@@ -597,9 +638,18 @@ mod tests {
         // Reader Ctrl+n/p unbound since the popup Journal view was removed.
         assert_eq!(m.get(&KeyCombo::ctrl("n")), None);
         assert_eq!(m.get(&KeyCombo::ctrl("p")), None);
-        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::JumpToNextVocab));
-        assert_eq!(m.get(&KeyCombo::ctrl_shift("underscore")), Some(&Action::JumpToPrevVocab));
-        assert_eq!(m.get(&KeyCombo::ctrl_shift("minus")), Some(&Action::JumpToPrevVocab));
+        // Vocab drill moved off the `-` cap to `=` (2026-07-26) so Ctrl+-
+        // could take the sentence stepper. On RPD `equal` is a LEVEL-1 symbol
+        // on its own cap (`<AE06>`), distinct from `plus` (`<AE01>`), so both
+        // Ctrl chords are reachable and no "plus" alternate belongs here.
+        assert_eq!(m.get(&KeyCombo::ctrl("equal")), Some(&Action::JumpToNextVocab));
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("equal")), Some(&Action::JumpToPrevVocab));
+        // Ctrl+- now steps sentences, feeding the SAME underline set that
+        // `-`/`_` build and `Return` reads.
+        assert_eq!(m.get(&KeyCombo::ctrl("minus")), Some(&Action::UnderlineNextSentence));
+        // The old drill chords on the minus cap are gone.
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("underscore")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl_shift("minus")), None);
         assert_eq!(m.get(&KeyCombo::plain("z")), Some(&Action::OpenConcordancePicker));
         assert_eq!(m.get(&KeyCombo::ctrl("z")), Some(&Action::OpenConcordanceWordPicker));
         assert_eq!(m.get(&KeyCombo::alt("z")), Some(&Action::OpenConcordanceWorksPicker));

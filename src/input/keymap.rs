@@ -4010,10 +4010,15 @@ fn handle_vocab_loop_key(
                 .try_send(crate::mpv::MpvCommand::TogglePause);
         }
         "Escape" => crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut()),
-        // Exit on the loop's own entry keys (Ctrl+- forward, Ctrl+Shift+-
-        // backward — shifted minus may arrive as "underscore"); Ctrl+r/R
+        // Exit on the loop's own entry key (Ctrl+= forward, Ctrl+Shift+=
+        // backward — both deliver "equal", `=` being level-1 on RPD); Ctrl+r/R
         // kept as a legacy exit.
-        "r" | "R" | "minus" | "underscore" if is_ctrl => {
+        //
+        // The entry moved off the minus cap 2026-07-26 (Ctrl+- is now
+        // UnderlineNextSentence), so `minus`/`underscore` are NOT exits here
+        // any more — leaving them would make a reader bind behave like an exit
+        // inside the drill.
+        "r" | "R" | "equal" if is_ctrl => {
             crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut())
         }
         _ => {}
@@ -4506,7 +4511,13 @@ fn dispatch_action(
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
         AskPassage => crate::input::visual::enter_visual_block_mode(&mut state.borrow_mut()),
         WordCycleCopy => crate::input::actions::word_copy::word_cycle_copy(&mut state.borrow_mut()),
+        WordCyclePrevCopy => {
+            crate::input::actions::word_copy::word_cycle_prev_copy(&mut state.borrow_mut())
+        }
         WordCollectCopy => crate::input::actions::word_copy::word_collect_copy(&mut state.borrow_mut()),
+        UnderlineNextSentence => {
+            crate::input::actions::word_copy::underline_next_sentence(&mut state.borrow_mut())
+        }
         OpenSyntaxDiagramForUnderlined => {
             // Guarded: falls through silently when nothing is underlined, or
             // when the underline belongs to a line the cursor has left.

@@ -38,7 +38,7 @@ const NUMBER_ROW: &[KeyDef] = &[
     key("{", "3", "next scene", "", &[]),
     ub("(", "4"),
     ub("&", "5"),
-    ub("=", "6"),
+    key("=", "6", "", "", &[("C-=", "vocab drill"), ("S-C-=", "drill back")]),
     ub(")", "7"),
     ub("}", "8"),
     ub("]", "9"),
@@ -76,12 +76,12 @@ const HOME_ROW: &[KeyDef] = &[
     key("t", "T", "dlg back", "", &[("C-t", "theme next"), ("S-C-T", "theme prev"), ("C-M-t", "theme info")]),
     key("n", "N", "next match", "N: prev match", &[("C-M-n", "nav test")]),
     bare("s", "S", "toggle sync"),
-    key("-", "_", "copy word", "_: collect words", &[("C--", "vocab drill"), ("S-C--", "drill back")]),
+    key("-", "_", "copy next word", "_: copy prev word", &[("M--", "collect words"), ("C--", "next sentence")]),
 ];
 const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 /// `Return` has no cap of its own in the strip (the strip mirrors the physical
-/// letter rows), so it rides on the `-`/`_` descriptions: those keys leave the
-/// underline that Return acts on.
+/// letter rows), so it rides on the `-`/`_`/`Ctrl+-` descriptions: those keys
+/// leave the underline that Return acts on.
 const RETURN_KEY: KeyDef = bare("Ret", "", "syntax gloss");
 
 const BOTTOM_ROW: &[KeyDef] = &[
@@ -330,7 +330,7 @@ loads the entry's edition + MPV media and opens the journal overlay on it) \
 
         // ── Vocab ──
         "vocab drill" => "Action::JumpToNextVocab -> InputMode::VocabLoop \
-(n/p step, a/Space pause, Esc/Ctrl+- exit; unavailable -> toast) \
+(n/p step, a/Space pause, Esc/Ctrl+= exit; unavailable -> toast) \
 — src/input/vocab_loop.rs",
         "drill back" => "Action::JumpToPrevVocab -> InputMode::VocabLoop \
 — src/input/actions/concordance.rs",
@@ -343,17 +343,25 @@ on cursor line: held toast while asking, then the journal overlay opens on \
 the entry; stored answers open immediately) — src/input/actions/vocab_journal.rs",
 
         // ── Word copy / visual ──
-        "copy word" => "Action::WordCycleCopy (plain `-`; cycles one word at a \
-time to the clipboard, and leaves it underlined for Return) \
+        "copy next word" => "Action::WordCycleCopy (plain `-`; steps FORWARD one \
+word at a time through the line to the clipboard, wrapping to the first word \
+after the last, and leaves it underlined for Return) \
 — src/input/actions/word_copy.rs",
+        "copy prev word" => "Action::WordCyclePrevCopy (`_`, Shift+-; the mirror \
+of `-` — steps BACKWARD through the line, wrapping to the LAST word when on \
+the first) — src/input/actions/word_copy.rs",
         "copy id" => "Action::CopyLineMappingId — src/input/keymap.rs",
-        "collect words" => "Action::WordCollectCopy (`_`, Shift+-; collects the \
-whole line, and leaves the words underlined for Return) \
-— src/input/actions/word_copy.rs",
+        "collect words" => "Action::WordCollectCopy (Alt+-, moved off Shift+- \
+2026-07-26; collects the whole LINE — deliberately not sentence-scoped — and \
+leaves the words underlined for Return) — src/input/actions/word_copy.rs",
+        "next sentence" => "Action::UnderlineNextSentence (Ctrl+-; underlines \
+the FIRST WORD of the next sentence on the cursor's line, stepping one \
+sentence per press and wrapping at the end. Writes the SAME underline set as \
+-/_, so Return glosses it) — src/input/actions/word_copy.rs",
         "syntax gloss" => "Action::OpenSyntaxDiagramForUnderlined (Return; opens \
 a syntax-gloss — grammatical analysis rendered by the gloss overlay — for the \
-sentence containing the words underlined by -/_. Does nothing when no words \
-are underlined) — src/input/actions/syntax.rs",
+sentence containing the words underlined by -/_/Alt+-/Ctrl+-. Does nothing \
+when no words are underlined) — src/input/actions/syntax.rs",
         "visual mode" => "Action::EnterVisualMode -> InputMode::Visual \
 — src/input/visual.rs",
 
@@ -495,8 +503,10 @@ fn expand_action(label: &str) -> String {
         "media picker" => "media picker",
         "gloss tog" => "toggle gloss overlay",
         "annot tint" => "toggle gloss/journal line tint",
-        "copy word" => "copy + underline word (cycles one at a time)",
+        "copy next word" => "copy + underline the next word (wraps at line end)",
+        "copy prev word" => "copy + underline the previous word (wraps to line end)",
         "collect words" => "collect + underline line words",
+        "next sentence" => "underline the next sentence's first word",
         "syntax gloss" => "syntax gloss of the underlined sentence",
         "gloss chat" => "reader-gloss chat at cursor (disabled)",
         "gloss pick" => "gloss picker",

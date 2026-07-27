@@ -185,7 +185,17 @@ pub enum Action {
     /// opens the "Ask a question about this passage" card directly.
     AskPassage,
     WordCycleCopy,
+    /// Shift+-: the mirror of `WordCycleCopy` — steps BACKWARD through the
+    /// line's words, wrapping to the LAST word when already on the first.
+    WordCyclePrevCopy,
     WordCollectCopy,
+    /// Ctrl+-: underline the FIRST WORD of the next sentence, stepping forward
+    /// one sentence per press. Writes the same `collect_ranges` as
+    /// `WordCycleCopy`/`WordCollectCopy`, so `OpenSyntaxDiagramForUnderlined`
+    /// acts on it identically — the three binds are three ways to build ONE
+    /// underline set. With nothing underlined yet, starts at the first
+    /// sentence of the cursor's line.
+    UnderlineNextSentence,
     /// Return: open the syntax diagram for the sentence containing the words
     /// underlined by `-` / `_`. No-ops when nothing is underlined, so the key
     /// is free for other uses in every other reader state.
@@ -389,7 +399,9 @@ impl Action {
             Action::EnterVisualMode
             | Action::AskPassage
             | Action::WordCycleCopy
+            | Action::WordCyclePrevCopy
             | Action::WordCollectCopy
+            | Action::UnderlineNextSentence
             | Action::OpenSyntaxDiagramForUnderlined
             | Action::OpenSegmentVim => Category::Selection,
 
@@ -507,7 +519,9 @@ impl Action {
             Action::EnterVisualMode => "EnterVisualMode",
             Action::AskPassage => "AskPassage",
             Action::WordCycleCopy => "WordCycleCopy",
+            Action::WordCyclePrevCopy => "WordCyclePrevCopy",
             Action::WordCollectCopy => "WordCollectCopy",
+            Action::UnderlineNextSentence => "UnderlineNextSentence",
             Action::OpenSyntaxDiagramForUnderlined => "OpenSyntaxDiagramForUnderlined",
             Action::OpenSegmentVim => "OpenSegmentVim",
             Action::ToggleTranslations => "ToggleTranslations",

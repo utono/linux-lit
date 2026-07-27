@@ -236,5 +236,42 @@ Record each deliberate consistency move here so future sweeps know the intent.
   left as-is deliberately — fixing it is a separate decision, not part of
   this change. See `src/input/actions/overlay_cycle.rs` module doc.
 
+- **2026-07-26 — the `-` cap becomes the underline family; vocab drill moves to
+  `=`.** All four levels of the minus cap now feed ONE underline set
+  (`WordCycleState`), which `Return` turns into a syntax gloss:
+
+  - `-` — next word in the line, wrapping to the first after the last
+  - `Shift+-` — previous word in the line, wrapping to the LAST from the first
+  - `Alt+-` — collect the whole line (moved off `Shift+-` to free it)
+  - `Ctrl+-` — first word of the NEXT sentence (`UnderlineNextSentence`)
+
+  This completes the "`-` cap = text selection for the syntax gloss" concept
+  started in the entry above, rather than spending fresh caps on the extra
+  selection verbs. `-` and `Shift+-` are exact mirrors sharing one
+  `cycle_index`, so the directions compose.
+
+  **Scope note (a reversal worth recording).** `-` was briefly made
+  SENTENCE-scoped the same day — walking only the current sentence and wrapping
+  there — on the reasoning that a prose buffer line is a whole paragraph. The
+  user reverted it: `-`/`Shift+-` step words within the LINE, and `Ctrl+-` is
+  the only sentence-level bind on the cap. `Alt+-` stays line-scoped too, since
+  collecting a full line is its whole purpose. Don't re-derive the sentence
+  version.
+
+  Displaced: the vocab-sentence drill (`JumpToNextVocab` /`JumpToPrevVocab`),
+  which had been on `Ctrl+-` / `Ctrl+Shift+-`. It moved WHOLE to the `=` cap —
+  `Ctrl+=` forward, `Ctrl+Shift+=` back — chosen because `=` was completely
+  unbound and sits next to `-`, so the drill keeps an adjacent home. The drill's
+  in-mode EXIT key followed its entry key (`handle_vocab_loop_key` now exits on
+  `Ctrl+=`, not `Ctrl+-`); leaving the old exit in place would have made a
+  reader bind behave like an exit inside the drill.
+
+  RPD note: `=` and `+` are DIFFERENT physical keys here, not two levels of one
+  cap (xkb `<AE06> { [ equal, 6 ] }` vs `<AE01> { [ plus, 1 ] }`). `equal` is
+  therefore level-1/unshifted, which is what makes `Ctrl+=` and `Ctrl+Shift+=`
+  distinct chords — the same property the `$` cap relies on. No `plus`
+  alternate belongs on the drill; `plus` is a separate key already bound to
+  `CopyWorkDivision`.
+
 **Open candidates** (flagged, not yet scheduled): consolidate the echoes
 concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2).
