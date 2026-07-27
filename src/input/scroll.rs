@@ -1211,6 +1211,34 @@ pub(crate) fn scroll_to_cursor(state: &mut AppState) {
 /// `prev_line` is the cursor position before the jump. In e-reader mode, if the
 /// new position triggers a page turn, the previous line becomes the top of the
 /// new page (continuity — last line of old page = first line of new page).
+/// Whether a dialogue/segment jump may TURN THE PAGE (2026-07-27).
+///
+/// User rule: the dialogue/segment binds (`;` `'` `,` `q` `j` `k`) never
+/// effect a page turn — on any work type. They move the cursor within what is
+/// already on screen; crossing to another page is the job of the explicit
+/// page binds (`x` `y` `[` `{`). When one of these binds would need a turn,
+/// the caller holds the cursor where it was instead.
+///
+/// Returns true when the cursor's new line is already visible, i.e. the jump
+/// needs no turn. Mirrors the `already_visible` test the scroll helpers use,
+/// including the prose `is_line_start_visible` exception (an over-tall
+/// paragraph whose opening row IS on screen must not read as "not visible").
+pub(crate) fn jump_stays_on_page(state: &AppState) -> bool {
+    if state.config.navigation_mode != crate::config::NavigationMode::EReader {
+        // Scroll mode centers the cursor; there is no page to leave.
+        return true;
+    }
+    if state.translations_visible {
+        // The translation overlay scrolls by scrolloff, never by page.
+        return true;
+    }
+    if state.is_prose() && state.column_count() == 1 {
+        super::viewport::is_line_start_visible(state, state.current_line)
+    } else {
+        super::viewport::is_line_fully_visible(state, state.current_line)
+    }
+}
+
 pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize) {
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
