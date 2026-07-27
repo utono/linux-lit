@@ -162,6 +162,15 @@ pub struct JournalOverlay {
     /// re-tags them (mirrors how `hi_ranges` is re-derived per page). Empty when
     /// no rewrite highlight is active.
     rewrite_diff_full: RefCell<Vec<(usize, usize)>>,
+    /// True while the diff ranges are TINTED. Distinct from
+    /// `rewrite_diff_active`, which stays true as long as ranges are
+    /// remembered: after the 3-second auto-fade the tint is gone but the
+    /// ranges live on so `w` can flash them again. Mirrors the gloss overlay.
+    rewrite_diff_shown: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Generation counter for the auto-fade timer — a timer whose captured
+    /// generation no longer matches is a no-op, so a re-flash or an early
+    /// clear cannot be undone by a stale timer. Mirrors the gloss overlay.
+    rewrite_diff_fade_gen: std::rc::Rc<std::cell::Cell<u64>>,
     /// Overlay-search match spans as char offsets into the WHOLE-entry body (the
     /// `whole_entry_text` basis) + the current-match index, so `/` search survives
     /// page turns WITHIN a paginated entry: `render_page` clips these to the
@@ -705,6 +714,8 @@ impl JournalOverlay {
             rewrite_diff_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
+            rewrite_diff_shown: std::rc::Rc::new(std::cell::Cell::new(false)),
+            rewrite_diff_fade_gen: std::rc::Rc::new(std::cell::Cell::new(0)),
             search_full: RefCell::new(Vec::new()),
             search_full_current: Cell::new(0),
         }
@@ -1285,17 +1296,65 @@ impl JournalOverlay {
             .map(|(a, b)| (*a as usize, *b as usize))
             .collect();
         self.rewrite_diff_active.set(!ranges.is_empty());
+        self.rewrite_diff_shown.set(!ranges.is_empty());
         self.reapply_rewrite_diff();
+        self.arm_rewrite_diff_fade();
+    }
+
+    /// Hide the diff tint after `REWRITE_DIFF_FADE_SECS`, KEEPING the ranges so
+    /// `flash_rewrite_diff` can bring them back. Mirrors the gloss overlay;
+    /// bumping the generation first cancels any timer already in flight, so a
+    /// re-flash always gets a full window.
+    fn arm_rewrite_diff_fade(&self) {
+        let generation = self.rewrite_diff_fade_gen.get() + 1;
+        self.rewrite_diff_fade_gen.set(generation);
+        if !self.rewrite_diff_shown.get() {
+            return;
+        }
+        let gen_rc = self.rewrite_diff_fade_gen.clone();
+        let buffer = self.view.buffer();
+        let tag = self.rewrite_diff_tag.clone();
+        let shown = self.rewrite_diff_shown.clone();
+        glib::timeout_add_local_once(
+            std::time::Duration::from_secs(crate::input::rewrite_diff::REWRITE_DIFF_FADE_SECS),
+            move || {
+                if gen_rc.get() != generation {
+                    return;
+                }
+                let (s, e) = buffer.bounds();
+                buffer.remove_tag(&tag, &s, &e);
+                shown.set(false);
+            },
+        );
+    }
+
+    /// Re-tint the remembered diff ranges for another fade window (the `w`
+    /// bind). Returns false when there is no diff to flash.
+    pub fn flash_rewrite_diff(&self) -> bool {
+        if self.rewrite_diff_full.borrow().is_empty() {
+            return false;
+        }
+        self.rewrite_diff_shown.set(true);
+        self.reapply_rewrite_diff();
+        self.arm_rewrite_diff_fade();
+        true
     }
 
     /// Re-tag the stored full-body diff ranges onto the CURRENT page's buffer,
     /// clipping each to the page's char span and shifting to page-local offsets.
     /// Called after each `set_text` in `render_page`, so the highlight survives
     /// page turns (the `<hi>` model). No-op when no ranges are stored.
+    ///
+    /// Also a no-op once the tint has FADED: the ranges are still remembered
+    /// (for `w`), so without the `rewrite_diff_shown` guard a page turn after
+    /// the fade would repaint a diff the reader already watched disappear.
     fn reapply_rewrite_diff(&self) {
         let buffer = self.view.buffer();
         let (bs, be) = buffer.bounds();
         buffer.remove_tag(&self.rewrite_diff_tag, &bs, &be);
+        if !self.rewrite_diff_shown.get() {
+            return;
+        }
         let full = self.rewrite_diff_full.borrow();
         if full.is_empty() {
             return;
@@ -1487,6 +1546,12 @@ impl JournalOverlay {
         buffer.remove_tag(&self.rewrite_diff_tag, &s, &e);
         self.rewrite_diff_full.borrow_mut().clear();
         self.rewrite_diff_active.set(false);
+        // Forget the tint AND the ranges: unlike the fade, a clear leaves
+        // nothing for `w` to flash. The generation bump cancels any fade timer
+        // still in flight so it cannot fire against a later diff.
+        self.rewrite_diff_shown.set(false);
+        self.rewrite_diff_fade_gen
+            .set(self.rewrite_diff_fade_gen.get() + 1);
     }
 
     /// Scroll the view so the given char offset is on-screen. Creates a

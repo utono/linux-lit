@@ -39,6 +39,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("Shift+Space", "synthesize all prose blocks"),
     ]),
     ("Editing", &[
+        ("w", "flash the last rewrite diff again (3s)"),
         ("e", "begin_edit (vim, in place)"),
         ("u", "undo_gloss_edit (confirm)"),
         ("D", "delete_current_gloss (confirm)"),

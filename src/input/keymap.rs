@@ -409,6 +409,34 @@ pub fn handle_key(
     false
 }
 
+/// Re-tint the last rewrite diff for another fade window (`w` in the gloss,
+/// synopsis and journal overlays).
+///
+/// The diff auto-fades ~3s after a rewrite so it does not linger over the text;
+/// the RANGES survive that fade, so this brings the tint back on demand. Toasts
+/// when there is nothing to flash rather than silently doing nothing — with the
+/// tint already gone, a no-op key is indistinguishable from a broken one.
+///
+/// `journal` selects which overlay owns the diff: the gloss overlay widget
+/// backs both the gloss and synopsis surfaces, the journal overlay its own.
+fn flash_rewrite_diff(state: &Rc<RefCell<AppState>>, journal: bool) {
+    let flashed = {
+        let s = state.borrow();
+        if journal {
+            s.journal_overlay.flash_rewrite_diff()
+        } else {
+            s.gloss_overlay.flash_rewrite_diff()
+        }
+    };
+    if !flashed {
+        crate::input::navigation::show_chapter_toast_secs(
+            &state.borrow(),
+            "no rewrite diff to flash",
+            2,
+        );
+    }
+}
+
 /// Shared body for the `rr` chord across every vocab surface. Toggles the
 /// popup: if visible, close it (clearing `auto`); if hidden, ensure vocab
 /// highlighting is on (enabling + persisting it when it was off, exactly as the
@@ -2165,6 +2193,13 @@ fn handle_journal_key(
         // `R`: vocab R reserved unbound, mirrors main card. The rewrite TARGET
         // chooser moved to Ctrl+w (handled in the is_ctrl block above).
         "R" => true,
+        // `w`: re-flash the last rewrite diff for another fade window. Sits on
+        // the rewrite cap (Ctrl+w rewrites here) so "w = what the rewrite
+        // changed" reads the same on every overlay.
+        "w" if !is_ctrl && !is_alt => {
+            flash_rewrite_diff(state, true);
+            true
+        }
         "e" => {
             crate::input::actions::journal::begin_edit(state);
             true
@@ -2634,6 +2669,13 @@ fn handle_gloss_key(
         // R: vocab R reserved unbound, mirrors main card. The ask-Claude
         // rewrite moved to Ctrl+r (handled in the is_ctrl block above).
         "R" => true,
+        // `w`: re-flash the last rewrite diff for another fade window. Sits on
+        // the rewrite cap (Ctrl+w rewrites here) so "w = what the rewrite
+        // changed" reads the same on every overlay.
+        "w" if !is_ctrl && !is_alt => {
+            flash_rewrite_diff(state, false);
+            true
+        }
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
         "u" => {
             crate::input::actions::gloss::show_undo_confirmation(
@@ -3127,6 +3169,15 @@ fn handle_synopsis_overlay_key(
         // dropped 2026-07-22). Opens in INSERT.
         "R" => {
             crate::input::actions::synopsis::begin_rewrite(state);
+            true
+        }
+        // `w`: re-flash the last rewrite diff for another fade window. Same key
+        // as the gloss/journal overlays even though the synopsis rewrite is on
+        // `R` here, not Ctrl+w — the flash is worth having in one place across
+        // all three surfaces. The synopsis renders into the GLOSS overlay
+        // widget, so the diff state is the gloss overlay's.
+        "w" if !is_ctrl && !is_alt => {
+            flash_rewrite_diff(state, false);
             true
         }
         // c: copy the current scene's synopsis troubleshooting payload (abbrev,

@@ -32,6 +32,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Editing", &[
         ("R", "begin_rewrite: Claude rewrite of this synopsis"),
+        ("w", "flash the last rewrite diff again (3s)"),
         ("e", "begin_edit (vim, in place)"),
         ("u", "undo last edit (confirm)"),
         ("c", "copy_synopsis_id (debug info)"),

@@ -37,6 +37,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Editing", &[
         ("C-w", "open_rewrite_target: Claude rewrite (q/a/b)"),
+        ("w", "flash the last rewrite diff again (3s)"),
         ("e", "begin_edit (vim, in place)"),
         ("u", "undo_journal_edit (confirm)"),
         ("D", "delete_current (confirm)"),
