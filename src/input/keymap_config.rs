@@ -214,7 +214,13 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // h / t are the cursor-only NO-SEEK dialogue twins.
         (KeyCombo::plain("j"), Action::NextBookmark),
         (KeyCombo::plain("k"), Action::PrevBookmark),
-        (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
+        // RETIRED 2026-07-27: `Q` (JumpToNextDialogue) and `Alt+,`
+        // (JumpToPrevDialogue). Both ran the play-only dialogue predicate with
+        // NO prose branch, so on prose they walked headings and behaved
+        // erratically. `'` / `;` (Cursor{Next,Prev}Dialogue) are strict
+        // supersets — identical play predicate PLUS a prose branch and a
+        // translation-overlay branch — so nothing is lost. The Action variants
+        // and handlers are deliberately KEPT (unbound) so a rebind is one line.
         (KeyCombo::plain("h"), Action::CursorNextDialogueNoSeek),
         (KeyCombo::plain("t"), Action::CursorPrevDialogueNoSeek),
         (KeyCombo::plain("Up"), Action::CursorPrevDialogue),
@@ -289,9 +295,10 @@ fn media_bindings() -> Vec<(KeyCombo, Action)> {
         // 2026-07-22 — was ShowCurrentChapter, which stays on `C`).
         (KeyCombo::plain("plus"), Action::CopyWorkDivision),
         (KeyCombo::alt("p"), Action::TogglePhraseHighlight),
-        // Alt+, is the unshifted comma cap (<AD02>) + alt → ("comma", alt=true),
-        // NOT ("less", ...) which is the shifted glyph. Jumps to prev dialogue.
-        (KeyCombo::alt("comma"), Action::JumpToPrevDialogue),
+        // (Alt+, → JumpToPrevDialogue retired here 2026-07-27; see the note by
+        // the `h` bind above. For the record, had it stayed: Alt+, is the
+        // UNSHIFTED comma cap (<AD02>) + alt → ("comma", alt=true), NOT
+        // ("less", ...) which is the shifted glyph.)
     ]
 }
 
@@ -742,15 +749,20 @@ mod tests {
         // strips the redundant shift, so plain("J") matches.
         assert_eq!(km.lookup("J", false, true, false), Some(Action::JumpToNextSpeaker));
         assert_eq!(km.lookup("K", false, true, false), Some(Action::JumpToPrevSpeaker));
-        // Bare , / q are the speaker jumps; Shift+q emits "Q" (uppercase,
-        // shift stripped) for the next-dialogue jump.
+        // Bare , / q are the speaker jumps.
         assert_eq!(km.lookup("comma", false, false, false), Some(Action::JumpToPrevSpeaker));
         assert_eq!(km.lookup("q", false, false, false), Some(Action::JumpToNextSpeaker));
-        assert_eq!(km.lookup("Q", false, true, false), Some(Action::JumpToNextDialogue));
         // Ctrl+, opens the settings overlay (mirrors the per-overlay handlers).
         assert_eq!(km.lookup("comma", true, false, false), Some(Action::OpenSettingsOverlay));
-        // Alt+, (unshifted comma cap + alt) jumps to the previous dialogue.
-        assert_eq!(km.lookup("comma", false, false, true), Some(Action::JumpToPrevDialogue));
+        // RETIRED 2026-07-27 — `Q` and `Alt+,` are now UNBOUND. Both ran the
+        // play-only dialogue predicate with no prose branch; `'` / `;` are
+        // strict supersets. These assertions are the regression guard: if a
+        // default creeps back, they fail.
+        assert_eq!(km.lookup("Q", false, true, false), None, "Q retired");
+        assert_eq!(km.lookup("comma", false, false, true), None, "Alt+, retired");
+        // ...and the supersets that replaced them are still bound.
+        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogue));
     }
 
     /// The `i` cap mirrors the `-` cap on all four levels, for every work type.

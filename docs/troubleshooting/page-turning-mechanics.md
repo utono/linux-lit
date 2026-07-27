@@ -81,7 +81,6 @@ the reader is looking at.
 **May turn (`Direction::Next`):**
 
 - `q` / `J` — `JumpToNextSpeaker` (next speaker turn; next paragraph on prose)
-- `Q` — `JumpToNextDialogue`
 - `'` / `Down` — `CursorNextDialogue` (seeks audio)
 - `h` — `CursorNextDialogueNoSeek` (cursor only, MPV keeps playing)
 
@@ -89,7 +88,6 @@ the reader is looking at.
 is a no-op; crossing backward is the job of `y` / `{`:
 
 - `,` / `K` — `JumpToPrevSpeaker`
-- `Alt+,` — `JumpToPrevDialogue`
 - `;` / `Up` — `CursorPrevDialogue` (seeks audio)
 - `t` — `CursorPrevDialogueNoSeek` (cursor only)
 
@@ -1142,7 +1140,7 @@ cached in `state.synopsis_cache` keyed by `(div1, div2)`.
 
 ### Scene-snap on navigation
 
-When FORWARD dialogue navigation (`q`/`Q`/`'`) or playback sync lands the cursor on
+When FORWARD dialogue navigation (`q`/`'`) or playback sync lands the cursor on
 the first dialogue line of a new scene that's off-page, the viewport snaps so the
 scene header is at the top of the new spread. Detection uses
 `is_first_dialogue_of_scene` in `viewport.rs`, which walks backward from the
@@ -1150,7 +1148,7 @@ cursor — if it hits a scene marker or separator before any dialogue line, the
 cursor is the scene's first dialogue; `back_up_for_speaker` then finds the full
 header-block top. This applies to plays only (`!is_prose`).
 
-- **Forward (`q`/`Q`/`'`):** scene-snap fires in `scroll_after_jump_forward`.
+- **Forward (`q`/`'`):** scene-snap fires in `scroll_after_jump_forward`.
 - **Sync:** scene-snap fires via the `(div1, div2)` comparison in the CursorSync
   handler (`main.rs`).
 - **Backward (`,`/`;`/`K`):** does NOT scene-snap. `scroll_after_jump_backward`
@@ -1161,7 +1159,7 @@ header-block top. This applies to plays only (`!is_prose`).
   `jump_to_prev_scene`), not these handlers — that is where intentional
   scene-to-page-top snapping lives.
 
-### Dialogue navigation reading model (forward `q` `Q` `'` `h`; backward `,` `;` `t` `K`)
+### Dialogue navigation reading model (forward `q` `'` `h`; backward `,` `;` `t` `K`)
 
 The forward segment binds (next dialogue/speaker) and the backward ones
 (previous dialogue/speaker) move the cursor one dialogue line. In two columns

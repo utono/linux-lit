@@ -1375,11 +1375,9 @@ pub(crate) fn scroll_to_cursor(state: &mut AppState) {
 /// new page (continuity — last line of old page = first line of new page).
 /// Whether a dialogue/segment jump may TURN THE PAGE (2026-07-27).
 ///
-/// User rule (revised 2026-07-27): only the BACKWARD segment binds (`,` `K`
-/// `Alt+,` `;` `t` `Up`) are barred from turning the page — they move the
+/// User rule (revised 2026-07-27): only the BACKWARD segment binds (`,` `K` `;` `t` `Up`) are barred from turning the page — they move the
 /// cursor within what is already on screen, and crossing backward is the job of
-/// the explicit page binds (`y` `{`). The FORWARD binds (`q` `J` `Q` `'` `h`
-/// `Down`) MAY turn, so reading forward never dead-ends at a page edge.
+/// the explicit page binds (`y` `{`). The FORWARD binds (`q` `J` `'` `h` `Down`) MAY turn, so reading forward never dead-ends at a page edge.
 ///
 /// Key names are this user's `keymap.json` (`reader` scope), not the compiled
 /// defaults; `j`/`k` are bookmark nav there, NOT segment binds.

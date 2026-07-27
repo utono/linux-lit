@@ -50,7 +50,8 @@ const BACKSPACE: KeyDef = bare("\u{232b}", "", "ts tap");
 
 const UPPER_ROW: &[KeyDef] = &[
     key(";", ":", "cursor \u{2191}", ":: cycle speed", &[]),
-    key(",", "<", "prev speaker", "", &[("M-,", "prev dlg"), ("C-,", "settings")]),
+    // M-, ("prev dlg") retired 2026-07-27 — see `;` (cursor ↑), its superset.
+    key(",", "<", "prev speaker", "", &[("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "karaoke")]),
     key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
@@ -86,7 +87,9 @@ const RETURN_KEY: KeyDef = bare("Ret", "", "syntax gloss");
 
 const BOTTOM_ROW: &[KeyDef] = &[
     bare("'", "\"", "cursor \u{2193}"),
-    key("q", "Q", "next speaker", "Q: next dlg", &[]),
+    // Shift+q ("Q: next dlg") retired 2026-07-27 — see `'` (cursor ↓), its
+    // superset. `q` itself is unchanged.
+    key("q", "Q", "next speaker", "", &[]),
     key("j", "J", "next bkmk", "J: next speaker", &[("C-j", "jrnl Q&A picker"), ("M-j", "recent Q&A")]),
     key("k", "K", "prev bkmk", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
@@ -249,8 +252,8 @@ fn describe(label: &str) -> Option<&'static str> {
         "pg back" => "Action::PageBackward — src/input/navigation.rs",
         "cursor ↓" | "cursor down" => "Action::CursorNextDialogue — src/input/navigation.rs",
         "cursor ↑" | "cursor up" => "Action::CursorPrevDialogue — src/input/navigation.rs",
-        "prev dlg" => "Action::JumpToPrevDialogue — src/input/navigation.rs",
-        "next dlg" => "Action::JumpToNextDialogue — src/input/navigation.rs",
+        // "prev dlg"/"next dlg" arms removed 2026-07-27 with the Alt+, and Q
+        // binds; no keycap emits those labels now (Actions kept, unbound).
         "dlg fwd" => "Action::CursorNextDialogueNoSeek — src/input/navigation.rs",
         "dlg back" => "Action::CursorPrevDialogueNoSeek — src/input/navigation.rs",
         "next speaker" => "Action::JumpToNextSpeaker — src/input/navigation.rs",
@@ -499,8 +502,6 @@ fn expand_action(label: &str) -> String {
         "next scene" => "next scene",
         "prev bkmk" => "previous bookmark",
         "next bkmk" => "next bookmark",
-        "prev dlg" => "previous dialogue",
-        "next dlg" => "next dialogue",
         "dlg fwd" => "next dialogue (cursor only, no seek)",
         "dlg back" => "previous dialogue (cursor only, no seek)",
         "vocab drill" => "vocab-sentence drill loop",
@@ -1079,5 +1080,50 @@ mod tests {
             assert_eq!(row_keys(row)[idx].unshifted, glyph,
                 "find_cap({name}) landed on the wrong cap");
         }
+    }
+}
+
+#[cfg(test)]
+mod retired_bind_legend_tests {
+    use super::*;
+
+    /// The Ctrl+/ legend is a HAND-MAINTAINED mirror of the real binds, so a
+    /// retirement that misses it leaves the overlay advertising a dead key.
+    /// `Q` (JumpToNextDialogue) and `Alt+,` (JumpToPrevDialogue) were retired
+    /// 2026-07-27 in favour of their supersets `'` / `;`.
+    #[test]
+    fn retired_binds_are_absent_from_the_legend() {
+        let all: Vec<&KeyDef> = (0..ROW_COUNT).flat_map(row_keys).collect();
+
+        let comma = all.iter().find(|d| d.unshifted == ",").expect("comma cap");
+        assert!(
+            !comma.modifiers.iter().any(|(m, _)| *m == "M-,"),
+            "Alt+, retired — must not appear on the comma cap"
+        );
+        // Ctrl+, (settings) is untouched by the retirement.
+        assert!(comma.modifiers.iter().any(|(m, _)| *m == "C-,"), "C-, kept");
+
+        let q = all.iter().find(|d| d.unshifted == "q").expect("q cap");
+        assert_eq!(q.shift_action, "", "Shift+q (Q: next dlg) retired");
+        assert_eq!(q.action, "next speaker", "plain q unchanged");
+
+        // No cap anywhere still advertises the retired labels.
+        for d in &all {
+            assert_ne!(d.action, "next dlg");
+            assert_ne!(d.action, "prev dlg");
+            assert_ne!(d.shift_action, "Q: next dlg");
+            for (_, label) in d.modifiers {
+                assert_ne!(*label, "prev dlg");
+                assert_ne!(*label, "next dlg");
+            }
+        }
+    }
+
+    /// The supersets that replaced them must still be advertised.
+    #[test]
+    fn superset_binds_are_still_in_the_legend() {
+        let all: Vec<&KeyDef> = (0..ROW_COUNT).flat_map(row_keys).collect();
+        assert!(all.iter().any(|d| d.unshifted == "'" && d.action == "cursor \u{2193}"));
+        assert!(all.iter().any(|d| d.unshifted == ";" && d.action == "cursor \u{2191}"));
     }
 }
