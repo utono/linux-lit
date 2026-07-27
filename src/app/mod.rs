@@ -3561,6 +3561,15 @@ pub fn display_work_at_with_prepared(
     // left column that duplicates the right column's opening lines. The prose
     // resnap re-derives the offset for a prose target from its own table.
     state.page_top_offset = 0;
+    // The open/last gloss's context (citations, source text, work_abbrev) all
+    // address the OLD work. Left stale, the `\` cycle's probe
+    // (`gloss_covers_cursor`) reads the displayed span out of it and queries
+    // the OLD abbrev, while the opener queries the new work — so the probe
+    // says a stop has content, `advance()` tears the current overlay down, the
+    // opener finds nothing, and the user is dumped into the reader with no
+    // toast. `gloss_covers_cursor` also guards on the abbrev; this is the root
+    // fix, that is the belt.
+    state.gloss_context = None;
     // A vocab-sentence loop never survives a work switch (its buffer lines,
     // media id, and ab-loop all belong to the old work).
     crate::input::vocab_loop::exit_vocab_loop(state);

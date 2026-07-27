@@ -3355,6 +3355,18 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
 /// whether the next stop can open BEFORE it tears down the current overlay,
 /// so that a lap with no reachable stop can leave the current overlay up and
 /// toast instead of dumping the reader out of an overlay it can't replace.
+/// Whether a `gloss_context`'s work agrees with the work actually loaded.
+///
+/// `gloss_context` is set when a gloss opens and is NOT cleared when the
+/// overlay closes, so it outlives its work unless a work switch clears it
+/// (`display_work_at_with_prepared`). This is the belt to that suspenders: the
+/// probe below queries with `ctx.work_abbrev` while the opener queries the
+/// current work, and a disagreement makes the probe answer about a work the
+/// opener will never look in. Pure so the rule is testable.
+fn displayed_span_is_current_work(current_abbrev: Option<&str>, ctx_abbrev: &str) -> bool {
+    current_abbrev == Some(ctx_abbrev)
+}
+
 pub(crate) fn gloss_covers_cursor(state: &Rc<RefCell<AppState>>, gloss_types: &[&str]) -> bool {
     // When an overlay is already open, the question the cycle is really asking
     // is "does another stop cover the passage I am LOOKING AT", not "…the
@@ -3366,11 +3378,19 @@ pub(crate) fn gloss_covers_cursor(state: &Rc<RefCell<AppState>>, gloss_types: &[
     // plainly has one. Test SPAN OVERLAP against the displayed passage first.
     let displayed_span = {
         let s = state.borrow();
-        s.gloss_context.as_ref().and_then(|ctx| {
-            let start = crate::app::parse_citation(&ctx.start_citation)?;
-            let end = crate::app::parse_citation(&ctx.end_citation)?;
-            Some((ctx.work_abbrev.clone(), start, end))
-        })
+        // Only trust the displayed span when its work IS the loaded work. A
+        // stale context from a previous work would send this branch querying
+        // the OLD abbrev and RETURN from it, while the opener queries the
+        // current work — probe true, open nothing, reader with no toast.
+        let current = s.current_work.as_ref().map(|w| w.canonical_abbrev.as_str());
+        s.gloss_context
+            .as_ref()
+            .filter(|ctx| displayed_span_is_current_work(current, &ctx.work_abbrev))
+            .and_then(|ctx| {
+                let start = crate::app::parse_citation(&ctx.start_citation)?;
+                let end = crate::app::parse_citation(&ctx.end_citation)?;
+                Some((ctx.work_abbrev.clone(), start, end))
+            })
     };
     if let Some((abbrev, dstart, dend)) = displayed_span {
         if let Ok(conn) = crate::db::queries::open_db() {
@@ -4070,6 +4090,34 @@ fn first_source_start_time(verses: &str, work: &[(String, Option<f64>)]) -> Opti
         }
     }
     None
+}
+
+#[cfg(test)]
+mod displayed_span_guard_tests {
+    use super::displayed_span_is_current_work;
+
+    /// The `\` cycle's probe reads the DISPLAYED passage out of `gloss_context`
+    /// and queries with `ctx.work_abbrev`, while the opener queries the CURRENT
+    /// work. `gloss_context` is never cleared on a work switch, so after one the
+    /// probe could answer about the OLD work: it returns true, `advance()` tears
+    /// the overlay down, the opener finds nothing in the new work, and the user
+    /// lands in the reader with no toast.
+    #[test]
+    fn stale_context_from_another_work_is_rejected() {
+        assert!(!displayed_span_is_current_work(Some("Ant"), "Cym"));
+    }
+
+    #[test]
+    fn context_matching_the_current_work_is_accepted() {
+        assert!(displayed_span_is_current_work(Some("Cym"), "Cym"));
+    }
+
+    /// No work loaded — there is nothing the displayed span can agree with, so
+    /// the probe must not trust it.
+    #[test]
+    fn absent_current_work_is_rejected() {
+        assert!(!displayed_span_is_current_work(None, "Cym"));
+    }
 }
 
 #[cfg(test)]
