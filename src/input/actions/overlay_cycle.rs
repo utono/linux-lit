@@ -207,6 +207,7 @@ fn close_current(state: &Rc<RefCell<AppState>>, current: Stop) {
             // jump_to_journal_source_start — so the lap continues from its
             // entry segment even after Ctrl+n/p traversal.
             s.journal.entry_page_id.take();
+            s.journal_from_synopsis = None;
             let pos = s.journal.return_pos.take();
             crate::app::restore_saved_position_resnap(&mut s, pos);
         }
