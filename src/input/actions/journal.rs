@@ -1244,17 +1244,27 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    open_journal_scene(state);
+    open_journal_scene(state, JournalOpenScope::SegmentElseBand);
 }
 
-/// Open the journal overlay on the cursor's Scene band. When that scene band
-/// has no Q&A, toast "no journal entry" and stay in the reader — never the
-/// work-wide picker, which has its own bind (`OpenJournalPicker`).
-/// Assumes reader mode / no conflicting overlay is showing; saves
-/// `return_pos` from the current cursor. Shared by the reader Ctrl+j
-/// (`toggle_overlay`'s open half) and the `\` overlay cycle
-/// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
-/// is on the line whose scene the journal should open on) and then call this.
+/// How far `open_journal_scene` may widen its search.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum JournalOpenScope {
+    /// The `\` overlay cycle: a `scope='passage'` entry covering the lap
+    /// anchor, or nothing. A miss returns false silently — no toast, no state
+    /// change — so `overlay_cycle::advance` can skip the stop.
+    SegmentOnly,
+    /// Ctrl+j: the segment entry if there is one, else the whole scene band.
+    SegmentElseBand,
+}
+
+impl JournalOpenScope {
+    /// Whether a segment miss may fall through to the chapter band.
+    fn allows_band_fallback(self) -> bool {
+        matches!(self, JournalOpenScope::SegmentElseBand)
+    }
+}
+
 /// Whether the journal Q&A stop has anything to show for the cursor: a
 /// `scope='passage'` entry whose citation span covers the lap anchor. Performed
 /// WITHOUT opening the overlay or touching any state.
@@ -1293,11 +1303,16 @@ pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bo
 
 /// Open the journal Q&A stop for the cursor. Returns whether an overlay was
 /// actually opened: false means nothing covers the cursor and the caller is
-/// still in whatever mode it started in. The `\` overlay cycle
-/// (`overlay_cycle::advance`) uses this to SKIP an empty journal stop instead
-/// of ending the lap there; standalone callers ignore the value and keep the
-/// miss toast this function emits.
-pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
+/// still in whatever mode it started in. `scope` controls how far a segment
+/// miss may widen: `SegmentOnly` (the `\` overlay cycle, via
+/// `overlay_cycle::advance`) returns false silently so the lap can SKIP an
+/// empty journal stop instead of ending there; `SegmentElseBand` (Ctrl+j, via
+/// `toggle_overlay`) falls through to the whole scene band and keeps the miss
+/// toast this function emits when even the band is empty.
+pub(crate) fn open_journal_scene(
+    state: &Rc<RefCell<AppState>>,
+    scope: JournalOpenScope,
+) -> bool {
     // First: if the cursor line itself falls inside a passage Q&A's span, open
     // the overlay LANDED on that specific entry — regardless of which band the
     // picker groups it under. Resolved from the cursor's exact
@@ -1311,10 +1326,15 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
             return false;
         }
         let abbrev = current_work_abbrev(&s);
+        // The lap anchor, not the live cursor — arriving here via `\` from the
+        // gloss stop leaves the cursor at the END of the glossed passage, so
+        // probing `current_line` asks about a different line than
+        // `journal_has_content_at_cursor` just approved.
+        let anchor = lap_anchor_for(&s);
         s.current_work
             .as_ref()
             .and_then(|w| {
-                s.work_line_for_buffer(s.current_line)
+                s.work_line_for_buffer(anchor)
                     .and_then(|wi| w.lines.get(wi))
             })
             .map(|l| (l.div1, l.div2, l.line_in_div))
@@ -1338,6 +1358,15 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
         land_on_page(&mut s, JournalBand::Scene(pd1, pd2), entry_id);
         s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
         return true;
+    }
+
+    // The `\` cycle stops here: no passage Q&A covers the segment, so the stop
+    // has nothing to show. Return silently — `overlay_cycle::advance` skips to
+    // the next stop and owns the all-empty toast. Emitting the band path's
+    // "No journal entry for this segment" toast here would fire on every lap
+    // through a segment that simply has no Q&A of its own.
+    if !scope.allows_band_fallback() {
+        return false;
     }
 
     let (d1, d2, scene_empty) = {
@@ -3267,6 +3296,15 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `\` cycle must never fall through to the chapter band; Ctrl+j must
+    /// keep doing so. Guards the scope enum against being collapsed back into
+    /// a bool or silently defaulted.
+    #[test]
+    fn only_segment_else_band_reaches_the_scene_band() {
+        assert!(!JournalOpenScope::SegmentOnly.allows_band_fallback());
+        assert!(JournalOpenScope::SegmentElseBand.allows_band_fallback());
+    }
 
     #[test]
     fn blank_question_is_skipped() {

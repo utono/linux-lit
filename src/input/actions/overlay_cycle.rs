@@ -79,7 +79,10 @@ impl Stop {
                 crate::input::actions::gloss::open_gloss_at_cursor(state);
             }
             Stop::Journal => {
-                crate::input::actions::journal::open_journal_scene(state);
+                crate::input::actions::journal::open_journal_scene(
+                    state,
+                    crate::input::actions::journal::JournalOpenScope::SegmentOnly,
+                );
             }
             Stop::Syntax => {
                 crate::input::actions::gloss::try_open_syntax_gloss_at_cursor(state);
