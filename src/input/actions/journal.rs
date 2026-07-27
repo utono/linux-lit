@@ -16,6 +16,31 @@ fn current_work_abbrev(s: &AppState) -> String {
         .unwrap_or_default()
 }
 
+/// The line the `\` lap is anchored to.
+///
+/// An open overlay has already moved the cursor to the end of its own passage,
+/// so the live `current_line` is the wrong question to ask once a lap is under
+/// way. `gloss_return_pos` / `journal.return_pos` hold the reader position the
+/// lap started from; fall back to the cursor when no overlay is open.
+///
+/// Pure so both the probe and the open resolve identically — they disagreed
+/// before 2026-07-27 and opened a different entry than they probed.
+fn lap_anchor_line(
+    gloss_return: Option<(usize, usize, i32)>,
+    journal_return: Option<(usize, usize, i32)>,
+    current_line: usize,
+) -> usize {
+    gloss_return
+        .or(journal_return)
+        .map(|(line, _, _)| line)
+        .unwrap_or(current_line)
+}
+
+/// `lap_anchor_line` read off live state.
+fn lap_anchor_for(s: &AppState) -> usize {
+    lap_anchor_line(s.gloss_return_pos, s.journal.return_pos, s.current_line)
+}
+
 /// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
 /// Used to turn a unit noun (`chapter`) into a user-message field label
 /// (`Chapter:`). Empty input returns empty. `pub(crate)` so the chat panel
@@ -3891,5 +3916,29 @@ mod tests {
             source_first_buffer_line(&work, Some(&line_map), "Cym.9.9.9", ""),
             None
         );
+    }
+
+    /// The `\` lap anchors on the position the lap STARTED from. Opening the
+    /// gloss stop moves the cursor to the end of the glossed passage, so the
+    /// journal stop must not probe the live cursor. Regression for the
+    /// probe/open mismatch fixed 2026-07-27.
+    #[test]
+    fn lap_anchor_prefers_gloss_return_pos() {
+        assert_eq!(lap_anchor_line(Some((424, 400, 0)), None, 437), 424);
+    }
+
+    #[test]
+    fn lap_anchor_falls_back_to_journal_return_pos() {
+        assert_eq!(lap_anchor_line(None, Some((910, 900, 0)), 979), 910);
+    }
+
+    #[test]
+    fn lap_anchor_prefers_gloss_over_journal() {
+        assert_eq!(lap_anchor_line(Some((424, 400, 0)), Some((910, 900, 0)), 979), 424);
+    }
+
+    #[test]
+    fn lap_anchor_uses_cursor_when_no_overlay_open() {
+        assert_eq!(lap_anchor_line(None, None, 979), 979);
     }
 }
