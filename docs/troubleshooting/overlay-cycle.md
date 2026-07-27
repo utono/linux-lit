@@ -148,6 +148,32 @@ path that resurrects a stale context cannot re-open this hole. Tests:
 `record_last_gloss` at DISPLAY time — clearing the in-memory context does not
 disturb it. Verify that before assuming a clear is safe.
 
+## 3c. The synopsis `\` is a SEPARATE toggle, not part of the lap
+
+Not a bug — the design, and the thing to check first when a `\` report comes
+from the synopsis. `\` there opens the band's newest `scope='scene'` journal
+entry and `\` in that entry returns; it never enters the gloss → journal →
+syntax rotation. The two are scoped differently ON PURPOSE: the reader's lap is
+SEGMENT-scoped (every stop must cover the cursor's passage), the synopsis is
+BAND-scoped, because a synopsis addresses a whole `(div1, div2)`.
+
+**How the return finds its way back.** `open_scene_qa_from_synopsis` stores the
+band in `AppState.journal_from_synopsis`; the journal `\` arm calls
+`return_to_synopsis` FIRST and only falls through to `cycle_from_journal` when
+that returns false. The marker is set in exactly ONE place and cleared in TWO
+(`journal::close_overlay`, `overlay_cycle::close_current`'s `Stop::Journal`).
+If a journal session opened by any other route (Ctrl+j, the picker, the lap)
+starts jumping to a synopsis on `\`, a clear site was dropped.
+
+**`show_synopsis_overlay` recomputes the band from the CURSOR** via
+`current_synopsis_key`, and overwrites `synopsis_overlay_scene` with it. Any
+caller that needs a SPECIFIC band must use `show_synopsis_overlay_for(state,
+div1, div2)` — writing `synopsis_overlay_scene` before calling the plain
+version is a dead write, and the reopen silently follows the cursor instead.
+Caught in review 2026-07-27; it mattered because a journal session can move the
+reader cursor across a chapter boundary (Ctrl+n/p is work-wide), which would
+have returned the user to a different synopsis than they left.
+
 ## 4. Verifying headlessly
 
 The whole rotation drives under cage. Land on the work, step the cursor onto a
@@ -157,3 +183,20 @@ renders 1 page, the reader gloss 2). See
 `docs/troubleshooting/headless-testing.md` for the harness rules — in
 particular, use a FRESH `XDG_RUNTIME_DIR` so `grim` cannot capture the user's
 own desktop.
+
+**Driving the SYNOPSIS `\` (2026-07-27).** Two traps cost two wasted runs:
+
+- The synopsis opens with **`Ctrl+h`** (`ShowSynopsisOverlay`), not `h`.
+- `Ctrl+h` **toggles**, AND the first chord after startup is dropped. So send
+  it as `--step "+ctrl:h" --step "+ctrl:h"`: the first is eaten by the focus
+  race, the second opens. Passing it as `--setup` is silently dropped and the
+  ENTIRE drive then runs in reader mode — the `\` presses hit the reader arm
+  and the captures look like a normal reading card, which is easy to misread
+  as "the feature did nothing".
+- **`Ctrl+j` opens a PICKER with a text input.** A following `\` is typed into
+  its filter box rather than dispatched, so a Ctrl+j-then-`\` drive does not
+  exercise the journal overlay's `\` at all. Check the capture for a filter
+  field before trusting such a run.
+
+Confirm which surface a capture actually shows before drawing a conclusion; the
+log lines (`SYNOPSIS:`, `JOURNAL-PAGINATE:`, `GLOSS-PAGES:`) disambiguate.
