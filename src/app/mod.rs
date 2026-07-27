@@ -1177,6 +1177,10 @@ impl AppState {
     /// every site that displays a gloss, so a freshly created gloss becomes
     /// "most recent" the instant it is shown. No-op if no gloss_context is set.
     pub fn record_last_gloss(&mut self, gloss_type: &str) {
+        // Every gloss DISPLAY path calls this with the type, so it is also the
+        // single place that can keep the footer counter's type label
+        // ("Reader gloss 1 of 2") in step with what is on screen.
+        self.gloss_overlay.set_footer_gloss_type(Some(gloss_type));
         if let Some(ctx) = &self.gloss_context {
             let work = ctx.work_abbrev.clone();
             let entry = crate::config::LastGloss {

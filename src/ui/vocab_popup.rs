@@ -1,6 +1,44 @@
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Label, Orientation};
 
+/// Fixed width of the two-column float card (`place_float`), in px.
+///
+/// Pinned 2026-07-27. The previous `(w - 48).clamp(200, 420)` happened to
+/// saturate at 420 on the usual 1920px two-column layout — measured at 418px
+/// on screen (420 minus the 1px borders) — so this preserves the look the user
+/// asked to keep while making it independent of column width.
+const FLOAT_WIDTH: i32 = 420;
+
+/// Floor for `place_float` when the column is too narrow for `FLOAT_WIDTH`,
+/// so a small window degrades gracefully instead of overhanging the column.
+const MIN_FLOAT_WIDTH: i32 = 200;
+
+/// Wrap width for the popup's body labels, in CHARACTERS.
+///
+/// A GTK4 `Label` with `wrap(true)` still reports its FULL unwrapped text as
+/// its natural width unless `max_width_chars` is set — so a long definition
+/// pushed the card far past its `width_request` (measured 624px against a
+/// requested 420px) instead of wrapping. The `width_request` is a MINIMUM, not
+/// a cap, so it cannot hold the card on its own.
+///
+/// Calibrated by MEASURING the rendered card, not estimated — the per-char
+/// width at the popup's 16px body font is ~8.4px, well off a naive estimate.
+/// Successive headless measurements on the long `solemn` definition:
+/// 56 chars ⇒ 507px, 46 ⇒ 437px, **44 ⇒ 425px** (the ~5px over `FLOAT_WIDTH`
+/// is the card's border/padding, matching the 418px the user measured on the
+/// real renderer).
+///
+/// Undershooting is safe — the card holds at `FLOAT_WIDTH` and simply wraps
+/// sooner. Overshooting is what stretched the card past its width_request.
+/// Re-measure this if the popup's font size changes.
+const BODY_WRAP_CHARS: i32 = 44;
+
+/// Bound a wrapping label's natural width so it wraps INSIDE the card instead
+/// of stretching it. Apply to every `wrap(true)` body label.
+fn constrain_wrap(label: &Label) {
+    label.set_max_width_chars(BODY_WRAP_CHARS);
+}
+
 /// Data for a single vocab word: definition + etymology + gloss.
 pub struct VocabWordData {
     pub word: String,
@@ -109,14 +147,25 @@ impl VocabPopup {
 
     /// Two-column placement: a COMPACT card centered in the reading column
     /// the cursor is NOT in (x/w = that column's window-coord rect from
-    /// layout::column_float_rect). Natural height, capped width — never the
-    /// full column panel it used to be. `h` is accepted for signature
-    /// compatibility but unused: the card takes its natural height (content is
-    /// short, and the Journal view caps its own body height).
+    /// layout::column_float_rect).
+    ///
+    /// Width is FIXED at `FLOAT_WIDTH` (2026-07-27) rather than derived from
+    /// the column. It used to be `(w - 48).clamp(200, 420)`, which in practice
+    /// saturated at the 420 ceiling on a 1920px two-column layout — so the card
+    /// was already ~420px wide, but only incidentally, and it would have
+    /// silently narrowed on a different column width. Pinning it keeps the
+    /// popup identical across works and layouts. It still shrinks if the
+    /// column genuinely cannot fit `FLOAT_WIDTH`, so a narrow window degrades
+    /// instead of overhanging.
+    ///
+    /// Height stays NATURAL (`-1`): a long definition makes the card taller
+    /// rather than being squeezed or clipped. `h` is accepted for signature
+    /// compatibility and unused.
     pub fn place_float(&self, x: i32, w: i32, h: i32) {
         self.container.add_css_class("vocab-popup-float");
         self.container.remove_css_class("vocab-popup-overlay");
-        let width = (w - 48).clamp(200, 420);
+        // Fixed width, but never wider than the column can hold.
+        let width = FLOAT_WIDTH.min((w - 16).max(MIN_FLOAT_WIDTH));
         let centered_x = x + (w - width) / 2;
         self.container.set_halign(gtk4::Align::Start);
         self.container.set_valign(gtk4::Align::Center);
@@ -247,6 +296,7 @@ impl VocabPopup {
                         .wrap_mode(gtk4::pango::WrapMode::Word)
                         .margin_bottom(8)
                         .build();
+                    constrain_wrap(&def_label);
                     def_label.add_css_class("definition-text");
                     def_label.set_text(def);
                     self.content_box.append(&def_label);
@@ -267,6 +317,7 @@ impl VocabPopup {
                         .wrap(true)
                         .wrap_mode(gtk4::pango::WrapMode::Word)
                         .build();
+                    constrain_wrap(&etym_label);
                     etym_label.add_css_class("definition-etymology");
                     etym_label.set_markup(etym);
                     self.content_box.append(&etym_label);
@@ -279,6 +330,7 @@ impl VocabPopup {
                         .wrap(true)
                         .wrap_mode(gtk4::pango::WrapMode::Word)
                         .build();
+                    constrain_wrap(&gloss_label);
                     gloss_label.add_css_class("definition-text");
                     gloss_label.set_text(gloss);
                     self.content_box.append(&gloss_label);
@@ -317,6 +369,7 @@ impl VocabPopup {
             .wrap(true)
             .wrap_mode(gtk4::pango::WrapMode::Word)
             .build();
+        constrain_wrap(&synopsis_label);
         synopsis_label.add_css_class("definition-text");
         synopsis_label.set_text(synopsis);
         self.content_box.append(&synopsis_label);
