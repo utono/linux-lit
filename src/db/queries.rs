@@ -1188,34 +1188,46 @@ pub fn set_vocab_highlight(
     Ok(())
 }
 
-/// Result of `insert_vocab_word`: whether the row was newly written / filled,
-/// or already had a good definition and was left untouched.
-pub enum VocabInsertOutcome {
+/// What `upsert_vocab_definition` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VocabUpsertOutcome {
+    /// The word was not in the table; a new row was inserted.
     Added,
-    AlreadyPresent,
+    /// The word existed and its definition was REPLACED. Carries the previous
+    /// definition so the caller can report what changed.
+    Updated { previous: String },
+    /// The word existed and the re-fetched definition was identical.
+    Unchanged,
 }
 
-/// Insert a vocab word, idempotent on the UNIQUE `word` column. A new word is
-/// inserted; an existing word with an EMPTY definition is filled; an existing
-/// word with a good definition is left intact. `word` is expected already
-/// normalized (trimmed, lowercased) by the caller.
-pub fn insert_vocab_word(
+/// Insert the word, or REPLACE an existing word's definition.
+///
+/// The difference from `insert_vocab_word`: that one deliberately preserves a
+/// non-empty stored definition (it is the "add" path, and must not clobber a
+/// good entry with a worse one). This is the "update" path behind Ctrl+r on a
+/// word already in the list — the user asked for a re-fetch, so the fresh
+/// definition wins and the previous one is reported back.
+///
+/// Motivating case (2026-07-27): 39 of 2544 stored definitions are truncated
+/// Merriam-Webster stubs ending in "such as" / ":" — e.g. `solemn` = "very
+/// serious or formal: such as", where the real senses follow in sub-entries the
+/// scraper dropped. Those rows are only repairable by overwriting.
+///
+/// `word` is expected already normalized by the caller.
+pub fn upsert_vocab_definition(
     conn: &Connection,
     word: &str,
     definition: &str,
     source: &str,
-) -> Result<VocabInsertOutcome, rusqlite::Error> {
-    // UNIQUE(word) is case-sensitive but words are matched case-insensitively
-    // everywhere else, so probe NOCASE first — a capitalization difference
-    // must update the existing row, never create a duplicate. The typed
-    // capitalization always wins (proper nouns are stored capitalized; see
-    // `normalize_vocab_word`).
-    let existing: Option<(i64, String, String)> = conn
+) -> Result<VocabUpsertOutcome, rusqlite::Error> {
+    // NOCASE probe for the same reason as `insert_vocab_word`: a capitalization
+    // difference must update the existing row, never create a duplicate.
+    let existing: Option<(i64, String)> = conn
         .query_row(
-            "SELECT id, word, IFNULL(definition, '') FROM vocab_words \
+            "SELECT id, IFNULL(definition, '') FROM vocab_words \
              WHERE word = ?1 COLLATE NOCASE",
             [word],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
     match existing {
@@ -1224,24 +1236,24 @@ pub fn insert_vocab_word(
                 "INSERT INTO vocab_words(word, definition, source) VALUES(?1, ?2, ?3)",
                 rusqlite::params![word, definition, source],
             )?;
-            Ok(VocabInsertOutcome::Added)
+            Ok(VocabUpsertOutcome::Added)
         }
-        Some((id, stored_word, existing_def)) => {
-            if existing_def.is_empty() {
+        Some((id, previous)) => {
+            if previous == definition {
+                // Definition unchanged, but the TYPED capitalization still wins
+                // (proper nouns stored lowercase historically) — the NOCASE
+                // probe matched, so retype the row without claiming an update.
                 conn.execute(
-                    "UPDATE vocab_words SET word = ?2, definition = ?3, source = ?4 WHERE id = ?1",
-                    rusqlite::params![id, word, definition, source],
+                    "UPDATE vocab_words SET word = ?2 WHERE id = ?1",
+                    rusqlite::params![id, word],
                 )?;
-                Ok(VocabInsertOutcome::Added)
-            } else {
-                if stored_word != word {
-                    conn.execute(
-                        "UPDATE vocab_words SET word = ?2 WHERE id = ?1",
-                        rusqlite::params![id, word],
-                    )?;
-                }
-                Ok(VocabInsertOutcome::AlreadyPresent)
+                return Ok(VocabUpsertOutcome::Unchanged);
             }
+            conn.execute(
+                "UPDATE vocab_words SET word = ?2, definition = ?3, source = ?4 WHERE id = ?1",
+                rusqlite::params![id, word, definition, source],
+            )?;
+            Ok(VocabUpsertOutcome::Updated { previous })
         }
     }
 }
@@ -2409,6 +2421,90 @@ pub fn next_start_after(conn: &Connection, media_id: i64, t: f64) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// In-memory `vocab_words` matching the live schema's relevant shape.
+    fn vocab_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE vocab_words (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                 word TEXT NOT NULL UNIQUE, definition TEXT, source TEXT);",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn stored_def(conn: &rusqlite::Connection, word: &str) -> String {
+        conn.query_row(
+            "SELECT IFNULL(definition,'') FROM vocab_words WHERE word = ?1 COLLATE NOCASE",
+            [word],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn upsert_inserts_a_new_word() {
+        let conn = vocab_conn();
+        let out = upsert_vocab_definition(&conn, "solemn", "grave and dignified", "wn").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Added);
+        assert_eq!(stored_def(&conn, "solemn"), "grave and dignified");
+    }
+
+    /// The point of the whole change: a word that is ALREADY stored gets its
+    /// definition replaced, and the previous text comes back for the toast.
+    /// `insert_vocab_word` deliberately does NOT do this.
+    #[test]
+    fn upsert_replaces_an_existing_definition_and_reports_the_old_one() {
+        let conn = vocab_conn();
+        // The real truncated-stub shape from lit.db.
+        upsert_vocab_definition(&conn, "solemn", "very serious or formal: such as", "mw").unwrap();
+        let out =
+            upsert_vocab_definition(&conn, "solemn", "grave, sober, or mirthless", "claude").unwrap();
+        assert_eq!(
+            out,
+            VocabUpsertOutcome::Updated {
+                previous: "very serious or formal: such as".to_string()
+            }
+        );
+        assert_eq!(stored_def(&conn, "solemn"), "grave, sober, or mirthless");
+    }
+
+    #[test]
+    fn upsert_reports_unchanged_when_the_refetch_matches() {
+        let conn = vocab_conn();
+        upsert_vocab_definition(&conn, "toil", "hard work", "wn").unwrap();
+        let out = upsert_vocab_definition(&conn, "toil", "hard work", "wn").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Unchanged);
+    }
+
+    /// Same NOCASE rule `insert_vocab_word` follows: a capitalization
+    /// difference must UPDATE the existing row, never create a second one.
+    #[test]
+    fn upsert_matches_case_insensitively_and_does_not_duplicate() {
+        let conn = vocab_conn();
+        upsert_vocab_definition(&conn, "solemn", "old", "wn").unwrap();
+        let out = upsert_vocab_definition(&conn, "Solemn", "new", "claude").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Updated { previous: "old".into() });
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vocab_words", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "must not create a case-variant duplicate");
+    }
+
+    /// An existing row with an EMPTY definition is filled, and reported as the
+    /// update it is (not as an insert).
+    #[test]
+    fn upsert_fills_an_empty_definition() {
+        let conn = vocab_conn();
+        conn.execute(
+            "INSERT INTO vocab_words(word, definition, source) VALUES('chary', '', 'seed')",
+            [],
+        )
+        .unwrap();
+        let out = upsert_vocab_definition(&conn, "chary", "cautious", "wn").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Updated { previous: String::new() });
+        assert_eq!(stored_def(&conn, "chary"), "cautious");
+    }
 
     #[test]
     fn load_work_reads_block_type() {
@@ -4139,58 +4235,63 @@ mod vocab_insert_tests {
     }
 
     #[test]
-    fn insert_new_word_reports_added() {
+    fn upsert_new_word_reports_added() {
         let conn = mem_db();
-        let out = insert_vocab_word(&conn, "brave", "courageous", "wordnet").unwrap();
-        assert!(matches!(out, VocabInsertOutcome::Added));
+        let out = upsert_vocab_definition(&conn, "brave", "courageous", "wordnet").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Added);
         let def: String = conn
             .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(def, "courageous");
     }
 
+    /// BEHAVIOR CHANGE (2026-07-27). The predecessor `insert_vocab_word`
+    /// PRESERVED a good stored definition and reported `AlreadyPresent`; this
+    /// test asserted `def == "courageous"` after a re-add. Ctrl+r now means
+    /// "re-fetch and overwrite", so the NEW text wins and the old one is
+    /// returned for the toast. Repairing a badly-stored definition (the
+    /// truncated "such as" stubs) is impossible under the old rule.
     #[test]
-    fn reinsert_keeps_good_definition_reports_already_present() {
+    fn reupsert_overwrites_a_good_definition_and_returns_the_old() {
         let conn = mem_db();
-        insert_vocab_word(&conn, "brave", "courageous", "wordnet").unwrap();
-        let out = insert_vocab_word(&conn, "brave", "SOMETHING ELSE", "claude").unwrap();
-        assert!(matches!(out, VocabInsertOutcome::AlreadyPresent));
+        upsert_vocab_definition(&conn, "brave", "courageous", "wordnet").unwrap();
+        let out = upsert_vocab_definition(&conn, "brave", "SOMETHING ELSE", "claude").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Updated { previous: "courageous".into() });
         let def: String = conn
             .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(def, "courageous"); // unchanged
+        assert_eq!(def, "SOMETHING ELSE");
     }
 
     #[test]
-    fn reinsert_fills_empty_definition() {
+    fn reupsert_fills_empty_definition() {
         let conn = mem_db();
-        insert_vocab_word(&conn, "brave", "", "wordnet").unwrap();
-        let out = insert_vocab_word(&conn, "brave", "courageous", "gcide").unwrap();
-        assert!(matches!(out, VocabInsertOutcome::Added));
+        upsert_vocab_definition(&conn, "brave", "", "wordnet").unwrap();
+        let out = upsert_vocab_definition(&conn, "brave", "courageous", "gcide").unwrap();
+        assert_eq!(out, VocabUpsertOutcome::Updated { previous: String::new() });
         let def: String = conn
             .query_row("SELECT definition FROM vocab_words WHERE word='brave'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(def, "courageous");
     }
 
+    /// Proper noun stored lowercase historically; re-adding it capitalized must
+    /// retype the ONE row (typed case wins), never insert a second. Unchanged
+    /// from the predecessor EXCEPT that the definition now updates too.
     #[test]
     fn case_variant_updates_capitalization_not_a_duplicate() {
-        // Proper noun stored lowercase historically; re-adding it capitalized
-        // must retype the ONE row (typed case wins), never insert a second.
         let conn = mem_db();
-        insert_vocab_word(&conn, "michaelmas", "a Christian feast", "claude").unwrap();
-        let out = insert_vocab_word(&conn, "Michaelmas", "ignored", "claude").unwrap();
-        assert!(matches!(out, VocabInsertOutcome::AlreadyPresent));
+        upsert_vocab_definition(&conn, "michaelmas", "a Christian feast", "claude").unwrap();
+        let out = upsert_vocab_definition(&conn, "Michaelmas", "a Christian feast", "claude").unwrap();
+        // Same text -> Unchanged, but the capitalization still retypes the row.
+        assert_eq!(out, VocabUpsertOutcome::Unchanged);
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM vocab_words", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
-        let (word, def): (String, String) = conn
-            .query_row("SELECT word, definition FROM vocab_words", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+        let word: String = conn
+            .query_row("SELECT word FROM vocab_words", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(word, "Michaelmas"); // capitalization updated in place
-        assert_eq!(def, "a Christian feast"); // definition untouched
+        assert_eq!(word, "Michaelmas", "typed capitalization must win");
     }
 }

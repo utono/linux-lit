@@ -4996,7 +4996,9 @@ pub fn apply_vocab_highlighting(state: &AppState) {
 /// word set, rebuild matches, re-apply the tag, and (if the popup is open with
 /// the word on the cursor line) refresh the popup. Called from both the sync
 /// local-lookup path and the async Claude success callback.
-pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, source: &str) {
+/// Refresh every vocab-tinted surface after a word is added or updated, then
+/// toast `verb` ("added" / "updated" / "already have" / "unchanged").
+pub fn apply_after_add(state: &mut AppState, word: &str, verb: &str, source: &str) {
     // Enable highlighting for this work and persist it (source of truth is the
     // per-work lit.db column, like ToggleVocabHighlight).
     state.vocab_highlight_visible = true;
@@ -5061,7 +5063,11 @@ pub fn apply_after_add(state: &mut AppState, word: &str, outcome_added: bool, so
         crate::input::actions::chat::rerender_current_view(state);
     }
 
-    let verb = if outcome_added { "added" } else { "already have" };
+    // `verb` is passed in rather than derived from a bool: Ctrl+r on an
+    // existing word REPLACES its definition (see `upsert_vocab_definition`), so
+    // "already have" would be wrong. Deriving it here once means exactly one
+    // toast fires — an earlier version emitted "already have" and then let the
+    // caller override it, which only worked because of call ordering.
     crate::input::navigation::show_chapter_toast_secs(
         state,
         &format!("{verb} \u{201c}{word}\u{201d} ({source})"),

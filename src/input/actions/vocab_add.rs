@@ -160,18 +160,38 @@ pub(crate) fn submit(state_rc: &Rc<RefCell<AppState>>) {
     );
 }
 
-/// Insert the word and run the shared view refresh. Used by both the sync
-/// local path and the async Claude success callback.
+/// Insert the word — or REPLACE an existing word's definition — and run the
+/// shared view refresh. Used by both the sync local path and the async Claude
+/// success callback.
+///
+/// Ctrl+r on a word ALREADY in the list re-fetches and overwrites (2026-07-27),
+/// rather than reporting "already added" and keeping the old text. That is the
+/// only way to repair a definition stored badly the first time — notably the
+/// truncated Merriam-Webster stubs ending in "such as" (see
+/// `queries::upsert_vocab_definition`). The toast distinguishes added from
+/// updated so an unintended overwrite is visible.
 fn insert_and_refresh(state_rc: &Rc<RefCell<AppState>>, word: &str, definition: &str, source: &str) {
+    use crate::db::queries::VocabUpsertOutcome;
     let outcome = match crate::db::queries::open_db_rw() {
-        Ok(conn) => crate::db::queries::insert_vocab_word(&conn, word, definition, source),
+        Ok(conn) => crate::db::queries::upsert_vocab_definition(&conn, word, definition, source),
         Err(e) => Err(e),
     };
     let mut s = state_rc.borrow_mut();
     match outcome {
         Ok(o) => {
-            let added = matches!(o, crate::db::queries::VocabInsertOutcome::Added);
-            crate::app::apply_after_add(&mut s, word, added, source);
+            // Log the replaced text before the toast — it is the only record of
+            // what a re-fetch overwrote.
+            if let VocabUpsertOutcome::Updated { ref previous } = o {
+                crate::logging::log(&format!(
+                    "VOCAB UPDATE: '{word}' definition replaced ({source}); was: {previous}"
+                ));
+            }
+            let verb = match o {
+                VocabUpsertOutcome::Added => "added",
+                VocabUpsertOutcome::Updated { .. } => "updated",
+                VocabUpsertOutcome::Unchanged => "unchanged",
+            };
+            crate::app::apply_after_add(&mut s, word, verb, source);
         }
         Err(e) => {
             crate::logging::log(&format!("VOCAB ADD: db write failed for '{word}': {e}"));
