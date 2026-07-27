@@ -333,6 +333,37 @@ pub(crate) fn prose_exact_end_for_current_page(state: &AppState) -> Option<usize
     .map(|last| last + 1)
 }
 
+/// On-page head of the LAST line of the current single-column prose page: the
+/// stored `end_off` when the page ends mid-paragraph, `None` when it ends at a
+/// paragraph boundary (or off-table). Companion to
+/// `prose_exact_end_for_current_page` — the two describe the same stored page's
+/// bottom edge, and both must be passed to the clip or it mismeasures the page
+/// (see `exact_page_content_height`).
+///
+/// `end_off == 0` is the normalized "ends at the previous line's full height"
+/// form: `end_line` starts the NEXT page and `last_rendered_line` already
+/// stepped back one, so the last rendered line IS whole and there is no head to
+/// apply — hence `None`, not `Some(0)`.
+pub(crate) fn prose_bottom_head_for_current_page(state: &AppState) -> Option<i32> {
+    prose_bottom_head_for(state, state.page_top_line, state.page_top_offset)
+}
+
+/// `prose_bottom_head_for_current_page` for an EXPLICIT page top. Use this when
+/// the page is still being established — during a snap, `state.page_top_line` /
+/// `page_top_offset` still describe the page being LEFT, so the current-page
+/// form would read the wrong row.
+pub(crate) fn prose_bottom_head_for(
+    state: &AppState,
+    top_line: usize,
+    top_off: i32,
+) -> Option<i32> {
+    if !(state.is_prose() && state.column_count() == 1) {
+        return None;
+    }
+    let end_off = crate::input::prose_pages::prose_table_end_off_for_top(state, top_line, top_off)?;
+    (end_off > 0).then_some(end_off)
+}
+
 /// Re-run `update_bottom_clip` against the current viewport state without
 /// touching the scroll position. Use after font / line-height changes that
 /// don't shift `page_top_line` — e.g. translation toggle, where the caller
@@ -354,6 +385,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.is_prose(),
         left_exact_end,
         state.page_top_offset,
+        prose_bottom_head_for_current_page(state),
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
         Some(state.current_line),
@@ -377,6 +409,7 @@ pub(crate) fn reschedule_left_clip_for_cursor(state: &AppState) {
         state.is_prose(),
         state.left_clip_boundary.get(),
         state.page_top_offset,
+        prose_bottom_head_for_current_page(state),
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
         Some(state.current_line),
@@ -401,6 +434,7 @@ pub(crate) fn reschedule_right_clip_for_cursor(state: &AppState) {
         state.is_prose(),
         Some(right_end),
         0, // right column of a two-column spread — never a mid-paragraph top
+        None, // ...nor a mid-paragraph bottom
         None,
         false,
         Some(state.current_line),
@@ -422,6 +456,7 @@ fn schedule_bottom_clip_update(
     is_prose: bool,
     exact_end: Option<usize>,
     top_offset: i32,
+    bottom_head: Option<i32>,
     section_starts: Option<Vec<bool>>,
     one_section_per_page: bool,
     cursor_line: Option<usize>,
@@ -431,10 +466,10 @@ fn schedule_bottom_clip_update(
     let sw1 = scrolled_window.clone();
     let ss1 = section_starts.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, top_offset, ss1.as_deref(), one_section_per_page, cursor_line);
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, top_offset, bottom_head, ss1.as_deref(), one_section_per_page, cursor_line);
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, top_offset, section_starts.as_deref(), one_section_per_page, cursor_line);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, top_offset, bottom_head, section_starts.as_deref(), one_section_per_page, cursor_line);
     });
 }
 
@@ -699,6 +734,12 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         // the `effective_top` clamp above only runs in the `offset == 0` branch,
         // so whenever `offset > 0` we know `effective_top == line`.
         offset,
+        // Bottom head for the page being scrolled TO — looked up from
+        // `(effective_top, offset)` rather than via
+        // `prose_bottom_head_for_current_page`, because `state.page_top_line` /
+        // `page_top_offset` are not assigned until after this call: reading
+        // "current page" here would return the page we are LEAVING.
+        prose_bottom_head_for(state, effective_top, offset),
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
         Some(state.current_line),
@@ -744,6 +785,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
             state.is_prose(),
             Some(right_end),
             0, // right column of a two-column spread — never a mid-paragraph top
+            None, // ...nor a mid-paragraph bottom
             None, // exact_end set → trim path (and section clamp) never runs
             false, // two-column right view: exact_end drives the clip, not the section fill-guard
             Some(state.current_line),
@@ -831,22 +873,55 @@ pub(crate) fn paged_bottom_clip(space: i32, total: i32, allowance: i32) -> i32 {
 }
 
 /// Height the exact-clip page's lines actually OCCUPY on the card, given the
-/// heights of `[page_top ..= end-1]` and the page's `page_top_offset`.
+/// heights of `[page_top ..= end-1]`, the page's `page_top_offset`, and the
+/// stored page's `end_off`.
 ///
-/// A prose row-fill page can START mid-paragraph: the viewport is scrolled
-/// `top_offset` px INTO the first line, so only that line's REMAINDER is on the
-/// card. Charging it its full height overstates the content by exactly the
-/// offset, and `paged_bottom_clip` then returns a clip that short — the page
-/// over-renders past its stored end (2026-07-27: BH-Barrett page 112 at
-/// (924,188) revealed 188px, i.e. the next chapter's heading).
+/// A prose row-fill page can straddle a paragraph at BOTH edges:
+/// - it can START mid-paragraph (`top_offset > 0`): the viewport is scrolled
+///   that many px INTO the first line, so only its REMAINDER is on the card;
+/// - it can END mid-paragraph (`bottom_head = Some(end_off)`): only the FIRST
+///   `end_off` px of the last line are on the card, the rest belongs to the
+///   next page.
 ///
-/// Mirrors the offset-aware charging `viewport::is_line_start_visible` already
-/// does. `top_offset` is 0 for every two-column/play page, so this is an
-/// identity there.
-pub(crate) fn exact_page_content_height(heights: &[i32], top_offset: i32) -> i32 {
+/// Charging either straddling line its FULL height overstates the content, and
+/// the two failures look different:
+/// - overstating the TOP makes `paged_bottom_clip` return a clip that short, so
+///   the page OVER-RENDERS past its stored end (BH-Barrett page 112 at
+///   (924,188) revealed 188px — the next chapter's heading);
+/// - overstating the BOTTOM makes the page read as OVERFULL, flooring the clip
+///   to 0 and emitting a spurious `CLIP_WARN ... OVERFLOW` (page 113 at
+///   (931,0)..(935,317) measured 1175px against a 1098px widget when its true
+///   occupied height is ~1050).
+///
+/// `page_px` in prose_pages.rs already measures a stored page this way — it
+/// subtracts both the top offset and the unrendered tail — which is why
+/// `validate_prose_pages` correctly ACCEPTED page 113. This is the render-side
+/// counterpart of that measurement; when the two disagree the reader sees a
+/// page the validator considers fine.
+///
+/// `bottom_head` is `None` when the last line is fully on the page (a page that
+/// ends at a paragraph boundary, and every two-column/play page). With
+/// `top_offset == 0` and `bottom_head == None` this is a plain sum.
+pub(crate) fn exact_page_content_height(
+    heights: &[i32],
+    top_offset: i32,
+    bottom_head: Option<i32>,
+) -> i32 {
+    let last = heights.len().saturating_sub(1);
     let mut total = 0i32;
     for (i, &h) in heights.iter().enumerate() {
-        total += if i == 0 { (h - top_offset).max(0) } else { h };
+        // The last line contributes only its on-page head when the page ends
+        // inside it; every other line contributes its full height.
+        let mut charged = match bottom_head {
+            Some(head) if i == last => head.min(h),
+            _ => h,
+        };
+        // ...less whatever is scrolled off the top, on the first line. Both can
+        // apply to the SAME line when one over-tall paragraph spans the page.
+        if i == 0 {
+            charged -= top_offset;
+        }
+        total += charged.max(0);
     }
     total
 }
@@ -957,7 +1032,7 @@ pub(crate) fn update_bottom_clip_public(
 ) {
     // No `exact_end` → the geometric/trim path, which never consults
     // `top_offset`; pass 0.
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, 0, section_starts, one_section_per_page, cursor_line);
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, 0, None, section_starts, one_section_per_page, cursor_line);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
@@ -980,6 +1055,11 @@ fn update_bottom_clip(
     // ever non-zero on a single-column prose row-fill page; used with
     // `exact_end` so the first line is charged just its on-page remainder.
     top_offset: i32,
+    // Stored `end_off` when the page ENDS mid-paragraph: only the first
+    // `bottom_head` px of the last line are on this page. `None` = the last
+    // line is whole (every two-column/play page, and a prose page that ends at
+    // a paragraph boundary).
+    bottom_head: Option<i32>,
     section_starts: Option<&[bool]>,
     one_section_per_page: bool,
     cursor_line: Option<usize>,
@@ -1032,10 +1112,11 @@ fn update_bottom_clip(
             return;
         }
         let last = end.saturating_sub(1).max(page_top);
-        // Offset-aware: a prose row-fill page can START mid-paragraph, so the
-        // FIRST line contributes only its on-page remainder. `top_offset` is 0
-        // for every two-column/play page (and for a prose page that starts at a
-        // paragraph top), where this is an identity. See
+        // Straddle-aware at BOTH edges: a prose row-fill page can START
+        // mid-paragraph (`top_offset`) and END mid-paragraph (`bottom_head`),
+        // in which case those lines contribute only their on-page part. Both
+        // are 0/None for every two-column/play page (and for a prose page that
+        // tiles whole paragraphs), where this is a plain sum. See
         // `exact_page_content_height`.
         let heights: Vec<i32> = (page_top..=last)
             .map(|i| {
@@ -1045,7 +1126,7 @@ fn update_bottom_clip(
                     .unwrap_or(0)
             })
             .collect();
-        let total = exact_page_content_height(&heights, top_offset);
+        let total = exact_page_content_height(&heights, top_offset, bottom_head);
         // Drop the clip's top edge below the last line's logical bottom so its
         // flush descender ink (g/y/p/comma tails) isn't sliced — capped at the
         // strip guaranteed free of the NEXT line's ink (the shared buffer
@@ -1074,9 +1155,15 @@ fn update_bottom_clip(
         // play_pages / over-tall-split overflow (clip-prevention.md #12). Its own
         // decisive tell is `total > widget_h` with `clip=0`.
         if crate::logging::debug_mode() && widget_height > 0 && total > widget_height {
+            // The label tracks which engine sized this page: the exact-clip
+            // path serves BOTH the two-column left/right views and single-column
+            // prose row-fill pages. It said "two-col" unconditionally until
+            // 2026-07-27, which sent a prose overflow hunt looking at the play
+            // pagination.
             crate::log_fmt!(
-                "CLIP_WARN: main-card two-col OVERFLOW total={} > widget_h={} clip={} page_top={} end={} (clip-prevention.md #12)",
-                total, widget_height, clip, page_top, end
+                "CLIP_WARN: main-card {} OVERFLOW total={} > widget_h={} clip={} page_top={} top_off={} bottom_head={:?} end={} (clip-prevention.md #12)",
+                if is_prose { "prose-1col" } else { "two-col" },
+                total, widget_height, clip, page_top, top_offset, bottom_head, end
             );
         }
         return;
@@ -1998,13 +2085,13 @@ mod paged_bottom_clip_tests {
         assert_eq!(heights.iter().sum::<i32>(), 1071);
 
         // Offset 0 (page starts at a paragraph top) — unchanged behavior.
-        assert_eq!(exact_page_content_height(&heights, 0), 1071);
-        assert_eq!(paged_bottom_clip(1098, exact_page_content_height(&heights, 0), 5), 22);
+        assert_eq!(exact_page_content_height(&heights, 0, None), 1071);
+        assert_eq!(paged_bottom_clip(1098, exact_page_content_height(&heights, 0, None), 5), 22);
 
         // Offset 188 (page starts 188px INTO line 924) — only the remainder counts.
-        assert_eq!(exact_page_content_height(&heights, 188), 883);
+        assert_eq!(exact_page_content_height(&heights, 188, None), 883);
         assert_eq!(
-            paged_bottom_clip(1098, exact_page_content_height(&heights, 188), 5),
+            paged_bottom_clip(1098, exact_page_content_height(&heights, 188, None), 5),
             210,
             "clip must cover the 188px that are scrolled off the top"
         );
@@ -2015,9 +2102,58 @@ mod paged_bottom_clip_tests {
     #[test]
     fn exact_page_content_height_clamps_a_degenerate_offset() {
         let heights = [100, 50];
-        assert_eq!(exact_page_content_height(&heights, 100), 50);
-        assert_eq!(exact_page_content_height(&heights, 140), 50, "clamped, never negative");
-        assert_eq!(exact_page_content_height(&[], 0), 0);
+        assert_eq!(exact_page_content_height(&heights, 100, None), 50);
+        assert_eq!(exact_page_content_height(&heights, 140, None), 50, "clamped, never negative");
+        assert_eq!(exact_page_content_height(&[], 0, None), 0);
+    }
+
+    /// The BOTTOM mirror of the top-offset case. A prose row-fill page can also
+    /// END mid-paragraph (`end_off > 0`): only the FIRST `end_off` px of the
+    /// last line are on the card, the rest belongs to the next page. Charging
+    /// that line its FULL height overstates the content by the unrendered tail,
+    /// `paged_bottom_clip` floors to 0, and the page reads as OVERFULL — the
+    /// spurious `CLIP_WARN ... OVERFLOW` (clip-prevention.md #12).
+    ///
+    /// Real BH-Barrett case (2026-07-27): stored page 113 is
+    /// (931,0)..(935,317) — line 935 contributes only 317px. Lines 931..=935 at
+    /// full height sum to 1175 against widget 1098, so the page looked 77px
+    /// overfull and clipped to 0. Its TRUE occupied height is ~1050, well
+    /// inside usable=1071 — `validate_prose_pages` was right to accept it
+    /// (its `page_px` already subtracts the unrendered tail); only the clip
+    /// measured it wrong.
+    #[test]
+    fn exact_clip_charges_the_last_line_only_its_on_page_head() {
+        // lines 931..=935; the last is 442px tall but only 317px are on-page.
+        let heights = [180, 190, 180, 183, 442];
+        assert_eq!(heights.iter().sum::<i32>(), 1175);
+
+        // Full last line (end_off == its height, or a page that ends at a
+        // paragraph boundary) — unchanged behavior.
+        assert_eq!(exact_page_content_height(&heights, 0, None), 1175);
+        assert_eq!(paged_bottom_clip(1098, 1175, 5), 0, "overfull: the old reading");
+
+        // Last line contributes only its first 317px.
+        assert_eq!(exact_page_content_height(&heights, 0, Some(317)), 1050);
+        assert_eq!(
+            paged_bottom_clip(1098, 1050, 5),
+            43,
+            "the page FITS — no overflow, and the unrendered tail is masked"
+        );
+    }
+
+    /// Top offset and bottom remainder can apply to the SAME page, and to the
+    /// same single line when a page both starts and ends inside one over-tall
+    /// paragraph.
+    #[test]
+    fn exact_page_content_height_combines_top_offset_and_bottom_remainder() {
+        // Page (L,100)..(L+1,60): first line 200px tall (100 on-page),
+        // last line 300px tall (60 on-page).
+        assert_eq!(exact_page_content_height(&[200, 300], 100, Some(60)), 160);
+
+        // Single over-tall line, page covers px 100..250 of it.
+        assert_eq!(exact_page_content_height(&[400], 100, Some(250)), 150);
+        // Degenerate: remainder at/below the offset yields nothing, never negative.
+        assert_eq!(exact_page_content_height(&[400], 250, Some(100)), 0);
     }
 
     #[test]
