@@ -436,8 +436,13 @@ fn run_step(s: &mut AppState) {
         Step::PrevBookmark => navigation::prev_bookmark(s),
         Step::JumpTop => navigation::jump_to_start(s),
         Step::JumpEnd => navigation::jump_to_end(s),
-        Step::NextDialogue => navigation::jump_to_next_dialogue(s),
-        Step::PrevDialogue => navigation::jump_to_prev_dialogue(s),
+        // Retargeted 2026-07-27 with the `Q` / `Alt+,` retirement: the fuzz must
+        // drive the handlers a real keypress reaches. `'` / `;` are the bound
+        // next/prev dialogue binds (and strict supersets of the retired
+        // `jump_to_*_dialogue`, adding the prose branch the fuzz needs on prose
+        // works).
+        Step::NextDialogue => navigation::cursor_next_dialogue(s),
+        Step::PrevDialogue => navigation::cursor_prev_dialogue(s),
         Step::SearchJump => {
             // Drive the REAL `/` search path (execute_search_with_query:
             // collect matches → highlight → land on the canonical spread →

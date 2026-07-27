@@ -122,8 +122,8 @@ pub(crate) enum PageChangeReason {
     Scene,
     /// User jumped to a vocab match.
     Vocab,
-    /// A segment bind that SEEKS audio — `q`/`J`/`Q`/`'`/`Down` forward,
-    /// `,`/`K`/`Alt+,`/`;`/`Up` backward.
+    /// A segment bind that SEEKS audio — `q`/`J`/`'`/`Down` forward,
+    /// `,`/`K`/`;`/`Up` backward.
     Dialogue,
     /// Cursor-only movement with no audio seek — `h`/`t` step to the next/prev
     /// dialogue line while MPV keeps playing where it was. The ONLY difference
@@ -1438,7 +1438,9 @@ pub fn page_backward(state: &mut AppState) {
     after_page_change(state, PageChangeReason::Backward);
 }
 
-/// Move cursor to the last fully visible line on the current page (`Q` key).
+/// Move cursor to the last fully visible line on the current page. UNBOUND —
+/// the `Q` key this comment named was never wired to it (and `Q` itself was
+/// retired 2026-07-27); kept as a helper.
 pub fn cursor_to_page_bottom(state: &mut AppState) {
     if state.current_work.is_none() {
         return;
@@ -1499,10 +1501,9 @@ pub fn page_backward_bottom(state: &mut AppState) {
 /// Commit a dialogue/segment cursor jump. FORWARD jumps may turn the page;
 /// BACKWARD jumps may not (2026-07-27, revised).
 ///
-/// User rule: the segment binds that move to the NEXT segment (`q` `J` `Q` `'`
-/// `h` `Down`) ARE allowed to effect a page turn — reading forward through a
+/// User rule: the segment binds that move to the NEXT segment (`q` `J` `'` `h` `Down`) ARE allowed to effect a page turn — reading forward through a
 /// work should never dead-end at a page edge. The binds that move to the
-/// PREVIOUS segment (`,` `K` `Alt+,` `;` `t` `Up`) keep the original
+/// PREVIOUS segment (`,` `K` `;` `t` `Up`) keep the original
 /// prohibition: they move the cursor within what is already on screen, and
 /// crossing backward is the job of the explicit page binds (`y` `{`).
 ///
@@ -1538,7 +1539,8 @@ fn keep_jump_if_on_page(state: &mut AppState, prev_line: usize, dir: Direction) 
     false
 }
 
-/// Previous dialogue line (`Alt+,`). Play-shaped stepping only: unlike
+/// Previous dialogue line. UNBOUND since 2026-07-27 (was `Alt+,`; retired
+/// because of exactly the defect below). Play-shaped stepping only: unlike
 /// `cursor_prev_dialogue` (`;`) this has NO prose branch and no translation-
 /// overlay branch, so on prose — where dialogue structure does not exist — it
 /// walks the play-style predicate and behaves erratically around headings.
@@ -1665,7 +1667,7 @@ pub fn cursor_next_dialogue_no_seek(state: &mut AppState) {
 /// to the reader keymap.)
 ///
 /// This is the general-purpose backward segment step, and differs from
-/// `jump_to_prev_dialogue` (`Alt+,`) in two ways: it has a PROSE branch (steps
+/// `jump_to_prev_dialogue` (now unbound) in two ways: it has a PROSE branch (steps
 /// one buffer line, skipping empty verse rows, because prose has no play-style
 /// dialogue structure) and a TRANSLATION-OVERLAY branch (scrolloff follow
 /// instead of paging). Both seek audio. Prefer this one on prose.

@@ -125,15 +125,11 @@ rather than adding to the mess. Ordered by how much they hurt memorability:
 6. **`i` — translation overlay vs. echoes-for-selection.** Two unrelated opens.
 7. **`n` / `p` — required modifier varies by surface** (reader plain, most
    overlays Ctrl, vocab-loop/echoes/pickers plain again). Real but low-stakes.
-8. **`comma` — four meanings** depending on mode/modifier. Includes a genuine
-   near-duplicate worth resolving: plain `,` is `JumpToPrevSpeaker` while
-   `Alt+,` is `JumpToPrevDialogue`, and the latter overlaps `;`
-   (`CursorPrevDialogue`) — same target on plays, but `Alt+,` has NO prose
-   branch and no translation-overlay branch, so on prose it walks the
-   play-style dialogue predicate and behaves erratically around headings. `;`
-   is the one that works everywhere. Candidate for retiring `Alt+,`, or for
-   giving it the prose branch so the two agree. (Both seek audio; the no-seek
-   variants are `h`/`t`.)
+8. **`comma` — three meanings** depending on mode/modifier (plain
+   `JumpToPrevSpeaker`, `Ctrl+,` settings, plus overlay-scope uses).
+   ✅ **RESOLVED 2026-07-27:** the fourth — `Alt+,` (`JumpToPrevDialogue`) —
+   was retired along with its forward twin `Q`; `;` / `'` are the dialogue
+   binds and are strict supersets. See the change log.
 9. **Nested minor collisions** — lowercase `v` (segment-vim viewer vs. voice
    picker) inside the otherwise-clean `V` = visual-select family; `u` undo vs.
    `Ctrl+u` half-page-up.
@@ -179,6 +175,21 @@ any multi-surface keybind change.
 ## Change log of consistency decisions
 
 Record each deliberate consistency move here so future sweeps know the intent.
+
+- **2026-07-27 — `Q` and `Alt+,` retired; `'` / `;` are the dialogue binds.**
+  `Q` (`JumpToNextDialogue`) and `Alt+,` (`JumpToPrevDialogue`) ran the
+  play-only dialogue predicate with NO prose branch, so on prose they walked
+  headings and behaved erratically. `'` (`CursorNextDialogue`) and `;`
+  (`CursorPrevDialogue`) are strict supersets — identical play predicate PLUS a
+  prose branch and a translation-overlay branch — so the retirement loses no
+  capability and resolves the `;`/`Alt+,` near-duplicate noted under `comma` in
+  the inconsistency list. UNBOUND ONLY: `Action::Jump{Next,Prev}Dialogue` and
+  their handlers are deliberately kept, so a rebind is one line. Retargeted the
+  two non-keyboard callers onto the supersets at the same time — the nav-fuzz
+  harness (`nav_test.rs`, so the fuzz drives what a keypress reaches) and the
+  gamepad face buttons (`input/gamepad.rs`, dormant: gamepad support is
+  disabled in main.rs). The translation overlay's own `,`/`q` (hardcoded in
+  `keymap.rs` `overlay_nav`) are overlay-scope and were left alone.
 
 - **2026-07-23 — vocab consolidated onto `r`.** `Ctrl+r` = add vocab word
   (reader + gloss/journal/synopsis/chat, uniform); `Ctrl+Shift+r` = vocab

@@ -145,11 +145,18 @@ fn dispatch(state: &Rc<RefCell<AppState>>, action: GamepadAction) {
         GamepadAction::PlayCurrentLine => {
             crate::input::timestamps::play_current_line(&mut state.borrow_mut());
         }
+        // Retargeted 2026-07-27 onto the `'` / `;` handlers, when the keyboard's
+        // `Q` and `Alt+,` binds were retired: `jump_to_{next,prev}_dialogue`
+        // run the play-only predicate with NO prose branch, so on prose they
+        // walk headings erratically. `cursor_{next,prev}_dialogue` are strict
+        // supersets (same play predicate + prose + translation-overlay
+        // branches). The gamepad is currently disabled in main.rs, so this is
+        // dormant — but it must be right if it is ever switched back on.
         GamepadAction::NextDialogue => {
-            navigation::jump_to_next_dialogue(&mut state.borrow_mut());
+            navigation::cursor_next_dialogue(&mut state.borrow_mut());
         }
         GamepadAction::PrevDialogue => {
-            navigation::jump_to_prev_dialogue(&mut state.borrow_mut());
+            navigation::cursor_prev_dialogue(&mut state.borrow_mut());
         }
         GamepadAction::TogglePlayback => {
             crate::input::search::toggle_playback_from_timestamp(&mut state.borrow_mut());
