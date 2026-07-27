@@ -39,11 +39,21 @@ bug three transformations downstream.
 
 ## The pagination model (read this first)
 
-linux-lit paginates a **flat buffer of lines** into pages on the fly — there is
-no precomputed page list (a font/size/width change would invalidate it). A play
-renders as a **two-column spread**: the reader fills the LEFT column top-to-
-bottom, then the RIGHT column, then turns to the next spread. Prose and
-translation mode use one column.
+linux-lit paginates a **flat buffer of lines** into pages. A play renders as a
+**two-column spread**: the reader fills the LEFT column top-to-bottom, then the
+RIGHT column, then turns to the next spread. Prose and translation mode use one
+column.
+
+> **Two engines, not one.** This section describes the LIVE engine, which
+> computes pages on the fly. Since 2026-07-04 most works also have a PINNED
+> page table in lit.db (`play_pages` / `prose_pages`, keyed by a layout
+> fingerprint so a font/size/width change misses and regenerates) — see
+> "Pinned page tables" below. When a table is active it is AUTHORITATIVE and
+> `column_split` is not consulted for rendering. Mixing the two is the single
+> most common source of pagination bugs: a table-chosen page top paired with a
+> live-computed end renders a window neither engine would choose. Always
+> establish WHICH engine is live before reasoning about a symptom
+> (`PAGES: table hit` / `PAGES_PROSE: table hit` in the log).
 
 **One function defines a spread: `column_split(top)`** (`viewport.rs`). Given a
 page-top line it returns a `ColumnSplit { split, page_end, next_page_top }`:
@@ -59,6 +69,33 @@ current one. **The cardinal rule is TILING:** consecutive spreads must abut with
 no gap and no overlap — `column_split(top).next_page_top` is exactly the next
 spread's `top`. Most pagination bugs are a tiling violation (a line shown twice,
 or skipped).
+
+## Which binds may turn the page (2026-07-27)
+
+**Dialogue/segment binds never turn the page** — `;` `'` `,` `q` `j` `k`, on
+plays, prose, AND verse. They move the cursor within what is already on
+screen; when the target would need a turn, the cursor is REVERTED and the key
+is a no-op. Turning is the job of the explicit page binds (`x` `y` `[` `{`)
+and the scene/act jumps.
+
+Implemented at one choke point, not per bind: `scroll::jump_stays_on_page`
+answers "would this need a turn?" (reusing the scroll helpers' own visibility
+test, including the prose `is_line_start_visible` exception for an over-tall
+paragraph whose opening row is on screen), and
+`navigation::keep_jump_if_on_page` reverts `current_line` and returns false so
+each jump site returns early. 11 call sites across
+`jump_to_{next,prev}_dialogue`, `cursor_{next,prev}_dialogue`,
+`cursor_{next,prev}_dialogue_no_seek`, `jump_to_{next,prev}_speaker`.
+
+**Deliberately exempt:** the scene/act jumps (`jump_to_next_scene` and
+friends) — moving between divisions is their purpose. Scroll mode and the
+translation overlay are exempt inside `jump_stays_on_page`: neither paginates,
+so there is no page to leave.
+
+This rule was requested as PROVISIONAL ("i am unsure if this is what i will
+ultimately want"), which is why it lives in one guard rather than spread
+through each bind — relaxing or re-scoping it means editing
+`jump_stays_on_page`, not eleven call sites.
 
 **How a spread's extent is decided** (inside `column_split`):
 
@@ -295,6 +332,44 @@ pattern is `prose_pages::prose_table_boundary_for_line(state, target)` +
 `set_page_instant_offset` (see `chapter_jump_land_ereader` in navigation.rs);
 the canonical-walk path is the fallback for gridless works only. This is the
 prose twin of the play-side "read the TABLE, never re-walk live" lesson.
+
+**A RESTORED position must be re-anchored to the grid too (2026-07-27).** The
+same symptom — a chapter heading rendering mid-page while the stored grid is
+provably correct — arrived a third time, through a new entry point: closing a
+gloss/journal overlay. `restore_saved_position_resnap` (app/mod.rs) set
+`(page_top_line, page_top_offset)` from the saved position and called
+`resnap_page`, which scrolls to whatever pair it is handed *without checking it
+against the active table*. A position saved before a table (re)generation is
+then restored verbatim and the reader sits off-grid; the renderer draws a
+window the pagination never chose, straddling the chapter break.
+
+Diagnosis, for the next occurrence: every legitimate page logs
+`PAGES_PROSE: page N/M top=(line,offset)`. Take the `page_top` from the
+symptom and grep for it — **if no `page N/M` line ever reports that top, the
+page top is off-grid and the grid is innocent.** (Observed: BH-Barrett
+rendering from `page_top=697`, a line no stored page starts at, immediately
+after two `RETURN_TO_READER` events, with "CHAPTER VIII" stranded mid-page.
+All 67 chapter starts in that work's active table begin a page — verified by
+querying `prose_pages`.)
+
+Fix: `restore_saved_position_resnap` now calls `page_table::resnap_to_table`
+and `prose_pages::resnap_prose_to_table` before `resnap_page`. Both helpers
+already existed and already ran on font changes and at startup — the
+overlay-return path simply never called them. Both are no-ops when their
+engine is inactive or the position is already canonical.
+
+The generalized lesson, now three-for-three: **any path that SETS a page top —
+generate, jump, resnap, or restore — must land on the stored grid.** A grid
+that is correct in lit.db proves nothing about what renders; the top is the
+other half of the contract. The play engine hit the same class the same week
+(`last_page_top` walking the live chain, see clip-prevention.md #12).
+
+**Guard.** `validate_prose_pages` gained a `chapter` invariant (2026-07-27):
+every `chapter_start` buffer line must begin a page at offset 0. Previously
+the suite checked only geometry, so a regression in `chapter_clamp` — or a
+table generated before `mark_chapter_starts` ran — would strand headings
+mid-page with every invariant still green. Works with no chapter data (PP,
+TTC: `chapter_start=0` on every line) pass vacuously.
 
 **pv4: a row whose INK fits stays on its page (row-fit correction,
 2026-07-09).** `prose_next_boundary` snaps the raw fill boundary (`y0 +
