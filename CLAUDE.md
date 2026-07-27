@@ -272,7 +272,14 @@ LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
 - Cage opens a fresh socket (`ls /run/user/1000/wayland-*`); export
   `WAYLAND_DISPLAY` to it. Default output is 1280×720 — resize to production
   geometry when pagination matters:
-  `wlr-randr --output HEADLESS-1 --custom-mode 1920x1200`.
+  `wlr-randr --output HEADLESS-1 --custom-mode 1920x1236`.
+  **1236, not 1200** — pagination keys on the TEXT VIEW height, and only 1236
+  reproduces production's `text_view.height = 1098` (1200 gives 1062, a 36px
+  miss that changes the page grid and can hide the bug entirely). Verify with
+  `RESIZE_TICK: text_view.height changed … -> 1098` in the log. The resize
+  lands after the app maps, so the first page table is built at 720p and
+  dropped — wait for the settled-layout hook to regenerate before driving, or
+  the run has no table and table-mode bugs cannot reproduce.
 - Give the window ~3s to map before `wtype`. An empty ~2-byte PNG from `grim`
   means not-mapped-yet, NOT failure — sleep 3 and retry; check `stat -c%s`
   before Read-ing. Modifier chords: `wtype -M ctrl -k j -m ctrl`.

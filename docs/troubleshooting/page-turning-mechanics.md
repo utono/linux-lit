@@ -358,11 +358,62 @@ already existed and already ran on font changes and at startup — the
 overlay-return path simply never called them. Both are no-ops when their
 engine is inactive or the position is already canonical.
 
-The generalized lesson, now three-for-three: **any path that SETS a page top —
-generate, jump, resnap, or restore — must land on the stored grid.** A grid
-that is correct in lit.db proves nothing about what renders; the top is the
-other half of the contract. The play engine hit the same class the same week
-(`last_page_top` walking the live chain, see clip-prevention.md #12).
+Lesson: **any path that SETS a page top — generate, jump, resnap, or restore —
+must land on the stored grid.** A grid that is correct in lit.db proves nothing
+about what renders; the top is one half of the contract. The play engine hit
+the same class the same week (`last_page_top` walking the live chain, see
+clip-prevention.md #12).
+
+**…and the page END is the OTHER half (2026-07-27).** The very next report of
+this symptom had a CORRECT top, so the rule above did not cover it — do not
+stop diagnosing once the top checks out. The single-column prose bottom clip
+was purely GEOMETRIC: it covers from the last visual row that fits
+`usable_height` down to the card edge and never consulted the stored page.
+That is right when a page ends because it RAN OUT OF ROOM, and wrong when it
+ends EARLY BY RULE — which is exactly what the chapter clamp does, so the
+viewport painted straight through the boundary.
+
+The two-column path never had this bug: it always passes the stored split as
+`exact_end`. `scroll::prose_exact_end_for_current_page` is the single-column
+counterpart, derived from `prose_table_last_line_for_top`.
+
+**Both clip-scheduling sites must use it.** `refresh_bottom_clip` gated
+`exact_end` on `column_count() == 2`, so fixing only the render path left a
+second live route to the same bug. They now share one helper — if you add a
+third scheduling site, route it through the helper too.
+
+Diagnosing the two apart, from the log:
+
+- `page_top` is NOT a stored page start ⇒ off-grid TOP (the previous entry).
+- `page_top` IS a stored page start but the clip line reads
+  `BOTTOM_CLIP_ROWFILL` ⇒ the geometric clip is running where the stored END
+  should govern. An `exact_end` page logs `BOTTOM_CLIP_EXACT` instead.
+
+(Observed: BH-Barrett page 82 = `(686,0)..(697,0)`; buffer 697 is the
+"CHAPTER VIII" line, so the table stops exactly at the heading and page 83
+opens on it — yet the reader painted past it with `row_clip=0`.)
+
+`last_rendered_line` (prose_pages.rs) is the pure inclusive/exclusive
+conversion the clip depends on, with a regression test built from those real
+page-82 values: the clip's `+ 1` makes the exclusive end 697, the heading
+line, which must not paint. **An off-by-one there IS this bug.**
+
+**A RESIZE used to disable pinned prose pagination for the rest of the session
+(fixed 2026-07-27).** `revalidate_prose_on_resize` drops a table whose
+fingerprint no longer matches and retries a LOAD — but generation is latched
+once per session by `prose_page_table_gen_attempted`, and that latch resets
+only on WORK LOAD. So after any window resize the reader silently fell back to
+the live engine until the work was reloaded, losing the pinned grid and with
+it the chapter-at-top rule baked into it. The resize tick now clears the latch
+and regenerates when the drop leaves nothing pinned (guarded on "actually
+dropped", so a no-op resize never triggers a full-document walk on a
+7300-line novel).
+
+This also unblocked HEADLESS verification of every table-mode prose bug: under
+cage the `wlr-randr` resize lands after the app maps, so the first table is
+built at 720p and dropped — with no regeneration the run had no table at all
+and table-mode bugs could not reproduce. Tell: `PAGES_PROSE: dropped table
+(layout changed)` followed by `no table for …` and never a `generated`.
 
 **Guard.** `validate_prose_pages` gained a `chapter` invariant (2026-07-27):
 every `chapter_start` buffer line must begin a page at offset 0. Previously

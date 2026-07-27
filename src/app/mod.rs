@@ -2781,10 +2781,31 @@ pub fn build_window(
                         // revalidate_on_resize's doc comment.
                         let st = state_for_tick.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                            {
+                            let prose_dropped = {
                                 let s = st.borrow();
                                 crate::input::page_table::revalidate_on_resize(&s);
+                                let had = s.prose_page_table.borrow().is_some();
                                 crate::input::prose_pages::revalidate_prose_on_resize(&s);
+                                // Dropped and not reloaded from lit.db at the new
+                                // fingerprint: nothing pinned covers this geometry.
+                                had && s.prose_page_table.borrow().is_none()
+                            };
+                            // REGENERATE at the settled geometry (2026-07-27).
+                            // `revalidate_prose_on_resize` only drops + retries a
+                            // LOAD; generation is latched once per session by
+                            // `prose_page_table_gen_attempted`, which resets only on
+                            // work load. So after any resize the reader fell back to
+                            // the live engine for the REST OF THE SESSION — losing
+                            // pinned pagination and, with it, the chapter-at-top rule
+                            // that lives in the stored grid. Clearing the latch here
+                            // lets the generator rebuild for the new layout. Guarded
+                            // on `prose_dropped` so a no-op resize (fingerprint
+                            // unchanged) never triggers a full-document walk.
+                            if prose_dropped {
+                                if let Ok(mut s) = st.try_borrow_mut() {
+                                    s.prose_page_table_gen_attempted.set(false);
+                                    crate::input::prose_pages::generate_and_store_prose(&mut s);
+                                }
                             }
                             // Same grid-swap re-anchor as the settled-layout hook.
                             if let Ok(mut s) = st.try_borrow_mut() {
