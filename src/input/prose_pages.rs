@@ -24,6 +24,11 @@ pub struct ProseValidateCtx<'a> {
     /// to one inter-paragraph gap past `usable_height` in BOX space — that
     /// excess is trailing/leading spacing only, never glyph ink.
     pub fit_slack: i32,
+    /// Buffer lines that START a chapter (`Line.is_chapter`), ascending. Each
+    /// must begin a page — a chapter heading never renders mid-page, like a
+    /// printed book. Empty for a work with no chapter data, which disables the
+    /// invariant. See the `chapter` check in `validate_prose_pages`.
+    pub chapter_starts: &'a [usize],
 }
 
 /// Maximum ink-free pixel gap between one display row's bottom and the next
@@ -127,6 +132,25 @@ pub fn validate_prose_pages(
             "tail: last page ends at ({}, {}) not ({}, {})",
             last.end_line, last.end_off, last_line, ctx.heights[last_line]
         ));
+    }
+    // chapter: every chapter-start line must BEGIN a page, so a heading never
+    // renders mid-page (the printed-book rule `prose_next_boundary` enforces
+    // via its chapter clamp). This is the only content-aware invariant here;
+    // the rest are pure geometry. Front matter before chapter 1 is not a
+    // chapter start, so a work with no chapters passes vacuously.
+    for &cs in ctx.chapter_starts {
+        if cs == 0 {
+            continue; // line 0 is page 1's start by the `first` invariant
+        }
+        let starts_a_page = pages
+            .iter()
+            .any(|p| p.start_line == cs && p.start_off == 0);
+        if !starts_a_page {
+            return Err(format!(
+                "chapter: chapter-start line {cs} does not begin a page \
+                 (heading would render mid-page)"
+            ));
+        }
     }
     Ok(())
 }
@@ -327,11 +351,33 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
     let widget_height = state.text_view.height();
     let guard = crate::input::viewport::descender_guard_px(&state.text_view, 0);
     let usable = widget_height - guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
+    // Chapter-start buffer lines, from the line map when present (it maps
+    // buffer -> work rows) else straight off the work lines. Same resolution
+    // `prose_next_boundary`'s `is_chapter_at` closure uses, so the validator
+    // and the generator agree on what a chapter start is.
+    let chapter_starts: Vec<usize> = match state.current_work.as_ref() {
+        Some(work) => (0..line_count)
+            .filter(|&bl| {
+                if let Some(ref lm) = state.line_map {
+                    lm.buffer_to_work
+                        .get(bl)
+                        .and_then(|o| o.as_ref())
+                        .and_then(|wi| work.lines.get(*wi))
+                        .map(|l| l.is_chapter)
+                        .unwrap_or(false)
+                } else {
+                    work.lines.get(bl).map(|l| l.is_chapter).unwrap_or(false)
+                }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     let ctx = ProseValidateCtx {
         line_count,
         heights: &heights,
         usable_height: usable,
         fit_slack: prose_fit_slack(&state.text_view),
+        chapter_starts: &chapter_starts,
     };
     if let Err(e) = validate_prose_pages(&pages, &ctx) {
         crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
@@ -631,13 +677,57 @@ mod tests {
     }
 
     fn ctx(h: &[i32]) -> ProseValidateCtx<'_> {
-        ProseValidateCtx { line_count: h.len(), heights: h, usable_height: 120, fit_slack: 0 }
+        ProseValidateCtx { line_count: h.len(), heights: h, usable_height: 120, fit_slack: 0, chapter_starts: &[] }
     }
 
     #[test]
     fn valid_pages_pass() {
         let h = heights();
         assert_eq!(validate_prose_pages(&ok_pages(), &ctx(&h)), Ok(()));
+    }
+
+    /// A chapter heading must never render mid-page (the printed-book rule).
+    /// `ok_pages()` has page 2 starting at line 1 offset 140 — so line 1 is
+    /// NOT a page start, and declaring it a chapter start must fail.
+    #[test]
+    fn chapter_start_not_at_a_page_top_fails() {
+        let h = heights();
+        let c = ProseValidateCtx { chapter_starts: &[1], ..ctx(&h) };
+        let err = validate_prose_pages(&ok_pages(), &c).unwrap_err();
+        assert!(err.starts_with("chapter:"), "got: {err}");
+    }
+
+    /// A line that DOES begin a page is a legitimate chapter start. Uses its
+    /// own uniform-height fixture so the page spans are trivially inside the
+    /// fit budget and ONLY the chapter invariant is under test.
+    #[test]
+    fn chapter_start_at_a_page_top_passes() {
+        // Four 50px lines, one line per page: every line is a page top.
+        let h = vec![50, 50, 50, 50];
+        let pages = vec![
+            ProsePage { start_line: 0, start_off: 0, end_line: 1, end_off: 0 },
+            ProsePage { start_line: 1, start_off: 0, end_line: 2, end_off: 0 },
+            ProsePage { start_line: 2, start_off: 0, end_line: 3, end_off: 50 },
+        ];
+        let c = ProseValidateCtx {
+            line_count: 4,
+            heights: &h,
+            usable_height: 120,
+            fit_slack: 0,
+            chapter_starts: &[1, 2],
+        };
+        assert_eq!(validate_prose_pages(&pages, &c), Ok(()));
+    }
+
+    /// Line 0 is page 1's start by construction, so a chapter there is fine —
+    /// and a work with no chapter data disables the invariant entirely.
+    #[test]
+    fn chapter_at_line_zero_and_no_chapters_both_pass() {
+        let h = heights();
+        let at_zero = ProseValidateCtx { chapter_starts: &[0], ..ctx(&h) };
+        assert_eq!(validate_prose_pages(&ok_pages(), &at_zero), Ok(()));
+        let none = ProseValidateCtx { chapter_starts: &[], ..ctx(&h) };
+        assert_eq!(validate_prose_pages(&ok_pages(), &none), Ok(()));
     }
 
     #[test]
@@ -715,7 +805,7 @@ mod tests {
             // page 1 starts at line 1's top and carries it whole into line 2.
             ProsePage { start_line: 1, start_off: 0, end_line: 2, end_off: 100 },
         ];
-        let c = ProseValidateCtx { line_count: 3, heights: &h, usable_height: 220, fit_slack: 0 };
+        let c = ProseValidateCtx { line_count: 3, heights: &h, usable_height: 220, fit_slack: 0, chapter_starts: &[] };
         assert_eq!(validate_prose_pages(&p, &c), Ok(()));
         // Line 1's FIRST row lands on page 1, never page 0.
         assert_eq!(prose_page_for_line(&p, 1), Some(1),
@@ -736,7 +826,7 @@ mod tests {
             ProsePage { start_line: 0, start_off: 0, end_line: 0, end_off: 100 },
             ProsePage { start_line: 1, start_off: 0, end_line: 1, end_off: 100 },
         ];
-        let c = ProseValidateCtx { line_count: 2, heights: &h, usable_height: 120, fit_slack: 0 };
+        let c = ProseValidateCtx { line_count: 2, heights: &h, usable_height: 120, fit_slack: 0, chapter_starts: &[] };
         assert_eq!(validate_prose_pages(&p, &c), Ok(()));
     }
 }
