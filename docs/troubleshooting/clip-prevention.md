@@ -722,14 +722,35 @@ When a half line clips at the bottom edge of a scrolled surface:
     regenerated to `end=3937`/`total=1034`/`clip=73` at the same `1920x1200`
     fingerprint.)
 
-    **DURABLE FIX LANDED 2026-07-27 (fingerprint `v5`).** The recurrence this
+    **THE USUAL CAUSE IS NOT STALENESS — CHECK THIS FIRST (2026-07-27).** If
+    the log shows `PAGES: table hit` AND the overflowing `BOTTOM_CLIP_EXACT`
+    line's `page_top` is NOT a stored `left_start`, the table is fine and the
+    TOP is wrong. `spread_for_top` is an exact-top match, so a `page_top` the
+    table doesn't start a spread at used to fall straight through to the live
+    `column_split` — pairing a table-chosen top with a live-chosen `end` and
+    rendering a column WIDER than either engine would choose alone. Observed on
+    Ant-Arkangel startup: `STARTUP: snap near-end` chose 5340 (from
+    `last_page_top`, which walked the LIVE page chain), the table had no spread
+    starting there, and the live split supplied `end=5381` ⇒ 1102px into a
+    1098px viewport. Two fixes, both needed: `last_page_top` returns the
+    TABLE's last spread when a table is active, and the render path falls back
+    to `page_for_line` (containment) before the live engine. Diagnostic: log
+    `effective_top` alongside `spread_for_top(...)` — a `None` there with a
+    live table is the tell. Regression:
+    `page_table::tests::a_top_inside_a_spread_resolves_to_that_spread`.
+
+    **FINGERPRINT FIX LANDED 2026-07-27 (`v5`).** Separately, the recurrence this
     entry predicted happened (`Ant-Arkangel` page 89: a 1102px left column in a
     1071px usable height, cutting "A simple countryman that brought her figs.";
     `validate-play-pages` reported PASS, as documented above). The card's
     `text_view.height()` is now a `layout_fingerprint` field
     (`FingerprintParts::view_height`), so a table baked at a different CARD
     height no longer matches and is regenerated automatically — no manual
-    DELETE, and the `PASS`-but-overflowing state is unreachable. The version
+    DELETE. NOTE: this closes the STALE-TABLE route to the overflow only; it
+    does NOT make the `PASS`-but-overflowing state unreachable, as first
+    believed. A v5 table regenerated at the correct geometry still rendered the
+    clipped line, because the top itself was off-grid (see the paragraph
+    above) — which is the more common cause. The version
     bump `v4`→`v5` invalidated all ~200 stored tables at once; they regenerate
     on next load of each work. Regression test:
     `page_table::tests::view_height_change_invalidates_the_fingerprint` (same
