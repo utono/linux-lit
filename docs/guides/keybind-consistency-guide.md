@@ -125,7 +125,15 @@ rather than adding to the mess. Ordered by how much they hurt memorability:
 6. **`i` — translation overlay vs. echoes-for-selection.** Two unrelated opens.
 7. **`n` / `p` — required modifier varies by surface** (reader plain, most
    overlays Ctrl, vocab-loop/echoes/pickers plain again). Real but low-stakes.
-8. **`comma` — four meanings** depending on mode/modifier.
+8. **`comma` — four meanings** depending on mode/modifier. Includes a genuine
+   near-duplicate worth resolving: plain `,` is `JumpToPrevSpeaker` while
+   `Alt+,` is `JumpToPrevDialogue`, and the latter overlaps `;`
+   (`CursorPrevDialogue`) — same target on plays, but `Alt+,` has NO prose
+   branch and no translation-overlay branch, so on prose it walks the
+   play-style dialogue predicate and behaves erratically around headings. `;`
+   is the one that works everywhere. Candidate for retiring `Alt+,`, or for
+   giving it the prose branch so the two agree. (Both seek audio; the no-seek
+   variants are `h`/`t`.)
 9. **Nested minor collisions** — lowercase `v` (segment-vim viewer vs. voice
    picker) inside the otherwise-clean `V` = visual-select family; `u` undo vs.
    `Ctrl+u` half-page-up.
