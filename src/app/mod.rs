@@ -811,6 +811,12 @@ pub struct AppState {
     /// messages never clobber the chapter/speed toast text.
     pub search_toast: gtk4::Label,
     pub word_cycle: crate::input::actions::word_copy::WordCycleState,
+    /// `-`-family cycle state for the GLOSS overlay (block-scoped; the
+    /// reader's `word_cycle` above is line-scoped and stays separate so the
+    /// two surfaces never clobber each other's position).
+    pub gloss_word_cycle: crate::input::actions::overlay_word_copy::OverlayWordCycle,
+    /// `-`-family cycle state for the JOURNAL Q&A overlay.
+    pub journal_word_cycle: crate::input::actions::overlay_word_copy::OverlayWordCycle,
     pub word_status_timer: Rc<Cell<u64>>,
     pub word_bold_tag: gtk4::TextTag,
     /// True while display_work is replacing the buffer. CursorSync and other
@@ -2411,6 +2417,8 @@ pub fn build_window(
         speed_toast,
         search_toast,
         word_cycle: crate::input::actions::word_copy::WordCycleState::default(),
+        gloss_word_cycle: Default::default(),
+        journal_word_cycle: Default::default(),
         word_status_timer: Rc::new(Cell::new(0)),
         word_bold_tag,
         // If we have an MRU work to load, mark loading_work=true now so the

@@ -20,7 +20,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
     ("r", "vocab_popup (rr toggles \u{b7} r next word)"),
     ("Ctrl+r", "vocab_add_card: add a vocab word"),
-    ("\\", "cycle_from_journal: → syntax gloss (same segment)"),
+    ("\\", "cycle overlays: → syntax → gloss → back here (skips empty; Esc exits)"),
 ]);
 
 /// Grouped (key, action) rows. Matches handle_journal_key + journal visual mode.
@@ -48,7 +48,17 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
         ("H", "in visual mode: toggle <hi> highlight on the selection"),
         ("Ctrl+v", "paste clipboard (also in the ask_card prompt)"),
     ]),
+    // Block-scoped word copy — the overlay counterpart of the reader's `-`
+    // family. Return is deliberately NOT bound here (it opens a syntax gloss
+    // in the reader); see input::actions::overlay_word_copy.
+    ("Word copy (cursor block)", &[
+        ("-", "next word → clipboard, underlined"),
+        ("Shift+-", "previous word (wraps)"),
+        ("Alt+-", "collect words, append → clipboard"),
+        ("Ctrl+-", "first word of next sentence"),
+    ]),
     ("Misc", &[
+        ("Ctrl+\\", "open_picker: work-wide Q&A picker"),
         ("+", "copy_work_division → clipboard"),
         ("Esc", "close vocab_popup / jump to source_text"),
         ("Ctrl+/", "close this legend"),

@@ -3347,6 +3347,69 @@ pub(crate) fn open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
     }
 }
 
+/// Whether a gloss of any of `gloss_types` covers the reader cursor line —
+/// the same lookup `try_open_gloss_at_cursor` / `try_open_syntax_gloss_at_cursor`
+/// perform, WITHOUT opening anything or touching overlay state.
+///
+/// The `\` overlay cycle (`overlay_cycle::advance`) needs this: it must know
+/// whether the next stop can open BEFORE it tears down the current overlay,
+/// so that a lap with no reachable stop can leave the current overlay up and
+/// toast instead of dumping the reader out of an overlay it can't replace.
+pub(crate) fn gloss_covers_cursor(state: &Rc<RefCell<AppState>>, gloss_types: &[&str]) -> bool {
+    let (work_abbrev, cur_triple) = {
+        let s = state.borrow();
+        let Some(work) = s.current_work.as_ref() else {
+            return false;
+        };
+        // Resolve from the LAP ANCHOR, not `current_line`: opening the gloss
+        // stop moves the cursor to the END of the glossed passage, so probing
+        // the live cursor asks "is there a syntax gloss at line 437?" when the
+        // lap started at 424. Passages of different widths (a reader-gloss over
+        // a whole speech vs a syntax gloss over one sentence) then never match.
+        // `gloss_return_pos`/`journal.return_pos` hold the position the lap was
+        // anchored to; fall back to the cursor when no overlay is open.
+        let anchor = s
+            .gloss_return_pos
+            .or(s.journal.return_pos)
+            .map(|(line, _, _)| line)
+            .unwrap_or(s.current_line);
+        let Some(wl) = s.work_line_for_buffer(anchor) else {
+            return false;
+        };
+        let Some(line) = work.lines.get(wl) else {
+            return false;
+        };
+        (
+            work.canonical_abbrev.clone(),
+            (line.div1, line.div2, line.line_in_div),
+        )
+    };
+
+    let Ok(conn) = crate::db::queries::open_db() else {
+        return false;
+    };
+    crate::db::queries::find_glossed_passages(&conn, &work_abbrev, gloss_types)
+        .unwrap_or_default()
+        .iter()
+        .any(|p| {
+            match (
+                crate::app::parse_citation(&p.start_citation),
+                crate::app::parse_citation(&p.end_citation),
+            ) {
+                (Some(start), Some(end)) => passage_covers(start, end, cur_triple),
+                _ => false,
+            }
+        })
+}
+
+/// Gloss types of the cycle's GLOSS stop (reader-facing types, excluding
+/// syntax-gloss, which is its own stop). Exposed for `overlay_cycle`'s
+/// availability probe.
+pub(crate) const CYCLE_GLOSS_TYPES: &[&str] = READER_GLOSS_TYPES;
+
+/// Gloss type of the cycle's SYNTAX stop.
+pub(crate) const CYCLE_SYNTAX_TYPES: &[&str] = &["syntax-gloss"];
+
 /// The open half of `open_gloss_at_cursor` without the miss toast: returns
 /// false (opening nothing) when no glossed passage covers the cursor, so the
 /// prose `-` path can fall through to background glossing instead of toasting.

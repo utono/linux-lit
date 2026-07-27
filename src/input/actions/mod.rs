@@ -15,6 +15,7 @@ pub mod escape;
 pub mod gloss;
 pub mod journal;
 pub mod overlay_cycle;
+pub mod overlay_word_copy;
 pub mod pickers;
 pub mod rewrite_history;
 pub mod segment_vim;

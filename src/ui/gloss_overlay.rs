@@ -214,6 +214,8 @@ pub struct GlossOverlay {
     /// applied by `apply_rewrite_diff` (Tasks 5/6), cleared by `clear_rewrite_diff`
     /// (Task 7). Placeholder color; `set_rewrite_diff_color` wires it to the theme.
     rewrite_diff_tag: gtk4::TextTag,
+    /// Underline tag for the overlay `-` family (`overlay_word_copy`).
+    word_underline_tag: gtk4::TextTag,
     /// True while a rewrite diff highlight is currently applied (empty ranges
     /// count as inactive). Read by Task 7 to decide whether to clear on next edit.
     rewrite_diff_active: std::cell::Cell<bool>,
@@ -691,6 +693,15 @@ impl GlossOverlay {
             .background("#ffe000") // placeholder; set via set_rewrite_diff_color
             .build();
         gloss_view.buffer().tag_table().add(&rewrite_diff_tag);
+        // Word-underline tag for the overlay `-` family
+        // (`input::actions::overlay_word_copy`), mirroring the reader's
+        // "word-bold" tag. Underline only — no color — so it reads the same on
+        // every theme.
+        let word_underline_tag = gtk4::TextTag::builder()
+            .name("gloss_word_underline")
+            .underline(gtk4::pango::Underline::Single)
+            .build();
+        gloss_view.buffer().tag_table().add(&word_underline_tag);
         // Vocab-word tint tag: same one-time registration as the search tags.
         // Placeholder color; `set_vocab_color` wires it to the theme.
         let vocab_tag = gtk4::TextTag::builder()
@@ -764,6 +775,7 @@ impl GlossOverlay {
             search_current_tag,
             vocab_tag,
             rewrite_diff_tag,
+            word_underline_tag,
             rewrite_diff_active: std::cell::Cell::new(false),
             rewrite_diff_full: RefCell::new(Vec::new()),
             rewrite_diff_shown: std::rc::Rc::new(std::cell::Cell::new(false)),
@@ -863,6 +875,34 @@ impl GlossOverlay {
             end.forward_to_line_end();
         }
         Some(buffer.text(&start, &end, false).to_string())
+    }
+
+    /// The cursor block as a `-`-family target (buffer + underline tag +
+    /// the block's buffer-line span). `None` when the overlay has no
+    /// navigable blocks — e.g. the loading card.
+    pub fn word_copy_target(
+        &self,
+    ) -> Option<crate::input::actions::overlay_word_copy::BlockTarget> {
+        let ranges = self.blocks.borrow();
+        if ranges.is_empty() {
+            return None;
+        }
+        let i = self.cursor_block.get().min(ranges.len() - 1);
+        let r = ranges.get(i)?;
+        Some(crate::input::actions::overlay_word_copy::BlockTarget {
+            buffer: self.gloss_view.buffer(),
+            tag: self.word_underline_tag.clone(),
+            start_line: r.start_line,
+            end_line: r.end_line,
+            block_index: i,
+        })
+    }
+
+    /// Drop any `-`-family underline (Escape / overlay close).
+    pub fn clear_word_underline(&self) {
+        let buffer = self.gloss_view.buffer();
+        let (s, e) = (buffer.start_iter(), buffer.end_iter());
+        buffer.remove_tag(&self.word_underline_tag, &s, &e);
     }
 
     /// True while a rewrite diff highlight is currently applied.
@@ -3414,6 +3454,9 @@ impl GlossOverlay {
         // while the ask card held focus) so the overlay never reopens with a
         // missing bar.
         self.clear_focus_dim();
+        // Drop any `-`-family underline: the next open re-renders the buffer,
+        // so the stored char offsets would point at unrelated text.
+        self.clear_word_underline();
     }
 
     pub fn set_position(&self, index: usize, total: usize) {
