@@ -689,6 +689,12 @@ pub struct AppState {
     /// The (div1, div2) scene currently displayed in the synopsis overlay. n/p
     /// step this through the work's scenes; the `A` amend targets it too.
     pub synopsis_overlay_scene: (i64, i64),
+    /// The `(div1, div2)` band a synopsis→journal `\` hop came FROM, or None
+    /// when the journal was opened any other way. Set on the hop, TAKEN on the
+    /// return hop, and cleared wherever a journal session ends — a stale
+    /// marker would make a later unrelated journal `\` jump to a synopsis
+    /// instead of advancing the overlay cycle.
+    pub journal_from_synopsis: Option<(i64, i64)>,
     /// Per-scene synopsis overlay cursor memory: the global block index the
     /// cursor sat on when Escape closed the overlay, keyed by (div1, div2).
     /// Ctrl+h on the same scene reopens the overlay at that block (clamped, so
@@ -2373,6 +2379,7 @@ pub fn build_window(
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
         synopsis_overlay_scene: (0, 0),
+        journal_from_synopsis: None,
         synopsis_cursor_memory: HashMap::new(),
         synopsis_amend_scene: (0, 0),
         synopsis_undo: None,

@@ -41,6 +41,12 @@ fn lap_anchor_for(s: &AppState) -> usize {
     lap_anchor_line(s.gloss_return_pos, s.journal.return_pos, s.current_line)
 }
 
+/// Take the synopsis-origin band, leaving None. Pure so the take-not-copy
+/// contract is testable without an AppState.
+fn take_synopsis_origin(marker: &mut Option<(i64, i64)>) -> Option<(i64, i64)> {
+    marker.take()
+}
+
 /// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
 /// Used to turn a unit noun (`chapter`) into a user-message field label
 /// (`Chapter:`). Empty input returns empty. `pub(crate)` so the chat panel
@@ -3964,5 +3970,16 @@ mod tests {
     #[test]
     fn lap_anchor_uses_cursor_when_no_overlay_open() {
         assert_eq!(lap_anchor_line(None, None, 979), 979);
+    }
+
+    /// The synopsis→journal hop records its origin band; the return hop TAKES
+    /// it, so a later journal session opened any other way cannot inherit a
+    /// stale marker and hijack `\`.
+    #[test]
+    fn synopsis_origin_is_taken_not_copied() {
+        let mut marker = Some((10, 0));
+        assert_eq!(take_synopsis_origin(&mut marker), Some((10, 0)));
+        assert_eq!(marker, None, "the marker must be consumed");
+        assert_eq!(take_synopsis_origin(&mut marker), None);
     }
 }
