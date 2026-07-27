@@ -122,11 +122,12 @@ pub(crate) enum PageChangeReason {
     Scene,
     /// User jumped to a vocab match.
     Vocab,
-    /// User pressed comma/q/j/k for dialogue navigation.
+    /// A segment bind that SEEKS audio — `q`/`J`/`Q`/`'`/`Down` forward,
+    /// `,`/`K`/`Alt+,`/`;`/`Up` backward.
     Dialogue,
-    /// Cursor-only movement with no audio seek — h/t step to the prev/next
-    /// dialogue line while MPV keeps playing where it was. (j/k, by contrast,
-    /// seek like comma/q via Dialogue.)
+    /// Cursor-only movement with no audio seek — `h`/`t` step to the next/prev
+    /// dialogue line while MPV keeps playing where it was. The ONLY difference
+    /// from `Dialogue` is the seek; both are segment navigation.
     Cursor,
     /// MPV CursorSync drove the cursor to a new line; do NOT re-seek MPV.
     MpvSync,
@@ -1495,17 +1496,20 @@ pub fn page_backward_bottom(state: &mut AppState) {
     after_page_change(state, PageChangeReason::Backward);
 }
 
-/// Previous dialogue line (`,` key).
-/// If cursor is at the top line of the page, just page backward (don't move cursor).
 /// Commit a dialogue/segment cursor jump. FORWARD jumps may turn the page;
 /// BACKWARD jumps may not (2026-07-27, revised).
 ///
-/// User rule: the segment binds that move to the NEXT segment (`q` `'` `j`, and
-/// the next-speaker jumps) ARE allowed to effect a page turn — reading forward
-/// through a work should never dead-end at a page edge. The binds that move to
-/// the PREVIOUS segment (`,` `;` `k`, and the prev-speaker jumps) keep the
-/// original prohibition: they move the cursor within what is already on screen,
-/// and crossing backward is the job of the explicit page binds (`y` `{`).
+/// User rule: the segment binds that move to the NEXT segment (`q` `J` `Q` `'`
+/// `h` `Down`) ARE allowed to effect a page turn — reading forward through a
+/// work should never dead-end at a page edge. The binds that move to the
+/// PREVIOUS segment (`,` `K` `Alt+,` `;` `t` `Up`) keep the original
+/// prohibition: they move the cursor within what is already on screen, and
+/// crossing backward is the job of the explicit page binds (`y` `{`).
+///
+/// Key names are this user's `~/.config/linux-lit/keymap.json` (`reader`
+/// scope), which overrides the compiled defaults; `j`/`k` are NOT segment binds
+/// there (they are bookmark nav). The tagging is per HANDLER via `dir`, so the
+/// rule is correct whatever the keys are bound to.
 ///
 /// The asymmetry is deliberate. Reading is forward-biased: a forward bind that
 /// stops at the page edge blocks progress and forces an `x`, whereas a backward
@@ -1534,6 +1538,15 @@ fn keep_jump_if_on_page(state: &mut AppState, prev_line: usize, dir: Direction) 
     false
 }
 
+/// Previous dialogue line (`Alt+,`). Play-shaped stepping only: unlike
+/// `cursor_prev_dialogue` (`;`) this has NO prose branch and no translation-
+/// overlay branch, so on prose — where dialogue structure does not exist — it
+/// walks the play-style predicate and behaves erratically around headings.
+/// Prefer `;` on prose.
+///
+/// Backward, so it may not turn the page: at the page top the jump is reverted
+/// and the key is a no-op. (A stale comment here used to claim it "just pages
+/// backward" instead — it does not, and has not since `f4b63088`.)
 pub fn jump_to_prev_dialogue(state: &mut AppState) {
     if state.current_line == 0 {
         return;
@@ -1645,8 +1658,17 @@ pub fn cursor_next_dialogue_no_seek(state: &mut AppState) {
     }
 }
 
-/// Move cursor to previous dialogue line and seek media to it (reader `;` /
-/// Up; the translation overlay's `k` routes here via `overlay_nav`).
+/// Move cursor to previous dialogue line and seek media to it.
+///
+/// Reader binds: `;` / `Up`. (The translation overlay's own `k` also routes
+/// here via `overlay_nav` — an overlay bind hardcoded in keymap.rs, unrelated
+/// to the reader keymap.)
+///
+/// This is the general-purpose backward segment step, and differs from
+/// `jump_to_prev_dialogue` (`Alt+,`) in two ways: it has a PROSE branch (steps
+/// one buffer line, skipping empty verse rows, because prose has no play-style
+/// dialogue structure) and a TRANSLATION-OVERLAY branch (scrolloff follow
+/// instead of paging). Both seek audio. Prefer this one on prose.
 pub fn cursor_prev_dialogue(state: &mut AppState) {
     if state.current_line == 0 {
         return;
@@ -1691,8 +1713,12 @@ pub fn cursor_prev_dialogue(state: &mut AppState) {
     after_page_change(state, PageChangeReason::Dialogue);
 }
 
-/// Move cursor to next dialogue line and seek media to it (reader `'` /
-/// Down; the translation overlay's `j` routes here via `overlay_nav`).
+/// Move cursor to next dialogue line and seek media to it.
+///
+/// Reader binds: `'` / `Down`. (The translation overlay's own `j` also routes
+/// here via `overlay_nav` — an overlay bind hardcoded in keymap.rs, unrelated
+/// to the reader keymap.) Forward counterpart of `cursor_prev_dialogue`, with
+/// the same prose and translation-overlay branches.
 pub fn cursor_next_dialogue(state: &mut AppState) {
     let line_count = state.buffer.line_count() as usize;
     if line_count == 0 {

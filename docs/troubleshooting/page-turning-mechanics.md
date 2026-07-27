@@ -78,10 +78,32 @@ forward bind that stopped at the page edge would block progress and force an
 `x`, whereas a backward bind stopping there merely declines to leave the page
 the reader is looking at.
 
-- **May turn** — `q` `'` `j` and the next-speaker jumps (`Direction::Next`).
-- **May NOT turn** — `,` `;` `k` and the prev-speaker jumps
-  (`Direction::Prev`). Target off-page ⇒ cursor REVERTED, key is a no-op.
-  Crossing backward is the job of `y` / `{`.
+**May turn (`Direction::Next`):**
+
+- `q` / `J` — `JumpToNextSpeaker` (next speaker turn; next paragraph on prose)
+- `Q` — `JumpToNextDialogue`
+- `'` / `Down` — `CursorNextDialogue` (seeks audio)
+- `h` — `CursorNextDialogueNoSeek` (cursor only, MPV keeps playing)
+
+**May NOT turn (`Direction::Prev`)** — target off-page ⇒ cursor REVERTED, key
+is a no-op; crossing backward is the job of `y` / `{`:
+
+- `,` / `K` — `JumpToPrevSpeaker`
+- `Alt+,` — `JumpToPrevDialogue`
+- `;` / `Up` — `CursorPrevDialogue` (seeks audio)
+- `t` — `CursorPrevDialogueNoSeek` (cursor only)
+
+**Key names above are this user's actual layout** — resolved from the stowed
+`~/.config/linux-lit/keymap.json` (`reader` scope), which OVERRIDES the
+compiled defaults. Do not copy key names out of source doc comments: several
+still say `j`/`k` for the segment binds, which this keymap rebinds to
+`NextBookmark`/`PrevBookmark` — a different subsystem, unaffected by this rule.
+The tagging is per HANDLER, not per key, so the rule holds whatever a key is
+bound to; only the prose naming keys can go stale. Re-derive with:
+
+```bash
+python3 -c "import json;d=json.load(open('$HOME/.config/linux-lit/keymap.json'));[print(('+'.join([m for m in ('ctrl','alt','shift') if b.get(m)]+[b['key']])).ljust(12),b['action']) for b in d['reader'] if 'Dialogue' in b['action'] or 'Speaker' in b['action']]"
+```
 
 Implemented at one choke point, not per bind:
 `navigation::keep_jump_if_on_page(state, prev_line, dir)` short-circuits to
@@ -1120,7 +1142,7 @@ cached in `state.synopsis_cache` keyed by `(div1, div2)`.
 
 ### Scene-snap on navigation
 
-When FORWARD dialogue navigation (`q`/`j`) or playback sync lands the cursor on
+When FORWARD dialogue navigation (`q`/`Q`/`'`) or playback sync lands the cursor on
 the first dialogue line of a new scene that's off-page, the viewport snaps so the
 scene header is at the top of the new spread. Detection uses
 `is_first_dialogue_of_scene` in `viewport.rs`, which walks backward from the
@@ -1128,23 +1150,27 @@ cursor — if it hits a scene marker or separator before any dialogue line, the
 cursor is the scene's first dialogue; `back_up_for_speaker` then finds the full
 header-block top. This applies to plays only (`!is_prose`).
 
-- **Forward (`q`/`j`):** scene-snap fires in `scroll_after_jump_forward`.
+- **Forward (`q`/`Q`/`'`):** scene-snap fires in `scroll_after_jump_forward`.
 - **Sync:** scene-snap fires via the `(div1, div2)` comparison in the CursorSync
   handler (`main.rs`).
-- **Backward (`,`/`k`):** does NOT scene-snap. `scroll_after_jump_backward`
+- **Backward (`,`/`;`/`K`):** does NOT scene-snap. `scroll_after_jump_backward`
   follows the plain reading model below — scene snapping a backward step caused
-  cursor oscillation in the final-spread region, and a reader pressing `,`/`k`
+  cursor oscillation in the final-spread region, and a reader pressing `,`/`;`
   expects to step to the previous dialogue, not jump a scene header to the top.
 - **Scene jumps (`2`/`3`):** a separate path (`jump_to_next_scene` /
   `jump_to_prev_scene`), not these handlers — that is where intentional
   scene-to-page-top snapping lives.
 
-### Dialogue navigation reading model (`,` `q` `k` `j`)
+### Dialogue navigation reading model (forward `q` `Q` `'` `h`; backward `,` `;` `t` `K`)
 
-`q`/`j` (next dialogue) and `,`/`k` (previous dialogue) move the cursor one
-dialogue line and turn the page only when the cursor leaves the visible spread.
-In two columns the cursor walks down the left column, down the right column, then
-onto the next spread — backward is the mirror. The handlers in `navigation.rs`
+The forward segment binds (next dialogue/speaker) and the backward ones
+(previous dialogue/speaker) move the cursor one dialogue line. In two columns
+the cursor walks down the left column, down the right column, then onto the
+next spread — backward is the mirror.
+
+**Turning differs by direction** (see *Which binds may turn the page*): forward
+binds turn when the cursor leaves the visible spread; backward binds do NOT
+turn — the jump is reverted and the key is a no-op at the page top. The handlers in `navigation.rs`
 set `current_line` to the next/prev dialogue, then call the scroll-after fns in
 `scroll.rs`:
 
@@ -1157,7 +1183,7 @@ set `current_line` to the next/prev dialogue, then call the scroll-after fns in
 - **`scroll_after_jump_backward`** — if still visible, nothing to do. Otherwise
   the cursor stepped above the page top: turn to `prev_page_top`, then set the
   cursor to that spread's LAST visible dialogue line (bottom of the right column)
-  — what a reader expects from `,`/`k` at the page top. Backing up off trailing
+  — what a reader expects from `,`/`;` at the page top. Backing up off trailing
   non-dialogue is via `prev_dialogue_line(last_fully_visible_line + 1)`.
 
 `navigation::last_page_top(target)` (shared with `jump_to_end`/`G`) walks the
