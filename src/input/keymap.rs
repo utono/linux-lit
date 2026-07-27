@@ -518,6 +518,49 @@ fn refresh_chat_vocab_scope(state: &Rc<RefCell<crate::app::AppState>>) {
     );
 }
 
+/// After a gloss/journal overlay BLOCK-CURSOR move (j/q, k/comma, gg, G, x, y),
+/// retarget an open corner-anchored vocab popup to the NEW cursor block's
+/// words — the overlay popup tracks the accent bar the way the chat popup
+/// tracks its row cursor (`refresh_chat_vocab_scope`) and the main card's
+/// popup tracks the cursor line.
+///
+/// Without this the popup kept whatever block was under the bar when `rr`
+/// opened it: moving the bar to a segment with different vocab words left the
+/// stale list up, and `r` only cycled that stale list — the words refreshed
+/// only on a close/reopen.
+///
+/// No-op unless the popup is up in one of the two overlay modes. When the new
+/// block has NO vocab words, keep the previous block's words rather than
+/// blanking the popup — same choice the chat path makes, and it also skips
+/// `open_vocab_popup_scoped`'s DB open entirely.
+fn refresh_overlay_vocab_scope(state: &Rc<RefCell<crate::app::AppState>>) {
+    let mode = {
+        let s = state.borrow();
+        if !s.vocab_popup.popup.is_visible() {
+            return;
+        }
+        s.input_mode
+    };
+    let words = match mode {
+        crate::app::InputMode::GlossOverlay => gloss_overlay_scope_words(state),
+        crate::app::InputMode::JournalOverlay => journal_overlay_scope_words(state),
+        _ => return,
+    };
+    if words.is_empty() {
+        crate::logging::log("VOCAB RESCOPE: new block has no vocab words, keeping previous");
+        return;
+    }
+    crate::logging::log(&format!(
+        "VOCAB RESCOPE: {} words: {:?}", words.len(), words
+    ));
+    let mut s = state.borrow_mut();
+    crate::app::vocab_popup::open_vocab_popup_scoped(
+        &mut s,
+        crate::app::vocab_popup::VocabScope::Words(words),
+        crate::app::vocab_popup::VocabAnchor::Corner,
+    );
+}
+
 /// Handle a key RELEASE. Only used for the Shift-tap timestamp delete/undo:
 /// a lone `Shift_L`/`Shift_R` release, still armed (no other key pressed during
 /// the hold), fires in **Reader mode only**. First tap on a line with a
@@ -1917,6 +1960,7 @@ fn handle_journal_key(
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
                 state.borrow().journal_overlay.cursor_first_block();
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             }
             return true;
         }
@@ -1943,14 +1987,17 @@ fn handle_journal_key(
         match key_name {
             "n" => {
                 crate::input::actions::journal::nav_scene(state, 1);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             "p" => {
                 crate::input::actions::journal::nav_scene(state, -1);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             "w" => {
                 crate::input::actions::journal::nav_to_work_band(state);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             // Alt+s: jump to the Scene band for the main card's current line —
@@ -1959,6 +2006,7 @@ fn handle_journal_key(
             // band without closing and reopening the overlay.
             "s" => {
                 crate::input::actions::journal::nav_to_scene_band(state);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             // Alt+a: jump to the author/corpus band (scope='author' pages for
@@ -1966,6 +2014,7 @@ fn handle_journal_key(
             // sequential band walk (Alt+n/p scenes, Alt+w work).
             "a" => {
                 crate::input::actions::journal::nav_to_author_band(state);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             // Alt+g: dropped (cross-create: reader-gloss from the journal
@@ -2000,10 +2049,12 @@ fn handle_journal_key(
         match key_name {
             "n" => {
                 crate::input::actions::journal::nav_page(state, 1);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             "p" => {
                 crate::input::actions::journal::nav_page(state, -1);
+                refresh_overlay_vocab_scope(state);
                 return true;
             }
             // Ctrl+a: ask a new Q&A (moved off Ctrl+r so every ask surface sits
@@ -2150,6 +2201,7 @@ fn handle_journal_key(
             crate::input::actions::gloss::stop_all_gloss_audio(state);
             state.borrow().journal_overlay.cursor_last_block();
             crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+            refresh_overlay_vocab_scope(state);
             true
         }
         // j/k step the paragraph block cursor (the left accent bar), mirroring
@@ -2165,6 +2217,7 @@ fn handle_journal_key(
                 state.borrow().journal_overlay.cursor_next_block();
                 // A page turn re-rendered the buffer; recolor cached blocks.
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().journal_overlay.scroll_view(1);
             }
@@ -2175,6 +2228,7 @@ fn handle_journal_key(
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.cursor_prev_block();
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().journal_overlay.scroll_view(-1);
             }
@@ -2188,6 +2242,7 @@ fn handle_journal_key(
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.page_turn(1);
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().journal_overlay.scroll_view(1);
             }
@@ -2198,6 +2253,7 @@ fn handle_journal_key(
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.page_turn(-1);
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().journal_overlay.scroll_view(-1);
             }
@@ -2258,10 +2314,12 @@ fn handle_journal_key(
         // a filter.
         "n" => {
             crate::input::actions::journal::step_overlay_search(state, true);
+            refresh_overlay_vocab_scope(state);
             true
         }
         "N" => {
             crate::input::actions::journal::step_overlay_search(state, false);
+            refresh_overlay_vocab_scope(state);
             true
         }
         // Escape precedence: an active rewrite diff-highlight clears first (stay
@@ -2396,6 +2454,7 @@ fn handle_gloss_key(
                     state.borrow().gloss_overlay.cursor_first_block();
                     // A page turn re-rendered the buffer; recolor cached blocks.
                     crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                    refresh_overlay_vocab_scope(state);
                 } else {
                     state.borrow().gloss_overlay.scroll_gloss_to_top();
                 }
@@ -2595,6 +2654,7 @@ fn handle_gloss_key(
                 state.borrow().gloss_overlay.cursor_last_block();
                 // A page turn re-rendered the buffer; recolor cached blocks.
                 crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss_to_bottom();
             }
@@ -2613,6 +2673,7 @@ fn handle_gloss_key(
                 state.borrow().gloss_overlay.cursor_next_block();
                 // A page turn re-rendered the buffer; recolor cached blocks.
                 crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(1);
             }
@@ -2624,6 +2685,7 @@ fn handle_gloss_key(
                 state.borrow().gloss_overlay.cursor_prev_block();
                 // A page turn re-rendered the buffer; recolor cached blocks.
                 crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(-1);
             }
@@ -2638,6 +2700,7 @@ fn handle_gloss_key(
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.page_turn(1);
                 crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(1);
             }
@@ -2648,6 +2711,7 @@ fn handle_gloss_key(
             if state.borrow().gloss_overlay.current_block().is_some() {
                 state.borrow().gloss_overlay.page_turn(-1);
                 crate::input::actions::gloss::recolor_cached_blocks_rc(state);
+                refresh_overlay_vocab_scope(state);
             } else {
                 state.borrow().gloss_overlay.scroll_gloss(-1);
             }
@@ -2730,10 +2794,12 @@ fn handle_gloss_key(
         // consumed no-op (Escape-only close policy retired `n` as a close alias).
         "n" => {
             crate::input::actions::gloss::step_overlay_search(state, true);
+            refresh_overlay_vocab_scope(state);
             true
         }
         "N" => {
             crate::input::actions::gloss::step_overlay_search(state, false);
+            refresh_overlay_vocab_scope(state);
             true
         }
         // Shift+V enters visual block-selection mode (j/k extend, gg/G ends,
@@ -3944,10 +4010,15 @@ fn handle_vocab_loop_key(
                 .try_send(crate::mpv::MpvCommand::TogglePause);
         }
         "Escape" => crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut()),
-        // Exit on the loop's own entry keys (Ctrl+- forward, Ctrl+Shift+-
-        // backward — shifted minus may arrive as "underscore"); Ctrl+r/R
+        // Exit on the loop's own entry key (Ctrl+= forward, Ctrl+Shift+=
+        // backward — both deliver "equal", `=` being level-1 on RPD); Ctrl+r/R
         // kept as a legacy exit.
-        "r" | "R" | "minus" | "underscore" if is_ctrl => {
+        //
+        // The entry moved off the minus cap 2026-07-26 (Ctrl+- is now
+        // UnderlineNextSentence), so `minus`/`underscore` are NOT exits here
+        // any more — leaving them would make a reader bind behave like an exit
+        // inside the drill.
+        "r" | "R" | "equal" if is_ctrl => {
             crate::input::vocab_loop::exit_vocab_loop(&mut state.borrow_mut())
         }
         _ => {}
@@ -4440,7 +4511,13 @@ fn dispatch_action(
         EnterVisualMode => crate::input::visual::enter_visual_mode(&mut state.borrow_mut()),
         AskPassage => crate::input::visual::enter_visual_block_mode(&mut state.borrow_mut()),
         WordCycleCopy => crate::input::actions::word_copy::word_cycle_copy(&mut state.borrow_mut()),
+        WordCyclePrevCopy => {
+            crate::input::actions::word_copy::word_cycle_prev_copy(&mut state.borrow_mut())
+        }
         WordCollectCopy => crate::input::actions::word_copy::word_collect_copy(&mut state.borrow_mut()),
+        UnderlineNextSentence => {
+            crate::input::actions::word_copy::underline_next_sentence(&mut state.borrow_mut())
+        }
         OpenSyntaxDiagramForUnderlined => {
             // Guarded: falls through silently when nothing is underlined, or
             // when the underline belongs to a line the cursor has left.
