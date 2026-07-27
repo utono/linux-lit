@@ -19,8 +19,11 @@ clip — a different algorithm, see "Not the same as the paged clip" below.)
 >
 > **On a two-column PLAY, also check the log for `PAGES: table hit` + a
 > `BOTTOM_CLIP_EXACT` line whose `total` exceeds `widget_h` (clip=0).** That is a
-> STALE pinned `play_pages` split rendering over-tall for the current card — a
-> data bug fixed by regenerating the table, not a clip-math bug. See checklist #12.
+> pinned `play_pages` problem, not a clip-math bug — but do NOT reach for
+> "regenerate the table" first. Two different causes share that tell: the page
+> TOP being off-grid (common — the table is fine and regenerating changes
+> nothing), or the stored split genuinely not fitting (stale table). Checklist
+> #12 tells them apart in one query.
 
 ## The two edges, two mechanisms
 
@@ -683,8 +686,8 @@ When a half line clips at the bottom edge of a scrolled surface:
     new path that sets `page_top_line` without the offset.
 
 12. **MAIN CARD, two-column play — the LAST line of the LEFT column is half-cut
-    with NO clip band below it, and the RIGHT column is nearly empty. A STALE
-    `play_pages` TABLE split, not a clip-math bug.** Tell: `linux-lit-dev.log`
+    with NO clip band below it, and the RIGHT column is nearly empty. A
+    `play_pages` TABLE problem, not a clip-math bug.** Tell: `linux-lit-dev.log`
     shows `PAGES: table hit` for this work AND a
     `BOTTOM_CLIP_EXACT: … total=T clip=0 page_top=P end=E` whose `total >
     widget_h` (the left column [P, E-1] sums TALLER than the viewport — e.g.
@@ -692,35 +695,21 @@ When a half line clips at the bottom edge of a scrolled surface:
     can't clip a negative, so `clip=0` and the overflowing last line pokes out
     with nothing to mask it. Reproduces on STARTUP onto that spread and via any
     nav that lands on it (journal-close→`{`, `x`/`y`, `G`); the journal/scene
-    step is NOT the cause, just how you first land there. **Root cause:** the
-    pinned table stored a left-column `split` that fit at the geometry it was
-    GENERATED at, but the current reader **card** height is smaller, so the split
-    now overflows. Historically the layout fingerprint keyed on the **toplevel
-    WINDOW** size (`state.window.width()/height()`), NOT the card's
-    `text_view.height()` — so a change that shrank the CARD without moving any
-    fingerprint input (a reader-clip/margin/spacing tweak whose effect on the
-    card isn't a fingerprint field, or a table generated before the card settled
-    to its final height) left the stale table a valid `table hit`. **As of `v5`
-    the view height IS fingerprinted** (see "durable fix" below), so this
-    root cause is closed for new tables. Confirm by
-    comparing the stored table's `end` against a LIVE `column_split` at the real
-    card height: a fresh `column_split` fits (`total < usable`, `clip > 0`) while
-    the stored `end` is one line too far. **Fix: FIRST check whether a derived
-    layout input is missing from the fingerprint** (that is the real bug — a
-    table that can go stale while still matching); regenerating by hand only
-    clears the symptom for one work and it will come back. The data IS the bug
-    either way — do NOT patch the reader. To clear it for one work, deleting the
-    rows is safe (`DELETE FROM play_pages WHERE work_abbrev='<ABBR>'; DELETE FROM
-    play_pages_meta WHERE work_abbrev='<ABBR>';`) and the app regenerates at the
-    true current geometry on next load — `record_spreads`→`column_split` respects
-    `usable = widget_h − guard − BASE_BOTTOM_MARGIN` and `validate_spreads` fit-
-    checks each left column, so a fresh table cannot overflow. `validate-play-pages`
-    reports **PASS** for this bug (it checks structure — overlaps/gaps/ordering —
-    not fit against the CURRENT card), so a PASS does not rule it out; the
-    `total > widget_h` log line is the decisive tell. (`Cym-Arkangel`,
-    2026-07-13: table generated 2026-07-04 with `end=3941`/`total=1148`;
-    regenerated to `end=3937`/`total=1034`/`clip=73` at the same `1920x1200`
-    fingerprint.)
+    step is NOT the cause, just how you first land there.
+
+    **There are TWO distinct root causes with this same tell.** Establish which
+    one you have BEFORE doing anything — they need opposite fixes, and the
+    off-grid one (A) is the more common:
+
+    - **(A) The page TOP is off-grid** — the table is fine. `page_top` is not a
+      stored `left_start`, so the render path mixes a table top with a live
+      `end`. See "THE USUAL CAUSE", immediately below.
+    - **(B) The stored SPLIT genuinely doesn't fit** — the table is stale for
+      the current card height. See "Root cause (B)" and "FINGERPRINT FIX"
+      further down.
+
+    Decide with one query: is the overflowing `page_top` a `left_start` in
+    `play_pages` for the ACTIVE fingerprint? If NO ⇒ (A). If YES ⇒ (B).
 
     **THE USUAL CAUSE IS NOT STALENESS — CHECK THIS FIRST (2026-07-27).** If
     the log shows `PAGES: table hit` AND the overflowing `BOTTOM_CLIP_EXACT`
@@ -739,6 +728,45 @@ When a half line clips at the bottom edge of a scrolled surface:
     live table is the tell. Regression:
     `page_table::tests::a_top_inside_a_spread_resolves_to_that_spread`.
 
+    **Root cause (B), the stale-table route:** the pinned table stored a
+    left-column `split` that fit at the geometry it was
+    GENERATED at, but the current reader **card** height is smaller, so the split
+    now overflows. Historically the layout fingerprint keyed on the **toplevel
+    WINDOW** size (`state.window.width()/height()`), NOT the card's
+    `text_view.height()` — so a change that shrank the CARD without moving any
+    fingerprint input (a reader-clip/margin/spacing tweak whose effect on the
+    card isn't a fingerprint field, or a table generated before the card settled
+    to its final height) left the stale table a valid `table hit`. **As of `v5`
+    the view height IS fingerprinted** (see "FINGERPRINT FIX" below), so this
+    root cause is closed for new tables. Confirm by
+    comparing the stored table's `end` against a LIVE `column_split` at the real
+    card height: a fresh `column_split` fits (`total < usable`, `clip > 0`) while
+    the stored `end` is one line too far. **Fix for (B): FIRST check whether a
+    derived layout input is missing from the fingerprint** (that is the real bug
+    — a table that can go stale while still matching); regenerating by hand only
+    clears the symptom for one work and it will come back. To clear it for one
+    work, deleting the rows is safe (`DELETE FROM play_pages WHERE
+    work_abbrev='<ABBR>'; DELETE FROM play_pages_meta WHERE
+    work_abbrev='<ABBR>';`) and the app regenerates at the
+    true current geometry on next load — `record_spreads`→`column_split` respects
+    `usable = widget_h − guard − BASE_BOTTOM_MARGIN` and `validate_spreads` fit-
+    checks each left column.
+
+    **A fresh table is NOT proof the bug is gone.** An earlier version of this
+    entry said a regenerated table "cannot overflow" — false. Regeneration only
+    rules out (B): a table generated at the correct geometry, `validated=1`,
+    still rendered the clipped line when the TOP was off-grid (A). If you
+    regenerate and the clip survives, you have (A); stop deleting rows and go
+    read the paragraph below.
+
+    `validate-play-pages` reports **PASS** for BOTH causes (it checks structure —
+    overlaps/gaps/ordering — not fit against the CURRENT card, and not the top
+    the renderer will use), so a PASS rules out neither; the
+    `total > widget_h` log line is the decisive tell. (`Cym-Arkangel`,
+    2026-07-13: table generated 2026-07-04 with `end=3941`/`total=1148`;
+    regenerated to `end=3937`/`total=1034`/`clip=73` at the same `1920x1200`
+    fingerprint.)
+
     **FINGERPRINT FIX LANDED 2026-07-27 (`v5`).** Separately, the recurrence this
     entry predicted happened (`Ant-Arkangel` page 89: a 1102px left column in a
     1071px usable height, cutting "A simple countryman that brought her figs.";
@@ -754,10 +782,14 @@ When a half line clips at the bottom edge of a scrolled surface:
     bump `v4`→`v5` invalidated all ~200 stored tables at once; they regenerate
     on next load of each work. Regression test:
     `page_table::tests::view_height_change_invalidates_the_fingerprint` (same
-    window size, different view height ⇒ different fingerprint). **If this
-    signature EVER reappears, the fingerprint is missing another derived input —
-    check what changed the card height without moving a fingerprint field, and
-    add it, rather than regenerating by hand.**
+    window size, different view height ⇒ different fingerprint).
+
+    **If this signature EVER reappears, run the A/B query FIRST** (is the
+    overflowing `page_top` a stored `left_start`?). If NO, a path is setting a
+    page top off the table grid — find it; do not touch the fingerprint. Only
+    if YES is it a fingerprint gap: something changed the card height without
+    moving a fingerprint field, so add that input rather than regenerating by
+    hand.
 
 13. **A PAGINATED overlay (translation overlay) squeezes a whole page into a thin
     band at the top on a page turn — the first line half-cut, the rest of the card

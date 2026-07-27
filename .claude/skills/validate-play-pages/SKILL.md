@@ -25,7 +25,15 @@ so when a table is unexpectedly missing you can see which layout input moved.
 which is what the fit check validates against (added in `v5`, 2026-07-27 — see
 clip-prevention.md #12).
 
-**PASS does not mean "fits".** This script checks STRUCTURE (coverage,
-ordering, overlaps), not whether a column fits the CURRENT card. A table can
-report PASS and still render a clipped last line; the decisive tell for that is
-a `BOTTOM_CLIP_EXACT` log line whose `total` exceeds `widget_h` with `clip=0`.
+**PASS does not mean "renders correctly".** This script checks STRUCTURE
+(coverage, ordering, overlaps) — not whether a column fits the CURRENT card,
+and not which page TOP the renderer will actually use. A table can report PASS
+and still render a clipped last line; the decisive tell is a
+`BOTTOM_CLIP_EXACT` log line whose `total` exceeds `widget_h` with `clip=0`.
+
+When you see that, **do not assume the table is stale.** Two causes share the
+tell, and the more common one leaves the table entirely correct: the page TOP
+is off-grid (not a stored `left_start`), so the renderer mixes a table top with
+a live-engine end. Regenerating fixes nothing in that case. Check whether the
+overflowing `page_top` is a `left_start` for the active fingerprint before
+deleting any rows — see clip-prevention.md #12.
