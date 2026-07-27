@@ -72,20 +72,30 @@ or skipped).
 
 ## Which binds may turn the page (2026-07-27)
 
-**Dialogue/segment binds never turn the page** — `;` `'` `,` `q` `j` `k`, on
-plays, prose, AND verse. They move the cursor within what is already on
-screen; when the target would need a turn, the cursor is REVERTED and the key
-is a no-op. Turning is the job of the explicit page binds (`x` `y` `[` `{`)
-and the scene/act jumps.
+**BACKWARD segment binds never turn the page; FORWARD ones may** (revised
+2026-07-27). The asymmetry is deliberate: reading is forward-biased, so a
+forward bind that stopped at the page edge would block progress and force an
+`x`, whereas a backward bind stopping there merely declines to leave the page
+the reader is looking at.
 
-Implemented at one choke point, not per bind: `scroll::jump_stays_on_page`
-answers "would this need a turn?" (reusing the scroll helpers' own visibility
-test, including the prose `is_line_start_visible` exception for an over-tall
-paragraph whose opening row is on screen), and
-`navigation::keep_jump_if_on_page` reverts `current_line` and returns false so
-each jump site returns early. 11 call sites across
+- **May turn** — `q` `'` `j` and the next-speaker jumps (`Direction::Next`).
+- **May NOT turn** — `,` `;` `k` and the prev-speaker jumps
+  (`Direction::Prev`). Target off-page ⇒ cursor REVERTED, key is a no-op.
+  Crossing backward is the job of `y` / `{`.
+
+Implemented at one choke point, not per bind:
+`navigation::keep_jump_if_on_page(state, prev_line, dir)` short-circuits to
+true for `Direction::Next`; for `Direction::Prev` it consults
+`scroll::jump_stays_on_page` and reverts `current_line` (returning false) so
+the caller returns early. 11 call sites across
 `jump_to_{next,prev}_dialogue`, `cursor_{next,prev}_dialogue`,
-`cursor_{next,prev}_dialogue_no_seek`, `jump_to_{next,prev}_speaker`.
+`cursor_{next,prev}_dialogue_no_seek`, `jump_to_{next,prev}_speaker` — 5
+forward, 6 backward.
+
+**History:** the rule originally barred BOTH directions (`f4b63088`). That
+made `q` dead-end at every page edge, and — combined with a geometry/table
+disagreement — produced the trapped-cursor bug in FAILURE MODE 1 below. The
+forward half was lifted the same day.
 
 **Deliberately exempt:** the scene/act jumps (`jump_to_next_scene` and
 friends) — moving between divisions is their purpose. Scroll mode and the
