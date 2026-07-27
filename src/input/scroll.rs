@@ -1251,8 +1251,9 @@ pub(crate) fn scroll_to_cursor(state: &mut AppState) {
 /// page binds (`x` `y` `[` `{`). When one of these binds would need a turn,
 /// the caller holds the cursor where it was instead.
 ///
-/// Returns true when the cursor's new line is already visible, i.e. the jump
-/// needs no turn. Mirrors the `already_visible` test the scroll helpers use,
+/// Returns true when the cursor's new line is already on the current page, i.e.
+/// the jump needs no turn. In table mode the STORED page decides (see the body);
+/// otherwise it mirrors the `already_visible` test the scroll helpers use,
 /// including the prose `is_line_start_visible` exception (an over-tall
 /// paragraph whose opening row IS on screen must not read as "not visible").
 pub(crate) fn jump_stays_on_page(state: &AppState) -> bool {
@@ -1264,9 +1265,36 @@ pub(crate) fn jump_stays_on_page(state: &AppState) -> bool {
         // The translation overlay scrolls by scrolloff, never by page.
         return true;
     }
+    // TABLE-AUTHORITATIVE (2026-07-27). When a stored page table drives the
+    // render, it — not the live geometry — decides what is on this page. A
+    // stored page can OVERFLOW the viewport (`CLIP_WARN: ... OVERFLOW total >
+    // widget_h`, clip-prevention.md #12); the renderer still clips at the
+    // STORED end, so lines past the geometric fit point are painted and
+    // visible. A fit-walk (`is_line_start_visible` / `is_line_fully_visible`)
+    // calls those lines invisible, `keep_jump_if_on_page` then reverts the
+    // cursor, and `q` (and every dialogue/segment bind) dies on that page with
+    // the target line plainly on screen — observed on BH-Barrett ch.10, stored
+    // page 931..=936 at total=1175 > widget_h=1098, cursor trapped at 934.
+    //
+    // Same lesson as `page_table::table_end_for_top`: in table mode, read the
+    // table, never re-walk live geometry. `None` means no table is active (or
+    // the top is off-grid) — fall back to the live walk.
+    //
+    // Only SINGLE-COLUMN PROSE needs the wrapper: `is_line_fully_visible`
+    // (the two-column branch) already consults the play table itself, while
+    // `is_line_start_visible` is a pure geometry walk with no table branch.
     if state.is_prose() && state.column_count() == 1 {
+        if let Some(on_page) =
+            crate::input::prose_pages::prose_table_line_on_current_page(state, state.current_line)
+        {
+            return on_page;
+        }
         super::viewport::is_line_start_visible(state, state.current_line)
     } else {
+        // Two-column/play: `is_line_fully_visible` is ALREADY table-authoritative
+        // (viewport.rs — it reads `table_end_for_top` and falls back to
+        // `column_split().page_end`), so no wrapper is needed here. Only the
+        // single-column prose path re-walked live geometry.
         super::viewport::is_line_fully_visible(state, state.current_line)
     }
 }
