@@ -129,7 +129,7 @@ pub fn handle_key(
         return handle_segment_vim_key(state, key_name, key_char, is_ctrl);
     }
 
-    // AddVocab (Ctrl+Alt+\ input card) owns ALL keys, like SegmentVim.
+    // AddVocab (the Ctrl+r input card) owns ALL keys, like SegmentVim.
     if state.borrow().input_mode == crate::app::InputMode::AddVocab {
         return handle_add_vocab_key(state, key_name, key_char, is_ctrl);
     }
@@ -407,6 +407,34 @@ pub fn handle_key(
     }
 
     false
+}
+
+/// Re-tint the last rewrite diff for another fade window (`w` in the gloss,
+/// synopsis and journal overlays).
+///
+/// The diff auto-fades ~3s after a rewrite so it does not linger over the text;
+/// the RANGES survive that fade, so this brings the tint back on demand. Toasts
+/// when there is nothing to flash rather than silently doing nothing — with the
+/// tint already gone, a no-op key is indistinguishable from a broken one.
+///
+/// `journal` selects which overlay owns the diff: the gloss overlay widget
+/// backs both the gloss and synopsis surfaces, the journal overlay its own.
+fn flash_rewrite_diff(state: &Rc<RefCell<AppState>>, journal: bool) {
+    let flashed = {
+        let s = state.borrow();
+        if journal {
+            s.journal_overlay.flash_rewrite_diff()
+        } else {
+            s.gloss_overlay.flash_rewrite_diff()
+        }
+    };
+    if !flashed {
+        crate::input::navigation::show_chapter_toast_secs(
+            &state.borrow(),
+            "no rewrite diff to flash",
+            2,
+        );
+    }
 }
 
 /// Shared body for the `rr` chord across every vocab surface. Toggles the
@@ -1966,9 +1994,10 @@ fn handle_journal_key(
         }
     }
 
-    // Ctrl+Alt+\: open the dedicated add-vocab card OVER the journal overlay.
     // Ctrl+\: open the work-wide Q&A picker. Checked BEFORE the plain Alt/Ctrl
     // blocks so the chord wins over any single-modifier meaning of `\`.
+    // (Add-vocab is Ctrl+r here like every surface — the old Ctrl+Alt+\
+    // chord now falls through to this same picker arm, which ignores alt.)
     // Lists every page in the work; confirm lands on the chosen page's band,
     // Escape returns to the journal overlay.
     if is_ctrl && key_name == "backslash" {
@@ -2165,6 +2194,13 @@ fn handle_journal_key(
         // `R`: vocab R reserved unbound, mirrors main card. The rewrite TARGET
         // chooser moved to Ctrl+w (handled in the is_ctrl block above).
         "R" => true,
+        // `w`: re-flash the last rewrite diff for another fade window. Sits on
+        // the rewrite cap (Ctrl+w rewrites here) so "w = what the rewrite
+        // changed" reads the same on every overlay.
+        "w" if !is_ctrl && !is_alt => {
+            flash_rewrite_diff(state, true);
+            true
+        }
         "e" => {
             crate::input::actions::journal::begin_edit(state);
             true
@@ -2634,6 +2670,13 @@ fn handle_gloss_key(
         // R: vocab R reserved unbound, mirrors main card. The ask-Claude
         // rewrite moved to Ctrl+r (handled in the is_ctrl block above).
         "R" => true,
+        // `w`: re-flash the last rewrite diff for another fade window. Sits on
+        // the rewrite cap (Ctrl+w rewrites here) so "w = what the rewrite
+        // changed" reads the same on every overlay.
+        "w" if !is_ctrl && !is_alt => {
+            flash_rewrite_diff(state, false);
+            true
+        }
         // u: undo the last `e` edit (single-level), behind a y/Esc confirmation.
         "u" => {
             crate::input::actions::gloss::show_undo_confirmation(
@@ -2883,7 +2926,7 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         "comma" => { overlay_nav(state, navigation::jump_to_prev_dialogue); true }
         "q" => { overlay_nav(state, navigation::jump_to_next_dialogue); true }
         "j" => { overlay_nav(state, navigation::cursor_next_dialogue); true }
-        "k" => { overlay_nav(state, navigation::cursor_prev_line); true }
+        "k" => { overlay_nav(state, navigation::cursor_prev_dialogue); true }
         // x / y turn the OVERLAY page forward / backward (same roles as the main
         // reading card), moving the reader cursor onto the first dialogue line of
         // the new page so the highlight + MPV sync follow.
@@ -3127,6 +3170,15 @@ fn handle_synopsis_overlay_key(
         // dropped 2026-07-22). Opens in INSERT.
         "R" => {
             crate::input::actions::synopsis::begin_rewrite(state);
+            true
+        }
+        // `w`: re-flash the last rewrite diff for another fade window. Same key
+        // as the gloss/journal overlays even though the synopsis rewrite is on
+        // `R` here, not Ctrl+w — the flash is worth having in one place across
+        // all three surfaces. The synopsis renders into the GLOSS overlay
+        // widget, so the diff state is the gloss overlay's.
+        "w" if !is_ctrl && !is_alt => {
+            flash_rewrite_diff(state, false);
             true
         }
         // c: copy the current scene's synopsis troubleshooting payload (abbrev,
@@ -4287,7 +4339,7 @@ fn dispatch_action(
 
         // Cursor / dialogue
         CursorNextDialogue => navigation::cursor_next_dialogue(&mut state.borrow_mut()),
-        CursorPrevLine => navigation::cursor_prev_line(&mut state.borrow_mut()),
+        CursorPrevDialogue => navigation::cursor_prev_dialogue(&mut state.borrow_mut()),
         CursorToPageBottom => navigation::cursor_to_page_bottom(&mut state.borrow_mut()),
         JumpToNextDialogue => navigation::jump_to_next_dialogue(&mut state.borrow_mut()),
         JumpToPrevDialogue => navigation::jump_to_prev_dialogue(&mut state.borrow_mut()),
@@ -4972,4 +5024,3 @@ fn activate_chunk(s: &mut AppState, idx: usize) {
         }
     }
 }
-

@@ -139,7 +139,8 @@ pub(crate) fn handle_word_selection(
     });
 }
 
-/// Ctrl+-: enter the vocab-sentence loop mode at the next vocab sentence.
+/// Ctrl+= (moved off Ctrl+- 2026-07-26): enter the vocab-sentence loop mode
+/// at the next vocab sentence.
 /// When the mode cannot start (no phrase audio, sync off, ...) the reason is
 /// toasted — there is deliberately NO fallback to a plain vocab jump.
 pub(crate) fn jump_to_next_vocab(

@@ -53,7 +53,12 @@ pub enum Action {
 
     // Cursor / dialogue navigation
     CursorNextDialogue,
-    CursorPrevLine,
+    /// The seeking inverse of `CursorNextDialogue` (`;` / Up). Renamed from
+    /// `CursorPrevLine` 2026-07-26: the name said "line" but the body always
+    /// called `prev_dialogue_line`, exactly mirroring `CursorNextDialogue`'s
+    /// `next_dialogue_line` (both share the same prose special-case of
+    /// stepping one buffer line). There is no separate prev-LINE action.
+    CursorPrevDialogue,
     CursorToPageBottom,
     JumpToNextDialogue,
     JumpToPrevDialogue,
@@ -128,7 +133,7 @@ pub enum Action {
     VocabPopupPrev,
     HideVocabPopup,
     /// Ask Claude about the vocab popup's current word in the cursor
-    /// segment and across the author's corpus (Ctrl+r — gated on popup
+    /// segment and across the author's corpus (Ctrl+Shift+r — gated on popup
     /// visible + a vocab word on the cursor line; silent no-op otherwise).
     /// Stores a kind='vocab' journal Q&A: a stored answer opens the journal
     /// overlay on it immediately; a fresh ask holds a "Journal Q&A - <word>"
@@ -139,7 +144,9 @@ pub enum Action {
     ConcordanceNext,
     ConcordancePrev,
     ToggleVocabHighlight,
-    /// Ctrl+Alt+\ on the main card: open the add-vocab-word input card.
+    /// Ctrl+r on the main card: open the add-vocab-word input card (uniform
+    /// with every overlay's Ctrl+r; moved off Ctrl+Alt+\ in the 2026-07-23
+    /// vocab-onto-`r` consolidation).
     AddVocabWord,
     ToggleGlossOverlay,
     ToggleJournalOverlay,
@@ -151,17 +158,22 @@ pub enum Action {
     /// open (fresh from the cursor). No-op with a toast if none remembered.
     /// Overlays themselves close via Escape only.
     ToggleLastOverlay,
-    /// Plain `\`: cycle the per-segment overlays — journal Q&A → gloss →
-    /// synopsis → journal (wraps). From the reader it opens the journal stop;
-    /// inside each overlay `\` advances (handled in the overlay modal
-    /// handlers, not this reader action). See input/actions/overlay_cycle.rs.
+    /// Plain `\` (and its home-row dupe `u`): cycle the per-segment overlays —
+    /// gloss → journal Q&A → syntax → back to the reader (four presses, no
+    /// wrap; synopsis was dropped from the lap 2026-07-21). From the reader it
+    /// opens the GLOSS stop; inside each overlay `\` advances (handled in the
+    /// overlay modal handlers, not this reader action). The canonical lap
+    /// order lives in input/actions/overlay_cycle.rs — trust its module doc
+    /// over any other description.
     CycleSegmentOverlays,
-    /// Open the journal Q&A picker directly from the reading card (Alt+j),
-    /// without first opening the journal overlay. Confirming a pick reveals the
+    /// Open the journal Q&A picker directly from the reading card (Ctrl+j —
+    /// moved off Alt+j in the 2026-07-23 journal-onto-`j` reshuffle), without
+    /// first opening the journal overlay. Confirming a pick reveals the
     /// overlay on that Q&A; Escape returns to the reader.
     OpenJournalPicker,
     /// Open the cross-work recent-Q&A jump-back picker from the reading card
-    /// (Ctrl+a): the last 15 journal entries across ALL works, newest-first.
+    /// (Alt+j — moved off Ctrl+a in the same 2026-07-23 reshuffle): the last
+    /// 15 journal entries across ALL works, newest-first.
     /// Confirming loads the entry's work + MPV media and opens the journal
     /// overlay on it; Escape returns to the reader.
     OpenRecentQaPicker,
@@ -180,25 +192,30 @@ pub enum Action {
 
     // Visual / selection
     EnterVisualMode,
-    /// Ctrl+a: auto-select the paragraph/speech around the cursor and enter
-    /// visual mode pending a Journal Q&A ask; a second Ctrl+a (or Return)
-    /// opens the "Ask a question about this passage" card directly.
+    /// Auto-select the paragraph/speech around the cursor and enter visual
+    /// mode pending a Journal Q&A ask; a second press (or Return) opens the
+    /// "Ask a question about this passage" card directly. NO DEFAULT BIND:
+    /// its historical reader chord (Ctrl+a) was retired in the 2026-07-23
+    /// journal reshuffle and reader Ctrl+a is now unbound. Kept dispatchable
+    /// so a keymap.json override can still reach it.
     AskPassage,
     WordCycleCopy,
-    /// Shift+-: the mirror of `WordCycleCopy` — steps BACKWARD through the
-    /// line's words, wrapping to the LAST word when already on the first.
+    /// Shift+- (dup: Shift+i): the mirror of `WordCycleCopy` — steps BACKWARD
+    /// through the line's words, wrapping to the LAST word when already on
+    /// the first.
     WordCyclePrevCopy,
     WordCollectCopy,
-    /// Ctrl+-: underline the FIRST WORD of the next sentence, stepping forward
-    /// one sentence per press. Writes the same `collect_ranges` as
-    /// `WordCycleCopy`/`WordCollectCopy`, so `OpenSyntaxDiagramForUnderlined`
-    /// acts on it identically — the three binds are three ways to build ONE
-    /// underline set. With nothing underlined yet, starts at the first
-    /// sentence of the cursor's line.
+    /// Ctrl+- (dup: Ctrl+i): underline the FIRST WORD of the next sentence,
+    /// stepping forward one sentence per press. Writes the same
+    /// `collect_ranges` as the other underline binds, so
+    /// `OpenSyntaxDiagramForUnderlined` acts on it identically — every bind
+    /// in the family builds ONE shared underline set. With nothing underlined
+    /// yet, starts at the first sentence of the cursor's line.
     UnderlineNextSentence,
     /// Return: open the syntax diagram for the sentence containing the words
-    /// underlined by `-` / `_`. No-ops when nothing is underlined, so the key
-    /// is free for other uses in every other reader state.
+    /// underlined by the minus-cap family (`-`/`Shift+-`/`Alt+-`/`Ctrl+-`) or
+    /// its `i`-cap dupes. No-ops when nothing is underlined, so the key is
+    /// free for other uses in every other reader state.
     OpenSyntaxDiagramForUnderlined,
     /// Open the cursor's segment (prose paragraph / verse line) in a read-only
     /// vim editor seeded in visual mode, for selecting text and copying it to
@@ -235,8 +252,11 @@ pub enum Action {
     /// Works from the reader AND from inside the panel (prompt/transcript),
     /// so one chord always dismisses it. No-op when the panel isn't open.
     CloseChatLayout,
-    /// Reader-mode `-`: open the chat panel pinned to the reader-gloss covering
-    /// the cursor line (no `V` needed). No-op toast if the line isn't glossed.
+    /// Open the chat panel pinned to the reader-gloss covering the cursor line
+    /// (no `V` needed). No-op toast if the line isn't glossed. NO DEFAULT
+    /// BIND: its historical reader `-` chord went with the 2026-07-23 chat
+    /// panel disable, and the `-` cap now carries the word-copy family. Kept
+    /// dispatchable for a keymap.json re-enable.
     ReaderGlossChatAtCursor,
     /// Ctrl+l: flip a floating chat panel to the other reading column.
     ChatPanelFlipSide,
@@ -294,7 +314,7 @@ impl Action {
             | Action::JumpToStart
             | Action::JumpToEnd
             | Action::CursorNextDialogue
-            | Action::CursorPrevLine
+            | Action::CursorPrevDialogue
             | Action::CursorToPageBottom
             | Action::JumpToNextDialogue
             | Action::JumpToPrevDialogue
@@ -445,7 +465,7 @@ impl Action {
             Action::JumpToStart => "JumpToStart",
             Action::JumpToEnd => "JumpToEnd",
             Action::CursorNextDialogue => "CursorNextDialogue",
-            Action::CursorPrevLine => "CursorPrevLine",
+            Action::CursorPrevDialogue => "CursorPrevDialogue",
             Action::CursorToPageBottom => "CursorToPageBottom",
             Action::JumpToNextDialogue => "JumpToNextDialogue",
             Action::JumpToPrevDialogue => "JumpToPrevDialogue",

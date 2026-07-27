@@ -217,7 +217,7 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("Q"), Action::JumpToNextDialogue),
         (KeyCombo::plain("h"), Action::CursorNextDialogueNoSeek),
         (KeyCombo::plain("t"), Action::CursorPrevDialogueNoSeek),
-        (KeyCombo::plain("Up"), Action::CursorPrevLine),
+        (KeyCombo::plain("Up"), Action::CursorPrevDialogue),
         (KeyCombo::shift("Up"), Action::PageBackwardBottom),
         (KeyCombo::plain("Down"), Action::CursorNextDialogue),
         (KeyCombo::plain("comma"), Action::JumpToPrevSpeaker),
@@ -251,7 +251,7 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // `;`/`'` carry the seeking cursor steps (prev line / next dialogue),
         // swapped with `k`/`j` (which took the bookmark steps above).
         // `}`/`]` (braceright/bracketright) stay unbound.
-        (KeyCombo::plain("semicolon"), Action::CursorPrevLine),
+        (KeyCombo::plain("semicolon"), Action::CursorPrevDialogue),
         (KeyCombo::plain("apostrophe"), Action::CursorNextDialogue),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         // `.` is overloaded (Action::BookmarkTap): single tap toggles the
@@ -365,6 +365,11 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         // `\` cycles the segment overlays: journal Q&A → gloss → synopsis
         // (wraps; advance arms live in the overlay modal handlers).
         (KeyCombo::plain("backslash"), Action::CycleSegmentOverlays),
+        // `u` DUPLICATES `\` (2026-07-26): same overlay cycle on a home-row
+        // letter cap, so the lap can be driven without reaching for `\`. Plain
+        // `u` was unbound in the reader (Alt+u is scansion, Shift+u — arriving
+        // as "U" — is undo-timestamp; both keep their own meanings).
+        (KeyCombo::plain("u"), Action::CycleSegmentOverlays),
     ]
 }
 
@@ -402,9 +407,41 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("A"), Action::PickAttributionSet),
         (KeyCombo::alt("f"), Action::ShowFontInfo),
         (KeyCombo::ctrl_alt("t"), Action::ShowThemeInfo),
-        (KeyCombo::ctrl_alt("i"), Action::ToggleTranslations),
-        (KeyCombo::ctrl("i"), Action::ToggleImageView),
+        // THE TRANSLATION / PAGE-IMAGE FAMILY MOVED OFF `i` TO `(` (2026-07-26)
+        // so the whole `i` cap could become a second home for the `-` cap's
+        // underline family (below) on EVERY work type, not just prose.
+        //
+        // RPD: `<AE04> { [ parenleft, 4 ] }` — `(` is level 1 (unshifted), so
+        // Ctrl+( and Ctrl+Alt+( are both reachable as distinct chords, the same
+        // property the `$` and `=` caps rely on. The cap was completely
+        // unbound before this.
+        (KeyCombo::ctrl_alt("parenleft"), Action::ToggleTranslations),
+        (KeyCombo::ctrl("parenleft"), Action::ToggleImageView),
+        (KeyCombo::plain("parenleft"), Action::ShowTranslationOverlay),
+        // Page calibration stays on Ctrl+Shift+I: it is not part of the
+        // translation/page-image pair being relocated, and the `-` cap has no
+        // fifth level for the `i` mirror to twin it with.
         (KeyCombo::ctrl_shift("I"), Action::EnterPageCalibration),
+        // THE `i` CAP MIRRORS THE `-` CAP ON EVERY WORK TYPE (2026-07-26).
+        // Four levels, four twins — no work-type test, no placeholder actions:
+        //
+        //   i        WordCycleCopy          next word in the line
+        //   Shift+i  WordCyclePrevCopy      prev word in the line
+        //   Alt+i    WordCollectCopy        collect the whole line
+        //   Ctrl+i   UnderlineNextSentence  first word of the next sentence
+        //
+        // This supersedes the prose-only mirror added earlier the same day,
+        // which had to keep `i`/Ctrl+i's verse meanings alive and swallow
+        // Shift+i/Alt+i on verse. Moving those meanings to `(` made the mirror
+        // unconditional and deleted `prose_i_mirror` entirely.
+        //
+        // `Shift+i` binds as plain("I"): for a bare uppercase LETTER
+        // `lookup`'s effective_shift strips the flag (the shifted form is the
+        // key name), unlike the `-` cap's `_`, which is a symbol and keeps it.
+        (KeyCombo::plain("i"), Action::WordCycleCopy),
+        (KeyCombo::plain("I"), Action::WordCyclePrevCopy),
+        (KeyCombo::alt("i"), Action::WordCollectCopy),
+        (KeyCombo::ctrl("i"), Action::UnderlineNextSentence),
         (KeyCombo::alt("e"), Action::ShowEchoTurnsBcp),
         (KeyCombo::alt("w"), Action::ShowEchoesShx),
         (KeyCombo::ctrl("w"), Action::ShowEchoTurnsShx),
@@ -441,7 +478,9 @@ fn selection_bindings() -> Vec<(KeyCombo, Action)> {
 
 fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
     vec![
-        (KeyCombo::plain("i"), Action::ShowTranslationOverlay),
+        // (plain `i` = ShowTranslationOverlay moved to plain `(` 2026-07-26 —
+        // see display_bindings, where the whole `i` cap became the `-` cap's
+        // underline-family twin.)
         (KeyCombo::plain("Right"), Action::SetStartTime),
         // Alt+b sets the end time (moved off Alt+i 2026-07-22, pairing with
         // plain `b` = SetStartTime on the same cap).
@@ -464,6 +503,9 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
+        // Ctrl+u DUPLICATES Ctrl+\ (2026-07-26), pairing with plain `u` = `\`
+        // above so the whole `\` cap has a home-row twin.
+        (KeyCombo::ctrl("u"), Action::OpenLibraryPicker),
         // Both vocab-drill entries live on the `=` cap: Ctrl+= forward,
         // Ctrl+Shift+= backward (InputMode::VocabLoop); when the mode can't
         // start the reason is toasted — no jump fallback.
@@ -586,13 +628,23 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
         assert_eq!(m.get(&KeyCombo::plain("b")), Some(&Action::SetStartTime));
-        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::ShowTranslationOverlay));
         assert_eq!(m.get(&KeyCombo::alt("u")), Some(&Action::CycleScansion));
-        assert_eq!(m.get(&KeyCombo::alt("i")), None);
         assert_eq!(m.get(&KeyCombo::alt("b")), Some(&Action::SetEndTime));
-        assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), Some(&Action::ToggleTranslations));
-        assert_eq!(m.get(&KeyCombo::ctrl("i")), Some(&Action::ToggleImageView));
+        // The whole `i` cap is the `-` cap's underline-family twin, on EVERY
+        // work type (2026-07-26). Shift+i binds as plain("I") — effective_shift
+        // strips the flag for a bare uppercase letter.
+        assert_eq!(m.get(&KeyCombo::plain("i")), Some(&Action::WordCycleCopy));
+        assert_eq!(m.get(&KeyCombo::plain("I")), Some(&Action::WordCyclePrevCopy));
+        assert_eq!(m.get(&KeyCombo::alt("i")), Some(&Action::WordCollectCopy));
+        assert_eq!(m.get(&KeyCombo::ctrl("i")), Some(&Action::UnderlineNextSentence));
+        // The translation / page-image pair moved to the `(` cap to free `i`.
+        assert_eq!(m.get(&KeyCombo::plain("parenleft")), Some(&Action::ShowTranslationOverlay));
+        assert_eq!(m.get(&KeyCombo::ctrl_alt("parenleft")), Some(&Action::ToggleTranslations));
+        assert_eq!(m.get(&KeyCombo::ctrl("parenleft")), Some(&Action::ToggleImageView));
+        // Page calibration did NOT move — it is not part of that pair.
         assert_eq!(m.get(&KeyCombo::ctrl_shift("I")), Some(&Action::EnterPageCalibration));
+        // The old `i` homes are gone.
+        assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), None);
     }
 
     #[test]
@@ -701,6 +753,76 @@ mod tests {
         assert_eq!(km.lookup("comma", false, false, true), Some(Action::JumpToPrevDialogue));
     }
 
+    /// The `i` cap mirrors the `-` cap on all four levels, for every work type.
+    ///
+    /// Shift+i is the subtle one: GTK delivers it as ("I", shift=true) —
+    /// CONFIRMED from the debug log, where real Shift+g/Shift+v arrive as
+    /// ("G", shift=true) / ("V", shift=true) — and is_uppercase_letter strips
+    /// the redundant flag, so plain("I") is the binding that matches. (`wtype`
+    /// cannot reproduce this: it sends ("i", shift=true), lowercase, so this
+    /// path is unreachable from the headless driver and is asserted here
+    /// instead.)
+    #[test]
+    fn i_cap_resolves_on_every_level_via_lookup() {
+        let km = Keymap::default();
+        assert_eq!(km.lookup("i", false, false, false), Some(Action::WordCycleCopy));
+        assert_eq!(km.lookup("I", false, true, false), Some(Action::WordCyclePrevCopy));
+        assert_eq!(km.lookup("i", false, false, true), Some(Action::WordCollectCopy));
+        assert_eq!(km.lookup("i", true, false, false), Some(Action::UnderlineNextSentence));
+        // Ctrl+Shift+I keeps its own meaning: with ctrl held the shift flag is
+        // significant, so this does NOT collapse into Ctrl+i.
+        assert_eq!(km.lookup("I", true, true, false), Some(Action::EnterPageCalibration));
+    }
+
+    /// Every action NAME in the user's real keymap.json must parse into the
+    /// Action enum. Unknown names are skipped with only a log-line warning at
+    /// runtime, so a rename that misses the JSON silently strands binds on
+    /// the compiled defaults — exactly how the pre-BCP/Shx echo names
+    /// (`ShowEchoes`/`ReopenEchoes`/`ShowEchoTurns`) sat dead in the file
+    /// until the 2026-07-26 stale-name sweep. Skips silently when the stowed
+    /// file is absent (fresh checkout / CI).
+    #[test]
+    fn stowed_keymap_json_action_names_all_parse() {
+        let path = config_path();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return; // no stowed keymap on this machine — nothing to check
+        };
+        let parsed: KeymapJson =
+            serde_json::from_str(&text).expect("stowed keymap.json is malformed");
+        let unknown: Vec<String> = parsed
+            .reader
+            .iter()
+            .filter(|b| parse_action(&b.action).is_none())
+            .map(|b| format!("{} (key {:?})", b.action, b.key))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "keymap.json has stale action names (silently skipped at runtime): {unknown:?}"
+        );
+    }
+
+    /// The translation / page-image family now lives on the `(` cap.
+    ///
+    /// RPD `<AE04> { [ parenleft, 4 ] }` puts `(` on level 1 (unshifted), so
+    /// plain, Ctrl and Ctrl+Alt are three distinct chords on one cap — the
+    /// same property the `$` and `=` caps rely on.
+    #[test]
+    fn paren_cap_carries_the_translation_family() {
+        let km = Keymap::default();
+        assert_eq!(
+            km.lookup("parenleft", false, false, false),
+            Some(Action::ShowTranslationOverlay)
+        );
+        assert_eq!(
+            km.lookup("parenleft", true, false, false),
+            Some(Action::ToggleImageView)
+        );
+        assert_eq!(
+            km.lookup("parenleft", true, false, true),
+            Some(Action::ToggleTranslations)
+        );
+    }
+
     #[test]
     fn keymap_lookup_returns_action_for_bound_key() {
         let km = Keymap::default();
@@ -735,17 +857,19 @@ mod tests {
             km.lookup("bracketleft", false, false, false),
             Some(Action::JumpToPrevScene),
         );
-        // The number-row (`2`/`3`/`4`/`5`) and `(`/`&` duplicates were dropped.
+        // The number-row (`2`/`3`/`4`/`5`) and `&` duplicates were dropped.
         assert_eq!(km.lookup("2", false, true, false), None);
         assert_eq!(km.lookup("3", false, true, false), None);
         assert_eq!(km.lookup("4", false, false, false), None);
         assert_eq!(km.lookup("5", false, false, false), None);
-        assert_eq!(km.lookup("parenleft", false, false, false), None);
         assert_eq!(km.lookup("ampersand", false, false, false), None);
+        // `(` is no longer unbound: it took the translation / page-image
+        // family off the `i` cap (2026-07-26) — see
+        // `paren_cap_carries_the_translation_family`.
         // `;`/`'` carry the seeking cursor steps; `}`/`]` are unbound.
         assert_eq!(km.lookup("braceright", false, false, false), None);
         assert_eq!(km.lookup("bracketright", false, false, false), None);
-        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevLine));
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogue));
         assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` copies

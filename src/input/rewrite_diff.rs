@@ -2,6 +2,15 @@
 //! returns CHARACTER-offset spans within `new` for the words that changed or were
 //! added relative to `old`. Mirrors the pure/`gtk_ops` split of `overlay_search`.
 
+/// How long the rewrite-diff tint stays on screen before fading, in seconds.
+///
+/// The diff is a "here is what just changed" cue, not a mode: after a rewrite
+/// (or a `w` flash) it shows for this long and then gets out of the reader's
+/// way. The RANGES survive the fade so `w` can bring the tint back; only
+/// `clear_rewrite_diff` forgets them. Shared by the gloss and journal overlays
+/// so both fade on the same clock.
+pub const REWRITE_DIFF_FADE_SECS: u64 = 3;
+
 /// Character-offset span of every whitespace-delimited word in `text`, in order.
 fn word_spans(text: &str) -> Vec<(i32, i32, &str)> {
     let mut out = Vec::new();

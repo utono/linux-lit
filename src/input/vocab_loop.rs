@@ -266,7 +266,8 @@ fn remove_sentence_tag(s: &AppState) {
     s.buffer.remove_tag(&s.vocab_sentence_tag, &bs, &be);
 }
 
-/// The ONE exit funnel: Escape/Ctrl+r in-mode, and defensively on work
+/// The ONE exit funnel: Escape/Ctrl+= in-mode (Ctrl+r/R kept as legacy
+/// exits; the entry moved to the `=` cap 2026-07-26), and defensively on work
 /// switch. Clears the MPV ab-loop (a leaked loop would trap normal
 /// playback), drops the state and tint, and returns to Reader. Playback
 /// continues from wherever it is; normal sync resumes on the next TimePos.

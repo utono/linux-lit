@@ -6,9 +6,10 @@ use crate::app::AppState;
 pub struct SelectionState {
     pub anchor_line: usize,
     pub cursor_line: usize,
-    /// True when visual mode was entered via Ctrl+a (AskPassage): Return then
-    /// confirms the Journal Q&A ask directly instead of opening the Action
-    /// menu. Extending the selection with j/k/G/gg keeps the flag.
+    /// True when visual mode was entered via AskPassage (no default reader
+    /// bind since 2026-07-23): Return then confirms the Journal Q&A ask
+    /// directly instead of opening the Action menu. Extending the selection
+    /// with j/k/G/gg keeps the flag.
     pub pending_ask: bool,
 }
 
@@ -156,11 +157,12 @@ pub fn enter_visual_mode(state: &mut AppState) {
     crate::logging::log(&format!("VISUAL: entered at line {}", state.current_line));
 }
 
-/// Ctrl+a (AskPassage): enter visual mode with the blank-line-delimited block
-/// around the cursor pre-selected (prose paragraph / play speech incl. speaker
-/// label) and `pending_ask` set, so a second Ctrl+a or Return opens the
-/// Journal Q&A ask card directly. On a blank/separator line, falls back to a
-/// single-line selection (same as V), still flagged pending-ask.
+/// AskPassage (no default reader bind since 2026-07-23; reachable via a
+/// keymap.json override): enter visual mode with the blank-line-delimited
+/// block around the cursor pre-selected (prose paragraph / play speech incl.
+/// speaker label) and `pending_ask` set, so Ctrl+a (in visual mode) or Return
+/// opens the Journal Q&A ask card directly. On a blank/separator line, falls
+/// back to a single-line selection (same as V), still flagged pending-ask.
 /// On DB-join buffers (works with no text_file, where one buffer line renders
 /// one work row and no blank lines exist) the block is the run of lines
 /// sharing the cursor's work row instead.

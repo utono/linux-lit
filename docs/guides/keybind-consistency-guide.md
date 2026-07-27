@@ -273,5 +273,40 @@ Record each deliberate consistency move here so future sweeps know the intent.
   alternate belongs on the drill; `plus` is a separate key already bound to
   `CopyWorkDivision`.
 
+- **2026-07-26 — the `i` cap becomes a full dupe of `-` on every work type;
+  the translation family moves to `(`.** First shipped as a prose-only mirror
+  (dispatch-time remap + placeholder actions); superseded the same day when
+  the verse features vacated the cap: `(` = two-column translation, `Ctrl+(` =
+  page image, `Ctrl+Alt+(` = inline translation (the `(` cap was entirely
+  unbound; RPD `<AE04>` puts `parenleft` on level 1, so all three chords are
+  distinct). With `i` freed, the mirror became four plain table entries —
+  `i`/`Shift+i`/`Alt+i`/`Ctrl+i` = `-`/`Shift+-`/`Alt+-`/`Ctrl+-` — and the
+  whole `prose_i_mirror` apparatus was deleted. `Ctrl+Shift+I` (page
+  calibration) stayed put: not part of the moved pair, and `-` has no fifth
+  level to twin it.
+
+- **2026-07-26 — `u` becomes a full dupe of `\`.** Plain `u` = cycle segment
+  overlays, `Ctrl+u` = library picker. Home-row twin for the far-corner `\`
+  cap; plain `u`/Ctrl+u were unbound (Alt+u scansion and Shift+u undo-
+  timestamp keep their meanings).
+
+- **2026-07-26 — `CursorPrevLine` renamed `CursorPrevDialogue`.** The name
+  said "line" but the body always called `prev_dialogue_line`, the exact
+  mirror of `CursorNextDialogue` — same rename applied to the backing fn and
+  the keymap.json wire name. `;`/Up = prev, `'`/Down = next.
+
+- **2026-07-26 — stale-name sweep.** keymap.json's echo actions predated the
+  BCP/Shx split (`ShowEchoes`/`ReopenEchoes`/`ShowEchoTurns` were silently
+  skipped by the loader; the compiled `*Bcp` defaults were what actually ran)
+  — renamed to the `*Bcp` forms, so the JSON says what happens. Doc comments
+  brought back in line with the table: `VocabJournalAsk` (Ctrl+Shift+r, not
+  Ctrl+r), `AddVocabWord` (Ctrl+r, not Ctrl+Alt+\), `OpenJournalPicker`
+  (Ctrl+j, not Alt+j), `OpenRecentQaPicker` (Alt+j, not Ctrl+a),
+  `CycleSegmentOverlays` (lap is gloss → journal → syntax → reader, no wrap),
+  `AskPassage`/`ReaderGlossChatAtCursor` (marked NO DEFAULT BIND),
+  `cursor_next/prev_dialogue` (`'`/`;`, not `j`/`k`), the vocab-loop exit
+  funnel (Ctrl+=), and the word-copy family comments (family-wide wording
+  instead of `-`/`_`).
+
 **Open candidates** (flagged, not yet scheduled): consolidate the echoes
 concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2).

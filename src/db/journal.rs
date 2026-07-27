@@ -390,7 +390,7 @@ pub fn find_page_by_id(
 /// newest-first, capped at `limit`. Carries `work_abbrev` like `find_page_by_id`
 /// so the cross-work open path can resolve each entry's edition. `id DESC` is the
 /// monotonic tiebreaker when two rows share a `timestamp`. Feeds the recent-Q&A
-/// jump-back picker (Ctrl+a). No `timestamp`-only index today; a small `LIMIT`
+/// jump-back picker (Alt+j). No `timestamp`-only index today; a small `LIMIT`
 /// scan is cheap at current table sizes — revisit only if the table grows large.
 pub fn find_recent_pages(
     conn: &Connection,

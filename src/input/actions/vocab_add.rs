@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::app::AppState;
 
-/// Ctrl+Alt+\ from any surface: open a dedicated compact vim-input card to type
+/// Ctrl+r from any surface: open a dedicated compact vim-input card to type
 /// a vocab word. Its own `AskCard` (attached above the whole overlay chain), so
 /// it opens OVER the gloss/journal overlays and the chat transcript — the old
 /// gloss-overlay reuse could not, since the gloss overlay was either busy or
