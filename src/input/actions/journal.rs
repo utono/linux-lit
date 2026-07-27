@@ -1523,11 +1523,19 @@ pub(crate) fn return_to_synopsis(state: &Rc<RefCell<AppState>>) -> bool {
         let pos = s.journal.return_pos.take();
         crate::app::return_to_reader_mode(&mut s);
         crate::app::restore_saved_position_resnap(&mut s, pos);
-        // Reopen on the band we came from, not wherever the cursor now sits.
-        s.synopsis_overlay_scene = (div1, div2);
     }
-    crate::app::scene_synopsis::show_synopsis_overlay(state);
-    true
+    // Reopen the band we came from, not wherever the cursor now sits — the
+    // journal session may have crossed a chapter/scene boundary (Ctrl+n/p
+    // traversal, or a jump-to-source that moved return_pos), so recomputing
+    // the band from the post-restore cursor would silently show a different
+    // synopsis than the one this journal session was opened from.
+    //
+    // On cache miss (no synopsis for that band), we're already back in
+    // reader mode (return_to_reader_mode above), so the caller's overlay-cycle
+    // fallthrough would try to open the NEXT overlay in the cycle, not leave
+    // the user stranded with nothing — report false rather than force-opening
+    // whatever `current_synopsis_key` would land on.
+    crate::app::scene_synopsis::show_synopsis_overlay_for(state, div1, div2)
 }
 
 /// Pure step+clamp for cross-band Q&A traversal: from flat index `pos`, move by

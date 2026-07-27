@@ -405,26 +405,42 @@ pub fn toggle_synopsis(state: &mut AppState) {
 }
 
 pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let (div1, div2) = {
+        let s = state.borrow();
+        current_synopsis_key(&s)
+    };
+    show_synopsis_overlay_for(state, div1, div2);
+}
+
+/// Same as `show_synopsis_overlay`, but opens the PASSED band instead of
+/// recomputing one from the cursor via `current_synopsis_key`. Used when the
+/// caller already knows which scene it wants reopened (e.g. `return_to_synopsis`
+/// restoring the band a journal session was entered from), so the reopen is
+/// honest about which synopsis it is showing rather than silently following
+/// wherever the cursor now sits.
+///
+/// Returns `true` if a synopsis was shown, `false` on cache miss (nothing
+/// changed — caller keeps its current mode/overlay).
+pub fn show_synopsis_overlay_for(state: &std::rc::Rc<std::cell::RefCell<AppState>>, div1: i64, div2: i64) -> bool {
     let s = state.borrow();
     if s.gloss_overlay.is_visible() {
         drop(s);
         let mut s = state.borrow_mut();
         s.gloss_overlay.hide();
         crate::app::return_to_reader_mode(&mut s);
-        return;
+        return false;
     }
 
     if s.synopsis_cache.is_empty() {
         crate::input::navigation::show_chapter_toast_secs(&s, "No synopsis for this section", 3);
-        return;
+        return false;
     }
 
-    let (div1, div2) = current_synopsis_key(&s);
     let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
         Some(text) => text.clone(),
         None => {
             crate::input::navigation::show_chapter_toast_secs(&s, "No synopsis for this section", 3);
-            return;
+            return false;
         }
     };
 
@@ -446,6 +462,7 @@ pub fn show_synopsis_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>>) 
     }
     crate::input::actions::gloss::recolor_cached_blocks(&s);
     s.input_mode = InputMode::SynopsisOverlay;
+    true
 }
 
 /// Card-matching synopsis layout for PROSE works: the main reading card's font
