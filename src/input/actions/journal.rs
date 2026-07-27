@@ -1255,13 +1255,14 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// (`toggle_overlay`'s open half) and the `\` overlay cycle
 /// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
 /// is on the line whose scene the journal should open on) and then call this.
-/// Whether the journal Q&A stop has anything to show for the cursor —
-/// the same two lookups `open_journal_scene` performs (a passage Q&A
-/// covering the exact cursor line, else a non-empty scene band), WITHOUT
-/// opening the overlay or touching any state.
+/// Whether the journal Q&A stop has anything to show for the cursor: a
+/// `scope='passage'` entry whose citation span covers the lap anchor. Performed
+/// WITHOUT opening the overlay or touching any state.
 ///
-/// The `\` overlay cycle probes with this before tearing down the current
-/// overlay; see `gloss::gloss_covers_cursor` for why.
+/// Matches `open_journal_scene(state, JournalOpenScope::SegmentOnly)` exactly —
+/// same anchor, same query. The `\` overlay cycle probes with this before
+/// tearing down the current overlay; see `gloss::gloss_covers_cursor`, whose
+/// span-only shape this mirrors.
 pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
     let s = state.borrow();
     if s.current_work.is_none() {
@@ -1272,37 +1273,22 @@ pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bo
         return false;
     };
 
-    // Resolve from the LAP ANCHOR, not `current_line` — see
-    // `gloss::gloss_covers_cursor` for why (an open overlay has already moved
-    // the cursor to the end of its own passage).
-    let anchor = s
-        .gloss_return_pos
-        .or(s.journal.return_pos)
-        .map(|(line, _, _)| line)
-        .unwrap_or(s.current_line);
-
-    // A passage Q&A landing on the anchor's exact (div1, div2, line_in_div).
-    let cursor_hit = s
-        .current_work
+    // SPAN-SCOPED ONLY (2026-07-27). The scene-band fallback that used to sit
+    // here answered "does this CHAPTER have any Q&A" — a question with no
+    // reference to the cursor — so `\` opened whichever entry sorted oldest in
+    // the band. The `\` lap shows material about the segment under the cursor,
+    // so the only hit that counts is a `scope='passage'` entry whose citation
+    // span contains the anchor. `scope='scene'` entries carry no span and are
+    // deliberately unreachable by `\`; Ctrl+j and the picker still reach them.
+    let anchor = lap_anchor_for(&s);
+    s.current_work
         .as_ref()
-        .and_then(|w| {
-            s.work_line_for_buffer(anchor)
-                .and_then(|wi| w.lines.get(wi))
-        })
+        .and_then(|w| s.work_line_for_buffer(anchor).and_then(|wi| w.lines.get(wi)))
         .map(|l| (l.div1, l.div2, l.line_in_div))
         .and_then(|(d1, d2, lid)| {
             crate::db::journal::find_journal_page_for_line(&conn, &abbrev, d1, d2, lid).ok()?
         })
-        .is_some();
-    if cursor_hit {
-        return true;
-    }
-
-    // Else the scene band, using the SAME query the band renders with.
-    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
-    !crate::db::journal::find_scene_band_pages(&conn, &abbrev, d1, d2)
-        .unwrap_or_default()
-        .is_empty()
+        .is_some()
 }
 
 /// Open the journal Q&A stop for the cursor. Returns whether an overlay was
