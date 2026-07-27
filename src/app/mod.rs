@@ -5259,6 +5259,18 @@ pub(crate) fn restore_saved_position_resnap(s: &mut AppState, pos: Option<(usize
         s.current_line = line;
         s.page_top_line = top;
         s.page_top_offset = off;
+        // Re-anchor onto the PINNED page grid before scrolling (2026-07-27).
+        // `resnap_page` scrolls to whatever (line, offset) it is handed — it
+        // does not check that pair against the active table. A saved position
+        // can predate a table (re)generation, so restoring it verbatim left the
+        // reader mid-page, off-grid: the renderer then drew a window the
+        // pagination never chose, which is how a CHAPTER HEADING appeared in
+        // the middle of a page after closing a gloss/journal overlay (observed
+        // in BH-Barrett at page_top=697, a line that no stored page starts at).
+        // Both resnaps are no-ops when their engine is inactive or the position
+        // is already canonical.
+        crate::input::page_table::resnap_to_table(s);
+        crate::input::prose_pages::resnap_prose_to_table(s);
         crate::input::scroll::resnap_page(s);
         crate::input::highlight::update_highlight(s);
     }
