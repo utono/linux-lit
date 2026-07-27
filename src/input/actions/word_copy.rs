@@ -231,7 +231,7 @@ pub fn underline_next_sentence(state: &mut AppState) {
 ///
 /// Pure because the wrap arithmetic (signed, modular) is the part worth
 /// testing without a GTK buffer.
-fn next_word_index(n: usize, stored: Option<usize>, delta: i32) -> usize {
+pub(crate) fn next_word_index(n: usize, stored: Option<usize>, delta: i32) -> usize {
     if n == 0 {
         return 0;
     }
@@ -251,7 +251,10 @@ fn next_word_index(n: usize, stored: Option<usize>, delta: i32) -> usize {
 /// Pure so the wrap/boundary behavior is unit-testable without an `AppState`.
 /// With `anchor` `None` this returns the first word of the whole text; past the
 /// last sentence it wraps to the first.
-fn next_sentence_first_word(text: &str, anchor: Option<usize>) -> Option<(usize, usize)> {
+pub(crate) fn next_sentence_first_word(
+    text: &str,
+    anchor: Option<usize>,
+) -> Option<(usize, usize)> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return None;

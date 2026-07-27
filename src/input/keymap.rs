@@ -477,6 +477,55 @@ fn vocab_chord_toggle(
     crate::app::vocab_popup::open_vocab_popup_scoped(&mut s, scope, anchor);
 }
 
+/// Map a `-`-family chord to its step, or `None` when this key isn't one.
+///
+/// RPD: `minus` is level 1, so plain/Ctrl/Alt all arrive as "minus"; the
+/// SHIFTED cap arrives as ("underscore", shift=true). `shift("minus")` is
+/// accepted defensively for a layout path reporting the shifted cap that way —
+/// the same pair `keymap_config` binds in reader mode.
+fn overlay_word_step(
+    key_name: &str,
+    is_ctrl: bool,
+    is_shift: bool,
+    is_alt: bool,
+) -> Option<crate::input::actions::overlay_word_copy::Step> {
+    use crate::input::actions::overlay_word_copy::Step;
+    match key_name {
+        "underscore" => Some(Step::Back),
+        "minus" if is_shift && !is_ctrl && !is_alt => Some(Step::Back),
+        "minus" if is_ctrl && !is_alt => Some(Step::NextSentence),
+        "minus" if is_alt && !is_ctrl => Some(Step::Collect),
+        "minus" if !is_ctrl && !is_alt => Some(Step::Forward),
+        _ => None,
+    }
+}
+
+/// Run a `-`-family step against the gloss overlay's cursor block.
+fn gloss_overlay_word_step(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    step: crate::input::actions::overlay_word_copy::Step,
+) {
+    let mut s = state.borrow_mut();
+    let Some(target) = s.gloss_overlay.word_copy_target() else {
+        return;
+    };
+    let cycle = &mut s.gloss_word_cycle;
+    crate::input::actions::overlay_word_copy::step(cycle, &target, step);
+}
+
+/// Run a `-`-family step against the journal overlay's cursor block.
+fn journal_overlay_word_step(
+    state: &Rc<RefCell<crate::app::AppState>>,
+    step: crate::input::actions::overlay_word_copy::Step,
+) {
+    let mut s = state.borrow_mut();
+    let Some(target) = s.journal_overlay.word_copy_target() else {
+        return;
+    };
+    let cycle = &mut s.journal_word_cycle;
+    crate::input::actions::overlay_word_copy::step(cycle, &target, step);
+}
+
 /// Vocab words visible in the gloss overlay (the `rr` scope there): scan the
 /// overlay's CURRENT cursor block for the user's vocab words.
 fn gloss_overlay_scope_words(state: &Rc<RefCell<crate::app::AppState>>) -> Vec<String> {
@@ -2326,6 +2375,17 @@ fn handle_journal_key(
             copy_work_division(state);
             true
         }
+        // `-` family (`-`, `Shift+-`, `Alt+-`, `Ctrl+-`): copy/underline words
+        // in the CURSOR BLOCK, the overlay counterpart of the reader's binds.
+        // `Return` is deliberately NOT bound here — in the reader it opens a
+        // syntax gloss for the underlined span, which must not fire from
+        // inside an overlay.
+        _ if overlay_word_step(key_name, is_ctrl, is_shift, is_alt).is_some() => {
+            if let Some(step) = overlay_word_step(key_name, is_ctrl, is_shift, is_alt) {
+                journal_overlay_word_step(state, step);
+            }
+            true
+        }
         // `\`: advance the segment-overlay cycle → gloss for the lap's entry
         // segment (Ctrl+\ = work-wide picker, handled above; Alt+\ excluded).
         "backslash" if !is_ctrl && !is_alt => {
@@ -2892,6 +2952,17 @@ fn handle_gloss_key(
         // 2026-07-22 — the running head already shows the position).
         "plus" => {
             copy_work_division(state);
+            true
+        }
+        // `-` family (`-`, `Shift+-`, `Alt+-`, `Ctrl+-`): copy/underline words
+        // in the CURSOR BLOCK, the overlay counterpart of the reader's binds.
+        // `Return` is deliberately NOT bound here — in the reader it opens a
+        // syntax gloss for the underlined span, which must not fire from
+        // inside a gloss.
+        _ if overlay_word_step(key_name, is_ctrl, is_shift, is_alt).is_some() => {
+            if let Some(step) = overlay_word_step(key_name, is_ctrl, is_shift, is_alt) {
+                gloss_overlay_word_step(state, step);
+            }
             true
         }
         _ => true,

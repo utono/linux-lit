@@ -1230,7 +1230,63 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
 /// (`toggle_overlay`'s open half) and the `\` overlay cycle
 /// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
 /// is on the line whose scene the journal should open on) and then call this.
-pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
+/// Whether the journal Q&A stop has anything to show for the cursor —
+/// the same two lookups `open_journal_scene` performs (a passage Q&A
+/// covering the exact cursor line, else a non-empty scene band), WITHOUT
+/// opening the overlay or touching any state.
+///
+/// The `\` overlay cycle probes with this before tearing down the current
+/// overlay; see `gloss::gloss_covers_cursor` for why.
+pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
+    let s = state.borrow();
+    if s.current_work.is_none() {
+        return false;
+    }
+    let abbrev = current_work_abbrev(&s);
+    let Ok(conn) = crate::db::queries::open_db() else {
+        return false;
+    };
+
+    // Resolve from the LAP ANCHOR, not `current_line` — see
+    // `gloss::gloss_covers_cursor` for why (an open overlay has already moved
+    // the cursor to the end of its own passage).
+    let anchor = s
+        .gloss_return_pos
+        .or(s.journal.return_pos)
+        .map(|(line, _, _)| line)
+        .unwrap_or(s.current_line);
+
+    // A passage Q&A landing on the anchor's exact (div1, div2, line_in_div).
+    let cursor_hit = s
+        .current_work
+        .as_ref()
+        .and_then(|w| {
+            s.work_line_for_buffer(anchor)
+                .and_then(|wi| w.lines.get(wi))
+        })
+        .map(|l| (l.div1, l.div2, l.line_in_div))
+        .and_then(|(d1, d2, lid)| {
+            crate::db::journal::find_journal_page_for_line(&conn, &abbrev, d1, d2, lid).ok()?
+        })
+        .is_some();
+    if cursor_hit {
+        return true;
+    }
+
+    // Else the scene band, using the SAME query the band renders with.
+    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
+    !crate::db::journal::find_scene_band_pages(&conn, &abbrev, d1, d2)
+        .unwrap_or_default()
+        .is_empty()
+}
+
+/// Open the journal Q&A stop for the cursor. Returns whether an overlay was
+/// actually opened: false means nothing covers the cursor and the caller is
+/// still in whatever mode it started in. The `\` overlay cycle
+/// (`overlay_cycle::advance`) uses this to SKIP an empty journal stop instead
+/// of ending the lap there; standalone callers ignore the value and keep the
+/// miss toast this function emits.
+pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
     // First: if the cursor line itself falls inside a passage Q&A's span, open
     // the overlay LANDED on that specific entry — regardless of which band the
     // picker groups it under. Resolved from the cursor's exact
@@ -1241,7 +1297,7 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     let cursor_hit = {
         let s = state.borrow();
         if s.current_work.is_none() {
-            return;
+            return false;
         }
         let abbrev = current_work_abbrev(&s);
         s.current_work
@@ -1270,13 +1326,13 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
         // The passage entry is stored under its own scene band; land ON it by id.
         land_on_page(&mut s, JournalBand::Scene(pd1, pd2), entry_id);
         s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
-        return;
+        return true;
     }
 
     let (d1, d2, scene_empty) = {
         let s = state.borrow();
         if s.current_work.is_none() {
-            return;
+            return false;
         }
         let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
         // Use the SAME query the Scene band renders with (find_scene_band_pages =
@@ -1302,7 +1358,7 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
             "No journal entry for this segment",
             3,
         );
-        return;
+        return false;
     }
 
     let mut s = state.borrow_mut();
@@ -1325,6 +1381,7 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) {
     // is still on it, close restores the exact reading position (no source
     // jump). Must be read AFTER render_current loads the band's pages.
     s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
+    true
 }
 
 pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {

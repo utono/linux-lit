@@ -17,6 +17,8 @@ pub struct JournalOverlay {
     head_scene: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
+    /// Underline tag for the overlay `-` family (`overlay_word_copy`).
+    word_underline_tag: gtk4::TextTag,
     clip_guard: crate::ui::bottom_clip_guard::BottomClipGuard,
     footer_container: gtk4::Box,
     footer_left: Label,
@@ -651,6 +653,15 @@ impl JournalOverlay {
             .foreground("#3b5bdb") // placeholder; set via set_vocab_color
             .build();
         view.buffer().tag_table().add(&vocab_tag);
+        // Word-underline tag for the overlay `-` family
+        // (`input::actions::overlay_word_copy`), mirroring the reader's
+        // "word-bold" tag. Underline only — no color — so it reads the same on
+        // every theme.
+        let word_underline_tag = gtk4::TextTag::builder()
+            .name("journal_word_underline")
+            .underline(gtk4::pango::Underline::Single)
+            .build();
+        view.buffer().tag_table().add(&word_underline_tag);
 
         Self {
             overlay,
@@ -660,6 +671,7 @@ impl JournalOverlay {
             head_scene,
             scrolled,
             view,
+            word_underline_tag,
             clip_guard,
             footer_container,
             footer_left,
@@ -1112,6 +1124,9 @@ impl JournalOverlay {
         // Universal close funnel: restore the doc card's accent bar (hidden while
         // the ask card held focus) so the overlay never reopens with a missing bar.
         self.clear_focus_dim();
+        // Drop any `-`-family underline: the next open re-renders the buffer,
+        // so the stored char offsets would point at unrelated text.
+        self.clear_word_underline();
     }
 
     pub fn is_visible(&self) -> bool {
@@ -2252,6 +2267,34 @@ impl JournalOverlay {
         }
         let i = self.cursor_block.get().min(len - 1);
         blocks.get(i).map(|b| b.text.clone())
+    }
+
+    /// The cursor block as a `-`-family target (buffer + underline tag + the
+    /// block's buffer-line span). `None` when the overlay has no blocks.
+    pub fn word_copy_target(
+        &self,
+    ) -> Option<crate::input::actions::overlay_word_copy::BlockTarget> {
+        let blocks = self.blocks.borrow();
+        let len = blocks.len();
+        if len == 0 {
+            return None;
+        }
+        let i = self.cursor_block.get().min(len - 1);
+        let b = blocks.get(i)?;
+        Some(crate::input::actions::overlay_word_copy::BlockTarget {
+            buffer: self.view.buffer(),
+            tag: self.word_underline_tag.clone(),
+            start_line: b.start_line,
+            end_line: b.end_line,
+            block_index: i,
+        })
+    }
+
+    /// Drop any `-`-family underline (Escape / overlay close).
+    pub fn clear_word_underline(&self) {
+        let buffer = self.view.buffer();
+        let (s, e) = (buffer.start_iter(), buffer.end_iter());
+        buffer.remove_tag(&self.word_underline_tag, &s, &e);
     }
 
     /// Every paragraph of the displayed entry (source + question + answer),
