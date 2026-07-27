@@ -353,6 +353,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.effective_line_count(),
         state.is_prose(),
         left_exact_end,
+        state.page_top_offset,
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
         Some(state.current_line),
@@ -375,6 +376,7 @@ pub(crate) fn reschedule_left_clip_for_cursor(state: &AppState) {
         state.effective_line_count(),
         state.is_prose(),
         state.left_clip_boundary.get(),
+        state.page_top_offset,
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
         Some(state.current_line),
@@ -398,6 +400,7 @@ pub(crate) fn reschedule_right_clip_for_cursor(state: &AppState) {
         state.effective_line_count(),
         state.is_prose(),
         Some(right_end),
+        0, // right column of a two-column spread — never a mid-paragraph top
         None,
         false,
         Some(state.current_line),
@@ -418,6 +421,7 @@ fn schedule_bottom_clip_update(
     line_count: usize,
     is_prose: bool,
     exact_end: Option<usize>,
+    top_offset: i32,
     section_starts: Option<Vec<bool>>,
     one_section_per_page: bool,
     cursor_line: Option<usize>,
@@ -427,10 +431,10 @@ fn schedule_bottom_clip_update(
     let sw1 = scrolled_window.clone();
     let ss1 = section_starts.clone();
     glib::idle_add_local_once(move || {
-        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, ss1.as_deref(), one_section_per_page, cursor_line);
+        update_bottom_clip(&tv1, &bc1, &sw1, page_top, line_count, is_prose, exact_end, top_offset, ss1.as_deref(), one_section_per_page, cursor_line);
     });
     glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, section_starts.as_deref(), one_section_per_page, cursor_line);
+        update_bottom_clip(&text_view, &bottom_clip, &scrolled_window, page_top, line_count, is_prose, exact_end, top_offset, section_starts.as_deref(), one_section_per_page, cursor_line);
     });
 }
 
@@ -691,6 +695,10 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         line_count,
         state.is_prose(),
         left_exact_end,
+        // `offset` is this snap's own mid-paragraph top. Safe to pass verbatim:
+        // the `effective_top` clamp above only runs in the `offset == 0` branch,
+        // so whenever `offset > 0` we know `effective_top == line`.
+        offset,
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
         Some(state.current_line),
@@ -735,6 +743,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
             line_count,
             state.is_prose(),
             Some(right_end),
+            0, // right column of a two-column spread — never a mid-paragraph top
             None, // exact_end set → trim path (and section clamp) never runs
             false, // two-column right view: exact_end drives the clip, not the section fill-guard
             Some(state.current_line),
@@ -819,6 +828,27 @@ pub(crate) fn two_column_divider_bottom_px(text_view: &sourceview5::View) -> i32
 /// GTK geometry.
 pub(crate) fn paged_bottom_clip(space: i32, total: i32, allowance: i32) -> i32 {
     (space - total - allowance).max(0)
+}
+
+/// Height the exact-clip page's lines actually OCCUPY on the card, given the
+/// heights of `[page_top ..= end-1]` and the page's `page_top_offset`.
+///
+/// A prose row-fill page can START mid-paragraph: the viewport is scrolled
+/// `top_offset` px INTO the first line, so only that line's REMAINDER is on the
+/// card. Charging it its full height overstates the content by exactly the
+/// offset, and `paged_bottom_clip` then returns a clip that short — the page
+/// over-renders past its stored end (2026-07-27: BH-Barrett page 112 at
+/// (924,188) revealed 188px, i.e. the next chapter's heading).
+///
+/// Mirrors the offset-aware charging `viewport::is_line_start_visible` already
+/// does. `top_offset` is 0 for every two-column/play page, so this is an
+/// identity there.
+pub(crate) fn exact_page_content_height(heights: &[i32], top_offset: i32) -> i32 {
+    let mut total = 0i32;
+    for (i, &h) in heights.iter().enumerate() {
+        total += if i == 0 { (h - top_offset).max(0) } else { h };
+    }
+    total
 }
 
 /// How far the paged clip's top edge may drop below the last line's logical
@@ -925,7 +955,9 @@ pub(crate) fn update_bottom_clip_public(
     one_section_per_page: bool,
     cursor_line: Option<usize>,
 ) {
-    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, section_starts, one_section_per_page, cursor_line);
+    // No `exact_end` → the geometric/trim path, which never consults
+    // `top_offset`; pass 0.
+    update_bottom_clip(text_view, bottom_clip, scrolled_window, page_top, line_count, is_prose, None, 0, section_starts, one_section_per_page, cursor_line);
 }
 
 /// Set the bottom clip to hide everything below the last fully-visible line.
@@ -944,6 +976,10 @@ fn update_bottom_clip(
     line_count: usize,
     is_prose: bool,
     exact_end: Option<usize>,
+    // `page_top_offset` — px the viewport is scrolled INTO `page_top`. Only
+    // ever non-zero on a single-column prose row-fill page; used with
+    // `exact_end` so the first line is charged just its on-page remainder.
+    top_offset: i32,
     section_starts: Option<&[bool]>,
     one_section_per_page: bool,
     cursor_line: Option<usize>,
@@ -996,13 +1032,20 @@ fn update_bottom_clip(
             return;
         }
         let last = end.saturating_sub(1).max(page_top);
-        let mut total = 0i32;
-        for i in page_top..=last {
-            if let Some(iter) = buf_sv.iter_at_line(i as i32) {
-                let (_y, h) = text_view.line_yrange(&iter);
-                total += h;
-            }
-        }
+        // Offset-aware: a prose row-fill page can START mid-paragraph, so the
+        // FIRST line contributes only its on-page remainder. `top_offset` is 0
+        // for every two-column/play page (and for a prose page that starts at a
+        // paragraph top), where this is an identity. See
+        // `exact_page_content_height`.
+        let heights: Vec<i32> = (page_top..=last)
+            .map(|i| {
+                buf_sv
+                    .iter_at_line(i as i32)
+                    .map(|iter| text_view.line_yrange(&iter).1)
+                    .unwrap_or(0)
+            })
+            .collect();
+        let total = exact_page_content_height(&heights, top_offset);
         // Drop the clip's top edge below the last line's logical bottom so its
         // flush descender ink (g/y/p/comma tails) isn't sliced — capped at the
         // strip guaranteed free of the NEXT line's ink (the shared buffer
@@ -1020,8 +1063,8 @@ fn update_bottom_clip(
         let clip = paged_bottom_clip(widget_height, total, allowance);
         if bottom_clip.height_request() != clip {
             crate::logging::log(&format!(
-                "BOTTOM_CLIP_EXACT: widget_h={} total={} allowance={} clip={} page_top={} end={}",
-                widget_height, total, allowance, clip, page_top, end
+                "BOTTOM_CLIP_EXACT: widget_h={} total={} allowance={} clip={} page_top={} top_off={} end={}",
+                widget_height, total, allowance, clip, page_top, top_offset, end
             ));
             bottom_clip.set_height_request(clip);
         }
@@ -1904,7 +1947,7 @@ mod overtall_clip_tests {
 
 #[cfg(test)]
 mod paged_bottom_clip_tests {
-    use super::{descender_allowance, paged_bottom_clip};
+    use super::{descender_allowance, exact_page_content_height, paged_bottom_clip};
 
     #[test]
     fn subtracts_descender_allowance_from_slack() {
@@ -1927,6 +1970,50 @@ mod paged_bottom_clip_tests {
         // With allowance 0 the helper reduces to space - total, the pre-fix
         // clip — proves the change is purely additive.
         assert_eq!(paged_bottom_clip(1112, 1000, 0), 112);
+    }
+
+    /// A prose row-fill page can START mid-paragraph (`page_top_offset > 0`):
+    /// the viewport is scrolled that many px INTO `page_top`, so only the
+    /// REMAINDER of that line occupies the card. Charging it its full height
+    /// overstates the content, `paged_bottom_clip` then returns a clip that is
+    /// too SHORT by exactly the offset, and the page over-renders past its
+    /// stored end.
+    ///
+    /// Real BH-Barrett case (2026-07-27): page 112 top = (924,188), lines
+    /// 924..=930 sum to 1071px, widget 1098, allowance 5.
+    ///   buggy:   clip = 1098 - 1071 - 5 = 22   (188px over-rendered)
+    ///   correct: clip = 1098 -  883 - 5 = 210
+    /// Those 188px revealed the tail of Chapter 9 PLUS the "CHAPTER X" /
+    /// "The Law-Writer" headings, which belong to the NEXT page — the printed-
+    /// book rule (a heading always begins a page) broken by the clip, not by
+    /// the page table (page 113 does start exactly at the chapter line).
+    #[test]
+    fn exact_clip_charges_the_first_line_only_its_on_page_remainder() {
+        // heights of buffer lines 924..=930 summing to 1071.
+        let heights = [400, 120, 80, 130, 111, 120, 110];
+        assert_eq!(heights.iter().sum::<i32>(), 1071);
+
+        // Offset 0 (page starts at a paragraph top) — unchanged behavior.
+        assert_eq!(exact_page_content_height(&heights, 0), 1071);
+        assert_eq!(paged_bottom_clip(1098, exact_page_content_height(&heights, 0), 5), 22);
+
+        // Offset 188 (page starts 188px INTO line 924) — only the remainder counts.
+        assert_eq!(exact_page_content_height(&heights, 188), 883);
+        assert_eq!(
+            paged_bottom_clip(1098, exact_page_content_height(&heights, 188), 5),
+            210,
+            "clip must cover the 188px that are scrolled off the top"
+        );
+    }
+
+    /// Degenerate offsets must not underflow or go negative: an offset at/past
+    /// the first line's full height means that line contributes nothing.
+    #[test]
+    fn exact_page_content_height_clamps_a_degenerate_offset() {
+        let heights = [100, 50];
+        assert_eq!(exact_page_content_height(&heights, 100), 50);
+        assert_eq!(exact_page_content_height(&heights, 140), 50, "clamped, never negative");
+        assert_eq!(exact_page_content_height(&[], 0), 0);
     }
 
     #[test]
