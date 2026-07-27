@@ -570,7 +570,22 @@ pub fn prose_table_last_line_for_top(
     if p.start_line != top_line || p.start_off != top_off {
         return None; // not a canonical page top — live path
     }
-    Some(if p.end_off > 0 { p.end_line } else { p.end_line.saturating_sub(1) })
+    Some(last_rendered_line(p))
+}
+
+/// Inclusive last RENDERED buffer line of `p`. Pure half of
+/// `prose_table_last_line_for_top`, split out so the exclusive/inclusive
+/// conversion the bottom clip depends on is unit-testable without GTK.
+///
+/// `end` is EXCLUSIVE: `end_off > 0` means `end_line` has ink on this page (its
+/// first `end_off` px), so it IS the last rendered line; `end_off == 0` is the
+/// normalized full-height form where `end_line` starts the NEXT page.
+pub(crate) fn last_rendered_line(p: &ProsePage) -> usize {
+    if p.end_off > 0 {
+        p.end_line
+    } else {
+        p.end_line.saturating_sub(1)
+    }
 }
 
 /// Last buffer line shown WHOLE on the stored page whose top is
@@ -684,6 +699,26 @@ mod tests {
     fn valid_pages_pass() {
         let h = heights();
         assert_eq!(validate_prose_pages(&ok_pages(), &ctx(&h)), Ok(()));
+    }
+
+    /// The bottom clip turns this into its EXCLUSIVE `exact_end` with `+ 1`,
+    /// so an off-by-one here paints one line too many — which is exactly the
+    /// "chapter heading rendered below the end of the previous chapter" bug
+    /// (2026-07-27). Values taken from the real BH-Barrett v5 table: page 82
+    /// is (686,0)..(697,0), so the last rendered line is 696 and the clip's
+    /// exclusive end is 697 — the "CHAPTER VIII" line, which must NOT paint.
+    #[test]
+    fn last_rendered_line_respects_exclusive_end() {
+        // end_off == 0: end_line starts the NEXT page.
+        let p = ProsePage { start_line: 686, start_off: 0, end_line: 697, end_off: 0 };
+        assert_eq!(last_rendered_line(&p), 696);
+        assert_eq!(last_rendered_line(&p) + 1, 697, "exclusive exact_end");
+        // end_off > 0: end_line has ink on THIS page, so it is the last line.
+        let q = ProsePage { start_line: 10, start_off: 0, end_line: 14, end_off: 40 };
+        assert_eq!(last_rendered_line(&q), 14);
+        // Degenerate page at the document start must not underflow.
+        let z = ProsePage { start_line: 0, start_off: 0, end_line: 0, end_off: 0 };
+        assert_eq!(last_rendered_line(&z), 0);
     }
 
     /// A chapter heading must never render mid-page (the printed-book rule).

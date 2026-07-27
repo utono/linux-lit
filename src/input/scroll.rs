@@ -305,6 +305,34 @@ pub fn resnap_page(state: &mut AppState) {
     snap_scroll_to_line_offset(state, state.page_top_line, state.page_top_offset);
 }
 
+/// Exclusive `exact_end` for a single-column PROSE page in table mode: the
+/// stored page's end, so the clip stops where the PAGINATION says the page
+/// stops (2026-07-27).
+///
+/// Without this the prose clip is purely GEOMETRIC — it covers from the last
+/// visual row that fits `usable_height` to the card edge, never consulting the
+/// stored page. That is right while a page ends because it ran out of room,
+/// and WRONG when it ends early by rule: the chapter clamp stops a page before
+/// a heading, and the viewport then painted straight past the boundary. The
+/// two-column path never had this bug because it always passed the stored
+/// split as `exact_end`; this is the single-column counterpart.
+///
+/// `None` off-table (live engine, or a non-canonical top) leaves the geometric
+/// clip in charge. `prose_table_last_line_for_top` gives the INCLUSIVE last
+/// rendered line; `exact_end` is exclusive downstream (the play path passes
+/// `cs.split`, the first line of the next column), hence the `+ 1`.
+pub(crate) fn prose_exact_end_for_current_page(state: &AppState) -> Option<usize> {
+    if !(state.is_prose() && state.column_count() == 1) {
+        return None;
+    }
+    crate::input::prose_pages::prose_table_last_line_for_top(
+        state,
+        state.page_top_line,
+        state.page_top_offset,
+    )
+    .map(|last| last + 1)
+}
+
 /// Re-run `update_bottom_clip` against the current viewport state without
 /// touching the scroll position. Use after font / line-height changes that
 /// don't shift `page_top_line` — e.g. translation toggle, where the caller
@@ -314,7 +342,7 @@ pub fn refresh_bottom_clip(state: &AppState) {
     let left_exact_end = if state.column_count() == 2 {
         Some(super::viewport::column_split(state, state.page_top_line).split)
     } else {
-        None
+        prose_exact_end_for_current_page(state)
     };
     state.left_clip_boundary.set(left_exact_end);
     schedule_bottom_clip_update(
@@ -637,7 +665,11 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         None
     };
     let line_count = state.effective_line_count();
-    let left_exact_end = cs.map(|c| c.split);
+    // Prose single-column clips at the stored page end too; see
+    // `prose_exact_end_for_current_page`.
+    let left_exact_end = cs
+        .map(|c| c.split)
+        .or_else(|| prose_exact_end_for_current_page(state));
     // EMPTY LEFT COLUMN (first-spread short opening section → right column):
     // `cs.split == 0` means the left view renders nothing. The deferred
     // update_bottom_clip below would only apply the full-height clip an idle
