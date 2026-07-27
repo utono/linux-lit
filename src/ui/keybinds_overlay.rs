@@ -317,7 +317,8 @@ config) — src/input/keymap.rs",
         "journal tog" => "Action::ToggleJournalOverlay (UNBOUND since 2026-07-23) \
 — src/input/actions/journal.rs",
         "cycle overlays" => "Action::CycleSegmentOverlays (gloss → journal Q&A \
-→ back to reader, no wrap; segment fixed at lap entry) — src/input/actions/overlay_cycle.rs",
+→ syntax → wraps; each stop scoped to the cursor's segment, empty stops \
+skipped; Esc exits) — src/input/actions/overlay_cycle.rs",
         "jrnl Q&A picker" => "Action::OpenJournalPicker — src/input/actions/journal.rs",
         "recent Q&A" => "Action::OpenRecentQaPicker (cross-work recent-Q&A \
 jump-back: the last 15 journal entries across ALL works, newest-first; confirm \

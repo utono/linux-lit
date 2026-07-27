@@ -16,6 +16,31 @@ fn current_work_abbrev(s: &AppState) -> String {
         .unwrap_or_default()
 }
 
+/// The line the `\` lap is anchored to.
+///
+/// An open overlay has already moved the cursor to the end of its own passage,
+/// so the live `current_line` is the wrong question to ask once a lap is under
+/// way. `gloss_return_pos` / `journal.return_pos` hold the reader position the
+/// lap started from; fall back to the cursor when no overlay is open.
+///
+/// Pure so both the probe and the open resolve identically — they disagreed
+/// before 2026-07-27 and opened a different entry than they probed.
+fn lap_anchor_line(
+    gloss_return: Option<(usize, usize, i32)>,
+    journal_return: Option<(usize, usize, i32)>,
+    current_line: usize,
+) -> usize {
+    gloss_return
+        .or(journal_return)
+        .map(|(line, _, _)| line)
+        .unwrap_or(current_line)
+}
+
+/// `lap_anchor_line` read off live state.
+fn lap_anchor_for(s: &AppState) -> usize {
+    lap_anchor_line(s.gloss_return_pos, s.journal.return_pos, s.current_line)
+}
+
 /// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
 /// Used to turn a unit noun (`chapter`) into a user-message field label
 /// (`Chapter:`). Empty input returns empty. `pub(crate)` so the chat panel
@@ -1219,24 +1244,35 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    open_journal_scene(state);
+    open_journal_scene(state, JournalOpenScope::SegmentElseBand);
 }
 
-/// Open the journal overlay on the cursor's Scene band. When that scene band
-/// has no Q&A, toast "no journal entry" and stay in the reader — never the
-/// work-wide picker, which has its own bind (`OpenJournalPicker`).
-/// Assumes reader mode / no conflicting overlay is showing; saves
-/// `return_pos` from the current cursor. Shared by the reader Ctrl+j
-/// (`toggle_overlay`'s open half) and the `\` overlay cycle
-/// (`overlay_cycle.rs`), which each return to the reader first (so the cursor
-/// is on the line whose scene the journal should open on) and then call this.
-/// Whether the journal Q&A stop has anything to show for the cursor —
-/// the same two lookups `open_journal_scene` performs (a passage Q&A
-/// covering the exact cursor line, else a non-empty scene band), WITHOUT
-/// opening the overlay or touching any state.
+/// How far `open_journal_scene` may widen its search.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum JournalOpenScope {
+    /// The `\` overlay cycle: a `scope='passage'` entry covering the lap
+    /// anchor, or nothing. A miss returns false silently — no toast, no state
+    /// change — so `overlay_cycle::advance` can skip the stop.
+    SegmentOnly,
+    /// Ctrl+j: the segment entry if there is one, else the whole scene band.
+    SegmentElseBand,
+}
+
+impl JournalOpenScope {
+    /// Whether a segment miss may fall through to the chapter band.
+    fn allows_band_fallback(self) -> bool {
+        matches!(self, JournalOpenScope::SegmentElseBand)
+    }
+}
+
+/// Whether the journal Q&A stop has anything to show for the cursor: a
+/// `scope='passage'` entry whose citation span covers the lap anchor. Performed
+/// WITHOUT opening the overlay or touching any state.
 ///
-/// The `\` overlay cycle probes with this before tearing down the current
-/// overlay; see `gloss::gloss_covers_cursor` for why.
+/// Matches `open_journal_scene(state, JournalOpenScope::SegmentOnly)` exactly —
+/// same anchor, same query. The `\` overlay cycle probes with this before
+/// tearing down the current overlay; see `gloss::gloss_covers_cursor`, whose
+/// span-only shape this mirrors.
 pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
     let s = state.borrow();
     if s.current_work.is_none() {
@@ -1247,46 +1283,36 @@ pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bo
         return false;
     };
 
-    // Resolve from the LAP ANCHOR, not `current_line` — see
-    // `gloss::gloss_covers_cursor` for why (an open overlay has already moved
-    // the cursor to the end of its own passage).
-    let anchor = s
-        .gloss_return_pos
-        .or(s.journal.return_pos)
-        .map(|(line, _, _)| line)
-        .unwrap_or(s.current_line);
-
-    // A passage Q&A landing on the anchor's exact (div1, div2, line_in_div).
-    let cursor_hit = s
-        .current_work
+    // SPAN-SCOPED ONLY (2026-07-27). The scene-band fallback that used to sit
+    // here answered "does this CHAPTER have any Q&A" — a question with no
+    // reference to the cursor — so `\` opened whichever entry sorted oldest in
+    // the band. The `\` lap shows material about the segment under the cursor,
+    // so the only hit that counts is a `scope='passage'` entry whose citation
+    // span contains the anchor. `scope='scene'` entries carry no span and are
+    // deliberately unreachable by `\`; Ctrl+j and the picker still reach them.
+    let anchor = lap_anchor_for(&s);
+    s.current_work
         .as_ref()
-        .and_then(|w| {
-            s.work_line_for_buffer(anchor)
-                .and_then(|wi| w.lines.get(wi))
-        })
+        .and_then(|w| s.work_line_for_buffer(anchor).and_then(|wi| w.lines.get(wi)))
         .map(|l| (l.div1, l.div2, l.line_in_div))
         .and_then(|(d1, d2, lid)| {
             crate::db::journal::find_journal_page_for_line(&conn, &abbrev, d1, d2, lid).ok()?
         })
-        .is_some();
-    if cursor_hit {
-        return true;
-    }
-
-    // Else the scene band, using the SAME query the band renders with.
-    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
-    !crate::db::journal::find_scene_band_pages(&conn, &abbrev, d1, d2)
-        .unwrap_or_default()
-        .is_empty()
+        .is_some()
 }
 
 /// Open the journal Q&A stop for the cursor. Returns whether an overlay was
 /// actually opened: false means nothing covers the cursor and the caller is
-/// still in whatever mode it started in. The `\` overlay cycle
-/// (`overlay_cycle::advance`) uses this to SKIP an empty journal stop instead
-/// of ending the lap there; standalone callers ignore the value and keep the
-/// miss toast this function emits.
-pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
+/// still in whatever mode it started in. `scope` controls how far a segment
+/// miss may widen: `SegmentOnly` (the `\` overlay cycle, via
+/// `overlay_cycle::advance`) returns false silently so the lap can SKIP an
+/// empty journal stop instead of ending there; `SegmentElseBand` (Ctrl+j, via
+/// `toggle_overlay`) falls through to the whole scene band and keeps the miss
+/// toast this function emits when even the band is empty.
+pub(crate) fn open_journal_scene(
+    state: &Rc<RefCell<AppState>>,
+    scope: JournalOpenScope,
+) -> bool {
     // First: if the cursor line itself falls inside a passage Q&A's span, open
     // the overlay LANDED on that specific entry — regardless of which band the
     // picker groups it under. Resolved from the cursor's exact
@@ -1300,10 +1326,15 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
             return false;
         }
         let abbrev = current_work_abbrev(&s);
+        // The lap anchor, not the live cursor — arriving here via `\` from the
+        // gloss stop leaves the cursor at the END of the glossed passage, so
+        // probing `current_line` asks about a different line than
+        // `journal_has_content_at_cursor` just approved.
+        let anchor = lap_anchor_for(&s);
         s.current_work
             .as_ref()
             .and_then(|w| {
-                s.work_line_for_buffer(s.current_line)
+                s.work_line_for_buffer(anchor)
                     .and_then(|wi| w.lines.get(wi))
             })
             .map(|l| (l.div1, l.div2, l.line_in_div))
@@ -1327,6 +1358,15 @@ pub(crate) fn open_journal_scene(state: &Rc<RefCell<AppState>>) -> bool {
         land_on_page(&mut s, JournalBand::Scene(pd1, pd2), entry_id);
         s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
         return true;
+    }
+
+    // The `\` cycle stops here: no passage Q&A covers the segment, so the stop
+    // has nothing to show. Return silently — `overlay_cycle::advance` skips to
+    // the next stop and owns the all-empty toast. Emitting the band path's
+    // "No journal entry for this segment" toast here would fire on every lap
+    // through a segment that simply has no Q&A of its own.
+    if !scope.allows_band_fallback() {
+        return false;
     }
 
     let (d1, d2, scene_empty) = {
@@ -3257,6 +3297,15 @@ pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
 mod tests {
     use super::*;
 
+    /// The `\` cycle must never fall through to the chapter band; Ctrl+j must
+    /// keep doing so. Guards the scope enum against being collapsed back into
+    /// a bool or silently defaulted.
+    #[test]
+    fn only_segment_else_band_reaches_the_scene_band() {
+        assert!(!JournalOpenScope::SegmentOnly.allows_band_fallback());
+        assert!(JournalOpenScope::SegmentElseBand.allows_band_fallback());
+    }
+
     #[test]
     fn blank_question_is_skipped() {
         assert!(is_blank_question("   \n\t "));
@@ -3891,5 +3940,29 @@ mod tests {
             source_first_buffer_line(&work, Some(&line_map), "Cym.9.9.9", ""),
             None
         );
+    }
+
+    /// The `\` lap anchors on the position the lap STARTED from. Opening the
+    /// gloss stop moves the cursor to the end of the glossed passage, so the
+    /// journal stop must not probe the live cursor. Regression for the
+    /// probe/open mismatch fixed 2026-07-27.
+    #[test]
+    fn lap_anchor_prefers_gloss_return_pos() {
+        assert_eq!(lap_anchor_line(Some((424, 400, 0)), None, 437), 424);
+    }
+
+    #[test]
+    fn lap_anchor_falls_back_to_journal_return_pos() {
+        assert_eq!(lap_anchor_line(None, Some((910, 900, 0)), 979), 910);
+    }
+
+    #[test]
+    fn lap_anchor_prefers_gloss_over_journal() {
+        assert_eq!(lap_anchor_line(Some((424, 400, 0)), Some((910, 900, 0)), 979), 424);
+    }
+
+    #[test]
+    fn lap_anchor_uses_cursor_when_no_overlay_open() {
+        assert_eq!(lap_anchor_line(None, None, 979), 979);
     }
 }

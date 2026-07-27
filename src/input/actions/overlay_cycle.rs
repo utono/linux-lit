@@ -29,6 +29,15 @@
 //! `\` key is a consumed no-op in handle_synopsis_overlay_key. This decision
 //! still stands.
 //! Escape and each overlay's own close/flip keys are untouched.
+//!
+//! EVERY STOP IS SEGMENT-SCOPED (2026-07-27). A stop has content only when
+//! something covers the CURSOR'S SEGMENT. The journal stop used to fall back
+//! to the whole scene band when no passage Q&A covered the cursor, so `\` on
+//! BH-Barrett ch. 10 opened the chapter's oldest Q&A — about a different
+//! passage than the one on screen. `open_journal_scene` now takes
+//! `JournalOpenScope::SegmentOnly` here; Ctrl+j keeps the band fallback.
+//! Consequence: `scope='scene'` journal entries carry no citation span and are
+//! unreachable by `\` — reach them with Ctrl+j or the picker.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -79,7 +88,10 @@ impl Stop {
                 crate::input::actions::gloss::open_gloss_at_cursor(state);
             }
             Stop::Journal => {
-                crate::input::actions::journal::open_journal_scene(state);
+                crate::input::actions::journal::open_journal_scene(
+                    state,
+                    crate::input::actions::journal::JournalOpenScope::SegmentOnly,
+                );
             }
             Stop::Syntax => {
                 crate::input::actions::gloss::try_open_syntax_gloss_at_cursor(state);
