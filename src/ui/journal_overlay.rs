@@ -322,21 +322,30 @@ const JOURNAL_BODY_INDENT: i32 = crate::ui::gloss_render::QUOTE_BODY_INDENT;
 /// surface. The reader card, the gloss, and the synopsis all render in whichever
 /// `config::FONT_CYCLE` serif is active (`reapply_font` → `sync_reader_font`), so
 /// the journal must sit OUTSIDE that cycle or a few presses of `f` would collide
-/// with it. iA Writer Quattro S is a duospaced hybrid: the Q&A reads as the
-/// reader's own notebook rather than more of the text.
+/// with it. Gentium Book is a humanist serif: warmer and a touch narrower than
+/// the cycle faces, so a Q&A reads as the reader's own notebook without breaking
+/// the page's texture.
+///
+/// NOTE: "Book" is a Pango WEIGHT keyword, so this family MUST be turned into a
+/// font string via `ui::font_string` (the comma form). Interpolated bare into
+/// `"{family} {size}"` it parses as family "Gentium" — not installed — and
+/// silently renders as the fontconfig fallback (Noto Sans).
 ///
 /// Only the FAMILY is pinned — `sync_reader_font` still follows the reader's
 /// SIZE, so `+`/`-` scales the journal with everything else.
-const JOURNAL_FONT_FAMILY: &str = "iA Writer Quattro S";
+const JOURNAL_FONT_FAMILY: &str = "Gentium Book";
 
-/// Point offset applied to the reader's size for the journal only. Quattro is
-/// DUOSPACED — its advance widths run ~20% wider than the `FONT_CYCLE` serifs at
-/// the same nominal point, so without a correction the source verse re-wraps and
-/// the entry gains pages. Measured with Pango against the longest MM-Arkangel
-/// verse line: Charter 17 = 487px, Quattro 16 = 584px, Quattro 14 = 490px — so
-/// -3 holds the reader's measure almost exactly. Pagination measures real line
-/// heights, so the page budget follows this automatically.
-const JOURNAL_FONT_SIZE_DELTA: i32 = -3;
+/// Point offset applied to the reader's size for the journal only. Zero: Gentium
+/// at the reader's own size is the closest match on BOTH axes that still packs.
+/// Measured with Pango against the longest MM-Arkangel verse line — Charter 17 =
+/// 487px/29px line, Gentium 17 = 475px/29px, Gentium 18 = 494px/30px. Gentium 18
+/// is the closer WIDTH match, but its extra line height pushed a passage Q&A's
+/// source block + first question to 519px against a 515px page budget, so page 1
+/// rendered the source alone and orphaned the question. At 17 the line height
+/// matches Charter's exactly and the page packs. Pagination measures real line
+/// heights, so the budget follows this automatically — re-verify packing on a
+/// passage Q&A if this constant ever changes.
+const JOURNAL_FONT_SIZE_DELTA: i32 = 0;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
@@ -1267,7 +1276,8 @@ impl JournalOverlay {
     /// overlay uses (`GlossOverlay::apply_font`), since this gtk4 version's
     /// per-widget CSS provider path is the deprecated `style_context()` API.
     fn apply_font(&self) {
-        let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
+        let font_str =
+            crate::ui::font_string(&self.font_family.borrow(), self.font_size.get());
         crate::ui::apply_font_to_views(
             &[&self.view, self.ask_host.input()],
             &font_str,
@@ -2140,8 +2150,12 @@ impl JournalOverlay {
         drop(paras);
         // Budget + per-block estimates for diagnosing pack decisions from a run.
         crate::log_fmt!(
-            "JOURNAL-PAGINATE: page_h={} wrap_w={} line_h={} font='{} {}' heights={:?}",
-            self.page_height(), wrap_w, line_h, family, size, heights
+            // Log the RESOLVED font string (comma form), not a bare
+            // "family size" — the bare form is exactly what mis-parses, so
+            // printing it would mask the fallback it is meant to reveal.
+            "JOURNAL-PAGINATE: page_h={} wrap_w={} line_h={} font='{}' heights={:?}",
+            self.page_height(), wrap_w, line_h,
+            crate::ui::font_string(&family, size), heights
         );
         *self.pages.borrow_mut() = if self.page_is_note.get() {
             // Notes: no-orphaned-heading packing — chrome blocks glue forward
