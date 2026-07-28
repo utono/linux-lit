@@ -477,6 +477,81 @@ pub fn retag_passage_scoped_journal_entries(
     Ok(n)
 }
 
+/// Marker key claimed by `refile_journal_bands_from_citations` so the refile
+/// runs exactly once across the DB's lifetime. Bump the date suffix if a
+/// future re-import renumbers bands again.
+const REFILE_JOURNAL_BANDS_KEY: &str = "refile-journal-bands-2026-07-28";
+
+/// One-time repair for journal entries whose band columns disagree with their
+/// own citation. A litdb re-import renumbered an edition's chapters (a
+/// front-matter offset), leaving entries banded under the OLD numbering while
+/// their citations — written from the reading cursor — address the NEW one.
+///
+/// Live data: three rows, all BH, filed under band (0,0) — the PREFACE —
+/// while citing chapter 1. Reading chapter 1 and pressing Ctrl+j resolves the
+/// cursor band to (1,0), calls `find_scene_band_pages`, gets nothing, and
+/// toasts "No journal entry for this segment" — while those chapter-1 Q&As
+/// sit filed under the Preface.
+///
+/// Only `div1` is rewritten: `div2` is 0 on every affected row and no row
+/// disagrees on `div2` alone. Restricted to `scope IN ('scene','passage')`
+/// so author-scope (div -2) and work-scope (div -1) sentinels are never
+/// touched.
+///
+/// Citations are parsed with `parse_citation`, never with SQL string
+/// surgery — an abbrev containing a dot would break a `substr` approach, and
+/// `parse_citation` is this codebase's single definition of the format.
+///
+/// Claims `REFILE_JOURNAL_BANDS_KEY` in `one_time_migrations` (caller must
+/// `ensure_one_time_migrations_table` first) before writing anything; if the
+/// marker was already claimed, returns `Ok(0)` without touching a row. The
+/// claim and the writes share one transaction, so a crash cannot consume the
+/// key without doing the work.
+pub fn refile_journal_bands_from_citations(
+    conn: &Connection,
+) -> Result<usize, rusqlite::Error> {
+    let tx = conn.unchecked_transaction()?;
+
+    let claimed = tx.execute(
+        "INSERT OR IGNORE INTO one_time_migrations (key) VALUES (?1)",
+        [REFILE_JOURNAL_BANDS_KEY],
+    )?;
+    if claimed == 0 {
+        return Ok(0);
+    }
+
+    // Read candidates, decide in Rust, write back only genuine mismatches.
+    let rows: Vec<(i64, i64, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, div1, start_citation FROM journal_entries \
+             WHERE start_citation IS NOT NULL AND end_citation IS NOT NULL \
+               AND scope IN ('scene', 'passage')",
+        )?;
+        let mapped = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+        })?;
+        mapped.collect::<Result<_, _>>()?
+    };
+
+    let mut refiled = 0usize;
+    for (id, filed_div1, citation) in rows {
+        let Some((cited_div1, _, _)) = crate::db::models::parse_citation(&citation) else {
+            continue;
+        };
+        if cited_div1 == filed_div1 {
+            continue;
+        }
+        tx.execute(
+            "UPDATE journal_entries SET div1 = ?1 WHERE id = ?2",
+            rusqlite::params![cited_div1, id],
+        )?;
+        refiled += 1;
+    }
+
+    tx.commit()?;
+    Ok(refiled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,6 +735,119 @@ mod tests {
         assert_eq!(retag_passage_scoped_journal_entries(&conn).unwrap(), 1);
         assert_eq!(
             retag_passage_scoped_journal_entries(&conn).unwrap(),
+            0,
+            "the claim key must make a second run a no-op"
+        );
+    }
+
+    /// Insert a journal row with an explicit band and citation. Mirrors the
+    /// shape a litdb re-import leaves behind: the citation is written from
+    /// the reading cursor, the band columns are whatever the import set.
+    fn insert_banded(
+        conn: &Connection,
+        work: &str,
+        div1: i64,
+        div2: i64,
+        scope: &str,
+        citation: Option<&str>,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO journal_entries
+                (work_abbrev, div1, div2, question, answer, claude_model,
+                 scope, start_citation, end_citation, source_text)
+             VALUES (?1, ?2, ?3, 'Q?', 'A.', 'm', ?4, ?5, ?5, 'src')",
+            rusqlite::params![work, div1, div2, scope, citation],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn band_of(conn: &Connection, id: i64) -> (i64, i64) {
+        conn.query_row(
+            "SELECT div1, div2 FROM journal_entries WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    /// The reported bug: BH ids 7/8/9 are filed under band (0,0) — the
+    /// PREFACE — while citing chapter 1. Reading chapter 1 and pressing
+    /// Ctrl+j asks find_scene_band_pages(work, 1, 0), gets nothing, and
+    /// toasts "No journal entry for this segment".
+    #[test]
+    fn mismatched_band_is_refiled_from_its_citation() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+
+        let mis_filed = insert_banded(&conn, "BH", 0, 0, "scene", Some("BH.1.0.12"));
+
+        let n = refile_journal_bands_from_citations(&conn).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(band_of(&conn, mis_filed), (1, 0), "refiled to the cited chapter");
+
+        // The whole point: the band render now finds it.
+        let ch1 = crate::db::journal::find_scene_band_pages(&conn, "BH", 1, 0).unwrap();
+        assert_eq!(ch1.len(), 1, "chapter 1's band now returns the entry");
+        let ch0 = crate::db::journal::find_scene_band_pages(&conn, "BH", 0, 0).unwrap();
+        assert!(ch0.is_empty(), "the Preface band is correctly empty");
+    }
+
+    /// Rows whose band already agrees with their citation must not be
+    /// touched, and must not inflate the returned count.
+    #[test]
+    fn matching_band_is_left_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+
+        let ok = insert_banded(&conn, "BH", 2, 0, "passage", Some("BH.2.0.48"));
+
+        assert_eq!(refile_journal_bands_from_citations(&conn).unwrap(), 0);
+        assert_eq!(band_of(&conn, ok), (2, 0));
+    }
+
+    /// Author- and work-scope rows use SENTINEL divs ((-2,-2) and (-1,-1))
+    /// and must never be refiled, whatever their citation looks like.
+    #[test]
+    fn sentinel_scopes_are_never_refiled() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+
+        let author = insert_banded(&conn, "Charles Dickens", -2, -2, "author", Some("BH.1.0.5"));
+        let work = insert_banded(&conn, "BH", -1, -1, "work", Some("BH.1.0.5"));
+
+        assert_eq!(refile_journal_bands_from_citations(&conn).unwrap(), 0);
+        assert_eq!(band_of(&conn, author), (-2, -2));
+        assert_eq!(band_of(&conn, work), (-1, -1));
+    }
+
+    /// A row with no citation carries no location to refile from.
+    #[test]
+    fn uncited_row_is_never_refiled() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+
+        let bare = insert_banded(&conn, "BH", 0, 0, "scene", None);
+
+        assert_eq!(refile_journal_bands_from_citations(&conn).unwrap(), 0);
+        assert_eq!(band_of(&conn, bare), (0, 0));
+    }
+
+    /// Claim-keyed, like every one-time migration in this file.
+    #[test]
+    fn refile_runs_only_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        insert_banded(&conn, "BH", 0, 0, "scene", Some("BH.1.0.12"));
+
+        assert_eq!(refile_journal_bands_from_citations(&conn).unwrap(), 1);
+        assert_eq!(
+            refile_journal_bands_from_citations(&conn).unwrap(),
             0,
             "the claim key must make a second run a no-op"
         );
