@@ -634,9 +634,18 @@ pub fn find_journal_page_for_line(
     // while their citations — written from the reading cursor — address the
     // other. The band columns still say where the entry is FILED, so return
     // them for `land_on_page`; the citation says where the passage LIVES.
+    //
+    // The scope list here MUST stay in sync with `find_scene_band_pages`
+    // (the render this probe feeds via `land_on_page`). Probing a scope the
+    // band render can't display would let `\` promise content it then can't
+    // land on — `position()` in the render's page list finds nothing and
+    // silently falls back via `unwrap_or(0)` to the WRONG entry. Confirmed
+    // live: two `scope='unassigned-after-reimport'` rows carry citations
+    // (BH id 6, TT id 61) and are not retagged by the migration below, since
+    // their `source_text IS NULL`.
     let mut stmt = conn.prepare(
         "SELECT div1, div2, id, start_citation, end_citation FROM journal_entries \
-         WHERE work_abbrev = ?1 \
+         WHERE work_abbrev = ?1 AND scope IN ('scene', 'passage') \
            AND start_citation IS NOT NULL AND end_citation IS NOT NULL",
     )?;
     let rows = stmt.query_map([work_abbrev], |row| {
@@ -1518,6 +1527,34 @@ mod tests {
 
         let hit = find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap();
         assert_eq!(hit, Some((2, 0, narrow)), "nearest start must still win");
+    }
+
+    /// Regression (final review, 2026-07-27): the probe must not match a scope
+    /// the BAND RENDER cannot display. `find_scene_band_pages` filters
+    /// `scope IN ('scene','passage')`, so an `unassigned-after-reimport` row
+    /// (two exist in lit.db, both citation-bearing) would be probed as content,
+    /// then filtered out of the band — landing the overlay on the wrong entry
+    /// via `unwrap_or(0)`.
+    #[test]
+    fn unrenderable_scope_is_not_probed() {
+        let conn = mem();
+        insert_cited(&conn, "BH", 0, 0, "unassigned-after-reimport", "BH.0.0.5", "BH.0.0.5");
+
+        assert_eq!(
+            find_journal_page_for_line(&conn, "BH", 0, 0, 5).unwrap(),
+            None,
+            "a scope the band render filters out must not be probed as content"
+        );
+    }
+
+    /// The branch's core fix must survive Fix 1: scene-filed entries with a
+    /// span are still found.
+    #[test]
+    fn scene_scope_still_found_after_render_alignment() {
+        let conn = mem();
+        let id = insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.48", "BH.2.0.48");
+
+        assert_eq!(find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap(), Some((2, 0, id)));
     }
 
     #[test]

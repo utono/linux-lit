@@ -439,11 +439,12 @@ const RETAG_PASSAGE_SCOPE_KEY: &str = "retag-passage-scope-2026-07-27";
 /// chapter-level question saved from the reader has a placeholder `.0`
 /// citation and no source_text, so it is correctly left alone.
 ///
-/// This is a data repair, not a correctness dependency: `find_journal_page_for_line`
-/// and `find_passage_citation_ranges` select on the citation span and no
-/// longer consult `scope` at all. It exists so `scope` again means what it
-/// says for the paths that legitimately filter on it (`find_passage_pages`,
-/// `find_journal_pages`).
+/// This is a data repair, not a correctness dependency: `find_passage_citation_ranges`
+/// selects on the citation span alone, and `find_journal_page_for_line` only
+/// restricts to the scopes the band render can display (`scene`, `passage`) —
+/// neither depends on `scope` distinguishing 'scene' from 'passage'. It exists
+/// so `scope` again means what it says for the paths that legitimately filter
+/// on it (`find_passage_pages`, `find_journal_pages`).
 ///
 /// Claims `RETAG_PASSAGE_SCOPE_KEY` in `one_time_migrations` (caller must
 /// `ensure_one_time_migrations_table` first) before writing anything; if the
@@ -451,14 +452,19 @@ const RETAG_PASSAGE_SCOPE_KEY: &str = "retag-passage-scope-2026-07-27";
 pub fn retag_passage_scoped_journal_entries(
     conn: &Connection,
 ) -> Result<usize, rusqlite::Error> {
-    let claimed = conn.execute(
+    // Claim + UPDATE run in one transaction so a crash (or UPDATE failure)
+    // between the two cannot consume the key without doing the retag: either
+    // both commit together, or neither does and the key stays unclaimed for
+    // the next launch to retry.
+    let tx = conn.unchecked_transaction()?;
+    let claimed = tx.execute(
         "INSERT OR IGNORE INTO one_time_migrations (key) VALUES (?1)",
         [RETAG_PASSAGE_SCOPE_KEY],
     )?;
     if claimed == 0 {
         return Ok(0);
     }
-    conn.execute(
+    let n = tx.execute(
         "UPDATE journal_entries
             SET scope = 'passage'
           WHERE scope = 'scene'
@@ -466,7 +472,9 @@ pub fn retag_passage_scoped_journal_entries(
             AND end_citation IS NOT NULL
             AND source_text IS NOT NULL",
         [],
-    )
+    )?;
+    tx.commit()?;
+    Ok(n)
 }
 
 #[cfg(test)]
