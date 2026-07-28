@@ -679,7 +679,11 @@ pub fn measure_planned_block(
     use gtk4::pango;
 
     let layout = pango::Layout::new(pctx);
-    let mut desc = pango::FontDescription::from_string(family);
+    // Trailing comma (see `ui::font_string`): parsed bare, a family ending in a
+    // style keyword ("Gentium Book") would drop that word and measure in a
+    // fallback face — silently diverging from what the tags actually RENDER,
+    // which is exactly the mismatch that over-packs a page.
+    let mut desc = pango::FontDescription::from_string(&format!("{},", family.trim()));
     let scaled = (base_size_pt as f64 * block_scale(&block.kind) * pango::SCALE as f64) as i32;
     desc.set_size(scaled);
     if block_is_bold(&block.kind) {

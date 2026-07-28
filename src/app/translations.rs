@@ -141,8 +141,10 @@ fn show_translations(state: &mut AppState) {
     // font change; set it here too so the first paint isn't a flash of the
     // previous size/family.
     let trans_size = state.config.font_size.saturating_sub(4);
+    // Comma form (see `ui::font_string`): keeps a family ending in a style
+    // keyword whole; the style + size follow the comma.
     let desc = pango::FontDescription::from_string(
-        &format!("{} Italic {}", state.config.font_family, trans_size),
+        &format!("{}, Italic {}", state.config.font_family.trim(), trans_size),
     );
     state.translation_text_tag.set_font_desc(Some(&desc));
 

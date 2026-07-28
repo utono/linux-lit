@@ -636,7 +636,7 @@ impl ChatPanel {
     /// Apply the reader font to the ask input, same technique as
     /// `JournalOverlay::apply_font` / `GlossOverlay::apply_font`.
     pub fn apply_font(&self, font_family: &str, font_size: u32) {
-        let font_str = format!("{} {}", font_family, font_size);
+        let font_str = crate::ui::font_string(font_family, font_size as i32);
         crate::ui::apply_font_to_views(&[self.input.input()], &font_str, "chat-input-font");
     }
 }
