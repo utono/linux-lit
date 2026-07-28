@@ -328,20 +328,34 @@ pub fn find_author_pages(
 /// (`scope='author'`, see `save_author_page`) store the AUTHOR NAME in that
 /// same column and are selected directly. Missing the second half silently
 /// drops corpus notes from author scope.
+/// `j.`-qualified twin of `JOURNAL_PAGE_COLUMNS`, for this query only. The
+/// first SELECT below joins `journal_entries j` to `works w`, and both tables
+/// have an `id` column — the shared const's bare `id` (and any other name
+/// `works` happens to share) is ambiguous there and SQLite refuses to
+/// prepare the statement. Qualifying with `j.` disambiguates; it must be used
+/// in BOTH halves of the UNION so the two SELECTs stay column-compatible.
+/// Do not replace this with `JOURNAL_PAGE_COLUMNS` again.
+const JOURNAL_PAGE_COLUMNS_J: &str =
+    "j.id, j.div1, j.div2, j.question, j.answer, COALESCE(j.claude_model, ''), j.timestamp, \
+     j.start_citation, j.end_citation, j.source_text, COALESCE(j.kind, 'qa')";
+
 pub fn find_author_all_pages(
     conn: &Connection,
     author: &str,
 ) -> Result<Vec<(JournalPage, String)>, rusqlite::Error> {
     let sql = format!(
-        "SELECT {JOURNAL_PAGE_COLUMNS}, j.work_abbrev \
+        "SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev \
            FROM journal_entries j \
            JOIN works w ON w.abbrev = j.work_abbrev \
           WHERE w.author = ?1 AND j.scope != 'author' \
          UNION ALL \
-         SELECT {JOURNAL_PAGE_COLUMNS}, j.work_abbrev \
+         SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev \
            FROM journal_entries j \
           WHERE j.work_abbrev = ?1 AND j.scope = 'author' \
-         ORDER BY timestamp ASC, id ASC"
+         -- ORDER BY on a compound SELECT can itself be ambiguous when column
+         -- names collide across the union; ordinal refs sidestep that.
+         -- timestamp is the 7th selected column, id is the 1st.
+         ORDER BY 7 ASC, 1 ASC"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([author], |row| {
@@ -1611,7 +1625,7 @@ mod tests {
         let conn = mem();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS works (
-                 abbrev TEXT PRIMARY KEY, title TEXT, author TEXT
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
              );
              INSERT INTO works (abbrev, title, author) VALUES
                  ('Ham', 'Hamlet', 'Shakespeare'),
@@ -1647,7 +1661,7 @@ mod tests {
         let conn = mem();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS works (
-                 abbrev TEXT PRIMARY KEY, title TEXT, author TEXT
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
              );",
         )
         .unwrap();
