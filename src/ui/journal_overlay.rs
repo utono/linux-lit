@@ -372,7 +372,44 @@ const SOURCE_GAP_SCALE: f64 = 0.3;
 ///
 /// Only the FAMILY is pinned — `sync_reader_font` still follows the reader's
 /// SIZE, so `+`/`-` scales the journal with everything else.
+///
+/// Gentium is ALSO in `config::FONT_CYCLE`, so the reader can land on it. When
+/// that happens the journal swaps to `JOURNAL_FONT_ALT_FAMILY` — see
+/// `journal_family_for_reader`, which keeps the two surfaces distinct in both
+/// directions.
 const JOURNAL_FONT_FAMILY: &str = "Gentium Book";
+
+/// The journal's family when the READER is on `JOURNAL_FONT_FAMILY`. Charter is
+/// the natural stand-in: it is the reader's own default, so the journal simply
+/// borrows the face the reader just left rather than introducing a third one.
+const JOURNAL_FONT_ALT_FAMILY: &str = "Charter";
+
+/// The journal's family for a given reader family: its own face, unless the
+/// reader is using that face — then the alternate. Guarantees the Q&A never
+/// renders in the same family as the card behind it, whichever way the reader
+/// cycles.
+///
+/// Comparison is case-insensitive and trimmed because the reader family comes
+/// from config (hand-editable) while ours is a compile-time constant.
+fn journal_family_for_reader(reader_family: &str) -> &'static str {
+    if reader_family.trim().eq_ignore_ascii_case(JOURNAL_FONT_FAMILY) {
+        JOURNAL_FONT_ALT_FAMILY
+    } else {
+        JOURNAL_FONT_FAMILY
+    }
+}
+
+/// Size delta for `family`. The `+1` exists to compensate Gentium's narrower
+/// measure (see `JOURNAL_FONT_SIZE_DELTA`); Charter IS the reference the delta
+/// was measured against, so on the alternate face the journal takes the
+/// reader's size unchanged.
+fn journal_size_delta(family: &str) -> i32 {
+    if family == JOURNAL_FONT_ALT_FAMILY {
+        0
+    } else {
+        JOURNAL_FONT_SIZE_DELTA
+    }
+}
 
 /// Point offset applied to the reader's size for the journal only. +1: Gentium
 /// runs slightly narrower than the `FONT_CYCLE` serifs at the same nominal point
@@ -701,6 +738,9 @@ impl JournalOverlay {
         // re-applies this when the family CHANGES, and the journal's family is
         // pinned — so without this the note body/headings would keep rendering
         // in the gloss's Charter while the rest of the journal used Quattro.
+        // Pre-first-work baseline only — `sync_reader_font` re-points these at
+        // the family chosen against the ACTUAL reader font on the first work
+        // load, including the swap when the reader is on Gentium itself.
         md_tags.set_serif_family(JOURNAL_FONT_FAMILY);
         // Overlay-search highlight tags (Task 2 of the overlay-search feature).
         // Registered once here — same pattern as md_tags — so later search/step
@@ -1261,23 +1301,27 @@ impl JournalOverlay {
         self.apply_font();
     }
 
-    /// Follow the reader card's font SIZE only — the journal keeps its OWN
-    /// family (`JOURNAL_FONT_FAMILY`), which is what makes it visually distinct
-    /// from the reader card, the gloss, and the synopsis (all of which DO follow
-    /// the reader's family via `GlossOverlay::sync_reader_font`). The `family`
-    /// argument is therefore deliberately ignored; `reapply_font` still calls
-    /// this on every work load / size change so `+`/`-` scales the journal too.
+    /// Follow the reader card's font SIZE, and pick a family DISTINCT from the
+    /// reader's — what makes the journal legible as its own surface, unlike the
+    /// gloss and synopsis (which follow the reader's family outright via
+    /// `GlossOverlay::sync_reader_font`).
+    ///
+    /// Normally that is `JOURNAL_FONT_FAMILY`. Because that face is also in
+    /// `config::FONT_CYCLE`, the reader can land on it — and then the journal
+    /// takes `JOURNAL_FONT_ALT_FAMILY` instead, so the two are never the same
+    /// (`journal_family_for_reader`). The size delta swaps with the family, as
+    /// it was measured for Gentium specifically (`journal_size_delta`).
     ///
     /// Does NOT run while `begin_edit_font` has stashed the reading family for
     /// the mono edit swap — clobbering `font_family` mid-edit would corrupt the
     /// stash `end_edit_font` restores from (see the gloss overlay's sync for the
     /// full rationale).
-    pub fn sync_reader_font(&self, _family: &str, size: i32) {
+    pub fn sync_reader_font(&self, reader_family: &str, size: i32) {
         if self.pre_edit_family.borrow().is_some() {
             return;
         }
-        let family = JOURNAL_FONT_FAMILY;
-        let size = (size + JOURNAL_FONT_SIZE_DELTA).max(8);
+        let family = journal_family_for_reader(reader_family);
+        let size = (size + journal_size_delta(family)).max(8);
         let family_changed = self.font_family.borrow().as_str() != family;
         let size_changed = self.font_size.get() != size;
         if family_changed || size_changed {
@@ -2822,6 +2866,49 @@ impl JournalOverlay {
     pub fn set_journal_visual_hint(&self) {
         self.hint
             .set_text("\u{21e7}V/Esc exit \u{00b7} j/k extend \u{00b7} gg/G ends \u{00b7} y yank");
+    }
+}
+
+#[cfg(test)]
+mod journal_font_swap_tests {
+    use super::{
+        journal_family_for_reader, journal_size_delta, JOURNAL_FONT_ALT_FAMILY,
+        JOURNAL_FONT_FAMILY, JOURNAL_FONT_SIZE_DELTA,
+    };
+
+    #[test]
+    fn keeps_its_own_face_when_the_reader_uses_another() {
+        assert_eq!(journal_family_for_reader("Charter"), JOURNAL_FONT_FAMILY);
+        assert_eq!(journal_family_for_reader("Junicode SemiExp"), JOURNAL_FONT_FAMILY);
+    }
+
+    #[test]
+    fn swaps_when_the_reader_takes_its_face() {
+        // The whole point: Gentium is in FONT_CYCLE, so the reader can land on
+        // it — the journal must not then match the card behind it.
+        assert_eq!(journal_family_for_reader(JOURNAL_FONT_FAMILY), JOURNAL_FONT_ALT_FAMILY);
+        assert_ne!(journal_family_for_reader(JOURNAL_FONT_FAMILY), JOURNAL_FONT_FAMILY);
+    }
+
+    #[test]
+    fn reader_family_is_matched_loosely() {
+        // config.font_family is hand-editable, so tolerate case and padding.
+        assert_eq!(journal_family_for_reader("  gentium book "), JOURNAL_FONT_ALT_FAMILY);
+        assert_eq!(journal_family_for_reader("GENTIUM BOOK"), JOURNAL_FONT_ALT_FAMILY);
+    }
+
+    #[test]
+    fn the_size_delta_travels_with_the_family() {
+        // +1 compensates Gentium's narrower measure; Charter is the reference
+        // that delta was measured AGAINST, so it takes none.
+        assert_eq!(journal_size_delta(JOURNAL_FONT_FAMILY), JOURNAL_FONT_SIZE_DELTA);
+        assert_eq!(journal_size_delta(JOURNAL_FONT_ALT_FAMILY), 0);
+    }
+
+    #[test]
+    fn the_two_families_actually_differ() {
+        // A copy-paste slip here would silently defeat the whole mechanism.
+        assert_ne!(JOURNAL_FONT_FAMILY, JOURNAL_FONT_ALT_FAMILY);
     }
 }
 
