@@ -225,13 +225,40 @@ fn default_font_family() -> String {
     "Charter".to_string()
 }
 
+/// Reading families cycled by `F` (forward) and `Ctrl+Shift+f` (backward) —
+/// plain `f` is `OpenJournalTermInput`, not a font key. Charter MUST stay first
+/// — it is `default_font_family`, and `font_cycle_starts_at_the_default_family`
+/// asserts the pair stays in step.
+///
+/// Every entry must be an INSTALLED family that Pango resolves, because a name
+/// it cannot resolve does not warn — it silently renders the fontconfig fallback
+/// (see `ui::font_string`). "Junicode SemiExp" resolves to family `Junicode` at
+/// `stretch=semi-expanded`: that is the intended cut (445px on the reference
+/// line vs the regular cut's 407px), and the comma form `ui::font_string`
+/// builds preserves the stretch. Do not shorten it to "Junicode".
 pub const FONT_CYCLE: &[&str] = &[
     "Charter",
-    "Crimson Pro",
-    "Noto Serif",
-    "Source Serif 4",
-    "IBM Plex Serif",
-    "Cormorant Garamond",
+    // Parked (2026-07-28) — kept here rather than deleted so the set can be
+    // restored by uncommenting. All five are installed and resolve; they were
+    // taken out of rotation to make `f` a short cycle over the faces below.
+    // NOTE: of these, only Noto Serif covers the IPA — the other four fall back
+    // to Noto Sans mid-word on the OP-IPA gloss pronunciations.
+    // "Crimson Pro",
+    // "Noto Serif",
+    // "Source Serif 4",
+    // "IBM Plex Serif",
+    // "Cormorant Garamond",
+    // Junicode is drawn for medieval/Early Modern text and is the only entry
+    // here covering BOTH the archaic sorts (yogh, long-s) and the IPA — cycling
+    // to it also renders the OP-IPA gloss pronunciations without the mid-word
+    // fallback the other families take.
+    "Junicode SemiExp",
+    // TeX Gyre: metric-compatible clones of the classic book types. Parked
+    // (2026-07-28) alongside the five above — all installed and resolving,
+    // uncomment to restore.
+    // "TeX Gyre Pagella", // Palatino — 459px, closest match to Charter's 457
+    // "TeX Gyre Schola",  // Century Schoolbook — 493px, large x-height
+    // "TeX Gyre Termes",  // Times — 419px, narrowest and tightest
 ];
 
 /// linux-lit's theme is independent of the system-wide theme system.
@@ -592,6 +619,58 @@ mod merge_tests {
         // Cycling fonts forward from the default should begin at the default
         // family, so the cycle's first entry must equal it.
         assert_eq!(FONT_CYCLE.first().copied(), Some(default_font_family().as_str()));
+    }
+
+    #[test]
+    fn font_cycle_has_no_duplicates() {
+        // A repeated family makes `f` appear to "stick" for one press.
+        let mut seen = std::collections::HashSet::new();
+        for f in FONT_CYCLE {
+            assert!(seen.insert(*f), "{f} appears twice in FONT_CYCLE");
+        }
+    }
+
+    /// A cycle entry Pango cannot resolve does NOT warn — it silently renders
+    /// the fontconfig fallback, so cycling would land on a face that is not the
+    /// one named. A misspelling is the live risk here (verified: "Tex Gyre
+    /// Pagela" resolves to "Noto Sans" and this test fails on it).
+    ///
+    /// This asserts unconditionally. An earlier version gated on
+    /// `gdk::Display::default()`, which is None under `cargo test`, so it
+    /// returned early and asserted NOTHING on every run — the pangocairo
+    /// fontmap works headless, which is the whole point. If the fonts are ever
+    /// absent from a CI image, skip by name rather than reintroducing a guard
+    /// that silently disables the check.
+    #[test]
+    fn font_cycle_entries_resolve_to_themselves() {
+        // NOT gated on a gdk::Display: there is none under `cargo test`, and
+        // gating on it made this assert nothing at all on every run. The
+        // pangocairo fontmap works headless, which is the whole point.
+        use gtk4::prelude::*;
+        let fontmap = pangocairo::FontMap::default();
+        let ctx = fontmap.create_context();
+        for entry in FONT_CYCLE {
+            let desc = pango::FontDescription::from_string(&crate::ui::font_string(entry, 16));
+            let Some(font) = fontmap.load_font(&ctx, &desc) else {
+                continue; // fonts unavailable in this environment
+            };
+            let got = font.describe().family().unwrap_or_default().to_string();
+            // A width-axis entry ("Junicode SemiExp") legitimately resolves to
+            // the BASE family plus a non-normal stretch, so accept the name with
+            // its trailing width token removed — but nothing looser, or a typo
+            // ("Tex Gyre Pagela") slips through on a prefix match.
+            let base = entry
+                .strip_suffix(" SemiExp")
+                .or_else(|| entry.strip_suffix(" SemiCond"))
+                .or_else(|| entry.strip_suffix(" Cond"))
+                .or_else(|| entry.strip_suffix(" Exp"))
+                .unwrap_or(entry);
+            assert!(
+                got.eq_ignore_ascii_case(entry) || got.eq_ignore_ascii_case(base),
+                "FONT_CYCLE entry {entry:?} resolved to {got:?} — not installed, \
+                 or misspelled; either way `f` would silently render a fallback",
+            );
+        }
     }
 
     #[test]
