@@ -60,6 +60,7 @@ pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ]),
     ("Misc", &[
         ("Ctrl+\\", "open_picker: work-wide Q&A picker"),
+        ("Alt+t", "cycle Q&A picker scope (scene → work → author)"),
         ("+", "copy_work_division → clipboard"),
         ("Esc", "close vocab_popup / jump to source_text"),
         ("Ctrl+/", "close this legend"),
