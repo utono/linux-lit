@@ -1484,10 +1484,15 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
     //
     // Only the single-column path needs this: `column_split` already clamps at
     // breaks for the two-column reader, and `page_table`/`prose_pages` bake the
-    // boundary into the stored spreads. This is the LIVE engine, which prose
-    // falls back to whenever the pinned table is dropped — e.g. cycling the font
-    // changes the layout fingerprint, and Bleak House then rendered
-    // "CHAPTER II / In Fashion" mid-page.
+    // boundary into the stored spreads.
+    //
+    // SCOPE: this serves single-column NON-PROSE works — bible_book, epic,
+    // poem, narrative_poem, verse_essay. Single-column PROSE returns earlier,
+    // from `page_forward`'s `column_count() == 1 && is_prose()` arm (which
+    // calls `prose_next_boundary`, carrying its own `is_chapter` clamp), so it
+    // never reaches here. An earlier version of this comment credited a Bleak
+    // House mid-page chapter heading; that is prose and cannot be fixed by this
+    // code — see the follow-up commit.
     for line in (top + 1)..=last_visible.min(line_count.saturating_sub(1)) {
         if state.is_section_start(line) {
             return NextPage { new_top: line, next_dialogue: line };
