@@ -3114,6 +3114,15 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
     s.journal_picker.set_header_scope(s.journal_picker_scope.label());
     // Clear the search filter text. Row sets differ between scopes, so a stale
     // filter silently hiding a scope's contents reads as "this scope is empty".
+    //
+    // BORROW SAFETY: `set_text` fires this entry's `changed` handler
+    // SYNCHRONOUSLY, and we are inside `&mut AppState` (the Alt+t path holds a
+    // `borrow_mut`). That is only safe because the handler at
+    // `app/mod.rs` (the sole `connect_changed` on this entry) uses
+    // `try_borrow`, so the re-entry fails and no-ops instead of aborting the
+    // process. Holding a borrow across `set_text` is what caused the RefCell
+    // abort documented at the BORROW SAFETY notes above — do NOT relax that
+    // `try_borrow` to a `borrow`, and do not add a second handler here.
     s.journal_picker.search_entry().set_text("");
 }
 
