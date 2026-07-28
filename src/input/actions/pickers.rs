@@ -1096,6 +1096,16 @@ pub(crate) fn delete_bookmark(
     }
 }
 
+/// The author column's display form: the LAST WORD of the stored author name.
+///
+/// `"Charles Dickens"` → `"Dickens"`; a mononym like `"Shakespeare"` is its
+/// own surname. Deliberately simple — correct for every author in lit.db, and
+/// the picker needs the horizontal space for the entry's identifying line. It
+/// would mis-split a particle surname ("van Gogh"), which does not occur.
+pub(crate) fn author_surname(author: &str) -> &str {
+    author.split_whitespace().last().unwrap_or("")
+}
+
 /// Alt+t inside the Q&A picker: advance the scope, rebuild the list, retitle
 /// the header. Selection resets to the first row and the filter is cleared —
 /// the row sets differ between scopes, so preserving either is meaningless,
@@ -1126,6 +1136,17 @@ mod tests {
         assert!(seen.contains(&"teacher-generic"));
         assert!(seen.contains(&"inner-monologue"));
         assert_eq!(seen.len(), 4, "one entry per type, no duplicates: {seen:?}");
+    }
+
+    #[test]
+    fn author_surname_takes_the_last_word() {
+        use super::author_surname;
+        assert_eq!(author_surname("Charles Dickens"), "Dickens");
+        assert_eq!(author_surname("Diarmaid MacCulloch"), "MacCulloch");
+        // A mononym is its own surname — Shakespeare is the dominant corpus.
+        assert_eq!(author_surname("Shakespeare"), "Shakespeare");
+        assert_eq!(author_surname(""), "");
+        assert_eq!(author_surname("  Jonathan  Swift  "), "Swift");
     }
 
     /// Tightest -> widest, wrapping. Mirrors GlossPickerFilter's cycle test.

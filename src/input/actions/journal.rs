@@ -3072,19 +3072,13 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
             .into_iter()
             .map(|p| (p, work_abbrev.clone(), None))
             .collect(),
-        crate::input::actions::pickers::JournalPickerScope::Author => {
-            let author = s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default();
-            let titles = crate::db::queries::load_work_titles_or_default();
-            conn.as_ref()
-                .and_then(|c| crate::db::journal::find_author_all_pages(c, &author).ok())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(p, work)| {
-                    let title = titles.get(&work).cloned();
-                    (p, work, title)
-                })
-                .collect()
-        }
+        crate::input::actions::pickers::JournalPickerScope::Author => conn
+            .as_ref()
+            .and_then(|c| crate::db::journal::find_all_journal_pages(c).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(p, work, title, _author)| (p, work, Some(title)))
+            .collect(),
     };
 
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
