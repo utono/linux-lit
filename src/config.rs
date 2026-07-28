@@ -236,8 +236,20 @@ fn default_font_family() -> String {
 /// `stretch=semi-expanded`: that is the intended cut (445px on the reference
 /// line vs the regular cut's 407px), and the comma form `ui::font_string`
 /// builds preserves the stretch. Do not shorten it to "Junicode".
+///
+/// Use the exact PANGO family name, which is not always the name the foundry
+/// or the package uses: "Charis" (not "Charis SIL" — that resolves to Noto
+/// Sans). `font_cycle_entries_resolve_to_themselves` catches these, but only
+/// on a machine where the font is installed.
 pub const FONT_CYCLE: &[&str] = &[
     "Charter",
+    // Charis SIL. The Pango family is "Charis" — asking for "Charis SIL"
+    // resolves to Noto Sans, silently. A legibility-first publishing serif with
+    // FULL coverage of both the archaic sorts (yogh, long-s) and the IPA, so
+    // cycling to it also renders the OP-IPA gloss pronunciations without the
+    // mid-word fallback Charter takes. 463px on the reference line against
+    // Charter's 457 — near enough to need no size compensation.
+    "Charis",
     // Parked (2026-07-28) — kept here rather than deleted so the set can be
     // restored by uncommenting. All five are installed and resolve; they were
     // taken out of rotation to make `f` a short cycle over the faces below.
