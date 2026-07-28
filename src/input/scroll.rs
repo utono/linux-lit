@@ -829,7 +829,7 @@ fn scroll_right_view_to_split(
 /// replaced, which makes it look like an upper bound; it is not. It is read at
 /// exactly two sites (the `needed`/`rneeded` clamps in this file), both about
 /// the vadjustment's reachable range. Since 2026-07-28 both fill reserves are
-/// 47 — larger than this 46 — with no interaction. Verified when they crossed:
+/// 52 — larger than this 46 — with no interaction. Verified when they crossed:
 /// a comment referencing a value is where a silent coupling would hide.
 pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 
@@ -844,12 +844,12 @@ pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 /// clip, and last-visible-line site must use this constant — a mismatch makes
 /// the clip disagree with the fill (or the prose validator reject the grid).
 ///
-/// 22 -> 47 (2026-07-28, in four passes): the 25px taken off
-/// `TOP_SPACER_HEIGHT` (74 -> 49) moves here, so the page keeps the SAME usable
+/// 22 -> 52 (2026-07-28, in five 5px passes): the 30px taken off
+/// `TOP_SPACER_HEIGHT` (74 -> 44) moves here, so the page keeps the SAME usable
 /// height (and therefore the same row grid) while the foot gains the breathing
 /// room the head gave up. Raising this alone would cost a line per page; the
 /// two constants must move together.
-pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 47;
+pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 52;
 
 /// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
 /// single-column path (whose clip covers the full descender_guard +
@@ -864,11 +864,11 @@ pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 47;
 /// back toward 40. The two-column fill sites AND `validate_spreads` must both use
 /// this constant or generation falls back to no-table.
 ///
-/// 22 -> 47 (2026-07-28, in four passes): mirrors
-/// `SINGLE_COLUMN_BOTTOM_MARGIN` — the 25px removed from `TOP_SPACER_HEIGHT`
+/// 22 -> 52 (2026-07-28, in five 5px passes): mirrors
+/// `SINGLE_COLUMN_BOTTOM_MARGIN` — the 30px removed from `TOP_SPACER_HEIGHT`
 /// moves to the foot on this layout too, so the two-column spread keeps its
 /// usable height and line count.
-pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 47;
+pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 52;
 
 /// The pixel reserve the two-column fill leaves BELOW the last possible line:
 /// `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` — exactly the band

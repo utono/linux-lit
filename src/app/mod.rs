@@ -1247,19 +1247,19 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// fewer row per page — the pinned play_pages/prose_pages tables must be
 /// regenerated at the new geometry to match (LIT_GEN_PAGE_TABLE / re-import).
 ///
-/// 74 -> 64 -> 59 -> 54 -> 49 (2026-07-28, in four passes): the gap under the
-/// running head read as too airy on both the one- and two-column layouts. The
-/// 25px is not reclaimed as extra text — it moves to the foot, where the two
-/// bottom reserves each rise by the same 25 (`SINGLE_COLUMN_BOTTOM_MARGIN`,
-/// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 47), so the usable height is unchanged and
+/// 74 -> 44 (2026-07-28, in five 5px passes): the gap under the running head
+/// read as too airy on both the one- and two-column layouts. The 30px is not
+/// reclaimed as extra text — it moves to the foot, where the two bottom
+/// reserves each rise by the same 30 (`SINGLE_COLUMN_BOTTOM_MARGIN`,
+/// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 52), so the usable height is unchanged and
 /// the row grid is preserved. Keep the three in step.
 ///
-/// FLOOR — 49 is CLOSE to it. The strip holds the 14px running-head labels AND
-/// the `card_focus_rule` at margin-top 36 (+2px tall = 38), leaving 11px of
-/// clearance here. Below ~40 the rule collides with the first text line, so one
-/// more 5px pass is the last that fits: after that, drop the rule's margin (it
-/// only shows in the chat layout) before shrinking the strip again.
-pub const TOP_SPACER_HEIGHT: i32 = 49;
+/// Everything in the strip now CENTRES itself (the running-head labels and, as
+/// of this pass, `card_focus_rule` — it was pinned with a fixed 36px top margin
+/// that capped how far the strip could shrink). So there is no arithmetic floor
+/// left, only a typographic one: the labels are 14px, and below ~24 the strip
+/// stops reading as a head band at all.
+pub const TOP_SPACER_HEIGHT: i32 = 44;
 
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
@@ -1681,14 +1681,14 @@ pub fn build_window(
     card_focus_rule.add_css_class("focus-rule");
     card_focus_rule.set_size_request(24, 2);
     card_focus_rule.set_halign(gtk4::Align::Center);
-    card_focus_rule.set_valign(gtk4::Align::Start);
-    // Sits INSIDE the top spacer: this margin + the 2px height (= 38) must stay
-    // under TOP_SPACER_HEIGHT, or the rule collides with the first text line.
-    // The strip has been shrinking (74 -> 49 over 2026-07-28), so the clearance
-    // is now 11px: ONE more 5px pass fits, after which this margin must come
-    // down FIRST. Deliberately not derived from TOP_SPACER_HEIGHT — the rule is
-    // positioned by eye against the running-head labels, not by arithmetic.
-    card_focus_rule.set_margin_top(36);
+    // CENTRED in the top spacer, like the running-head labels beside it, rather
+    // than pinned to the top with a fixed margin. It was `Align::Start` +
+    // `margin_top(36)`, which had to stay under TOP_SPACER_HEIGHT or the rule
+    // collided with the first text line — and the strip shrank 74 -> 44 over
+    // 2026-07-28, spending that 38px budget down to 6px of clearance. Centring
+    // makes the rule track the strip's height automatically, so the spacer can
+    // shrink further without this needing to move again.
+    card_focus_rule.set_valign(gtk4::Align::Center);
     card_focus_rule.set_visible(false);
     page_turn_overlay.add_overlay(&card_focus_rule);
 
