@@ -4409,6 +4409,24 @@ pub fn display_work_at_with_prepared(
     crate::input::page_table::load_for_work(state);
     crate::input::prose_pages::load_for_prose_work(state);
 
+    // A jump landing (concordance/echo cross-work, toggle_previous_work) set
+    // `page_top_line = buf_idx` above — the target line forced to the top of
+    // the page, off-grid by construction. It could not read the table there:
+    // the tables only just loaded, ~40 lines below that assignment. This is the
+    // first point where BOTH the target line and the grid are known, so snap
+    // here. Gated on `target_line_id` so ordinary work loads and the
+    // saved-position resume (which reads the table itself) are untouched.
+    //
+    // No-op when no table is active — including the cold-start case where
+    // `prose_layout_fingerprint` misses because the window has no size yet.
+    // `resnap_prose_to_table` stays the safety net for that.
+    if target_line_id.is_some() {
+        let (top, off) =
+            crate::input::navigation::canonical_page_top_offset_for(state, state.current_line);
+        state.page_top_line = top;
+        state.page_top_offset = off;
+    }
+
     // Persistent bottom toast retired: the running-head strip is now the
     // always-visible position indicator. Keep the flag false so the transient-
     // toast borrow/restore never treats an (unpainted, empty) pill as

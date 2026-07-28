@@ -210,6 +210,12 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     // settles (see app.rs deferred-layout-refresh branch).
 
     let scroll_to = state.page_top_line;
+    // A prose page top is `(line, row-offset px)`. Scrolling to the LINE's top
+    // and dropping the offset would discard the cross-work jump landing's snap
+    // (see display_work_at_with_prepared) and render a window the pagination
+    // never chose. `+ 0` for every pre-existing caller — page_top_offset is 0
+    // unless a prose grid put a boundary mid-paragraph.
+    let scroll_off = state.page_top_offset;
     let line_count = state.effective_line_count();
     let is_prose = state.is_prose();
     let one_section_per_page = state.one_section_per_page();
@@ -230,7 +236,7 @@ pub fn update_highlight_and_show(state: &mut AppState) {
             let (y, _h) = text_view.line_yrange(&iter);
             let adj = scrolled_window.vadjustment();
             let max_scroll = (adj.upper() - adj.page_size()).max(0.0);
-            adj.set_value((y as f64).max(0.0).min(max_scroll));
+            adj.set_value(((y + scroll_off) as f64).max(0.0).min(max_scroll));
         }
         // Show the scrolled window so GTK can complete the layout pass.
         scrolled_window.set_visible(true);
@@ -250,9 +256,26 @@ pub fn update_highlight_and_show(state: &mut AppState) {
 /// Update highlight and center the current line on screen.
 pub fn update_highlight_and_center(state: &mut AppState) {
     update_highlight(state);
-    let lpp = lines_per_page(state);
-    let new_top = state.current_line.saturating_sub(lpp / 2);
-    set_page_instant(state, new_top);
+    // On a pinned prose grid the landing is the STORED page containing the
+    // cursor, not a centring guess. `current_line - lpp/2` is off-grid by
+    // construction and can even land on the PREVIOUS page's tail, which is how
+    // a concordance/echo/vocab jump dropped the reader out of table mode
+    // (2026-07-27 audit). Deliberate, approved consequence: on those works the
+    // cursor is no longer vertically centred after a jump — it sits where the
+    // stored page puts it, matching what page-turning already does.
+    //
+    // Reads `prose_table_boundary_for_line` rather than
+    // `canonical_page_top_offset_for` on purpose: plays are NOT part of this
+    // defect and must keep centring, so the play table must not be consulted.
+    if let Some((top, off)) =
+        crate::input::prose_pages::prose_table_boundary_for_line(state, state.current_line)
+    {
+        crate::input::scroll::set_page_instant_offset(state, top, off);
+    } else {
+        let lpp = lines_per_page(state);
+        let new_top = state.current_line.saturating_sub(lpp / 2);
+        set_page_instant(state, new_top);
+    }
     auto_show_vocab_popup(state);
 }
 

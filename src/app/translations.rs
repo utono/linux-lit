@@ -420,6 +420,26 @@ fn hide_translations(state: &mut AppState) {
         return;
     }
 
+    // Single-column: the prose grid becomes active again the moment
+    // translations are gone (active_prose_page_table requires
+    // !translations_visible, cleared by the strip above). Re-anchor onto it
+    // BEFORE the pixel anchor below, so a pinned prose work lands on a stored
+    // page instead of wherever the cursor's old screen-y happens to fall.
+    // No-op on works with no table, which is every work that has translations
+    // today (all 43 are plays) — this is a latent-trap fix, not a live one.
+    if let Some((top, off)) =
+        crate::input::prose_pages::prose_table_boundary_for_line(state, state.current_line)
+    {
+        // Land on the CURSOR's stored page explicitly rather than leaning on
+        // resnap_prose_to_table: the remapped (line, 0) pair can coincidentally
+        // satisfy resnap's already-on-grid check and no-op, leaving the reader
+        // on a boundary that is real but is not the one holding the cursor.
+        crate::input::scroll::set_page_instant_offset(state, top, off);
+        rebuild_line_number_gutter(state);
+        state.card_vbox.set_opacity(1.0);
+        return;
+    }
+
     // Defer viewport anchor to an idle callback — GTK hasn't re-laid the
     // buffer yet so line_yrange and adjustment.upper are stale right now.
     let cursor_line = state.current_line;
@@ -498,6 +518,11 @@ fn strip_translation_lines(state: &mut AppState) {
     let old_top = state.page_top_line;
     state.current_line = map_line_before_insert(old_current, &state.translation_lines);
     state.page_top_line = map_line_before_insert(old_top, &state.translation_lines);
+    // The remapped top is a LINE index; any offset belonged to the
+    // translations-visible layout and is meaningless against the restored
+    // buffer. Zero it so a stale value cannot survive the toggle — the
+    // single-column caller re-derives the real one from the grid.
+    state.page_top_offset = 0;
 
     crate::logging::log(&format!(
         "TRANSLATIONS_HIDE: line remap current {}→{} page_top {}→{} buf_lines {}→{}",
