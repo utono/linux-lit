@@ -970,7 +970,7 @@ fn handle_picker_key(
                     true
                 }
                 InputMode::JournalPicker => {
-                    crate::input::actions::journal::confirm_picker(state);
+                    crate::input::actions::journal::confirm_picker(state, tokio_handle);
                     true
                 }
                 InputMode::RecentQaPicker => {

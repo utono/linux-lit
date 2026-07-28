@@ -16,6 +16,13 @@ pub struct JournalRow {
     /// otherwise indistinguishable. `None` in scene/work scope leaves the
     /// row rendering exactly as before.
     pub work_label: Option<String>,
+    /// The entry's owning work ABBREV — distinct from `work_label`, which is
+    /// a display title and not usable for loading. `Some(abbrev)` only when
+    /// the row is a genuinely different work than the one currently loaded
+    /// (possible in AUTHOR scope, the one cross-work list); `None` for
+    /// scene/work-scope rows and same-work rows in author scope, which
+    /// `confirm_picker` keeps on today's exact `land_on_page` path.
+    pub work_abbrev: Option<String>,
 }
 
 pub struct JournalQaPicker {

@@ -3061,7 +3061,7 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
 
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
-        .map(|(p, _work, work_title)| {
+        .map(|(p, row_work, work_title)| {
             let band = match band_for_page(p) {
                 JournalBand::Author(_) => JournalBand::Author(
                     s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default(),
@@ -3093,12 +3093,19 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
                 p.question.clone()
             };
             let prefix: String = label_text.chars().take(80).collect();
+            // Only a genuinely different work needs the cross-work confirm
+            // path; same-work rows (scene/work scope, and same-work rows in
+            // author scope) leave this None so confirm_picker's fast path is
+            // untouched.
+            let row_work_abbrev =
+                if *row_work != work_abbrev { Some(row_work.clone()) } else { None };
             crate::ui::journal_picker::JournalRow {
                 id: p.id,
                 band,
                 question_prefix: prefix,
                 scene_label,
                 work_label: work_title.clone(),
+                work_abbrev: row_work_abbrev,
             }
         })
         .collect();
@@ -3150,26 +3157,64 @@ pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
 /// Confirm the picker selection: switch the journal overlay to the chosen page's
 /// band, land on that exact page (matched by id within the band), hide the
 /// picker, return to the journal overlay.
-pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
+///
+/// AUTHOR scope is the one cross-work list, so the selected row may belong to
+/// a different work than the one currently loaded. A same-work row (`row.
+/// work_abbrev == None`) keeps today's exact path: hide the picker, switch to
+/// `InputMode::JournalOverlay`, `land_on_page` directly — no reload, no async
+/// hop. A cross-work row instead follows `confirm_recent_qa_picker`'s shape:
+/// capture the pick inside a scoped borrow that drops before the loader runs,
+/// then `load_arkangel_edition_then` + `open_journal_hit` (which already
+/// handle the same-work skip, MPV discovery, and the error toast).
+pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>, tokio_handle: &tokio::runtime::Handle) {
     let selected = state.borrow().journal_picker.selected_index();
-    let mut s = state.borrow_mut();
-    s.journal_picker.hide();
-    s.input_mode = InputMode::JournalOverlay;
-    // Confirming always reveals the overlay (land_on_page -> render_current ->
-    // show_page), so the reader-initiated flag has done its job. Clear it but
-    // KEEP return_pos — closing the overlay later (Esc) restores the reader.
-    s.journal.picker_from_reader = false;
 
-    let Some(idx) = selected else {
-        // Nothing selected — just return to the overlay, re-render current band.
-        render_current(&mut s);
+    // Capture what's needed from the selected row inside a scoped borrow, then
+    // drop it — the cross-work branch calls load_arkangel_edition_then, which
+    // spawns async work, and must not run with a borrow held.
+    let picked = {
+        let mut s = state.borrow_mut();
+        s.journal_picker.hide();
+        // Confirming always reveals the overlay (land_on_page -> render_current
+        // -> show_page), so the reader-initiated flag has done its job. Clear it
+        // but KEEP return_pos — closing the overlay later (Esc) restores the
+        // reader.
+        s.journal.picker_from_reader = false;
+
+        let Some(idx) = selected else {
+            s.input_mode = InputMode::JournalOverlay;
+            // Nothing selected — just return to the overlay, re-render current band.
+            render_current(&mut s);
+            return;
+        };
+        let row = &s.journal_picker.items[idx];
+        (row.band.clone(), row.id, row.work_abbrev.clone())
+    };
+    let (band, target_id, cross_work_abbrev) = picked;
+
+    let Some(other_abbrev) = cross_work_abbrev else {
+        // Same-work row — today's exact path.
+        let mut s = state.borrow_mut();
+        s.input_mode = InputMode::JournalOverlay;
+        land_on_page(&mut s, band, target_id);
         return;
     };
-    let (band, target_id) = {
-        let row = &s.journal_picker.items[idx];
-        (row.band.clone(), row.id)
-    };
-    land_on_page(&mut s, band, target_id);
+
+    // Cross-work row: drop to Reader so the loader's post-load open_journal_hit
+    // reveals the journal overlay from a clean state, matching
+    // confirm_recent_qa_picker.
+    {
+        let mut s = state.borrow_mut();
+        s.input_mode = InputMode::Reader;
+    }
+    let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+    crate::input::actions::pickers::load_arkangel_edition_then(
+        state,
+        tokio_handle,
+        other_abbrev,
+        current_abbrev,
+        move |state| crate::input::actions::corpus_search::open_journal_hit(state, target_id, ""),
+    );
 }
 
 /// Open the cross-work "recent Q&A" jump-back picker from the reading card
