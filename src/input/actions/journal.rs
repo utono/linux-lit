@@ -3105,6 +3105,9 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
 
     s.journal_picker.set_items(rows);
     s.journal_picker.set_header_scope(s.journal_picker_scope.label());
+    // Clear the search filter text. Row sets differ between scopes, so a stale
+    // filter silently hiding a scope's contents reads as "this scope is empty".
+    s.journal_picker.search_entry().set_text("");
 }
 
 /// Build the Q&A picker rows for the current scope, populate + show the

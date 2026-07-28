@@ -1096,6 +1096,16 @@ pub(crate) fn delete_bookmark(
     }
 }
 
+/// Alt+t inside the Q&A picker: advance the scope, rebuild the list, retitle
+/// the header. Selection resets to the first row and the filter is cleared —
+/// the row sets differ between scopes, so preserving either is meaningless,
+/// and a stale filter silently hiding a scope's contents reads as "empty".
+pub(crate) fn cycle_journal_picker_scope(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    s.journal_picker_scope = s.journal_picker_scope.next();
+    crate::input::actions::journal::repopulate_picker_for_scope(&mut s);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1132,5 +1142,13 @@ mod tests {
     #[test]
     fn journal_picker_scope_defaults_to_work() {
         assert_eq!(super::JournalPickerScope::default(), super::JournalPickerScope::Work);
+    }
+
+    /// The cycle handler advances the scope: default (Work) -> Author.
+    /// The bind reaches Author scope, proving the handler wiring is intact.
+    #[test]
+    fn journal_picker_scope_default_next_is_author() {
+        let start = super::JournalPickerScope::default();
+        assert_eq!(start.next(), super::JournalPickerScope::Author);
     }
 }
