@@ -3577,6 +3577,13 @@ pub fn display_work_at_with_prepared(
     // toast. `gloss_covers_cursor` also guards on the abbrev; this is the root
     // fix, that is the belt.
     state.gloss_context = None;
+    // Same class: the synopsis→journal `\` toggle's origin band addresses the
+    // OLD work's (div1, div2). Every in-journal work switch today runs
+    // close_overlay first (which clears this), and synopsis_cache is replaced
+    // wholesale below, so a stale band would toast rather than open the wrong
+    // work's synopsis — this makes that structurally true instead of
+    // incidentally true.
+    state.journal_from_synopsis = None;
     // A vocab-sentence loop never survives a work switch (its buffer lines,
     // media id, and ab-loop all belong to the old work).
     crate::input::vocab_loop::exit_vocab_loop(state);
