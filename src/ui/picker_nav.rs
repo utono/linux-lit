@@ -13,13 +13,6 @@ pub(crate) const PICKER_LIST_MAX_H: i32 = 750;
 /// constant so the Q&A picker and the journal-move picker cannot drift apart.
 /// Other pickers keep `build_picker_card`'s 900.
 pub(crate) const JOURNAL_PICKER_WIDTH: i32 = 1180;
-/// Display budget for the five-column rows' elastic TAG column, in characters.
-/// See the `max_width_chars` note in `five_column_row` for why setting it at
-/// all is load-bearing (it forces the xalign-respecting sizing path). The value
-/// is tuned to the room left at `JOURNAL_PICKER_WIDTH` once the four fixed
-/// columns take their share; `ellipsize` still cuts to the real allocation.
-pub(crate) const TAG_MAX_CHARS: i32 = 44;
-
 /// Build the hidden full-bleed scrim box (`library-picker-scrim`) that sits
 /// behind the scrim-style pickers/overlays. Byte-identical (modulo source
 /// formatting) at every scrim site.
@@ -244,12 +237,17 @@ pub(crate) fn five_column_row(
     div: &str,
     kind: &str,
 ) -> GtkBox {
+    // NO `ellipsize` on the fixed columns. A SizeGroup sizes itself from its
+    // members' NATURAL width, but an ellipsizing label reports a MINIMUM width
+    // of about one character — so the group's negotiated width is unstable and
+    // the columns visibly jitter row to row, which in turn shoves the elastic
+    // tag column around. These columns hold short strings (a surname, a work
+    // title, "1.4", "passage") and never need to ellipsize.
     let fixed = |text: &str, group: &SizeGroup, css: &str| {
         let l = Label::builder()
             .label(text)
             .halign(Align::Start)
             .xalign(0.0)
-            .ellipsize(gtk4::pango::EllipsizeMode::End)
             .build();
         l.add_css_class(css);
         group.add_widget(&l);
@@ -259,29 +257,36 @@ pub(crate) fn five_column_row(
     let author_l = fixed(author, &groups.author, "picker-item-detail");
     let work_l = fixed(work, &groups.work, "picker-item-detail");
 
-    // `max_width_chars` is load-bearing, not cosmetic. Without it a
-    // NON-truncating tag (its natural width fits without an ellipsis) is
-    // measured through a different GtkLabel/Pango code path than a truncating
-    // one, and that path does not honor `xalign(0.0)` inside a `SizeGroup` +
-    // `hexpand` row: the text drifts right by an amount that depends on how
-    // the OTHER size-grouped columns settled in an earlier layout pass.
-    // Reproduced on screen — "Bow your knees." and "I never saw", both too
-    // short to ever ellipsize, floated ~100px right of every truncating row.
-    // Setting it forces every row through the constrained-width
-    // (ellipsize-aware) path, which does respect `xalign`.
+    // NO `ellipsize` HERE — truncation happens in Rust, above. That is the
+    // whole point, and reverting to an ellipsizing label reintroduces a
+    // measurable misalignment.
     //
-    // The VALUE is a display budget, not a hard cap on the allocation:
-    // `hexpand` still lets the widget fill the row, and `ellipsize` still cuts
-    // to whatever width it actually gets. Sized to the room the row affords at
-    // `JOURNAL_PICKER_WIDTH` after the four fixed columns take their share —
-    // verified on screen at production geometry (1920x1236).
+    // A GtkLabel whose text is short enough that `ellipsize` never fires is
+    // measured and allocated through a DIFFERENT Pango code path than one that
+    // actually truncates, and that path does not honor `xalign(0.0)` inside a
+    // `SizeGroup` + `hexpand` row. The two paths disagree by a constant offset,
+    // so the list splits into two ragged left edges along the truncation
+    // boundary. Pixel-measured on screen at production geometry: with
+    // `ellipsize` + `max_width_chars(20)` the split was ~100px; widening to 44
+    // only shrank it to ~40px (truncating rows at x≈870, short rows at x≈909)
+    // — mitigation, not a fix.
+    //
+    // Pre-truncating to `TAG_MAX_CHARS` means EVERY label is short enough to
+    // never ellipsize, so every row takes the same path and `xalign(0.0)`
+    // holds. `hexpand` still lets the widget fill the row.
+    // Deliberately the SAME shape as `two_label_row`'s primary label, which
+    // renders correctly left-aligned in the eight other pickers:
+    // `halign(Start)` + `hexpand(true)` + `ellipsize(End)`. Earlier attempts
+    // here (Align::Fill, max_width_chars, pre-truncation) all chased the
+    // symptom in this label; the actual cause was the FIXED columns
+    // ellipsizing, which destabilised their SizeGroups. Fix that and this
+    // label needs nothing special.
     let tag_l = Label::builder()
         .label(tag)
         .halign(Align::Start)
         .xalign(0.0)
         .hexpand(true)
         .ellipsize(gtk4::pango::EllipsizeMode::End)
-        .max_width_chars(TAG_MAX_CHARS)
         .build();
 
     let div_l = fixed(div, &groups.div, "picker-item-detail");
@@ -389,4 +394,6 @@ mod tests {
         assert_eq!(wrap_index(0, 0), 0);
         assert_eq!(wrap_index(-1, 0), 0);
     }
+
+
 }
