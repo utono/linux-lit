@@ -3011,25 +3011,57 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     );
 }
 
-/// Build the Q&A picker rows for the current work, populate + show the picker,
-/// and switch to `InputMode::JournalPicker`. Returns false (after a toast) when
-/// the journal is empty, so the caller can leave state untouched. Shared by the
-/// overlay (`open_picker`) and reader (`open_picker_from_reader`) entry points.
-fn populate_and_show_picker(s: &mut AppState) -> bool {
+/// Rebuild `s.journal_picker`'s rows for the CURRENT `s.journal_picker_scope`
+/// and retitle the header to match — but do not show the picker. Split out of
+/// `populate_and_show_picker` so a scope-cycle bind (Alt+t) can rebuild the
+/// list of an already-open picker without re-running `show()` (which would
+/// reset the filter/selection). Keeps the existing row-mapping logic (band
+/// resolution, `is_passage` labeling, `first_passage_line`, the 80-char
+/// prefix) identical across all three scopes — only the SOURCE of pages
+/// changes, plus `work_label` in Author scope.
+pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
     let work_abbrev = current_work_abbrev(s);
-    let pages = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
-        .unwrap_or_default();
+    let conn = crate::db::queries::open_db().ok();
 
-    if pages.is_empty() {
-        crate::input::navigation::show_chapter_toast_secs(&s, "No journal pages yet — press Ctrl+a to ask", 3);
-        return false;
-    }
+    // (JournalPage, work_abbrev, work_title) triples, uniform across scopes so
+    // the row-mapping closure below doesn't need to branch on scope again.
+    let pages: Vec<(crate::db::journal::JournalPage, String, Option<String>)> = match s
+        .journal_picker_scope
+    {
+        crate::input::actions::pickers::JournalPickerScope::Scene => {
+            let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(s);
+            conn.as_ref()
+                .and_then(|c| crate::db::journal::find_scene_band_pages(c, &work_abbrev, d1, d2).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| (p, work_abbrev.clone(), None))
+                .collect()
+        }
+        crate::input::actions::pickers::JournalPickerScope::Work => conn
+            .as_ref()
+            .and_then(|c| crate::db::journal::find_all_pages_ordered(c, &work_abbrev).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (p, work_abbrev.clone(), None))
+            .collect(),
+        crate::input::actions::pickers::JournalPickerScope::Author => {
+            let author = s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default();
+            let titles = crate::db::queries::load_work_titles_or_default();
+            conn.as_ref()
+                .and_then(|c| crate::db::journal::find_author_all_pages(c, &author).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(p, work)| {
+                    let title = titles.get(&work).cloned();
+                    (p, work, title)
+                })
+                .collect()
+        }
+    };
 
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
-        .map(|p| {
+        .map(|(p, _work, work_title)| {
             let band = match band_for_page(p) {
                 JournalBand::Author(_) => JournalBand::Author(
                     s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default(),
@@ -3066,11 +3098,24 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
                 band,
                 question_prefix: prefix,
                 scene_label,
+                work_label: work_title.clone(),
             }
         })
         .collect();
 
     s.journal_picker.set_items(rows);
+    s.journal_picker.set_header_scope(s.journal_picker_scope.label());
+}
+
+/// Build the Q&A picker rows for the current scope, populate + show the
+/// picker, and switch to `InputMode::JournalPicker`. Always opens on
+/// `JournalPickerScope::Work` (Alt+t cycles once open). An empty scope no
+/// longer refuses to open — the picker shows a non-selectable empty-state row
+/// so Alt+t can widen from it. Shared by the overlay (`open_picker`) and
+/// reader (`open_picker_from_reader`) entry points.
+fn populate_and_show_picker(s: &mut AppState) -> bool {
+    s.journal_picker_scope = crate::input::actions::pickers::JournalPickerScope::default();
+    repopulate_picker_for_scope(s);
     s.journal_picker.show();
     s.input_mode = InputMode::JournalPicker;
     true
@@ -3078,7 +3123,6 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
 
 /// Open the Q&A picker over the journal overlay (Alt+p). Lists every page in the
 /// work (work pages first, then scene pages by scene), each by creation time.
-/// Empty journal -> toast, stay in the overlay.
 pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal.picker_from_reader = false;
@@ -3088,7 +3132,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
 /// Open the Q&A picker directly from the READING CARD (Alt+j), without first
 /// opening the journal overlay. Records the reader return position and flags the
 /// picker as reader-initiated so confirm reveals the overlay and Escape returns
-/// to the reader. Empty journal -> toast, stay in the reader.
+/// to the reader.
 pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.current_work.is_none() {
@@ -3097,11 +3141,7 @@ pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.picker_from_reader = true;
-    if !populate_and_show_picker(&mut s) {
-        // Empty journal: nothing shown, drop the half-set reader-return state.
-        s.journal.picker_from_reader = false;
-        s.journal.return_pos = None;
-    }
+    populate_and_show_picker(&mut s);
 }
 
 /// Confirm the picker selection: switch the journal overlay to the chosen page's
