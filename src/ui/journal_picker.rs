@@ -48,10 +48,10 @@ impl JournalQaPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = crate::ui::picker_nav::build_picker_card();
+        let picker_box = crate::ui::picker_nav::build_picker_card_wide(crate::ui::picker_nav::JOURNAL_PICKER_WIDTH);
 
         let search_entry = Entry::builder()
-            .placeholder_text("Filter Q&A pages...")
+            .placeholder_text("Filter Q&A pages…   (Alt+t cycles scope: scene · work · author)")
             .build();
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();

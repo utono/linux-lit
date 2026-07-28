@@ -9,6 +9,10 @@ pub(crate) const PICKER_WIDE_W: i32 = 900;
 pub(crate) const PICKER_NARROW_W: i32 = 675;
 /// Scroll cap for a top-anchored picker's list.
 pub(crate) const PICKER_LIST_MAX_H: i32 = 750;
+/// Fixed width for the JOURNAL pickers, which carry five columns. One
+/// constant so the Q&A picker and the journal-move picker cannot drift apart.
+/// Other pickers keep `build_picker_card`'s 900.
+pub(crate) const JOURNAL_PICKER_WIDTH: i32 = 1180;
 
 /// Build the hidden full-bleed scrim box (`library-picker-scrim`) that sits
 /// behind the scrim-style pickers/overlays. Byte-identical (modulo source
@@ -163,6 +167,15 @@ pub(crate) fn build_picker_card() -> GtkBox {
         .height_request(775)
         .build();
     picker_box.add_css_class("library-picker");
+    picker_box
+}
+
+/// `build_picker_card` at an explicit width. Used by the journal pickers
+/// to apply `JOURNAL_PICKER_WIDTH` without affecting the other eight callers
+/// that rely on the 900px default.
+pub(crate) fn build_picker_card_wide(width: i32) -> GtkBox {
+    let picker_box = build_picker_card();
+    picker_box.set_width_request(width);
     picker_box
 }
 
