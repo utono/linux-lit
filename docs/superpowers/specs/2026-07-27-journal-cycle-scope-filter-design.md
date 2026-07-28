@@ -75,6 +75,24 @@ clause. Candidate selection becomes purely span-based: any entry with a
 parseable `start_citation`/`end_citation` pair whose span contains the
 anchor line qualifies.
 
+### Second site: the main-card line tint
+
+Found while planning: `find_passage_citation_ranges`
+(`src/db/journal.rs:592`) carries the **identical** `scope = 'passage'`
+predicate and the identical false assumption. It feeds the reader's
+line-tint path (`src/app/mod.rs:5273`) — the marker showing that a line is
+covered by a journal Q&A, colored like a reader-glossed line.
+
+Same consequence, same works: BH's 11 scene-scoped entries get no tint, so
+the reader has no on-page indication that a Q&A exists for a passage. This
+is the same defect wearing a different hat, and leaving it in place after
+fixing its twin would guarantee a second bug report.
+
+Fix it identically — drop the `scope` predicate, keep the `IS NOT NULL`
+guards. The existing test `passage_citation_ranges_distinct_and_scoped`
+(`db/journal.rs:807`) stays green unchanged: its scene-scope row has NULL
+citations and is still excluded by the `IS NOT NULL` guard.
+
 Nothing downstream changes:
 
 - The `IS NOT NULL` guards already do the real filtering.
@@ -101,6 +119,46 @@ Each is rewritten to state the rule that actually holds: a journal entry is
 `scope`; entries with no citation at all are unreachable by `\` and are
 reached with Ctrl+j or the picker.
 
+## Data repair: retag the mis-scoped entries
+
+The queries above make the reader correct whatever `scope` says. But the
+stored data is also wrong, and `scope` should mean what it says for the
+paths that legitimately filter on it.
+
+`save_passage_page` and `save_vocab_page` both hardcode `scope='passage'`
+(`db/journal.rs:506`, `:554`). Yet lit.db's two BH vocab entries read
+`scope='scene'` — they cannot have been written that way. Something rewrote
+the column after insert, the same event that left two rows reading
+`scope='unassigned-after-reimport'`: a litdb re-import.
+
+**Retag rule:** `scope='scene'` AND both citations non-NULL AND
+`source_text` non-NULL. Only those two writers store `source_text`, so the
+trio is the signature of a passage-created entry.
+
+Verified against lit.db — the rule discriminates cleanly:
+
+- **Retags 17 rows** (BH 10, TT 7). Counts move from
+  `passage 27 / scene 25` to `passage 44 / scene 8`.
+- **Correctly excludes 2** (BH id 7, TT id 57): chapter-level questions with
+  a placeholder `.0` line citation and no `source_text`.
+- No other work is affected.
+
+Delivered as a claim-keyed one-time migration in `src/db/migrations.rs`,
+following `purge_stale_passage_journal_audio`'s established pattern, run
+from the `BOOKMARKS_INIT` block at startup.
+
+**Not fixed here:** whatever rewrites `scope` on re-import. That is a litdb
+defect, and CLAUDE.md's upstream-routing rule puts the fix there, with a
+ledger entry here linking to it. This migration repairs today's data but
+does not prevent recurrence — hence the claim key is date-suffixed and
+bumpable.
+
+**Deliberately NOT touched:** the `div1`/`div2` columns. Ids 7, 8, 9 are
+filed under band `(0,0)` while citing chapter 1 — the front-matter
+renumbering `find_journal_page_for_line`'s comment already describes, and
+the reason it matches on the citation rather than the band. Correcting the
+band columns is a separate question and is out of scope.
+
 ## Explicitly preserved
 
 Segment scoping is **not** relaxed. An entry still needs a citation span
@@ -122,6 +180,16 @@ They must agree, and a single shared query keeps them in lockstep. Ctrl+j's
 band fallback, the Q&A picker, `find_scene_band_pages`, and `land_on_page`
 do not call it and are untouched.
 
+`find_passage_citation_ranges` has exactly one caller,
+`apply_reader_gloss_highlighting`'s range collection (`app/mod.rs:5273`).
+It only ever ADDS ranges to a list that already includes gloss passages, so
+widening it can tint more lines but can never untint one.
+
+`find_passage_pages` (`db/journal.rs:515`) also filters `scope='passage'`
+and is deliberately NOT changed: it looks up entries by exact citation
+equality for the ask-save reuse path, a different question from "what
+covers this line".
+
 ## Testing
 
 TDD, per the project default for sync-adjacent fixes. Tests 1 and 2 are
@@ -135,11 +203,17 @@ first and test 1 must be seen failing.
    its scope. Prevents the fix from widening into "any entry in the band".
 3. **Guard.** A span that does not cover the anchor is still not returned —
    segment scoping intact.
-4. **Round trip (headless).** Report B as an acceptance test: land on
-   BH-Barrett 2.0.48, open the journal overlay on entry 24, press `\`
-   twice, assert the journal overlay is showing entry 24 again. This is the
-   strongest assertion available — it exercises probe and open together,
-   through the real cycle.
+4. **Retag migration.** Two tests: the rule retags a mis-filed row and
+   leaves a chapter-level question, an uncited row, and an
+   already-correct row alone; and a second run is a no-op (claim key held).
+5. **Round trip (headless).** Report B as an acceptance test: land on
+   BH-Barrett 2.0.48 in reader mode, press `\` twice, assert the journal
+   overlay is showing entry 24. This is the strongest assertion available —
+   it exercises probe and open together, through the real cycle.
+
+   Note `scripts/land-on.sh` uses a PRIVATE COPY of lit.db, so this runs
+   against entries with their original `scope='scene'`. That is deliberate:
+   it proves the query fix works independently of the data repair.
 
 ## Acceptance
 
