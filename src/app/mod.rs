@@ -1682,8 +1682,12 @@ pub fn build_window(
     card_focus_rule.set_size_request(24, 2);
     card_focus_rule.set_halign(gtk4::Align::Center);
     card_focus_rule.set_valign(gtk4::Align::Start);
-    // Sits INSIDE the top spacer: 36 + its 2px height must stay under
-    // TOP_SPACER_HEIGHT (59), or the rule collides with the first text line.
+    // Sits INSIDE the top spacer: this margin + the 2px height (= 38) must stay
+    // under TOP_SPACER_HEIGHT, or the rule collides with the first text line.
+    // The strip has been shrinking (74 -> 49 over 2026-07-28), so the clearance
+    // is now 11px: ONE more 5px pass fits, after which this margin must come
+    // down FIRST. Deliberately not derived from TOP_SPACER_HEIGHT — the rule is
+    // positioned by eye against the running-head labels, not by arithmetic.
     card_focus_rule.set_margin_top(36);
     card_focus_rule.set_visible(false);
     page_turn_overlay.add_overlay(&card_focus_rule);

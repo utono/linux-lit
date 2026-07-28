@@ -823,6 +823,14 @@ fn scroll_right_view_to_split(
 /// The minimum bottom_margin needed is `page_size` — this guarantees that even
 /// the very last buffer line can appear at the viewport top with whitespace
 /// below. We only increase, never decrease, to avoid fighting GTK's layout.
+///
+/// SCROLL HEADROOM ONLY — not a ceiling on the paged FILL reserves. The two
+/// `*_BOTTOM_MARGIN` constants below cite this as the value they historically
+/// replaced, which makes it look like an upper bound; it is not. It is read at
+/// exactly two sites (the `needed`/`rneeded` clamps in this file), both about
+/// the vadjustment's reachable range. Since 2026-07-28 both fill reserves are
+/// 47 — larger than this 46 — with no interaction. Verified when they crossed:
+/// a comment referencing a value is where a silent coupling would hide.
 pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 
 /// Bottom reserve for the SINGLE-COLUMN paged FILL decision (and the matching
