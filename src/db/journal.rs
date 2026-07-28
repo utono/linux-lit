@@ -602,7 +602,7 @@ pub fn find_passage_citation_ranges(
     rows.collect()
 }
 
-/// The passage-scope Q&A entry whose `[start_citation, end_citation]` line
+/// The Q&A entry — any filing scope — whose `[start_citation, end_citation]` line
 /// range contains the cursor line `(div1, div2, line_in_div)`, or `None`. Used
 /// by reader Ctrl+j so a cursor sitting inside a passage Q&A's span opens the
 /// overlay LANDED on that entry (via `land_on_page`), instead of falling to the

@@ -1293,9 +1293,13 @@ pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bo
     // here answered "does this CHAPTER have any Q&A" — a question with no
     // reference to the cursor — so `\` opened whichever entry sorted oldest in
     // the band. The `\` lap shows material about the segment under the cursor,
-    // so the only hit that counts is a `scope='passage'` entry whose citation
-    // span contains the anchor. `scope='scene'` entries carry no span and are
-    // deliberately unreachable by `\`; Ctrl+j and the picker still reach them.
+    // so the only hit that counts is an entry whose citation span contains the
+    // anchor. FILING SCOPE IS NOT THE TEST (corrected 2026-07-27): this used
+    // to require `scope='passage'` on the belief that scene-filed entries
+    // carry no span. They do — a litdb re-import rewrites `scope` while
+    // leaving citations intact, and 19 rows in lit.db are scene-filed WITH a
+    // span. Entries with NO citation carry no location and stay unreachable
+    // by `\`; Ctrl+j and the picker still reach them.
     let anchor = lap_anchor_for(&s);
     s.current_work
         .as_ref()

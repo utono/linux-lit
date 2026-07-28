@@ -36,8 +36,12 @@
 //! BH-Barrett ch. 10 opened the chapter's oldest Q&A — about a different
 //! passage than the one on screen. `open_journal_scene` now takes
 //! `JournalOpenScope::SegmentOnly` here; Ctrl+j keeps the band fallback.
-//! Consequence: `scope='scene'` journal entries carry no citation span and are
-//! unreachable by `\` — reach them with Ctrl+j or the picker.
+//! A journal entry is reachable by `\` when its citation span covers the
+//! anchor, whatever its filing `scope` (corrected 2026-07-27 — the probe
+//! used to require `scope='passage'`, which hid every scene-filed entry that
+//! carried a span, and made the journal stop dead on Bleak House). Entries
+//! with no citation at all are unreachable by `\` — reach them with Ctrl+j
+//! or the picker.
 
 use std::cell::RefCell;
 use std::rc::Rc;
