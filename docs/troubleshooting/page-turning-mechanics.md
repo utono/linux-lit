@@ -645,30 +645,54 @@ Verified safe because the surface NEVER MOVES THE READER — a bare
   path, which reveals the overlay.
 - **Chat panel, echo Escape, SegmentVim, vocab_add.** No position surface.
 
-**Genuinely off-grid, and NOT on any Escape path** (both predate this fix and
-are untouched by it):
+**Genuinely off-grid, and NOT on any Escape path — ALL FIXED 2026-07-27** (they
+predated the `canonical_page_top_offset_for` fix; a follow-on branch closed
+them, spec `2026-07-27-cross-work-landing-grid-design.md`):
 
-1. **`display_work_at_with_prepared` target branch** (`app/mod.rs`, the
-   `if let Some(target_id) = target_line_id` block) does
+1. **`display_work_at_with_prepared` target branch** (`app/mod.rs`) did
    `state.page_top_line = buf_idx` — the target line forced as the page top,
-   no offset, no table consult. This is the shared root of every CROSS-WORK
-   jump landing: concordance `r`/`R` across works, echo source jumps, and
-   `toggle_previous_work`/`load_work_at` when a target line is passed. Live on
-   all 13 prose works that have pinned tables.
-2. **`update_highlight_and_center`** (`highlight.rs`) computes
-   `current_line - lpp/2` then `set_page_instant` — a pure geometric guess.
-   Reached by the concordance same-work landing
-   (`concordance_position_cursor`), `pickers::jump_to_line_mapping_id`, and the
-   echo jump in `keymap.rs`. Both should read
-   `canonical_page_top_offset_for` + `set_page_instant_offset`.
-
-**Latent only — do not chase without a repro:** `hide_translations`
-(`app/translations.rs`) remaps `current_line`/`page_top_line` through
-`map_line_before_insert` and never assigns `page_top_offset`, then anchors the
-single-column path by a raw pixel `adj.set_value(...)`. Structurally the same
-defect, but currently unreachable: all 43 works with `line_translations` rows
-are plays, and ZERO have a `prose_pages` table. It becomes live the day a prose
-work gets translations. Confirm before chasing:
+   no offset, no table consult. Shared root of every CROSS-WORK jump landing:
+   concordance across works, echo source jumps, and
+   `toggle_previous_work`/`load_work_at` with a target line.
+   **The trap when fixing it: the page tables are not loaded yet.**
+   `page_table::load_for_work` / `prose_pages::load_for_prose_work` run ~40
+   lines BELOW that assignment, so the branch itself cannot read the grid. The
+   snap therefore lives AFTER those loads and before
+   `update_highlight_and_show`, gated on `target_line_id.is_some()`.
+   **Companion requirement:** `update_highlight_and_show` scrolled to
+   `line_yrange(scroll_to).0` with no offset term and would have discarded the
+   snap; it now adds `page_top_offset` (`+ 0` for every other caller).
+2. **`update_highlight_and_center`** (`highlight.rs`) computed
+   `current_line - lpp/2` then `set_page_instant`. It now reads
+   `prose_table_boundary_for_line` first and centres only as a fallback.
+   Reached by the concordance same-work landing, `jump_to_line_mapping_id`, the
+   echo jump, `nav_test.rs`, `phrase_highlight.rs`, and the AB-loop clear.
+   - **Deliberate behaviour change:** on a pinned prose work a jump no longer
+     centres the cursor — it lands where the stored page puts it, matching
+     page-turning. Plays and live-engine prose still centre exactly as before.
+   - It reads `prose_table_boundary_for_line`, NOT the full
+     `canonical_page_top_offset_for`, on purpose: plays were never part of this
+     defect, and routing them through the play table would change their
+     landing too.
+   - Proven by A/B (concordance `equanimity` on BH-Barrett, identical start
+     `page_top=38`): baseline landed `page_top=45` / `BOTTOM_CLIP_ROWFILL`
+     (the `47 - 4/2` guess), fixed lands `page_top=42 top_off=603` /
+     `BOTTOM_CLIP_EXACT`.
+3. **`hide_translations`** (`app/translations.rs`) never assigned
+   `page_top_offset` after remapping line numbers, and anchored the
+   single-column path by a raw pixel `adj.set_value(...)`. It now zeroes the
+   stale offset at the remap and lands on the cursor's stored page when a prose
+   grid is active.
+   - It lands EXPLICITLY via `set_page_instant_offset` rather than calling
+     `resnap_prose_to_table`: the remapped `(line, 0)` pair can coincidentally
+     satisfy resnap's already-on-grid check and no-op, leaving the reader on a
+     real boundary that is not the one holding the cursor.
+   - The two-column branch is deliberately untouched — it defers its entire
+     re-snap to RESIZE_TICK because the left view still has its single-column
+     width (see the comment there).
+   - **Latent, not live:** all 43 works with `line_translations` rows are plays
+     and ZERO have a `prose_pages` table, so this path cannot fire today. Fixed
+     as a trap. Confirm before assuming otherwise:
 
 ```sql
 SELECT DISTINCT lm.work_abbrev FROM line_translations lt

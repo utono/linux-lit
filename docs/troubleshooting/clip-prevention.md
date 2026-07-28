@@ -1152,12 +1152,15 @@ When a half line clips at the bottom edge of a scrolled surface:
       call sites, one shared fix) in **page-turning-mechanics.md, "A landing
       that drops out of table mode"**.
     - **Which landing?** That entry's audit sub-section lists every
-      close-to-reader path by category. Short version: all OVERLAY closes are
-      correct — if the reader went off-grid, suspect a CROSS-WORK jump
-      (`display_work_at_with_prepared`'s target branch) or a centering landing
-      (`update_highlight_and_center`), not the overlay you just escaped. A
-      close that only calls `return_to_reader_mode` is fine when that surface
-      never moved the reader (synopsis, every picker).
+      close-to-reader path by category. As of 2026-07-27 every known landing
+      reads the grid — overlay closes, jumps, the resume, cross-work landings,
+      centering landings, and the translations hide. So a NEW occurrence is a
+      new call site, not one of the known ones: find whoever set
+      `page_top_line` without going through
+      `canonical_page_top_offset_for` / `prose_table_boundary_for_line` /
+      `restore_saved_position_resnap`. A close that only calls
+      `return_to_reader_mode` is still fine when that surface never moved the
+      reader (synopsis, every picker) — do not "fix" those.
     - Fix: land through `navigation::canonical_page_top_offset_for` and pass
       BOTH halves to `set_page_instant_offset`. Dropping the offset lands on
       the right line and still mis-frames by up to a full paragraph.
