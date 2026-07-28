@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Entry, ListBox, ListBoxRow, Overlay,
+    Box as GtkBox, Entry, Label, ListBox, ListBoxRow, Overlay,
 };
 
 use crate::app::JournalBand;
@@ -11,12 +11,25 @@ pub struct JournalRow {
     pub band: JournalBand,
     pub question_prefix: String,
     pub scene_label: String,
+    /// `Some(work title)` in AUTHOR scope only — it is the one cross-work
+    /// list, where two identically-worded questions from different works are
+    /// otherwise indistinguishable. `None` in scene/work scope leaves the
+    /// row rendering exactly as before.
+    pub work_label: Option<String>,
+    /// The entry's owning work ABBREV — distinct from `work_label`, which is
+    /// a display title and not usable for loading. `Some(abbrev)` only when
+    /// the row is a genuinely different work than the one currently loaded
+    /// (possible in AUTHOR scope, the one cross-work list); `None` for
+    /// scene/work-scope rows and same-work rows in author scope, which
+    /// `confirm_picker` keeps on today's exact `land_on_page` path.
+    pub work_abbrev: Option<String>,
 }
 
 pub struct JournalQaPicker {
     pub overlay: Overlay,
     scrim: GtkBox,
     picker_box: GtkBox,
+    header_title: Label,
     search_entry: Entry,
     list_box: ListBox,
     pub items: Vec<JournalRow>,
@@ -34,7 +47,7 @@ impl JournalQaPicker {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
-        let (header_box, _header_title) =
+        let (header_box, header_title) =
             crate::ui::picker_nav::build_picker_header("Q&A PAGES");
         picker_box.append(&header_box);
         picker_box.append(&search_entry);
@@ -44,10 +57,17 @@ impl JournalQaPicker {
             overlay,
             scrim: crate::ui::picker_nav::build_picker_scrim(),
             picker_box,
+            header_title,
             search_entry,
             list_box,
             items: Vec::new(),
         }
+    }
+
+    /// Retitle the header so the active scope is always visible. Three
+    /// different list contents behind one unlabeled title is unreadable.
+    pub fn set_header_scope(&self, scope_label: &str) {
+        self.header_title.set_label(&format!("Q&A PAGES — {scope_label}"));
     }
 
     pub fn attach(&self, base: &impl IsA<gtk4::Widget>) {
@@ -86,20 +106,34 @@ impl JournalQaPicker {
 
     pub fn populate_list(&self, filter: &str) {
         crate::ui::picker_nav::clear_list(&self.list_box);
+
+        if self.items.is_empty() {
+            let hbox = crate::ui::picker_nav::two_label_row(
+                "No Q&A in this scope — Alt+t to widen.",
+                "",
+            );
+            let row = ListBoxRow::builder().child(&hbox).build();
+            row.set_selectable(false);
+            row.set_activatable(false);
+            self.list_box.append(&row);
+            return;
+        }
+
         let filter_lower = filter.to_lowercase();
 
         for (idx, item) in self.items.iter().enumerate() {
+            let primary = match &item.work_label {
+                Some(w) => format!("{} · {}", w, item.question_prefix),
+                None => item.question_prefix.clone(),
+            };
             if !filter.is_empty() {
-                let target = format!("{} {}", item.scene_label, item.question_prefix).to_lowercase();
+                let target = format!("{} {}", item.scene_label, primary).to_lowercase();
                 if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
                     continue;
                 }
             }
 
-            let hbox = crate::ui::picker_nav::two_label_row(
-                &item.question_prefix,
-                &item.scene_label,
-            );
+            let hbox = crate::ui::picker_nav::two_label_row(&primary, &item.scene_label);
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&idx.to_string());

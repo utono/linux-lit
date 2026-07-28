@@ -176,6 +176,17 @@ any multi-surface keybind change.
 
 Record each deliberate consistency move here so future sweeps know the intent.
 
+- **2026-07-28 — Alt+t expands: "cycle this picker's filter/scope" on both
+  gloss and Q&A pickers.** The gloss picker already binds `Alt+t` to cycle its
+  gloss-type filter (v6 → v7 → other); the Q&A picker now ALSO binds `Alt+t` to
+  cycle its scope (scene → work → author → scene). One concept (`t` = "cycle
+  this picker's filter/scope"), one key, two surfaces — strengthens the key→
+  concept map rather than muddying it. The bind is picker-modal (handled in
+  `keymap.rs`'s picker arms), so `Alt+t` does nothing in plain reader mode,
+  preserving dispatch cleanness. No impact on the compiled `keymap_config.rs` or
+  `keymap.json`: like the gloss picker's `Alt+t`, this bind lives in the
+  picker's modal arm, not in the default binds.
+
 - **2026-07-27 — `Q` and `Alt+,` retired; `'` / `;` are the dialogue binds.**
   `Q` (`JumpToNextDialogue`) and `Alt+,` (`JumpToPrevDialogue`) ran the
   play-only dialogue predicate with NO prose branch, so on prose they walked

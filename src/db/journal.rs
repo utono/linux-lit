@@ -319,6 +319,53 @@ pub fn find_author_pages(
     rows.collect()
 }
 
+/// Every journal entry attributable to `author`, paired with the
+/// `work_abbrev` it belongs to: entries from ALL of the author's works, plus
+/// that author's corpus notes.
+///
+/// Two keying schemes are unioned here. Ordinary entries store a WORK ABBREV
+/// in `work_abbrev` and are joined to `works` on the author; corpus notes
+/// (`scope='author'`, see `save_author_page`) store the AUTHOR NAME in that
+/// same column and are selected directly. Missing the second half silently
+/// drops corpus notes from author scope.
+/// `j.`-qualified twin of `JOURNAL_PAGE_COLUMNS`, for this query only. The
+/// first SELECT below joins `journal_entries j` to `works w`, and both tables
+/// have an `id` column — the shared const's bare `id` (and any other name
+/// `works` happens to share) is ambiguous there and SQLite refuses to
+/// prepare the statement. Qualifying with `j.` disambiguates; it must be used
+/// in BOTH halves of the UNION so the two SELECTs stay column-compatible.
+/// Do not replace this with `JOURNAL_PAGE_COLUMNS` again.
+const JOURNAL_PAGE_COLUMNS_J: &str =
+    "j.id, j.div1, j.div2, j.question, j.answer, COALESCE(j.claude_model, ''), j.timestamp, \
+     j.start_citation, j.end_citation, j.source_text, COALESCE(j.kind, 'qa')";
+
+pub fn find_author_all_pages(
+    conn: &Connection,
+    author: &str,
+) -> Result<Vec<(JournalPage, String)>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev \
+           FROM journal_entries j \
+           JOIN works w ON w.abbrev = j.work_abbrev \
+          WHERE w.author = ?1 AND j.scope != 'author' \
+         UNION ALL \
+         SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev \
+           FROM journal_entries j \
+          WHERE j.work_abbrev = ?1 AND j.scope = 'author' \
+         -- ORDER BY on a compound SELECT can itself be ambiguous when column
+         -- names collide across the union; ordinal refs sidestep that.
+         -- timestamp is the 7th selected column, id is the 1st.
+         ORDER BY 7 ASC, 1 ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([author], |row| {
+        let page = map_journal_page_row(row)?;
+        let work: String = row.get(11)?;
+        Ok((page, work))
+    })?;
+    rows.collect()
+}
+
 pub fn find_work_pages(
     conn: &Connection,
     work_abbrev: &str,
@@ -1567,5 +1614,58 @@ mod tests {
         if let Some(r) = rows.first() {
             assert!(!r.answer.is_empty() || !r.question.is_empty());
         }
+    }
+
+    /// Author scope spans every work by the author AND that author's
+    /// corpus notes. Corpus notes store the AUTHOR NAME in work_abbrev
+    /// (see save_author_page / AUTHOR_DIV), so the query is a union of two
+    /// different keying schemes — the thing most likely to be got wrong.
+    #[test]
+    fn author_scope_spans_works_and_corpus_notes() {
+        let conn = mem();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS works (
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
+             );
+             INSERT INTO works (abbrev, title, author) VALUES
+                 ('Ham', 'Hamlet', 'Shakespeare'),
+                 ('Rom', 'Romeo and Juliet', 'Shakespeare'),
+                 ('BH',  'Bleak House', 'Charles Dickens');",
+        )
+        .unwrap();
+
+        save_journal_page(&conn, "Ham", 1, 2, "HamQ?", "A.", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "Rom", 2, 2, "RomQ?", "A.", "m", "scene", "qa").unwrap();
+        save_author_page(&conn, "Shakespeare", "CorpusQ?", "A.", "m", "note").unwrap();
+        // Another author's entry must NOT appear.
+        save_journal_page(&conn, "BH", 1, 0, "DickensQ?", "A.", "m", "scene", "qa").unwrap();
+
+        let rows = find_author_all_pages(&conn, "Shakespeare").unwrap();
+
+        let questions: Vec<&str> = rows.iter().map(|(p, _)| p.question.as_str()).collect();
+        assert_eq!(rows.len(), 3, "two work entries + one corpus note");
+        assert!(questions.contains(&"HamQ?"));
+        assert!(questions.contains(&"RomQ?"));
+        assert!(questions.contains(&"CorpusQ?"));
+        assert!(!questions.contains(&"DickensQ?"), "another author must be excluded");
+
+        // Each row knows which work it came from — author rows are the only
+        // cross-work list, so the picker labels them.
+        let ham = rows.iter().find(|(p, _)| p.question == "HamQ?").unwrap();
+        assert_eq!(ham.1, "Ham");
+    }
+
+    /// An author with no entries at all yields an empty vec, never an error.
+    #[test]
+    fn author_scope_empty_is_not_an_error() {
+        let conn = mem();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS works (
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
+             );",
+        )
+        .unwrap();
+
+        assert!(find_author_all_pages(&conn, "Nobody").unwrap().is_empty());
     }
 }

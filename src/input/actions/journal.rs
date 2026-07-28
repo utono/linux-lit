@@ -3011,25 +3011,85 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     );
 }
 
-/// Build the Q&A picker rows for the current work, populate + show the picker,
-/// and switch to `InputMode::JournalPicker`. Returns false (after a toast) when
-/// the journal is empty, so the caller can leave state untouched. Shared by the
-/// overlay (`open_picker`) and reader (`open_picker_from_reader`) entry points.
-fn populate_and_show_picker(s: &mut AppState) -> bool {
-    let work_abbrev = current_work_abbrev(s);
-    let pages = crate::db::queries::open_db()
-        .ok()
-        .and_then(|conn| crate::db::journal::find_all_pages_ordered(&conn, &work_abbrev).ok())
-        .unwrap_or_default();
-
-    if pages.is_empty() {
-        crate::input::navigation::show_chapter_toast_secs(&s, "No journal pages yet — press Ctrl+a to ask", 3);
-        return false;
+/// Whether a picker row belongs to a DIFFERENT work than the one loaded and
+/// therefore needs a work load on confirm. `None` means same-work (the
+/// existing fast `land_on_page` path); `Some(abbrev)` means confirm must
+/// `load_arkangel_edition_then` that abbrev first.
+///
+/// A corpus note (sentinel divs `AUTHOR_DIV`, see `save_author_page`) stores
+/// the AUTHOR NAME in `row_work`, not a work abbrev — comparing it against
+/// `current_work` would always look cross-work and confirm would try
+/// `load_work("Shakespeare")`, which does not exist (0 rows — verified
+/// against lit.db). Its `band_for_page` resolves to `JournalBand::Author`,
+/// which `land_on_page` renders against the CURRENTLY LOADED work, so a
+/// corpus note is same-work for landing purposes regardless of what
+/// `row_work` says. Detect it by the sentinel divs, not the abbrev string.
+pub(crate) fn cross_work_abbrev_for_row(
+    row_div1: i64,
+    row_div2: i64,
+    row_work: &str,
+    current_work: &str,
+) -> Option<String> {
+    let is_corpus_note =
+        row_div1 == crate::db::journal::AUTHOR_DIV.0 && row_div2 == crate::db::journal::AUTHOR_DIV.1;
+    if !is_corpus_note && row_work != current_work {
+        Some(row_work.to_string())
+    } else {
+        None
     }
+}
+
+/// Rebuild `s.journal_picker`'s rows for the CURRENT `s.journal_picker_scope`
+/// and retitle the header to match — but do not show the picker. Split out of
+/// `populate_and_show_picker` so a scope-cycle bind (Alt+t) can rebuild the
+/// list of an already-open picker without re-running `show()` (which would
+/// reset the filter/selection). Keeps the existing row-mapping logic (band
+/// resolution, `is_passage` labeling, `first_passage_line`, the 80-char
+/// prefix) identical across all three scopes — only the SOURCE of pages
+/// changes, plus `work_label` in Author scope.
+pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
+    let work_abbrev = current_work_abbrev(s);
+    let conn = crate::db::queries::open_db().ok();
+
+    // (JournalPage, work_abbrev, work_title) triples, uniform across scopes so
+    // the row-mapping closure below doesn't need to branch on scope again.
+    let pages: Vec<(crate::db::journal::JournalPage, String, Option<String>)> = match s
+        .journal_picker_scope
+    {
+        crate::input::actions::pickers::JournalPickerScope::Scene => {
+            let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(s);
+            conn.as_ref()
+                .and_then(|c| crate::db::journal::find_scene_band_pages(c, &work_abbrev, d1, d2).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| (p, work_abbrev.clone(), None))
+                .collect()
+        }
+        crate::input::actions::pickers::JournalPickerScope::Work => conn
+            .as_ref()
+            .and_then(|c| crate::db::journal::find_all_pages_ordered(c, &work_abbrev).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (p, work_abbrev.clone(), None))
+            .collect(),
+        crate::input::actions::pickers::JournalPickerScope::Author => {
+            let author = s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default();
+            let titles = crate::db::queries::load_work_titles_or_default();
+            conn.as_ref()
+                .and_then(|c| crate::db::journal::find_author_all_pages(c, &author).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(p, work)| {
+                    let title = titles.get(&work).cloned();
+                    (p, work, title)
+                })
+                .collect()
+        }
+    };
 
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
-        .map(|p| {
+        .map(|(p, row_work, work_title)| {
             let band = match band_for_page(p) {
                 JournalBand::Author(_) => JournalBand::Author(
                     s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default(),
@@ -3061,16 +3121,50 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
                 p.question.clone()
             };
             let prefix: String = label_text.chars().take(80).collect();
+            // Only a genuinely different work needs the cross-work confirm
+            // path; same-work rows (scene/work scope, and same-work rows in
+            // author scope) leave this None so confirm_picker's fast path is
+            // untouched. A corpus note's row_work is the AUTHOR NAME, not a
+            // work abbrev — cross_work_abbrev_for_row treats it as same-work
+            // via its sentinel divs (see AUTHOR_DIV).
+            let row_work_abbrev =
+                cross_work_abbrev_for_row(p.div1, p.div2, row_work, &work_abbrev);
             crate::ui::journal_picker::JournalRow {
                 id: p.id,
                 band,
                 question_prefix: prefix,
                 scene_label,
+                work_label: work_title.clone(),
+                work_abbrev: row_work_abbrev,
             }
         })
         .collect();
 
     s.journal_picker.set_items(rows);
+    s.journal_picker.set_header_scope(s.journal_picker_scope.label());
+    // Clear the search filter text. Row sets differ between scopes, so a stale
+    // filter silently hiding a scope's contents reads as "this scope is empty".
+    //
+    // BORROW SAFETY: `set_text` fires this entry's `changed` handler
+    // SYNCHRONOUSLY, and we are inside `&mut AppState` (the Alt+t path holds a
+    // `borrow_mut`). That is only safe because the handler at
+    // `app/mod.rs` (the sole `connect_changed` on this entry) uses
+    // `try_borrow`, so the re-entry fails and no-ops instead of aborting the
+    // process. Holding a borrow across `set_text` is what caused the RefCell
+    // abort documented at the BORROW SAFETY notes above — do NOT relax that
+    // `try_borrow` to a `borrow`, and do not add a second handler here.
+    s.journal_picker.search_entry().set_text("");
+}
+
+/// Build the Q&A picker rows for the current scope, populate + show the
+/// picker, and switch to `InputMode::JournalPicker`. Always opens on
+/// `JournalPickerScope::Work` (Alt+t cycles once open). An empty scope no
+/// longer refuses to open — the picker shows a non-selectable empty-state row
+/// so Alt+t can widen from it. Shared by the overlay (`open_picker`) and
+/// reader (`open_picker_from_reader`) entry points.
+fn populate_and_show_picker(s: &mut AppState) -> bool {
+    s.journal_picker_scope = crate::input::actions::pickers::JournalPickerScope::default();
+    repopulate_picker_for_scope(s);
     s.journal_picker.show();
     s.input_mode = InputMode::JournalPicker;
     true
@@ -3078,7 +3172,6 @@ fn populate_and_show_picker(s: &mut AppState) -> bool {
 
 /// Open the Q&A picker over the journal overlay (Alt+p). Lists every page in the
 /// work (work pages first, then scene pages by scene), each by creation time.
-/// Empty journal -> toast, stay in the overlay.
 pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     s.journal.picker_from_reader = false;
@@ -3088,7 +3181,7 @@ pub(crate) fn open_picker(state: &Rc<RefCell<AppState>>) {
 /// Open the Q&A picker directly from the READING CARD (Alt+j), without first
 /// opening the journal overlay. Records the reader return position and flags the
 /// picker as reader-initiated so confirm reveals the overlay and Escape returns
-/// to the reader. Empty journal -> toast, stay in the reader.
+/// to the reader.
 pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     if s.current_work.is_none() {
@@ -3097,36 +3190,76 @@ pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.picker_from_reader = true;
-    if !populate_and_show_picker(&mut s) {
-        // Empty journal: nothing shown, drop the half-set reader-return state.
-        s.journal.picker_from_reader = false;
-        s.journal.return_pos = None;
-    }
+    populate_and_show_picker(&mut s);
 }
 
 /// Confirm the picker selection: switch the journal overlay to the chosen page's
 /// band, land on that exact page (matched by id within the band), hide the
 /// picker, return to the journal overlay.
-pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>) {
+///
+/// AUTHOR scope is the one cross-work list, so the selected row may belong to
+/// a different work than the one currently loaded. A same-work row (`row.
+/// work_abbrev == None`) keeps today's exact path: hide the picker, switch to
+/// `InputMode::JournalOverlay`, `land_on_page` directly — no reload, no async
+/// hop. A cross-work row instead follows `confirm_recent_qa_picker`'s shape:
+/// capture the pick inside a scoped borrow that drops before the loader runs,
+/// then `load_arkangel_edition_then` + `open_journal_hit` (which already
+/// handle the same-work skip, MPV discovery, and the error toast).
+pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>, tokio_handle: &tokio::runtime::Handle) {
     let selected = state.borrow().journal_picker.selected_index();
-    let mut s = state.borrow_mut();
-    s.journal_picker.hide();
-    s.input_mode = InputMode::JournalOverlay;
-    // Confirming always reveals the overlay (land_on_page -> render_current ->
-    // show_page), so the reader-initiated flag has done its job. Clear it but
-    // KEEP return_pos — closing the overlay later (Esc) restores the reader.
-    s.journal.picker_from_reader = false;
 
-    let Some(idx) = selected else {
-        // Nothing selected — just return to the overlay, re-render current band.
-        render_current(&mut s);
+    // Capture what's needed from the selected row inside a scoped borrow, then
+    // drop it — the cross-work branch calls load_arkangel_edition_then, which
+    // spawns async work, and must not run with a borrow held.
+    let picked = {
+        let mut s = state.borrow_mut();
+        s.journal_picker.hide();
+        // Confirming always reveals the overlay (land_on_page -> render_current
+        // -> show_page), so the reader-initiated flag has done its job. Clear it
+        // but KEEP return_pos — closing the overlay later (Esc) restores the
+        // reader.
+        s.journal.picker_from_reader = false;
+
+        let Some(idx) = selected else {
+            s.input_mode = InputMode::JournalOverlay;
+            // Nothing selected — just return to the overlay, re-render current band.
+            render_current(&mut s);
+            return;
+        };
+        let Some(row) = s.journal_picker.items.get(idx) else {
+            s.input_mode = InputMode::JournalOverlay;
+            // Selected index out of range (e.g. picker shown with an empty
+            // item list) — same graceful fallback as "nothing selected".
+            render_current(&mut s);
+            return;
+        };
+        (row.band.clone(), row.id, row.work_abbrev.clone())
+    };
+    let (band, target_id, cross_work_abbrev) = picked;
+
+    let Some(other_abbrev) = cross_work_abbrev else {
+        // Same-work row — today's exact path.
+        let mut s = state.borrow_mut();
+        s.input_mode = InputMode::JournalOverlay;
+        land_on_page(&mut s, band, target_id);
         return;
     };
-    let (band, target_id) = {
-        let row = &s.journal_picker.items[idx];
-        (row.band.clone(), row.id)
-    };
-    land_on_page(&mut s, band, target_id);
+
+    // Cross-work row: drop to Reader so the loader's post-load open_journal_hit
+    // reveals the journal overlay from a clean state, matching
+    // confirm_recent_qa_picker.
+    {
+        let mut s = state.borrow_mut();
+        s.input_mode = InputMode::Reader;
+    }
+    let current_abbrev = state.borrow().current_work.as_ref().map(|w| w.abbrev.clone());
+    crate::input::actions::pickers::load_arkangel_edition_then(
+        state,
+        tokio_handle,
+        other_abbrev,
+        current_abbrev,
+        move |state| crate::input::actions::corpus_search::open_journal_hit(state, target_id, ""),
+    );
 }
 
 /// Open the cross-work "recent Q&A" jump-back picker from the reading card
@@ -3409,6 +3542,35 @@ mod tests {
     fn only_segment_else_band_reaches_the_scene_band() {
         assert!(!JournalOpenScope::SegmentOnly.allows_band_fallback());
         assert!(JournalOpenScope::SegmentElseBand.allows_band_fallback());
+    }
+
+    /// A corpus note (sentinel AUTHOR_DIV, author name in `row_work`) must be
+    /// treated as SAME-WORK even though its `row_work` never matches the
+    /// current work's abbrev — otherwise confirm_picker tries
+    /// `load_work("Shakespeare")`, which does not exist, and dumps the user
+    /// into the reader with a "Could not load" toast instead of landing on
+    /// the note. Regression guard for that dead-end.
+    #[test]
+    fn corpus_note_is_same_work_despite_author_name_in_row_work() {
+        let (d1, d2) = crate::db::journal::AUTHOR_DIV;
+        assert_eq!(cross_work_abbrev_for_row(d1, d2, "Shakespeare", "Cym"), None);
+    }
+
+    /// A genuine cross-work row (real work divs, different abbrev) still
+    /// needs the cross-work confirm path.
+    #[test]
+    fn genuine_cross_work_row_is_flagged() {
+        assert_eq!(
+            cross_work_abbrev_for_row(1, 0, "DC", "BH"),
+            Some("DC".to_string())
+        );
+    }
+
+    /// A same-work row (scene/work scope, or an author-scope row that
+    /// happens to belong to the currently loaded work) stays None.
+    #[test]
+    fn same_work_row_is_not_flagged() {
+        assert_eq!(cross_work_abbrev_for_row(2, 0, "BH", "BH"), None);
     }
 
     #[test]

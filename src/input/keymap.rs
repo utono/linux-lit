@@ -970,7 +970,7 @@ fn handle_picker_key(
                     true
                 }
                 InputMode::JournalPicker => {
-                    crate::input::actions::journal::confirm_picker(state);
+                    crate::input::actions::journal::confirm_picker(state, tokio_handle);
                     true
                 }
                 InputMode::RecentQaPicker => {
@@ -1030,6 +1030,16 @@ fn handle_picker_key(
                     // into the search entry, so no focus guard is needed.
                     if is_alt && key_name == "t" {
                         crate::input::actions::pickers::toggle_gloss_picker_type(state, tokio_handle);
+                        return true;
+                    }
+                }
+                InputMode::JournalPicker => {
+                    // Alt+t cycles the scope (scene -> work -> author), the
+                    // same bind and the same reason as the gloss picker's
+                    // type filter: Alt combos don't type into the search
+                    // entry, so no focus guard is needed.
+                    if is_alt && key_name == "t" {
+                        crate::input::actions::pickers::cycle_journal_picker_scope(state);
                         return true;
                     }
                 }
