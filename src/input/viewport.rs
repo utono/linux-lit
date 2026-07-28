@@ -1476,6 +1476,23 @@ pub(crate) fn next_page_top(state: &AppState, top: usize) -> NextPage {
             .map(|l| l.sub_line)
     };
     let last_visible = last_fully_visible_line(state, top);
+    // A SECTION boundary (chapter/scene) must BEGIN a page — never appear part
+    // way down one. If a section start falls strictly inside this page, end the
+    // page there so the next page opens on the heading. Authoritative metadata
+    // via `is_section_start` (the `(div1,div2)` bitmap), never inferred from the
+    // text.
+    //
+    // Only the single-column path needs this: `column_split` already clamps at
+    // breaks for the two-column reader, and `page_table`/`prose_pages` bake the
+    // boundary into the stored spreads. This is the LIVE engine, which prose
+    // falls back to whenever the pinned table is dropped — e.g. cycling the font
+    // changes the layout fingerprint, and Bleak House then rendered
+    // "CHAPTER II / In Fashion" mid-page.
+    for line in (top + 1)..=last_visible.min(line_count.saturating_sub(1)) {
+        if state.is_section_start(line) {
+            return NextPage { new_top: line, next_dialogue: line };
+        }
+    }
     let last = last_dialogue_in_page(
         &state.buffer,
         top,
