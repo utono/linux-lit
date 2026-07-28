@@ -1147,14 +1147,17 @@ pub(crate) fn author_surname(author: &str) -> &str {
 /// be labelled by their own kind. That is why this is a pure string predicate
 /// rather than `scene_synopsis::is_chapter_work`, which reads `AppState`.
 ///
-/// KNOWN GAP (latent, 2026-07-28): `is_prose_work` covers only
-/// novel/essay_collection/prose_book/prose. Measured against lit.db,
-/// `epic` (11 works), `epic_translation` (2), `narrative_poem` (4), `poem` (4),
-/// `sonnet_sequence` (2) and `verse_essay` (1) ALSO have `div2` identically 0
-/// on every line, so the first journal entry on one of them will read "3.0" —
-/// the same noise this function exists to remove. Not live: today only `play`
-/// and `prose` works have entries. `bible_book` (1754 non-zero div2 lines) and
-/// `anthology` genuinely use both numbers and must stay numeric.
+/// The noun comes from `gloss::genre_unit`, the SAME source the picker header
+/// uses (`JournalPickerScope::label`), so a row and the title above it can
+/// never disagree — an epic's header reading BOOK while its rows read "3.0"
+/// was the split this unification removed.
+///
+/// TWO-LEVEL vs ONE-LEVEL is decided by whether the work type actually uses
+/// `div2`, measured against lit.db: only `play` (530804 non-zero div2 lines),
+/// `bible_book` (1754) and `anthology` (1334) do. Every other type has `div2`
+/// identically 0, so printing it was pure noise. A two-level work keeps bare
+/// `act.scene` numerals, where both numbers carry meaning and a noun would
+/// crowd the column.
 pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
     // Sentinel divisions have no numeric address to show: (-1,-1) is a
     // whole-work entry, (-2,-2) a corpus note. Printing "-2.-2" is noise —
@@ -1162,15 +1165,31 @@ pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
     if div1 < 0 {
         return String::new();
     }
-    if crate::db::line_types::is_prose_work(work_type) {
-        if div1 == 0 {
-            "Preface".to_string()
-        } else {
-            format!("Ch. {div1}")
-        }
-    } else {
-        format!("{div1}.{div2}")
+    if uses_two_level_divisions(work_type) {
+        return format!("{div1}.{div2}");
     }
+    // Division 0 on a one-level work is the FRONT MATTER, not a chapter zero —
+    // the same convention `scene_synopsis::chapter_label` already uses.
+    if div1 == 0 {
+        return "Preface".to_string();
+    }
+    // Title-case the genre noun for display: "chapter" -> "Chapter 2".
+    let unit = crate::gloss::genre_unit(work_type).1;
+    let mut noun = unit.chars();
+    let titled: String = match noun.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + noun.as_str(),
+        None => String::new(),
+    };
+    format!("{titled} {div1}")
+}
+
+/// Whether `work_type` addresses its lines with BOTH div1 and div2.
+///
+/// Measured against lit.db rather than assumed: only plays (act.scene), bible
+/// books (chapter.verse) and anthologies have any non-zero `div2`. Everything
+/// else is single-level, so showing the second number is noise.
+fn uses_two_level_divisions(work_type: &str) -> bool {
+    matches!(work_type, "play" | "bible_book" | "anthology")
 }
 
 /// Alt+t inside the Q&A picker: advance the scope, rebuild the list, retitle
@@ -1220,24 +1239,31 @@ mod tests {
     #[test]
     fn division_label_uses_the_works_own_noun() {
         use super::division_label;
-        // Plays: act.scene, both numbers meaningful.
+        // Two-level works keep bare numerals: both numbers carry meaning.
         assert_eq!(division_label("play", 1, 4), "1.4");
         assert_eq!(division_label("play", 4, 10), "4.10");
-        // Prose: div2 is always 0 in lit.db, so it is noise — chapters only.
-        assert_eq!(division_label("prose", 2, 0), "Ch. 2");
-        assert_eq!(division_label("novel", 10, 0), "Ch. 10");
-        // div1 <= 0 on prose is FRONT MATTER, never "Ch. 0". Six live entries
-        // hit this; it matches scene_synopsis::chapter_label's convention.
+        assert_eq!(division_label("bible_book", 3, 16), "3.16");
+        assert_eq!(division_label("anthology", 2, 5), "2.5");
+        // One-level works take their OWN genre noun, from the same
+        // genre_unit the picker header uses — so a row can never disagree
+        // with the title above it.
+        assert_eq!(division_label("prose", 2, 0), "Chapter 2");
+        assert_eq!(division_label("prose_book", 10, 0), "Chapter 10");
+        assert_eq!(division_label("epic", 3, 0), "Book 3");
+        assert_eq!(division_label("sonnet_sequence", 18, 0), "Sonnet 18");
+        assert_eq!(division_label("essay_collection", 4, 0), "Essay 4");
+        // Unknown type degrades to the neutral noun, never a wrong specific one.
+        assert_eq!(division_label("", 3, 0), "Section 3");
+        // Division 0 on a one-level work is FRONT MATTER, never "Chapter 0".
+        // Six live entries hit this.
         assert_eq!(division_label("prose", 0, 0), "Preface");
+        assert_eq!(division_label("epic", 0, 0), "Preface");
         // Sentinel divisions carry no numeric address: a whole-work entry
         // (-1,-1) and a corpus note (-2,-2) show nothing rather than "-2.-2".
         // Their TYPE column already reads `work` / `author`.
         assert_eq!(division_label("prose", -1, -1), "");
         assert_eq!(division_label("", -2, -2), "");
         assert_eq!(division_label("play", -1, -1), "");
-        // An unknown/blank work_type falls through to the numeric form rather
-        // than silently claiming a chapter.
-        assert_eq!(division_label("", 3, 1), "3.1");
     }
 
     /// Tightest -> widest, wrapping. Mirrors GlossPickerFilter's cycle test.
