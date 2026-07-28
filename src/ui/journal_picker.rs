@@ -23,6 +23,14 @@ pub struct JournalRow {
     /// scene/work-scope rows and same-work rows in author scope, which
     /// `confirm_picker` keeps on today's exact `land_on_page` path.
     pub work_abbrev: Option<String>,
+    /// `Some(surname)` in AUTHOR scope only — the five-column form. `None`
+    /// in scene/work scope, which keep the two-column rendering because
+    /// author and work are constant there and would be noise.
+    pub author_label: Option<String>,
+    /// The entry's OWN scope (`passage`/`scene`/`work`/`author`). Shown as
+    /// the type column so the header's BROWSING scope is never mistaken for
+    /// each row's own scope — the confusion that prompted this change.
+    pub type_label: String,
 }
 
 pub struct JournalQaPicker {
@@ -33,6 +41,7 @@ pub struct JournalQaPicker {
     search_entry: Entry,
     list_box: ListBox,
     pub items: Vec<JournalRow>,
+    column_groups: crate::ui::picker_nav::PickerColumnGroups,
 }
 
 impl JournalQaPicker {
@@ -61,6 +70,7 @@ impl JournalQaPicker {
             search_entry,
             list_box,
             items: Vec::new(),
+            column_groups: crate::ui::picker_nav::PickerColumnGroups::new(),
         }
     }
 
@@ -133,7 +143,18 @@ impl JournalQaPicker {
                 }
             }
 
-            let hbox = crate::ui::picker_nav::two_label_row(&primary, &item.scene_label);
+            let hbox = match (&item.author_label, &item.work_label) {
+                (Some(author), Some(work)) => crate::ui::picker_nav::five_column_row(
+                    &self.column_groups,
+                    author,
+                    work,
+                    &item.question_prefix,
+                    &item.scene_label,
+                    &item.type_label,
+                ),
+                // Scene/work scope: byte-identical to before this change.
+                _ => crate::ui::picker_nav::two_label_row(&primary, &item.scene_label),
+            };
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&idx.to_string());

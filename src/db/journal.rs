@@ -13,6 +13,11 @@ pub struct JournalPage {
     pub end_citation: Option<String>,
     pub source_text: Option<String>,
     pub kind: String,
+    /// The entry's own scope (`passage`/`scene`/`work`/`author`) — appended
+    /// as the LAST column/field (never inserted mid-list) so the ten
+    /// existing `map_journal_page_row` callers keep reading indices 0-10
+    /// untouched; only readers past the shared list need a +1.
+    pub scope: String,
 }
 
 /// A journal page plus the work it belongs to — used by cross-work term browse
@@ -28,7 +33,7 @@ pub struct TermMatch {
 /// row mapper cannot drift apart.
 const JOURNAL_PAGE_COLUMNS: &str =
     "id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-     start_citation, end_citation, source_text, COALESCE(kind, 'qa')";
+     start_citation, end_citation, source_text, COALESCE(kind, 'qa'), scope";
 
 /// Build a `JournalPage` from a row selected with `JOURNAL_PAGE_COLUMNS`.
 fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite::Error> {
@@ -44,6 +49,7 @@ fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite
         end_citation: row.get(8)?,
         source_text: row.get(9)?,
         kind: row.get(10)?,
+        scope: row.get(11)?,
     })
 }
 
@@ -337,7 +343,7 @@ pub fn find_author_pages(
 /// Do not replace this with `JOURNAL_PAGE_COLUMNS` again.
 const JOURNAL_PAGE_COLUMNS_J: &str =
     "j.id, j.div1, j.div2, j.question, j.answer, COALESCE(j.claude_model, ''), j.timestamp, \
-     j.start_citation, j.end_citation, j.source_text, COALESCE(j.kind, 'qa')";
+     j.start_citation, j.end_citation, j.source_text, COALESCE(j.kind, 'qa'), j.scope";
 
 /// EVERY journal entry, each paired with `(work_abbrev, work_title, author)`.
 ///
@@ -382,7 +388,9 @@ pub fn find_all_journal_pages(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         let page = map_journal_page_row(row)?;
-        Ok((page, row.get(11)?, row.get(12)?, row.get(13)?))
+        // row_work_abbrev/row_work_title/row_author sit right after the
+        // (now 12-column) JOURNAL_PAGE_COLUMNS_J list, i.e. indices 12/13/14.
+        Ok((page, row.get(12)?, row.get(13)?, row.get(14)?))
     })?;
     rows.collect()
 }
@@ -505,8 +513,9 @@ pub fn find_recent_pages(
 
 fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Error> {
     let page = map_journal_page_row(row)?;
-    // work_abbrev is the column AFTER the JOURNAL_PAGE_COLUMNS list (index 11).
-    let work_abbrev: String = row.get(11)?;
+    // work_abbrev is the column AFTER the (12-column) JOURNAL_PAGE_COLUMNS
+    // list, i.e. index 12.
+    let work_abbrev: String = row.get(12)?;
     Ok(TermMatch { page, work_abbrev })
 }
 
@@ -862,6 +871,28 @@ mod tests {
         // find_journal_scenes lists only scene-scoped rows.
         let scenes = find_journal_scenes(&conn, "Ham").unwrap();
         assert_eq!(scenes, vec![(1, 2)]);
+    }
+
+    /// Proves the APPENDED `scope` column (Task 3) did not shift any
+    /// existing field: every other column must still read back correctly
+    /// through the shared `map_journal_page_row`, and the newly-appended
+    /// `scope` must round-trip alongside the pre-existing `kind`.
+    #[test]
+    fn appended_scope_column_does_not_shift_existing_fields() {
+        let conn = mem();
+        save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "claude-opus-4-8", "scene", "note")
+            .unwrap();
+
+        let pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
+        assert_eq!(pages.len(), 1);
+        let p = &pages[0];
+        assert_eq!(p.div1, 1);
+        assert_eq!(p.div2, 2);
+        assert_eq!(p.question, "Q1?");
+        assert_eq!(p.answer, "A1.");
+        assert_eq!(p.claude_model, "claude-opus-4-8");
+        assert_eq!(p.kind, "note", "kind must still read from its own index, not scope's");
+        assert_eq!(p.scope, "scene", "appended scope column must round-trip");
     }
 
     #[test]

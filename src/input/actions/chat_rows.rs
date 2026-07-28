@@ -1077,6 +1077,7 @@ mod panel_view_toggle_tests {
             end_citation: Some("W.1.0.1".to_string()),
             source_text: None,
             kind: "qa".to_string(),
+            scope: "passage".to_string(),
         }
     }
 
