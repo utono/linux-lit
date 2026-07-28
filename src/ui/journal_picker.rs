@@ -31,6 +31,11 @@ pub struct JournalRow {
     /// the type column so the header's BROWSING scope is never mistaken for
     /// each row's own scope — the confusion that prompted this change.
     pub type_label: String,
+    /// The division column in the WORK'S OWN noun — "Ch. 2" for prose,
+    /// "1.4" for a play, "Preface" for prose front matter. Distinct from
+    /// `scene_label`, which already embeds the TYPE ("1.4 passage") and would
+    /// print it twice beside `type_label`. AUTHOR scope only.
+    pub div_label: String,
 }
 
 pub struct JournalQaPicker {
@@ -149,7 +154,10 @@ impl JournalQaPicker {
                     author,
                     work,
                     &item.question_prefix,
-                    &item.scene_label,
+                    // `div_label`, NOT `scene_label` — the latter already
+                    // embeds the type ("1.4 passage") and would print it
+                    // twice beside the type column.
+                    &item.div_label,
                     &item.type_label,
                 ),
                 // Scene/work scope: byte-identical to before this change.

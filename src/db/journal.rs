@@ -360,7 +360,7 @@ const JOURNAL_PAGE_COLUMNS_J: &str =
 /// LIST rather than an error.
 pub fn find_all_journal_pages(
     conn: &Connection,
-) -> Result<Vec<(JournalPage, String, String, String)>, rusqlite::Error> {
+) -> Result<Vec<(JournalPage, String, String, String, String)>, rusqlite::Error> {
     // Parenthesised ordinal refs (`ORDER BY (14)`) are rejected by SQLite on a
     // compound SELECT ("1st ORDER BY term does not match any column in the
     // result set") — and so is ANY non-bare-column first ORDER BY term (even
@@ -372,13 +372,15 @@ pub fn find_all_journal_pages(
         "SELECT * FROM ( \
            SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev AS row_work_abbrev, \
                   COALESCE(w.title, j.work_abbrev) AS row_work_title, \
-                  COALESCE(w.author, j.work_abbrev) AS row_author \
+                  COALESCE(w.author, j.work_abbrev) AS row_author, \
+                  COALESCE(w.work_type, '') AS row_work_type \
              FROM journal_entries j \
              JOIN works w ON w.abbrev = j.work_abbrev \
             WHERE j.scope != 'author' \
            UNION ALL \
            SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev AS row_work_abbrev, \
-                  j.work_abbrev AS row_work_title, j.work_abbrev AS row_author \
+                  j.work_abbrev AS row_work_title, j.work_abbrev AS row_author, \
+                  '' AS row_work_type \
              FROM journal_entries j \
             WHERE j.scope = 'author' \
          ) \
@@ -388,9 +390,10 @@ pub fn find_all_journal_pages(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         let page = map_journal_page_row(row)?;
-        // row_work_abbrev/row_work_title/row_author sit right after the
-        // (now 12-column) JOURNAL_PAGE_COLUMNS_J list, i.e. indices 12/13/14.
-        Ok((page, row.get(12)?, row.get(13)?, row.get(14)?))
+        // row_work_abbrev/row_work_title/row_author/row_work_type sit right
+        // after the (now 12-column) JOURNAL_PAGE_COLUMNS_J list — indices
+        // 12/13/14/15.
+        Ok((page, row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?))
     })?;
     rows.collect()
 }
@@ -1675,11 +1678,11 @@ mod tests {
         let conn = mem();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS works (
-                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT, work_type TEXT
              );
-             INSERT INTO works (abbrev, title, author) VALUES
-                 ('Ham', 'Hamlet', 'Shakespeare'),
-                 ('BH',  'Bleak House', 'Charles Dickens');",
+             INSERT INTO works (abbrev, title, author, work_type) VALUES
+                 ('Ham', 'Hamlet', 'Shakespeare', 'play'),
+                 ('BH',  'Bleak House', 'Charles Dickens', 'prose');",
         )
         .unwrap();
 
@@ -1688,14 +1691,14 @@ mod tests {
         save_author_page(&conn, "Shakespeare", "CorpusQ?", "A.", "m", "note").unwrap();
 
         let rows = find_all_journal_pages(&conn).unwrap();
-        let qs: Vec<&str> = rows.iter().map(|(p, _, _, _)| p.question.as_str()).collect();
+        let qs: Vec<&str> = rows.iter().map(|(p, _, _, _, _)| p.question.as_str()).collect();
 
         assert_eq!(rows.len(), 3, "every author's entries plus the corpus note");
         assert!(qs.contains(&"HamQ?"));
         assert!(qs.contains(&"DickensQ?"), "another author must NOT be excluded now");
         assert!(qs.contains(&"CorpusQ?"));
 
-        let ham = rows.iter().find(|(p, _, _, _)| p.question == "HamQ?").unwrap();
+        let ham = rows.iter().find(|(p, _, _, _, _)| p.question == "HamQ?").unwrap();
         assert_eq!(ham.1, "Ham", "work abbrev");
         assert_eq!(ham.2, "Hamlet", "work title");
         assert_eq!(ham.3, "Shakespeare", "author");
@@ -1707,12 +1710,12 @@ mod tests {
         let conn = mem();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS works (
-                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT, work_type TEXT
              );
-             INSERT INTO works (abbrev, title, author) VALUES
-                 ('BH',  'Bleak House', 'Charles Dickens'),
-                 ('GT',  'Gullivers Travels', 'Jonathan Swift'),
-                 ('Ham', 'Hamlet', 'Shakespeare');",
+             INSERT INTO works (abbrev, title, author, work_type) VALUES
+                 ('BH',  'Bleak House', 'Charles Dickens', 'prose'),
+                 ('GT',  'Gullivers Travels', 'Jonathan Swift', 'prose'),
+                 ('Ham', 'Hamlet', 'Shakespeare', 'play');",
         )
         .unwrap();
         save_journal_page(&conn, "GT", 1, 0, "SwiftQ?", "A.", "m", "scene", "qa").unwrap();
@@ -1722,7 +1725,7 @@ mod tests {
         let authors: Vec<String> = find_all_journal_pages(&conn)
             .unwrap()
             .into_iter()
-            .map(|(_, _, _, a)| a)
+            .map(|(_, _, _, a, _)| a)
             .collect();
 
         assert_eq!(
