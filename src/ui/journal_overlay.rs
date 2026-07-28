@@ -214,6 +214,12 @@ struct SourceLineRoles {
     speaker_line: Option<i32>,
     verse_lines: Vec<i32>,
     citation_line: Option<i32>,
+    /// The BLANK separator lines inside the quotation: the one under the speaker
+    /// label and the one above the citation. They are collapsed to a hairline so
+    /// the parts of one quotation don't drift apart (see `SOURCE_GAP_SCALE`);
+    /// the blank line between the source and the QUESTION is deliberately not
+    /// included — that break should stay full-size.
+    inner_gap_lines: Vec<i32>,
 }
 
 /// Map the leading source paragraphs to their buffer lines by role. `paras` are
@@ -253,10 +259,28 @@ fn source_line_roles(paras: &[String], has_speaker: bool, has_citation: bool) ->
         }
         _ => Vec::new(),
     };
+    // The blank separator sits on the line directly ABOVE a paragraph's start.
+    // Collect the two INSIDE the quotation (under the speaker, above the
+    // citation); never the one below the whole source block, which separates the
+    // quotation from the question and stays full-size.
+    let mut inner_gap_lines = Vec::new();
+    if speaker_para.is_some() {
+        if let Some(&first_verse_line) = verse_lines.first() {
+            if first_verse_line > 0 {
+                inner_gap_lines.push(first_verse_line - 1);
+            }
+        }
+    }
+    if let Some(c) = citation_para {
+        if starts[c] > 0 {
+            inner_gap_lines.push(starts[c] - 1);
+        }
+    }
     SourceLineRoles {
         speaker_line: speaker_para.map(|p| starts[p]),
         verse_lines,
         citation_line: citation_para.map(|p| starts[p]),
+        inner_gap_lines,
     }
 }
 
@@ -316,6 +340,22 @@ const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
 /// pagination reads left_margin live so wrap/height follow automatically (no
 /// measure change).
 const JOURNAL_BODY_INDENT: i32 = crate::ui::gloss_render::QUOTE_BODY_INDENT;
+
+/// Font scale applied to the two BLANK separator lines inside the quoted source
+/// (under the speaker label, above the citation). The source's paragraphs are
+/// `\n\n`-joined like every other block, so each internal boundary renders a
+/// full blank line — too airy for parts of one quotation.
+///
+/// Shrinking the blank line's own font is the only way to close it: GTK's
+/// `pixels-above-lines`/`pixels-below-lines` are `min=0`, so a NEGATIVE pull is
+/// not merely ignored — setting one aborts the process with "invalid or out of
+/// range" inside a non-unwinding GTK callback. Do not reach for negative
+/// spacing here.
+///
+/// Scaling the blank leaves the TEXT untouched, so every char offset (search,
+/// diff spans, page char spans) and every buffer line index (blocks,
+/// pagination, the accent bar) is unchanged.
+const SOURCE_GAP_SCALE: f64 = 0.3;
 
 /// The journal's OWN reading family — deliberately distinct from every other
 /// surface. The reader card, the gloss, and the synopsis all render in whichever
@@ -1703,11 +1743,20 @@ impl JournalOverlay {
         // `bar_left`) and reuse the gloss's own indent constants, so a journal
         // source block sits exactly where the gloss card puts it.
         let bar_left = self.view.left_margin() - JOURNAL_BODY_INDENT;
-        for name in ["journal-src-speaker", "journal-src-verse"] {
+        for name in ["journal-src-speaker", "journal-src-verse", "journal-src-gap"] {
             if let Some(old) = table.lookup(name) {
                 table.remove(&old);
             }
         }
+        // Collapse the blank separator lines INSIDE the quotation by shrinking
+        // their font (see `SOURCE_GAP_SCALE` — negative pixel spacing is not an
+        // option; GTK aborts on it).
+        table.add(
+            &gtk4::TextTag::builder()
+                .name("journal-src-gap")
+                .scale(SOURCE_GAP_SCALE)
+                .build(),
+        );
         table.add(
             &gtk4::TextTag::builder()
                 .name("journal-src-speaker")
@@ -1780,6 +1829,21 @@ impl JournalOverlay {
         }
         if let Some(l) = roles.citation_line {
             apply_line("journal-src-citation", l);
+        }
+        // The gap lines are EMPTY, so `apply_line`'s start..line-end range would
+        // be zero-length and tag nothing. Span the line's trailing newline
+        // instead — that is the character carrying the blank line's height.
+        if let Some(tag) = table.lookup("journal-src-gap") {
+            for l in &roles.inner_gap_lines {
+                let Some(start) = buffer.iter_at_line(*l) else {
+                    continue;
+                };
+                let mut end = start.clone();
+                if !end.forward_line() {
+                    continue;
+                }
+                buffer.apply_tag(&tag, &start, &end);
+            }
         }
     }
 
@@ -2802,6 +2866,10 @@ mod source_line_roles_tests {
         assert_eq!(roles.speaker_line, Some(0));
         assert_eq!(roles.verse_lines, vec![2, 3, 4]);
         assert_eq!(roles.citation_line, Some(6));
+        // The two blanks INSIDE the quotation get collapsed: line 1 (under the
+        // speaker) and line 5 (above the citation). The blank BELOW the whole
+        // source block separates it from the question and is not listed.
+        assert_eq!(roles.inner_gap_lines, vec![1, 5]);
     }
 
     #[test]
@@ -2812,6 +2880,8 @@ mod source_line_roles_tests {
         assert_eq!(roles.speaker_line, None);
         assert_eq!(roles.verse_lines, vec![0]);
         assert_eq!(roles.citation_line, None);
+        // Nothing to collapse: no speaker label above, no citation below.
+        assert!(roles.inner_gap_lines.is_empty());
     }
 
     #[test]
@@ -2823,6 +2893,9 @@ mod source_line_roles_tests {
         assert_eq!(roles.speaker_line, None);
         assert_eq!(roles.verse_lines, vec![0, 1]);
         assert_eq!(roles.citation_line, Some(3));
+        // Only the citation's own gap (line 2) — there is no speaker label, so
+        // the quote starts at line 0 with no blank above it to collapse.
+        assert_eq!(roles.inner_gap_lines, vec![2]);
     }
 }
 
