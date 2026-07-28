@@ -318,6 +318,26 @@ const UNACCOUNTED_CHROME_MARGINS: i32 = 24 + 20 /* scroll_overlay top+bottom */;
 /// measure change).
 const JOURNAL_BODY_INDENT: i32 = crate::ui::gloss_render::QUOTE_BODY_INDENT;
 
+/// The journal's OWN reading family — deliberately distinct from every other
+/// surface. The reader card, the gloss, and the synopsis all render in whichever
+/// `config::FONT_CYCLE` serif is active (`reapply_font` → `sync_reader_font`), so
+/// the journal must sit OUTSIDE that cycle or a few presses of `f` would collide
+/// with it. iA Writer Quattro S is a duospaced hybrid: the Q&A reads as the
+/// reader's own notebook rather than more of the text.
+///
+/// Only the FAMILY is pinned — `sync_reader_font` still follows the reader's
+/// SIZE, so `+`/`-` scales the journal with everything else.
+const JOURNAL_FONT_FAMILY: &str = "iA Writer Quattro S";
+
+/// Point offset applied to the reader's size for the journal only. Quattro is
+/// DUOSPACED — its advance widths run ~20% wider than the `FONT_CYCLE` serifs at
+/// the same nominal point, so without a correction the source verse re-wraps and
+/// the entry gains pages. Measured with Pango against the longest MM-Arkangel
+/// verse line: Charter 17 = 487px, Quattro 16 = 584px, Quattro 14 = 490px — so
+/// -3 holds the reader's measure almost exactly. Pagination measures real line
+/// heights, so the page budget follows this automatically.
+const JOURNAL_FONT_SIZE_DELTA: i32 = -3;
+
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
         let overlay = Overlay::new();
@@ -624,6 +644,12 @@ impl JournalOverlay {
         // Build markdown tags once against the view's tag table so every
         // render_page call reuses the same registered tags (O(1) apply).
         let md_tags = crate::ui::markdown::MarkdownTags::register(&view.buffer());
+        // `register` defaults the serif tags to GLOSS_DEFAULT_FONT_FAMILY; point
+        // them at the journal's own family up front. `sync_reader_font` only
+        // re-applies this when the family CHANGES, and the journal's family is
+        // pinned — so without this the note body/headings would keep rendering
+        // in the gloss's Charter while the rest of the journal used Quattro.
+        md_tags.set_serif_family(JOURNAL_FONT_FAMILY);
         // Overlay-search highlight tags (Task 2 of the overlay-search feature).
         // Registered once here — same pattern as md_tags — so later search/step
         // logic (Task 3) can apply them without re-registering. Placeholder
@@ -696,13 +722,17 @@ impl JournalOverlay {
             text_margins: text_margins as i32,
             column_width: column_width as i32,
             prose_reading: Cell::new(false),
-            // Match the gloss overlay's reading family + size (shared consts) so
-            // the journal applies its OWN 19pt font tag. An EMPTY family made
-            // apply_font early-return, so the journal never applied a tag and fell
-            // back to the `.gloss-text` CSS at config.font_size (the reader's size,
-            // e.g. 17pt) — rendering SMALLER than the gloss overlay's 19pt.
-            font_family: RefCell::new(crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_FAMILY.to_string()),
-            font_size: Cell::new(crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_SIZE),
+            // The journal's OWN family (distinct from every other surface — see
+            // JOURNAL_FONT_FAMILY), at the shared overlay size less the journal's
+            // delta. Pre-first-work baseline only: `sync_reader_font` re-applies
+            // the reader's SIZE (keeping this family) on the first work load.
+            // Must be NON-EMPTY — an empty family makes apply_font early-return,
+            // which drops the journal to the `.gloss-text` CSS at the reader's
+            // size instead of its own tag.
+            font_family: RefCell::new(JOURNAL_FONT_FAMILY.to_string()),
+            font_size: Cell::new(
+                crate::ui::gloss_overlay::GLOSS_DEFAULT_FONT_SIZE + JOURNAL_FONT_SIZE_DELTA,
+            ),
             pre_edit_family: RefCell::new(None),
             last_card_size: Cell::new((0, 0)),
             loading_animator: crate::ui::loading_animator::LoadingAnimator::new(),
@@ -1174,16 +1204,23 @@ impl JournalOverlay {
         self.apply_font();
     }
 
-    /// Follow the reader card's font FAMILY and SIZE. Mirrors
-    /// `GlossOverlay::sync_reader_font` — the two overlays share the main
-    /// card's font (never drift). Does NOT run while `begin_edit_font` has
-    /// stashed the reading family for the mono edit swap — clobbering
-    /// `font_family` mid-edit would corrupt the stash `end_edit_font`
-    /// restores from (see the gloss overlay's sync for the full rationale).
-    pub fn sync_reader_font(&self, family: &str, size: i32) {
+    /// Follow the reader card's font SIZE only — the journal keeps its OWN
+    /// family (`JOURNAL_FONT_FAMILY`), which is what makes it visually distinct
+    /// from the reader card, the gloss, and the synopsis (all of which DO follow
+    /// the reader's family via `GlossOverlay::sync_reader_font`). The `family`
+    /// argument is therefore deliberately ignored; `reapply_font` still calls
+    /// this on every work load / size change so `+`/`-` scales the journal too.
+    ///
+    /// Does NOT run while `begin_edit_font` has stashed the reading family for
+    /// the mono edit swap — clobbering `font_family` mid-edit would corrupt the
+    /// stash `end_edit_font` restores from (see the gloss overlay's sync for the
+    /// full rationale).
+    pub fn sync_reader_font(&self, _family: &str, size: i32) {
         if self.pre_edit_family.borrow().is_some() {
             return;
         }
+        let family = JOURNAL_FONT_FAMILY;
+        let size = (size + JOURNAL_FONT_SIZE_DELTA).max(8);
         let family_changed = self.font_family.borrow().as_str() != family;
         let size_changed = self.font_size.get() != size;
         if family_changed || size_changed {
@@ -1637,27 +1674,51 @@ impl JournalOverlay {
         }
         let buffer = self.view.buffer();
         let table = buffer.tag_table();
-        if table.lookup("journal-src-speaker").is_none() {
-            table.add(
-                &gtk4::TextTag::builder()
-                    .name("journal-src-speaker")
-                    // Match the main reading card's speaker-name scale
-                    // (formatting.rs `speaker-name`, 0.75) — the only overlay
-                    // text allowed below the card's body size.
-                    .scale(0.75)
-                    .weight(600)
-                    .build(),
-            );
+        // The quote indents are ABSOLUTE pixel margins derived from the current
+        // card's column edge, so they MUST be recomputed per render — a tag
+        // cached by `lookup().is_none()` keeps the margin of whatever card built
+        // it first and outdents the source on every later card of a different
+        // width. Remove and rebuild each time.
+        //
+        // Anchor at the COLUMN edge (`left_margin` minus the body indent, the
+        // same value `show_passage_source` passes the gloss renderer as
+        // `bar_left`) and reuse the gloss's own indent constants, so a journal
+        // source block sits exactly where the gloss card puts it.
+        let bar_left = self.view.left_margin() - JOURNAL_BODY_INDENT;
+        for name in ["journal-src-speaker", "journal-src-verse"] {
+            if let Some(old) = table.lookup(name) {
+                table.remove(&old);
+            }
         }
-        if table.lookup("journal-src-verse").is_none() {
-            table.add(
-                &gtk4::TextTag::builder()
-                    .name("journal-src-verse")
-                    .left_margin(self.view.left_margin() + 28)
-                    .indent(-28)
-                    .build(),
-            );
-        }
+        table.add(
+            &gtk4::TextTag::builder()
+                .name("journal-src-speaker")
+                // Match the main reading card's speaker-name scale
+                // (formatting.rs `speaker-name`, 0.75) — the only overlay
+                // text allowed below the card's body size.
+                .scale(0.75)
+                .weight(600)
+                .left_margin(bar_left + crate::ui::gloss_render::QUOTE_SPEAKER_INDENT)
+                .build(),
+        );
+        // Verse hangs one dialogue step past the speaker label, matching the
+        // main card's speaker→dialogue hang-indent (the gloss's
+        // `QUOTE_VERSE_INDENT` when a speaker is present; without a label the
+        // verse sits at the speaker's own indent, as `populate_verse_buffer`
+        // does).
+        let verse_indent = if self.source_has_speaker.get() {
+            crate::ui::gloss_render::QUOTE_VERSE_INDENT
+        } else {
+            crate::ui::gloss_render::QUOTE_SPEAKER_INDENT
+        };
+        table.add(
+            &gtk4::TextTag::builder()
+                .name("journal-src-verse")
+                .left_margin(bar_left + verse_indent)
+                // Turnovers of a long verse line tuck under the hang indent.
+                .indent(-28)
+                .build(),
+        );
         if table.lookup("journal-src-citation").is_none() {
             table.add(
                 &gtk4::TextTag::builder()
