@@ -71,8 +71,8 @@ pub enum Action {
     JumpToPrevSpeaker,
     JumpToNextChapter,
     JumpToPrevChapter,
-    JumpToNextScene,
-    JumpToPrevScene,
+    JumpToNextDivision,
+    JumpToPrevDivision,
 
     // Bookmarks
     ToggleBookmark,
@@ -325,8 +325,8 @@ impl Action {
             | Action::JumpToPrevSpeaker
             | Action::JumpToNextChapter
             | Action::JumpToPrevChapter
-            | Action::JumpToNextScene
-            | Action::JumpToPrevScene
+            | Action::JumpToNextDivision
+            | Action::JumpToPrevDivision
             | Action::ToggleBookmark
             | Action::BookmarkTap
             | Action::ToggleChapterStart
@@ -476,8 +476,8 @@ impl Action {
             Action::JumpToPrevSpeaker => "JumpToPrevSpeaker",
             Action::JumpToNextChapter => "JumpToNextChapter",
             Action::JumpToPrevChapter => "JumpToPrevChapter",
-            Action::JumpToNextScene => "JumpToNextScene",
-            Action::JumpToPrevScene => "JumpToPrevScene",
+            Action::JumpToNextDivision => "JumpToNextDivision",
+            Action::JumpToPrevDivision => "JumpToPrevDivision",
             Action::ToggleBookmark => "ToggleBookmark",
             Action::BookmarkTap => "BookmarkTap",
             Action::ToggleChapterStart => "ToggleChapterStart",

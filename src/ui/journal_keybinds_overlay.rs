@@ -27,7 +27,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("Ctrl+n / Ctrl+p", "nav_page: next / prev Q&A in the WORK (all scopes)"),
-        ("Alt+n / Alt+p", "nav_scene: next / prev scene band"),
+        ("Alt+n / Alt+p", "nav_division: next / prev scene band"),
         ("\\", "back to the synopsis (only when entered from one)"),
         ("Shift+V", "visual select (y yank → clipboard)"),
     ]),

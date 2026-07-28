@@ -1568,7 +1568,7 @@ pub fn page_backward_bottom(state: &mut AppState) {
 /// jump that was reverted to `prev_line`; the caller then skips its
 /// scroll/after-page work, leaving the reader exactly where they were.
 ///
-/// Deliberately does NOT cover the scene/act jumps (`jump_to_next_scene` and
+/// Deliberately does NOT cover the scene/act jumps (`jump_to_next_division` and
 /// friends): those exist to move between divisions, so turning the page is
 /// their whole purpose.
 fn keep_jump_if_on_page(state: &mut AppState, prev_line: usize, dir: Direction) -> bool {
@@ -2058,7 +2058,7 @@ pub fn jump_to_next_act(state: &mut AppState) {
 /// places the cursor on the first dialogue line of that scene. The viewport
 /// top is pinned to the scene marker so the scene header stays visible above
 /// the cursorline.
-pub fn jump_to_prev_scene(state: &mut AppState) {
+pub fn jump_to_prev_division(state: &mut AppState) {
     use crate::db::line_types;
     let line_count = state.effective_line_count();
     let (marker, cursor) = {
@@ -2067,7 +2067,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
         }
         // Authoritative `section_starts` bitmap, not `is_act_scene_marker` text
         // (which false-positives on dialogue like 'act of hares…' — see
-        // jump_to_next_scene). Text fallback only mid-load (no bitmap).
+        // jump_to_next_division). Text fallback only mid-load (no bitmap).
         let has_bitmap = state.section_starts().is_some();
         let is_marker_at = |bl: usize| -> bool {
             if has_bitmap {
@@ -2121,7 +2121,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
             return;
         }
         state.current_line = cursor_idx;
-        // See jump_to_next_scene: clear but don't push, so `y` pages back one
+        // See jump_to_next_division: clear but don't push, so `y` pages back one
         // viewport into skipped content rather than teleporting to the origin.
         state.page_back_stack.clear();
         match state.config.navigation_mode {
@@ -2536,7 +2536,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
 }
 
 /// Next scene marker (used for plays on the `3` key).
-pub fn jump_to_next_scene(state: &mut AppState) {
+pub fn jump_to_next_division(state: &mut AppState) {
     use crate::db::line_types;
     let line_count = state.effective_line_count();
     // Find the next scene boundary from the AUTHORITATIVE `section_starts` bitmap
@@ -2584,7 +2584,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
             crate::config::NavigationMode::EReader => {
                 // In two-column mode, if the new scene would render in the RIGHT
                 // column, re-page so it begins the LEFT column even when the
-                // cursor line is already on screen (see jump_to_prev_scene).
+                // cursor line is already on screen (see jump_to_prev_division).
                 if division_starts_in_right_column(state, marker_idx) {
                     set_page_instant(state, marker_idx);
                 } else if is_line_fully_visible(state, cursor_idx) {
@@ -2607,20 +2607,20 @@ pub fn jump_to_next_section(state: &mut AppState) {
         .map(|w| w.work_type == "play")
         .unwrap_or(false);
     if is_play {
-        jump_to_next_scene(state);
+        jump_to_next_division(state);
     } else {
         jump_to_next_chapter(state);
     }
     // The running-head strip already tracks the landed scene (via the
     // cursor-move refresh), so there is no bottom toast to surface here.
-    surface_current_scene_toast(state);
+    surface_current_division_toast(state);
 }
 
 /// Retired no-op, kept for its call sites (scene/chapter jumps). The
 /// always-visible running-head strip replaced the bottom act/scene toast, and
 /// the head is refreshed by the cursor-move path, so scene jumps need nothing
 /// surfaced here.
-pub(crate) fn surface_current_scene_toast(state: &mut AppState) {
+pub(crate) fn surface_current_division_toast(state: &mut AppState) {
     // Retired: the running-head strip shows the current position for every
     // work. Scene/chapter jumps update the head via the cursor-move path, so
     // there is nothing to surface as a bottom toast.
@@ -2634,12 +2634,12 @@ pub fn jump_to_prev_section(state: &mut AppState) {
         .map(|w| w.work_type == "play")
         .unwrap_or(false);
     if is_play {
-        jump_to_prev_scene(state);
+        jump_to_prev_division(state);
     } else {
         jump_to_prev_chapter(state);
     }
-    // Surface the new act/scene without toggling — see surface_current_scene_toast.
-    surface_current_scene_toast(state);
+    // Surface the new act/scene without toggling — see surface_current_division_toast.
+    surface_current_division_toast(state);
 }
 
 /// Show the act/scene (plays) or chapter (prose) containing the current line as
@@ -2658,7 +2658,7 @@ pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
 
     // Plays/verse: authoritative act/scene label, never "Chapter N of M".
     if !state.is_prose() {
-        let (div1, div2) = crate::app::division_synopsis::current_scene_divs(state);
+        let (div1, div2) = crate::app::division_synopsis::current_division_divs(state);
         let label = crate::app::division_synopsis::synopsis_division_label_for(state, div1, div2);
         return format!("{} — {}", abbrev, label);
     }
@@ -2676,7 +2676,7 @@ pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
 
     // Prose without chapter markers: scene-label fallback.
     if chapter_lines.is_empty() {
-        let (div1, div2) = crate::app::division_synopsis::current_scene_divs(state);
+        let (div1, div2) = crate::app::division_synopsis::current_division_divs(state);
         let label = crate::app::division_synopsis::synopsis_division_label_for(state, div1, div2);
         return format!("{} — {}", abbrev, label);
     }
@@ -2696,7 +2696,7 @@ pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
 
     // Chapter number and total come from the authoritative div1 metadata,
     // never from counting heading lines in the buffer.
-    let (div1, _) = crate::app::division_synopsis::current_scene_divs(state);
+    let (div1, _) = crate::app::division_synopsis::current_division_divs(state);
     let max_div1 = work.lines.iter().map(|l| l.div1).max().unwrap_or(0);
 
     // The displayed heading text still comes from the nearest marker line at
@@ -2973,7 +2973,7 @@ pub(crate) fn hide_chapter_toast(state: &AppState) {
 
 /// Keep the persistent chapter toast in sync with the cursor: recompute its
 /// text and hold it visible. No-op when the toast is not in persistent mode.
-/// Rides the per-navigation `update_title_bar_scene` sites but is a SEPARATE
+/// Rides the per-navigation `update_title_bar_division` sites but is a SEPARATE
 /// call — it must refresh even when the title bar is hidden.
 pub(crate) fn refresh_persistent_chapter_toast(state: &AppState) {
     // Retired: the running-head strip replaced the persistent bottom toast.
@@ -4166,7 +4166,7 @@ mod page_turn_tests {
     /// Shakespeare plays, verify the first dialogue line after the scene marker
     /// maps to the correct (div1, div2) via the work's line_mapping.
     #[test]
-    fn test_scene_synopsis_identification_all_shakespeare() {
+    fn test_division_synopsis_identification_all_shakespeare() {
         let db_path = "/home/mlj/utono/litdb/data/lit.db";
         if !std::path::Path::new(db_path).exists() {
             eprintln!("SKIP: lit.db not found");
@@ -4183,7 +4183,7 @@ mod page_turn_tests {
             return;
         }
 
-        let mut total_scenes = 0;
+        let mut total_divisions = 0;
         let mut verified = 0;
 
         for path in &files {
@@ -4228,7 +4228,7 @@ mod page_turn_tests {
                 if !line_types::is_act_scene_marker(trimmed) {
                     continue;
                 }
-                total_scenes += 1;
+                total_divisions += 1;
 
                 // Find first dialogue line after this marker
                 let first_dialogue = match next_dialogue(&lines, i) {
@@ -4251,7 +4251,7 @@ mod page_turn_tests {
 
         eprintln!(
             "Synopsis identification: {} total scene markers, {} verified with synopsis match",
-            total_scenes, verified
+            total_divisions, verified
         );
         assert!(verified > 0, "Expected at least some synopsis matches");
     }
@@ -4321,7 +4321,7 @@ mod page_turn_tests {
     /// in its interior (after the opening header block). Verified across all
     /// Shakespeare plays.
     #[test]
-    fn test_x_page_forward_no_mid_page_scene_breaks_all_shakespeare() {
+    fn test_x_page_forward_no_mid_page_division_breaks_all_shakespeare() {
         let files = shakespeare_play_files();
         if files.is_empty() {
             eprintln!("SKIP: no Shakespeare files found");
@@ -4383,7 +4383,7 @@ mod page_turn_tests {
     /// jump can skip many pages (mid-scene -> EPILOGUE), so origin-return would
     /// hide everything between. Verify the stack is empty after a scene jump.
     #[test]
-    fn test_y_after_scene_jump_pages_back_all_shakespeare() {
+    fn test_y_after_division_jump_pages_back_all_shakespeare() {
         let files = shakespeare_play_files();
         if files.is_empty() {
             eprintln!("SKIP: no Shakespeare files found");
@@ -4461,7 +4461,7 @@ mod page_turn_tests {
     /// x x x 3 y returns to the page before the scene jump.
     /// x x x 3 y y falls through (empty stack).
     #[test]
-    fn test_x_x_x_scene_jump_y_y_sequence() {
+    fn test_x_x_x_division_jump_y_y_sequence() {
         let lines = load_troilus_lines();
         let page_size = 30;
         let markers = division_marker_indices(&lines);
@@ -4498,7 +4498,7 @@ mod page_turn_tests {
 
     /// 3 3 y returns to the page before the SECOND scene jump (not the first).
     #[test]
-    fn test_chained_scene_jumps_only_last_origin_survives() {
+    fn test_chained_division_jumps_only_last_origin_survives() {
         let lines = load_troilus_lines();
         let page_size = 30;
         let markers = division_marker_indices(&lines);

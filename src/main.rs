@@ -253,7 +253,7 @@ fn main() {
                         // Capture the overlay's scene BEFORE the cursor moves so
                         // sync_translation_overlay (end of arm) can detect a
                         // cross-scene move and rebuild rather than just re-highlight.
-                        let ov_scene_before = crate::app::division_synopsis::current_scene_divs(&s);
+                        let ov_division_before = crate::app::division_synopsis::current_division_divs(&s);
 
                         if s.current_line != buffer_line {
                             crate::logging::log_always(&format!(
@@ -276,8 +276,8 @@ fn main() {
                                     let wi = s.work_line_for_buffer(buffer_line).unwrap_or(line_idx);
                                     if let Some(line) = work.lines.get(wi) {
                                         let scene = (line.div1, line.div2);
-                                        let old_scene = s.current_sync_scene;
-                                        s.current_sync_scene = Some(scene);
+                                        let old_division = s.current_sync_division;
+                                        s.current_sync_division = Some(scene);
                                         // Skip the scene snap when the new scene
                                         // is ALREADY visible on the current spread
                                         // (e.g. in the right column because it's
@@ -287,8 +287,8 @@ fn main() {
                                             crate::input::viewport::is_line_fully_visible(
                                                 &s, buffer_line,
                                             );
-                                        if old_scene.is_some()
-                                            && old_scene != Some(scene)
+                                        if old_division.is_some()
+                                            && old_division != Some(scene)
                                             && !already_visible
                                         {
                                             // Table mode: the stored page containing
@@ -317,7 +317,7 @@ fn main() {
                                             if top != s.page_top.line() {
                                                 crate::logging::log_always(&format!(
                                                     "SYNC_SCENE_SCROLL: {:?}->{:?} top={} current={} page_top={}",
-                                                    old_scene, scene, top, buffer_line, s.page_top.line()
+                                                    old_division, scene, top, buffer_line, s.page_top.line()
                                                 ));
                                                 crate::input::scroll::set_page_instant(&mut s, top);
                                                 division_scrolled = true;
@@ -490,7 +490,7 @@ fn main() {
                         // overlay so its highlight follows audio playback. Drop the
                         // borrow first — sync_translation_overlay re-borrows.
                         drop(s);
-                        crate::app::translations::sync_translation_overlay(&state_for_events, ov_scene_before);
+                        crate::app::translations::sync_translation_overlay(&state_for_events, ov_division_before);
                     }
                     MpvEvent::ConnectionStatus(connected) => {
                         let mut s = state_for_events.borrow_mut();
@@ -614,7 +614,7 @@ fn main() {
                                     s.pending_advance_ignore_bl = Some(s.current_line);
                                     s.pending_advance = None;
                                     if s.current_line != next_bl {
-                                        ov_moved = Some(crate::app::division_synopsis::current_scene_divs(&s));
+                                        ov_moved = Some(crate::app::division_synopsis::current_division_divs(&s));
                                         s.current_line = next_bl;
                                         crate::input::navigation::update_highlight_and_advance_page(
                                             &mut s,

@@ -4019,7 +4019,7 @@ mod passages_div1_div2_tests {
     }
 
     #[test]
-    fn neighbor_glosses_same_scene_nearest_two_each_side() {
+    fn neighbor_glosses_same_division_nearest_two_each_side() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE passages (id INTEGER PRIMARY KEY, hash TEXT, \

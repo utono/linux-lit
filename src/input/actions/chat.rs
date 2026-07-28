@@ -784,7 +784,7 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         let synopsis_division_label = crate::app::division_synopsis::synopsis_division_label(seg.div1, seg.div2);
         // The full scene text is the SAME window the journal Passage band sends
         // (anchored on the journal's saved reader position via journal_band).
-        let division_text = crate::input::actions::journal::current_scene_text(&s);
+        let division_text = crate::input::actions::journal::current_division_text(&s);
         let chip: String = seg.segments[seg.cursor_index].chars().take(120).collect();
         // Everything build_qa_answer_message needs to (re)build the user message
         // once the question has been rewritten. Captured by value so the answer

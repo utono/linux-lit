@@ -1268,7 +1268,7 @@ mod tests {
 
     /// Tightest -> widest, wrapping. Mirrors GlossPickerFilter's cycle test.
     #[test]
-    fn journal_picker_scope_cycles_scene_work_author() {
+    fn journal_picker_scope_cycles_division_work_author() {
         use super::JournalPickerScope as S;
         assert_eq!(S::Division.next(), S::Work);
         assert_eq!(S::Work.next(), S::Author);

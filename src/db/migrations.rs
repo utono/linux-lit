@@ -335,7 +335,7 @@ pub fn ensure_gloss_audio_table(conn: &Connection) -> Result<(), rusqlite::Error
 pub fn ensure_synopsis_audio_table(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS synopsis_audio ({SYNOPSIS_AUDIO_COLUMNS});
-         CREATE INDEX IF NOT EXISTS idx_synopsis_audio_scene
+         CREATE INDEX IF NOT EXISTS idx_synopsis_audio_division
              ON synopsis_audio(work_abbrev, div1, div2);"
     ))
 }
@@ -489,7 +489,7 @@ const REFILE_JOURNAL_BANDS_KEY: &str = "refile-journal-bands-2026-07-28";
 ///
 /// Live data: three rows, all BH, filed under band (0,0) — the PREFACE —
 /// while citing chapter 1. Reading chapter 1 and pressing Ctrl+j resolves the
-/// cursor band to (1,0), calls `find_scene_band_pages`, gets nothing, and
+/// cursor band to (1,0), calls `find_division_band_pages`, gets nothing, and
 /// toasts "No journal entry for this segment" — while those chapter-1 Q&As
 /// sit filed under the Preface.
 ///
@@ -773,7 +773,7 @@ mod tests {
 
     /// The reported bug: BH ids 7/8/9 are filed under band (0,0) — the
     /// PREFACE — while citing chapter 1. Reading chapter 1 and pressing
-    /// Ctrl+j asks find_scene_band_pages(work, 1, 0), gets nothing, and
+    /// Ctrl+j asks find_division_band_pages(work, 1, 0), gets nothing, and
     /// toasts "No journal entry for this segment".
     #[test]
     fn mismatched_band_is_refiled_from_its_citation() {
@@ -788,9 +788,9 @@ mod tests {
         assert_eq!(band_of(&conn, mis_filed), (1, 0), "refiled to the cited chapter");
 
         // The whole point: the band render now finds it.
-        let ch1 = crate::db::journal::find_scene_band_pages(&conn, "BH", 1, 0).unwrap();
+        let ch1 = crate::db::journal::find_division_band_pages(&conn, "BH", 1, 0).unwrap();
         assert_eq!(ch1.len(), 1, "chapter 1's band now returns the entry");
-        let ch0 = crate::db::journal::find_scene_band_pages(&conn, "BH", 0, 0).unwrap();
+        let ch0 = crate::db::journal::find_division_band_pages(&conn, "BH", 0, 0).unwrap();
         assert!(ch0.is_empty(), "the Preface band is correctly empty");
     }
 

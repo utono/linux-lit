@@ -184,14 +184,14 @@ fn improve_terms_line(terms: &[String]) -> String {
 /// BORROW SAFETY: scene text + model are read under one scoped borrow that drops
 /// before `run_claude_request` (which re-borrows `state`), mirroring
 /// `spawn_retag`. `on_done` runs later inside the request callbacks.
-fn extract_scene_terms(
+fn extract_division_terms(
     state: &Rc<RefCell<AppState>>,
     question: String,
     on_done: impl Fn(&Rc<RefCell<AppState>>, String, Vec<String>) + 'static,
 ) {
     let (division_text, model) = {
         let s = state.borrow();
-        (current_scene_text(&s), s.config.tag_extract_model.clone())
+        (current_division_text(&s), s.config.tag_extract_model.clone())
     };
     if division_text.trim().is_empty() {
         on_done(state, question, Vec::new());
@@ -368,7 +368,7 @@ pub(crate) fn term_input_opened_from_reader(mode: crate::app::InputMode) -> bool
 /// `(div1, div2)` scene/chapter band. A passage page therefore resolves to the
 /// same `Scene` band as the scene Q&As around it, so `confirm_picker` lands the
 /// reader in the merged band (where `render_current` loads scene + passage pages
-/// together via `find_scene_band_pages`) and finds the page by id. The picker's
+/// together via `find_division_band_pages`) and finds the page by id. The picker's
 /// "N.N passage" label is computed separately from the ROW's citations, not from
 /// the band — see `open_picker`.
 fn band_for_page(p: &crate::db::journal::JournalPage) -> JournalBand {
@@ -596,9 +596,9 @@ fn load_band_pages(s: &AppState) -> Vec<crate::db::journal::JournalPage> {
             .unwrap_or_default(),
         JournalBand::Division(d1, d2) => conn
             // A scene/chapter band holds BOTH its scene Q&As and the passage
-            // Q&As anchored in the same (div1, div2) — `find_scene_band_pages`
+            // Q&As anchored in the same (div1, div2) — `find_division_band_pages`
             // merges them so Ctrl+n/p pages through all of a chapter's Q&As.
-            .and_then(|c| crate::db::journal::find_scene_band_pages(&c, &work_abbrev, d1, d2).ok())
+            .and_then(|c| crate::db::journal::find_division_band_pages(&c, &work_abbrev, d1, d2).ok())
             .unwrap_or_default(),
         JournalBand::Passage { start, end, .. } => conn
             .and_then(|c| crate::db::journal::find_passage_pages(&c, &work_abbrev, &start, &end).ok())
@@ -1250,10 +1250,10 @@ pub(crate) fn toggle_overlay(state: &Rc<RefCell<AppState>>) {
         return;
     }
 
-    open_journal_scene(state, JournalOpenScope::SegmentElseBand);
+    open_journal_division(state, JournalOpenScope::SegmentElseBand);
 }
 
-/// How far `open_journal_scene` may widen its search.
+/// How far `open_journal_division` may widen its search.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum JournalOpenScope {
     /// The `\` overlay cycle: a `scope='passage'` entry covering the lap
@@ -1275,7 +1275,7 @@ impl JournalOpenScope {
 /// `scope='passage'` entry whose citation span covers the lap anchor. Performed
 /// WITHOUT opening the overlay or touching any state.
 ///
-/// Matches `open_journal_scene(state, JournalOpenScope::SegmentOnly)` exactly —
+/// Matches `open_journal_division(state, JournalOpenScope::SegmentOnly)` exactly —
 /// same anchor, same query. The `\` overlay cycle probes with this before
 /// tearing down the current overlay; see `gloss::gloss_covers_cursor`, whose
 /// span-only shape this mirrors.
@@ -1319,7 +1319,7 @@ pub(crate) fn journal_has_content_at_cursor(state: &Rc<RefCell<AppState>>) -> bo
 /// empty journal stop instead of ending there; `SegmentElseBand` (Ctrl+j, via
 /// `toggle_overlay`) falls through to the whole scene band and keeps the miss
 /// toast this function emits when even the band is empty.
-pub(crate) fn open_journal_scene(
+pub(crate) fn open_journal_division(
     state: &Rc<RefCell<AppState>>,
     scope: JournalOpenScope,
 ) -> bool {
@@ -1384,15 +1384,15 @@ pub(crate) fn open_journal_scene(
         if s.current_work.is_none() {
             return false;
         }
-        let (d1, d2) = crate::app::division_synopsis::current_scene_divs(&s);
-        // Use the SAME query the Scene band renders with (find_scene_band_pages =
+        let (d1, d2) = crate::app::division_synopsis::current_division_divs(&s);
+        // Use the SAME query the Scene band renders with (find_division_band_pages =
         // scene Q&As + passage Q&As in this (d1,d2)), so a scene that has only
         // passage entries is NOT treated as empty.
         let work_abbrev = current_work_abbrev(&s);
         let division_pages = crate::db::queries::open_db()
             .ok()
             .and_then(|conn| {
-                crate::db::journal::find_scene_band_pages(&conn, &work_abbrev, d1, d2).ok()
+                crate::db::journal::find_division_band_pages(&conn, &work_abbrev, d1, d2).ok()
             })
             .unwrap_or_default();
         (d1, d2, division_pages.is_empty())
@@ -1454,13 +1454,13 @@ pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
 /// Synopsis `\`: open the band's newest scene-scoped Q&A. Returns whether an
 /// entry was opened; false means the band has none and the caller keeps the
 /// synopsis open (this function emits the miss toast).
-pub(crate) fn open_scene_qa_from_synopsis(state: &Rc<RefCell<AppState>>) -> bool {
+pub(crate) fn open_division_qa_from_synopsis(state: &Rc<RefCell<AppState>>) -> bool {
     let (abbrev, div1, div2, unit) = {
         let s = state.borrow();
         if s.current_work.is_none() {
             return false;
         }
-        let (d1, d2) = s.synopsis_overlay_scene;
+        let (d1, d2) = s.synopsis_overlay_division;
         // "chapter" for prose, "scene" for plays — match the surface's wording.
         let unit = if crate::app::division_synopsis::is_chapter_work(&s) {
             "chapter"
@@ -1473,7 +1473,7 @@ pub(crate) fn open_scene_qa_from_synopsis(state: &Rc<RefCell<AppState>>) -> bool
     let page = crate::db::queries::open_db()
         .ok()
         .and_then(|conn| {
-            crate::db::journal::find_newest_scene_page(&conn, &abbrev, div1, div2).ok()
+            crate::db::journal::find_newest_division_page(&conn, &abbrev, div1, div2).ok()
         })
         .flatten();
 
@@ -1687,7 +1687,7 @@ pub(crate) fn nav_page(state: &Rc<RefCell<AppState>>, delta: i32) {
 /// Jump to the next/prev scene that has pages (skips empty scenes). Lands on
 /// that scene's first page. From the Work band, delta>0 lands on the first
 /// scene with pages, delta<0 on the last (the Work band sorts before scenes).
-pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
+pub(crate) fn nav_division(state: &Rc<RefCell<AppState>>, delta: i32) {
     let mut s = state.borrow_mut();
     // Moving to a different scene invalidates any diff-highlight from a
     // custom-prompt rewrite on the entry we're leaving (Task 7).
@@ -1696,7 +1696,7 @@ pub(crate) fn nav_scene(state: &Rc<RefCell<AppState>>, delta: i32) {
     let work_abbrev = current_work_abbrev(&s);
     let scenes = crate::db::queries::open_db()
         .ok()
-        .and_then(|conn| crate::db::journal::find_journal_scenes(&conn, &work_abbrev).ok())
+        .and_then(|conn| crate::db::journal::find_journal_divisions(&conn, &work_abbrev).ok())
         .unwrap_or_default();
     if scenes.is_empty() {
         return;
@@ -1747,11 +1747,11 @@ pub(crate) fn nav_to_work_band(state: &Rc<RefCell<AppState>>) {
 }
 
 /// Switch to the Scene band for the main card's current cursor line and render
-/// it. Jump-only — a direct jump to `Scene(current_scene_divs)`, complementing
+/// it. Jump-only — a direct jump to `Scene(current_division_divs)`, complementing
 /// `Alt+n/p` (which only step through the scene list) and matching the band the
 /// overlay first opens on. Lets the author/work band return to the reading
 /// position's scene without closing and reopening the overlay.
-pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
+pub(crate) fn nav_to_division_band(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
     // Switching bands invalidates any diff-highlight from a custom-prompt
     // rewrite on the entry we're leaving (Task 7).
@@ -1760,7 +1760,7 @@ pub(crate) fn nav_to_scene_band(state: &Rc<RefCell<AppState>>) {
     if s.current_work.is_none() {
         return;
     }
-    let (d1, d2) = crate::app::division_synopsis::current_scene_divs(&s);
+    let (d1, d2) = crate::app::division_synopsis::current_division_divs(&s);
     if s.journal_band == JournalBand::Division(d1, d2) {
         return;
     }
@@ -2555,7 +2555,7 @@ pub(crate) fn submit_passage_question(state: &Rc<RefCell<AppState>>, text: &str)
     }
     // A brand-new ask has no saved entry/tags yet — derive candidate terms from
     // the scene text first, then ground the phrasing on them.
-    extract_scene_terms(state, text.to_string(), move |st, question, terms| {
+    extract_division_terms(state, text.to_string(), move |st, question, terms| {
         improve_question(st, question, &terms, move |st2, improved| {
             ask_claude(st2, &improved);
         });
@@ -2774,7 +2774,7 @@ pub(crate) fn spawn_retag(
 /// `pub(crate)` so the chat panel can fetch the SAME scene text the journal
 /// Passage band sends (the two surfaces build one shared answer message — see
 /// `build_qa_answer_message`).
-pub(crate) fn current_scene_text(s: &AppState) -> String {
+pub(crate) fn current_division_text(s: &AppState) -> String {
     let anchor_work_line = s
         .journal
         .return_pos
@@ -2873,7 +2873,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
         // Anchor on the reader's saved position (where the journal overlay was
         // opened from), mapped to a work line — factored so the first-ask term
         // extractor builds identical context. Empty for Work/Author bands.
-        let division_text = current_scene_text(&s);
+        let division_text = current_division_text(&s);
         (
             title,
             author,
@@ -3068,10 +3068,10 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
     )> =
         match s.journal_picker_scope {
             crate::input::actions::pickers::JournalPickerScope::Division => {
-                let (d1, d2) = crate::app::division_synopsis::current_scene_divs(s);
+                let (d1, d2) = crate::app::division_synopsis::current_division_divs(s);
                 conn.as_ref()
                     .and_then(|c| {
-                        crate::db::journal::find_scene_band_pages(c, &work_abbrev, d1, d2).ok()
+                        crate::db::journal::find_division_band_pages(c, &work_abbrev, d1, d2).ok()
                     })
                     .unwrap_or_default()
                     .into_iter()
@@ -3565,7 +3565,7 @@ mod tests {
     /// keep doing so. Guards the scope enum against being collapsed back into
     /// a bool or silently defaulted.
     #[test]
-    fn only_segment_else_band_reaches_the_scene_band() {
+    fn only_segment_else_band_reaches_the_division_band() {
         assert!(!JournalOpenScope::SegmentOnly.allows_band_fallback());
         assert!(JournalOpenScope::SegmentElseBand.allows_band_fallback());
     }
@@ -3847,7 +3847,7 @@ mod tests {
     }
 
     #[test]
-    fn qa_message_scene_band() {
+    fn qa_message_division_band() {
         let got = super::build_qa_answer_message(
             &JournalBand::Division(3, 4),
             "play", "Cymbeline", "William Shakespeare",
@@ -4065,7 +4065,7 @@ mod tests {
     }
 
     #[test]
-    fn band_for_page_classifies_work_and_scene_passages_share_scene_band() {
+    fn band_for_page_classifies_work_and_division_passages_share_division_band() {
         // Work: div1 < 0 (the JOURNAL_WORK_DIV sentinel), no citations.
         assert_eq!(band_for_page(&page(-1, -1, None, None)), JournalBand::Work);
         // Scene: div1 >= 0, no citations.

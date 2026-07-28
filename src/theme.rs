@@ -1198,7 +1198,7 @@ pub fn generate_css(
          .running-head {{ padding: 0 40px; }} \
          .running-head-work {{ color: {fg}; font-size: 14px; \
            font-variant: small-caps; letter-spacing: 1px; opacity: 0.72; }} \
-         .running-head-scene {{ color: {fg}; font-size: 14px; \
+         .running-head-division {{ color: {fg}; font-size: 14px; \
            font-variant: small-caps; letter-spacing: 1px; opacity: 0.72; }} \
          .card-middle {{ background-color: {bg}; border-radius: 0; }} \
          .card-bottom {{ background-color: {bg}; border-radius: 0 0 12px 12px; }} \

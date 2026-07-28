@@ -956,8 +956,8 @@ pub(crate) fn page_turn_top_state(state: &AppState, target_line: usize) -> usize
     back_up_for_speaker_state(state, target_line)
 }
 
-/// `state`-taking convenience wrapper for `is_first_dialogue_of_scene`.
-pub(crate) fn is_first_dialogue_of_scene_state(
+/// `state`-taking convenience wrapper for `is_first_dialogue_of_division`.
+pub(crate) fn is_first_dialogue_of_division_state(
     state: &AppState,
     translation_lines: &[bool],
     line: usize,
@@ -965,7 +965,7 @@ pub(crate) fn is_first_dialogue_of_scene_state(
     let sec = state.section_starts();
     let bf = sec.map(section_break_fn);
     let is_break = bf.as_ref().map(|f| f as &dyn Fn(usize) -> bool);
-    is_first_dialogue_of_scene(&state.buffer, translation_lines, line, is_break)
+    is_first_dialogue_of_division(&state.buffer, translation_lines, line, is_break)
 }
 
 /// `state`-taking convenience wrapper for `division_header_top`.
@@ -979,7 +979,7 @@ pub(crate) fn division_header_top_state(state: &AppState, line: usize) -> usize 
 
 /// Returns true when `line` is the first dialogue line of a scene — i.e.
 /// walking backward hits a scene marker or separator before any dialogue.
-pub(crate) fn is_first_dialogue_of_scene(
+pub(crate) fn is_first_dialogue_of_division(
     buffer: &sourceview5::Buffer,
     translation_lines: &[bool],
     line: usize,
@@ -2531,7 +2531,7 @@ mod headless_pagination_tests {
     }
 
     #[test]
-    fn clamp_before_a_new_scene_that_follows_dialogue() {
+    fn clamp_before_a_new_division_that_follows_dialogue() {
         // Right-column-style page: starts mid-scene on dialogue, the scene ENDS a
         // few lines in (dialogue, exit, blank), then the NEXT scene heading.
         let lines = play_lines(&[
@@ -2627,7 +2627,7 @@ mod headless_pagination_tests {
     }
 
     #[test]
-    fn clamp_keeps_the_scenes_own_trailing_exit_and_blank() {
+    fn clamp_keeps_the_divisions_own_trailing_exit_and_blank() {
         // The clamp target is the marker line; the trailing [exit]/blanks belong
         // to the ENDING scene and stay on this page (clamp = marker - 1).
         let lines = play_lines(&[
@@ -2653,7 +2653,7 @@ mod headless_pagination_tests {
     }
 
     #[test]
-    fn clamp_page_opening_on_act_then_later_scene_clamps_at_the_later_one() {
+    fn clamp_page_opening_on_act_then_later_division_clamps_at_the_later_one() {
         // Page opens on ACT 1 (header skipped), then has real dialogue, then a
         // Scene 2 marker further down: the LATER marker must still clamp.
         let lines = play_lines(&[

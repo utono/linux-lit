@@ -1222,7 +1222,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("inner-monologue"));
         s.input_mode = crate::app::InputMode::GlossOverlay;
         s.pending_echo_context = Some(ctx.clone());
-        s.pending_echo_scene_lines = division_lines.clone();
+        s.pending_echo_division_lines = division_lines.clone();
         s.pending_echo_passage_doc = passage_doc;
     }
 
@@ -1309,7 +1309,7 @@ pub fn cancel_pending_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<
     s.echo_picker.hide();
     s.gloss_overlay.hide();
     s.pending_echo_context = None;
-    s.pending_echo_scene_lines = Vec::new();
+    s.pending_echo_division_lines = Vec::new();
     s.pending_echo_passage_doc = String::new();
     s.input_mode = crate::app::InputMode::Reader;
     crate::logging::log("ECHO: cancelled gloss from picker");
@@ -1326,7 +1326,7 @@ fn run_pending_inner_monologue_blocking(
             Some(c) => c,
             None => return,
         };
-        let division_lines = std::mem::take(&mut s.pending_echo_scene_lines);
+        let division_lines = std::mem::take(&mut s.pending_echo_division_lines);
         // Re-show the passage on the loading card (the echo picker hid the
         // overlay, or we skipped it) so generation reads as the reader-gloss
         // loading card, not a bare "Glossing…" label.

@@ -12,7 +12,7 @@
 //!
 //! EMPTY STOPS ARE SKIPPED (2026-07-27). Previously the lap ran
 //! `reader → gloss → journal → syntax → reader` and simply ENDED wherever a
-//! stop had nothing to show. Because `open_journal_scene` returned `()`, the
+//! stop had nothing to show. Because `open_journal_division` returned `()`, the
 //! gloss advance could not tell that the journal stop had toasted and opened
 //! nothing, so on any scene without a journal entry the user was dumped back
 //! into the reader and the syntax stop was UNREACHABLE by cycling — the
@@ -34,7 +34,7 @@
 //! something covers the CURSOR'S SEGMENT. The journal stop used to fall back
 //! to the whole scene band when no passage Q&A covered the cursor, so `\` on
 //! BH-Barrett ch. 10 opened the chapter's oldest Q&A — about a different
-//! passage than the one on screen. `open_journal_scene` now takes
+//! passage than the one on screen. `open_journal_division` now takes
 //! `JournalOpenScope::SegmentOnly` here; Ctrl+j keeps the band fallback.
 //! A journal entry is reachable by `\` when its citation span covers the
 //! anchor, whatever its filing `scope` (corrected 2026-07-27 — the probe
@@ -92,7 +92,7 @@ impl Stop {
                 crate::input::actions::gloss::open_gloss_at_cursor(state);
             }
             Stop::Journal => {
-                crate::input::actions::journal::open_journal_scene(
+                crate::input::actions::journal::open_journal_division(
                     state,
                     crate::input::actions::journal::JournalOpenScope::SegmentOnly,
                 );

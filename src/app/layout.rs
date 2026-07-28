@@ -311,7 +311,7 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
     state.column_divider.set_visible(two_col);
     if !two_col {
         state.right_bottom_clip.set_height_request(0);
-        state.next_scene_watermark.set_visible(false);
+        state.next_division_watermark.set_visible(false);
     }
 }
 

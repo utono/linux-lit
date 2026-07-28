@@ -1,7 +1,7 @@
 use crate::input::page_top::PageTop;
 use super::AppState;
 use crate::app::layout::{apply_column_layout, overlay_card_size};
-use crate::app::division_synopsis::{current_scene_divs, synopsis_label};
+use crate::app::division_synopsis::{current_division_divs, synopsis_label};
 use crate::app::font::{reapply_font, rebuild_line_number_gutter};
 use gtk4::prelude::*;
 
@@ -613,7 +613,7 @@ pub fn sync_translation_overlay(
         let s = state.borrow();
         (
             s.translation_overlay.is_visible(),
-            current_scene_divs(&s),
+            current_division_divs(&s),
             s.work_line_for_buffer(s.current_line),
         )
     };
@@ -640,7 +640,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         None => return false,
     };
 
-    let (div1, div2) = current_scene_divs(&s);
+    let (div1, div2) = current_division_divs(&s);
 
     // Collect this scene's lines (preserving order) with their work indices.
     let division_lines: Vec<crate::db::models::Line> = work
@@ -659,7 +659,7 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         .position(|l| l.div1 == div1 && l.div2 == div2)
         .unwrap_or(0);
 
-    let blocks = crate::ui::translation_overlay::group_scene_into_blocks(
+    let blocks = crate::ui::translation_overlay::group_division_into_blocks(
         &division_lines,
         |i| base + i,
         |id| s.translations.get(&id).cloned(),

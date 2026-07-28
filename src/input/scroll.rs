@@ -518,13 +518,13 @@ fn log_first_paint(state: &AppState, new_top: usize) {
 /// `ColumnSplit` (already computed by the caller). The next scene's act/scene
 /// is read from `cs.next_page_top`'s DB `(div1, div2)` — authoritative metadata,
 /// never inferred from buffer text.
-fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSplit) {
+fn update_next_division_watermark(state: &AppState, cs: &super::viewport::ColumnSplit) {
     // Anthology works have no act/scene structure (div1 is an excerpt index),
     // and they pack excerpts into both columns rather than ending the spread at
     // each section break — so there is no "empty right column awaiting the next
     // scene" to annotate. Never show the watermark for them.
     if state.is_anthology() {
-        state.next_scene_watermark.set_visible(false);
+        state.next_division_watermark.set_visible(false);
         return;
     }
     let line_count = state.effective_line_count();
@@ -547,14 +547,14 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
             .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
             .map(|l| l.sub_line)
     };
-    let next_opens_scene =
+    let next_opens_division =
         cs.next_page_top < line_count && state.is_section_start(cs.next_page_top);
     let right_has_dialogue = (cs.split..=cs.page_end.min(line_count.saturating_sub(1)))
         .any(|l| super::viewport::is_dialogue_line(&state.buffer, l, state.is_prose(), &stage_lookup));
-    let empty_right = (cs.page_end < cs.split || (next_opens_scene && !right_has_dialogue))
+    let empty_right = (cs.page_end < cs.split || (next_opens_division && !right_has_dialogue))
         && cs.next_page_top < line_count;
     if !empty_right {
-        state.next_scene_watermark.set_visible(false);
+        state.next_division_watermark.set_visible(false);
         return;
     }
     let (div1, div2) = crate::app::division_synopsis::divs_at_buffer_line(state, cs.next_page_top);
@@ -568,8 +568,8 @@ fn update_next_scene_watermark(state: &AppState, cs: &super::viewport::ColumnSpl
         size_units,
         glib::markup_escape_text(&label),
     );
-    state.next_scene_watermark.set_markup(&markup);
-    state.next_scene_watermark.set_visible(true);
+    state.next_division_watermark.set_markup(&markup);
+    state.next_division_watermark.set_visible(true);
 }
 
 /// Scroll so `line` is at the top of the viewport, then size the bottom clip
@@ -745,7 +745,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
     );
 
     if let Some(cs) = cs {
-        update_next_scene_watermark(state, &cs);
+        update_next_division_watermark(state, &cs);
         // Make sure the right view has enough bottom headroom that a near-the-end
         // split line can actually be scrolled to its top (otherwise the scroll
         // clamps low and the right column duplicates the start of the buffer).
@@ -793,7 +793,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         // Single-column (prose) or layout-not-ready: never show the two-column
         // watermark.
         state.right_clip_boundary.set(None);
-        state.next_scene_watermark.set_visible(false);
+        state.next_division_watermark.set_visible(false);
     }
 }
 
@@ -1532,7 +1532,7 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             {
                 t
             } else if !state.is_prose()
-                && super::viewport::is_first_dialogue_of_scene_state(
+                && super::viewport::is_first_dialogue_of_division_state(
                     state, &state.translation_lines, state.current_line,
                 )
             {

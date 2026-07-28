@@ -1979,7 +1979,7 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
     // `synth_all_synopsis_blocks`) so synopsis audio is shared across editions
     // (`2H6`/`2H6-Amb`) the same way the synopsis TEXT is — `synopsis_cache` is
     // itself loaded under the base abbrev, so the audio key must match it.
-    let (div1, div2) = s.synopsis_overlay_scene;
+    let (div1, div2) = s.synopsis_overlay_division;
     let work_abbrev = match s.current_work.as_ref() {
         Some(w) => w.canonical_abbrev.clone(),
         None => return,
@@ -2325,7 +2325,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
     }
     let (work_abbrev, div1, div2, blocks, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
+        let (div1, div2) = s.synopsis_overlay_division;
         let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
             Some(t) => t.clone(),
             None => return,
@@ -2412,7 +2412,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
 fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
     let (work_abbrev, div1, div2, text, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
+        let (div1, div2) = s.synopsis_overlay_division;
         let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
             Some(t) => t.clone(),
             None => return,

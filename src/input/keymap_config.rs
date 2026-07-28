@@ -242,11 +242,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // former number-row duplicates (`4`/`5`, `2`/`3`, shifted forms) and
         // the AE04/AE05 symbol binds (`(`/`&`) were dropped as redundant; bookmarks
         // moved fully to the `;`/`'` home-region pair below.
-        (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
+        (KeyCombo::plain("bracketleft"), Action::JumpToPrevDivision),
         // Ctrl+[ sets an audio track/chapter mark (moved off Ctrl+c, which now
         // toggles the previous work).
         (KeyCombo::ctrl("bracketleft"), Action::SetChapter),
-        (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
+        (KeyCombo::plain("braceleft"), Action::JumpToNextDivision),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         // Shift+; emits ("colon", shift=true) on this layout (same class as
         // Shift+, → "less") — toggle playback speed. The bare-name form is
@@ -867,7 +867,7 @@ mod tests {
         // previous scene. Same for {/3 and the next scene.
         assert_eq!(
             km.lookup("bracketleft", false, false, false),
-            Some(Action::JumpToPrevScene),
+            Some(Action::JumpToPrevDivision),
         );
         // The number-row (`2`/`3`/`4`/`5`) and `&` duplicates were dropped.
         assert_eq!(km.lookup("2", false, true, false), None);
@@ -883,7 +883,7 @@ mod tests {
         assert_eq!(km.lookup("bracketright", false, false, false), None);
         assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogue));
         assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
-        assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
+        assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextDivision));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` copies
         // the work + division to the clipboard (was ShowCurrentChapter, which
         // stays on `C`).

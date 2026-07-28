@@ -25,7 +25,7 @@ pub struct TranslationBlock {
 /// lines (stage directions, scene headers) form non-spoken interlude blocks.
 /// `idx_of(i)` maps the i-th element of `lines` back to its `work.lines` index;
 /// `translation_of(line_id)` returns the modern translation if one exists.
-pub fn group_scene_into_blocks(
+pub fn group_division_into_blocks(
     lines: &[Line],
     idx_of: impl Fn(usize) -> usize,
     translation_of: impl Fn(i64) -> Option<String>,
@@ -195,7 +195,7 @@ impl TranslationOverlay {
     }
 
     /// Populate and reveal the overlay. `blocks` come from
-    /// `group_scene_into_blocks`. `cursor_work_idx` selects the page to open on.
+    /// `group_division_into_blocks`. `cursor_work_idx` selects the page to open on.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &self,
@@ -895,7 +895,7 @@ mod tests {
             12 => Some("O lord".to_string()),
             _ => None,
         };
-        let blocks = group_scene_into_blocks(&lines, |i| i, trans);
+        let blocks = group_division_into_blocks(&lines, |i| i, trans);
 
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].speaker.as_deref(), Some("CRANMER"));
@@ -915,7 +915,7 @@ mod tests {
             mk(20, "Enter KING and CRANMER", None),
             mk(21, "Thou speakest wonders.", Some("KING")),
         ];
-        let blocks = group_scene_into_blocks(&lines, |i| i, |_| None);
+        let blocks = group_division_into_blocks(&lines, |i| i, |_| None);
 
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].speaker, None);
@@ -930,14 +930,14 @@ mod tests {
             mk(30, "first", Some("A")),
             mk(31, "second", Some("A")),
         ];
-        let blocks = group_scene_into_blocks(&lines, |i| 100 + i, |_| None);
+        let blocks = group_division_into_blocks(&lines, |i| 100 + i, |_| None);
         assert_eq!(blocks[0].start_idx, 100);
         assert_eq!(blocks[0].end_idx, 101);
     }
 
     #[test]
     fn empty_input_yields_no_blocks() {
-        let blocks = group_scene_into_blocks(&[], |i| i, |_| None);
+        let blocks = group_division_into_blocks(&[], |i| i, |_| None);
         assert!(blocks.is_empty());
     }
 
