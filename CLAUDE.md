@@ -298,6 +298,23 @@ LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
   the moment the wrapper returns. For agent self-check, launch cage with the
   harness `run_in_background` (it owns the lifecycle), not a detached shell
   backgrounding.
+- **Never poll for a launch with a bare `until … done` — always bound it with
+  `timeout`.** Waiting on `land-on.sh` output with
+  `until rg -q "XDG_RUNTIME_DIR=" "$OUT"; do sleep 2; done` spins FOREVER when
+  the launch fails, when the run is abandoned, or when the output file was
+  already consumed — leaving orphaned shells in the harness's Background panel
+  that the user has to notice and kill by hand. (This happened repeatedly in
+  one session; the loops outlived every cage they were waiting on.) Bound the
+  wait and also match the failure line the script actually emits:
+
+  ```bash
+  timeout 90 bash -c 'until rg -q "XDG_RUNTIME_DIR=|ERROR" "$0"; do sleep 2; done' "$OUT" \
+    || echo "launch never reported — check $OUT"
+  ```
+
+  The `timeout` here wraps the POLLING shell, not the cage: it is a different
+  thing from `timeout N ./land-on.sh`, which the bullet above rightly forbids
+  because it kills the instance itself.
 - **After a `wlr-randr` resize the first `wtype` chord is dropped** (focus
   lost) — re-send it and confirm the `KEY:` log line landed before trusting
   the screenshot. The vim ask card also eats Escapes one modal layer at a
