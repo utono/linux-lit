@@ -1018,4 +1018,48 @@ mod tests {
         // the corrected path must not trigger a resnap at all.
         assert_eq!(prose_page_for_position(&pages, 42, 603), Some(1));
     }
+
+    /// A JUMP landing (concordance, echo, vocab, cross-work) must resolve to
+    /// the stored page, not to a centring guess. `update_highlight_and_center`
+    /// used `current_line - lines_per_page/2` and
+    /// `display_work_at_with_prepared` used the target line itself as the page
+    /// top; both ignore the grid and both land off it (2026-07-27 audit).
+    ///
+    /// This pins the RULE the fixed landings share: whatever the guess would
+    /// have been, the answer is the page whose interval contains the target's
+    /// first row — and it carries a row offset that a bare line cannot express.
+    #[test]
+    fn jump_landing_prefers_stored_page_over_centering_guess() {
+        // Same real BH-Barrett shape as the test above: the middle page is
+        // offset-started, which is what the guesses cannot reproduce.
+        let pages = vec![
+            ProsePage { start_line: 36, start_off: 0,   end_line: 42, end_off: 603 },
+            ProsePage { start_line: 42, start_off: 603, end_line: 48, end_off: 0 },
+            ProsePage { start_line: 48, start_off: 0,   end_line: 54, end_off: 120 },
+        ];
+        let target = 47;
+
+        let i = prose_page_for_line(&pages, target).expect("target is covered");
+        let (top, off) = (pages[i].start_line, pages[i].start_off);
+        assert_eq!((top, off), (42, 603));
+
+        // The centring guess (`update_highlight_and_center`): with a ~12-line
+        // page it lands 41 — inside the right page, but NOT at its boundary,
+        // so the reader renders a window the pagination never chose.
+        let lpp = 12;
+        let centering_guess = target.saturating_sub(lpp / 2);
+        assert_ne!(centering_guess, top, "centring must not be the landing");
+        // It is not even on the same page as the cursor here (41 < 42), which
+        // is how a centred jump could show the PREVIOUS page's tail.
+        assert_eq!(prose_page_for_position(&pages, centering_guess, 0), Some(0));
+
+        // The cross-work guess (`display_work_at_with_prepared`): the target
+        // line as its own page top. Lands mid-page, off-grid.
+        assert_ne!(target, top, "the target line is not a page boundary");
+
+        // Only the stored pair is canonical. The offset is load-bearing:
+        // dropping it leaves the page 603px short of where it belongs.
+        assert_eq!(prose_page_for_position(&pages, top, off), Some(i));
+        assert_ne!(off, 0, "this page's offset is what a bare usize loses");
+    }
 }
