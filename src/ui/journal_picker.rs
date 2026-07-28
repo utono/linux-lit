@@ -142,7 +142,19 @@ impl JournalQaPicker {
                 None => item.question_prefix.clone(),
             };
             if !filter.is_empty() {
-                let target = format!("{} {}", item.scene_label, primary).to_lowercase();
+                // Filter against what the row DISPLAYS. In author scope that
+                // is the five columns — so typing a surname ("dickens") or a
+                // division ("ch. 2") narrows, which is the natural gesture on
+                // a global cross-work list. `scene_label` stays in the target
+                // for the two-column scopes, where it IS the visible detail.
+                let target = format!(
+                    "{} {} {} {}",
+                    item.author_label.as_deref().unwrap_or(""),
+                    item.scene_label,
+                    item.div_label,
+                    primary,
+                )
+                .to_lowercase();
                 if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
                     continue;
                 }

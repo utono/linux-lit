@@ -13,6 +13,12 @@ pub(crate) const PICKER_LIST_MAX_H: i32 = 750;
 /// constant so the Q&A picker and the journal-move picker cannot drift apart.
 /// Other pickers keep `build_picker_card`'s 900.
 pub(crate) const JOURNAL_PICKER_WIDTH: i32 = 1180;
+/// Display budget for the five-column rows' elastic TAG column, in characters.
+/// See the `max_width_chars` note in `five_column_row` for why setting it at
+/// all is load-bearing (it forces the xalign-respecting sizing path). The value
+/// is tuned to the room left at `JOURNAL_PICKER_WIDTH` once the four fixed
+/// columns take their share; `ellipsize` still cuts to the real allocation.
+pub(crate) const TAG_MAX_CHARS: i32 = 44;
 
 /// Build the hidden full-bleed scrim box (`library-picker-scrim`) that sits
 /// behind the scrim-style pickers/overlays. Byte-identical (modulo source
@@ -253,27 +259,29 @@ pub(crate) fn five_column_row(
     let author_l = fixed(author, &groups.author, "picker-item-detail");
     let work_l = fixed(work, &groups.work, "picker-item-detail");
 
-    // `max_width_chars(1)` looks backwards for a column meant to hold a full
-    // line of text, but it is the fix, not a mistake: without it, a
+    // `max_width_chars` is load-bearing, not cosmetic. Without it a
     // NON-truncating tag (its natural width fits without an ellipsis) is
-    // measured and allocated through a different GtkLabel/Pango code path
-    // than a truncating one, and that path does not honor `xalign(0.0)`
-    // consistently inside a `SizeGroup` + `hexpand` row — the text drifts
-    // rightward by an amount that depends on how the OTHER size-grouped
-    // columns happened to settle in an earlier layout pass (reproduced:
-    // "Bow your knees." and "I never saw", both short enough to never
-    // ellipsize, floated ~100px right of every truncating row). Setting
-    // `max_width_chars` forces GTK to always go through the constrained-width
-    // (ellipsize-aware) sizing path regardless of content length, which is
-    // the one that actually respects `xalign`. `hexpand` still lets the
-    // widget grow to fill the row; only the SIZE REQUEST is pinned narrow.
+    // measured through a different GtkLabel/Pango code path than a truncating
+    // one, and that path does not honor `xalign(0.0)` inside a `SizeGroup` +
+    // `hexpand` row: the text drifts right by an amount that depends on how
+    // the OTHER size-grouped columns settled in an earlier layout pass.
+    // Reproduced on screen — "Bow your knees." and "I never saw", both too
+    // short to ever ellipsize, floated ~100px right of every truncating row.
+    // Setting it forces every row through the constrained-width
+    // (ellipsize-aware) path, which does respect `xalign`.
+    //
+    // The VALUE is a display budget, not a hard cap on the allocation:
+    // `hexpand` still lets the widget fill the row, and `ellipsize` still cuts
+    // to whatever width it actually gets. Sized to the room the row affords at
+    // `JOURNAL_PICKER_WIDTH` after the four fixed columns take their share —
+    // verified on screen at production geometry (1920x1236).
     let tag_l = Label::builder()
         .label(tag)
         .halign(Align::Start)
         .xalign(0.0)
         .hexpand(true)
         .ellipsize(gtk4::pango::EllipsizeMode::End)
-        .max_width_chars(20)
+        .max_width_chars(TAG_MAX_CHARS)
         .build();
 
     let div_l = fixed(div, &groups.div, "picker-item-detail");

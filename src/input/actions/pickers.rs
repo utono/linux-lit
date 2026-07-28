@@ -1121,9 +1121,24 @@ pub(crate) fn author_surname(author: &str) -> &str {
 /// cross-work, so a play row and a novel row appear in the same list and must
 /// be labelled by their own kind. That is why this is a pure string predicate
 /// rather than `scene_synopsis::is_chapter_work`, which reads `AppState`.
+///
+/// KNOWN GAP (latent, 2026-07-28): `is_prose_work` covers only
+/// novel/essay_collection/prose_book/prose. Measured against lit.db,
+/// `epic` (11 works), `epic_translation` (2), `narrative_poem` (4), `poem` (4),
+/// `sonnet_sequence` (2) and `verse_essay` (1) ALSO have `div2` identically 0
+/// on every line, so the first journal entry on one of them will read "3.0" —
+/// the same noise this function exists to remove. Not live: today only `play`
+/// and `prose` works have entries. `bible_book` (1754 non-zero div2 lines) and
+/// `anthology` genuinely use both numbers and must stay numeric.
 pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
+    // Sentinel divisions have no numeric address to show: (-1,-1) is a
+    // whole-work entry, (-2,-2) a corpus note. Printing "-2.-2" is noise —
+    // their TYPE column already says `work` / `author`.
+    if div1 < 0 {
+        return String::new();
+    }
     if crate::db::line_types::is_prose_work(work_type) {
-        if div1 <= 0 {
+        if div1 == 0 {
             "Preface".to_string()
         } else {
             format!("Ch. {div1}")
@@ -1189,7 +1204,12 @@ mod tests {
         // div1 <= 0 on prose is FRONT MATTER, never "Ch. 0". Six live entries
         // hit this; it matches scene_synopsis::chapter_label's convention.
         assert_eq!(division_label("prose", 0, 0), "Preface");
-        assert_eq!(division_label("prose", -1, -1), "Preface");
+        // Sentinel divisions carry no numeric address: a whole-work entry
+        // (-1,-1) and a corpus note (-2,-2) show nothing rather than "-2.-2".
+        // Their TYPE column already reads `work` / `author`.
+        assert_eq!(division_label("prose", -1, -1), "");
+        assert_eq!(division_label("", -2, -2), "");
+        assert_eq!(division_label("play", -1, -1), "");
         // An unknown/blank work_type falls through to the numeric form rather
         // than silently claiming a chapter.
         assert_eq!(division_label("", 3, 1), "3.1");
