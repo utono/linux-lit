@@ -248,11 +248,12 @@ pub const FONT_CYCLE: &[&str] = &[
     // "Source Serif 4",
     // "IBM Plex Serif",
     // "Cormorant Garamond",
-    // Junicode is drawn for medieval/Early Modern text and is the only entry
-    // here covering BOTH the archaic sorts (yogh, long-s) and the IPA — cycling
-    // to it also renders the OP-IPA gloss pronunciations without the mid-word
-    // fallback the other families take.
-    "Junicode SemiExp",
+    // Parked (2026-07-28). Junicode is drawn for medieval/Early Modern text and
+    // is the only face here covering BOTH the archaic sorts (yogh, long-s) and
+    // the IPA, so cycling to it also renders the OP-IPA gloss pronunciations
+    // without the mid-word fallback every other family takes. Uncomment to
+    // restore; the entry resolves (family `Junicode`, stretch semi-expanded).
+    // "Junicode SemiExp",
     // The journal Q&A's own face. Cycling the reader ONTO it is safe: the
     // journal detects the collision and swaps to Charter for as long as the
     // reader holds Gentium (`journal_overlay::journal_family_for_reader`), so
