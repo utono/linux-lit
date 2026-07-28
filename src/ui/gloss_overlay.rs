@@ -800,7 +800,8 @@ impl GlossOverlay {
     /// a buffer-wide font TextTag, overriding the global `.gloss-text` CSS. Call
     /// after each populate so a rebuilt buffer keeps the chosen size.
     pub fn apply_font(&self) {
-        let font_str = format!("{} {}", self.font_family.borrow(), self.font_size.get());
+        let font_str =
+            crate::ui::font_string(&self.font_family.borrow(), self.font_size.get());
         crate::ui::apply_font_to_views(
             &[&self.gloss_view, &self.echo_header_view, self.ask_host.input()],
             &font_str,
@@ -2199,7 +2200,7 @@ impl GlossOverlay {
             if let Some(old) = table.lookup("gloss-font") {
                 table.remove(&old);
             }
-            let font_str = format!("{} {}", p.font_family, p.font_size);
+            let font_str = crate::ui::font_string(&p.font_family, p.font_size);
             let tag = gtk4::TextTag::builder().name("gloss-font").font(&font_str).build();
             table.add(&tag);
             let (start, end) = buffer.bounds();
