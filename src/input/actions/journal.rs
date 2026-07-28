@@ -3011,6 +3011,34 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
     );
 }
 
+/// Whether a picker row belongs to a DIFFERENT work than the one loaded and
+/// therefore needs a work load on confirm. `None` means same-work (the
+/// existing fast `land_on_page` path); `Some(abbrev)` means confirm must
+/// `load_arkangel_edition_then` that abbrev first.
+///
+/// A corpus note (sentinel divs `AUTHOR_DIV`, see `save_author_page`) stores
+/// the AUTHOR NAME in `row_work`, not a work abbrev — comparing it against
+/// `current_work` would always look cross-work and confirm would try
+/// `load_work("Shakespeare")`, which does not exist (0 rows — verified
+/// against lit.db). Its `band_for_page` resolves to `JournalBand::Author`,
+/// which `land_on_page` renders against the CURRENTLY LOADED work, so a
+/// corpus note is same-work for landing purposes regardless of what
+/// `row_work` says. Detect it by the sentinel divs, not the abbrev string.
+pub(crate) fn cross_work_abbrev_for_row(
+    row_div1: i64,
+    row_div2: i64,
+    row_work: &str,
+    current_work: &str,
+) -> Option<String> {
+    let is_corpus_note =
+        row_div1 == crate::db::journal::AUTHOR_DIV.0 && row_div2 == crate::db::journal::AUTHOR_DIV.1;
+    if !is_corpus_note && row_work != current_work {
+        Some(row_work.to_string())
+    } else {
+        None
+    }
+}
+
 /// Rebuild `s.journal_picker`'s rows for the CURRENT `s.journal_picker_scope`
 /// and retitle the header to match — but do not show the picker. Split out of
 /// `populate_and_show_picker` so a scope-cycle bind (Alt+t) can rebuild the
@@ -3096,9 +3124,11 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
             // Only a genuinely different work needs the cross-work confirm
             // path; same-work rows (scene/work scope, and same-work rows in
             // author scope) leave this None so confirm_picker's fast path is
-            // untouched.
+            // untouched. A corpus note's row_work is the AUTHOR NAME, not a
+            // work abbrev — cross_work_abbrev_for_row treats it as same-work
+            // via its sentinel divs (see AUTHOR_DIV).
             let row_work_abbrev =
-                if *row_work != work_abbrev { Some(row_work.clone()) } else { None };
+                cross_work_abbrev_for_row(p.div1, p.div2, row_work, &work_abbrev);
             crate::ui::journal_picker::JournalRow {
                 id: p.id,
                 band,
@@ -3196,7 +3226,13 @@ pub(crate) fn confirm_picker(state: &Rc<RefCell<AppState>>, tokio_handle: &tokio
             render_current(&mut s);
             return;
         };
-        let row = &s.journal_picker.items[idx];
+        let Some(row) = s.journal_picker.items.get(idx) else {
+            s.input_mode = InputMode::JournalOverlay;
+            // Selected index out of range (e.g. picker shown with an empty
+            // item list) — same graceful fallback as "nothing selected".
+            render_current(&mut s);
+            return;
+        };
         (row.band.clone(), row.id, row.work_abbrev.clone())
     };
     let (band, target_id, cross_work_abbrev) = picked;
@@ -3506,6 +3542,35 @@ mod tests {
     fn only_segment_else_band_reaches_the_scene_band() {
         assert!(!JournalOpenScope::SegmentOnly.allows_band_fallback());
         assert!(JournalOpenScope::SegmentElseBand.allows_band_fallback());
+    }
+
+    /// A corpus note (sentinel AUTHOR_DIV, author name in `row_work`) must be
+    /// treated as SAME-WORK even though its `row_work` never matches the
+    /// current work's abbrev — otherwise confirm_picker tries
+    /// `load_work("Shakespeare")`, which does not exist, and dumps the user
+    /// into the reader with a "Could not load" toast instead of landing on
+    /// the note. Regression guard for that dead-end.
+    #[test]
+    fn corpus_note_is_same_work_despite_author_name_in_row_work() {
+        let (d1, d2) = crate::db::journal::AUTHOR_DIV;
+        assert_eq!(cross_work_abbrev_for_row(d1, d2, "Shakespeare", "Cym"), None);
+    }
+
+    /// A genuine cross-work row (real work divs, different abbrev) still
+    /// needs the cross-work confirm path.
+    #[test]
+    fn genuine_cross_work_row_is_flagged() {
+        assert_eq!(
+            cross_work_abbrev_for_row(1, 0, "DC", "BH"),
+            Some("DC".to_string())
+        );
+    }
+
+    /// A same-work row (scene/work scope, or an author-scope row that
+    /// happens to belong to the currently loaded work) stays None.
+    #[test]
+    fn same_work_row_is_not_flagged() {
+        assert_eq!(cross_work_abbrev_for_row(2, 0, "BH", "BH"), None);
     }
 
     #[test]
