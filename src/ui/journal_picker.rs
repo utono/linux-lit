@@ -56,7 +56,11 @@ impl JournalQaPicker {
         let picker_box = crate::ui::picker_nav::build_picker_card_wide(crate::ui::picker_nav::JOURNAL_PICKER_WIDTH);
 
         let search_entry = Entry::builder()
-            .placeholder_text("Filter Q&A pages…   (Alt+t cycles scope: scene · work · author)")
+            // Scope names track the header, whose tightest label is the work's
+            // own division noun (chapter/scene/book) — so name the scopes by
+            // what they WIDEN to rather than restating a noun that changes per
+            // work.
+            .placeholder_text("Filter Q&A pages…   (Alt+t cycles scope: division · work · all)")
             .build();
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();

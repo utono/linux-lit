@@ -71,11 +71,36 @@ impl JournalPickerScope {
     }
 
     /// Suffix for the picker header, so the active scope is always visible.
-    pub(crate) fn label(self) -> &'static str {
+    ///
+    /// The tightest scope is named with the WORK'S OWN division noun, taken
+    /// from `gloss::genre_unit` (the single source for genre vocabulary), so a
+    /// novel reads CHAPTER and an epic BOOK rather than the play-only "SCENE".
+    /// This mirrors `division_label`, which already renders the rows that way.
+    ///
+    /// BOTH work-local scopes carry the abbrev (`CHAPTER — BH-Barrett`,
+    /// `WORK — BH-Barrett`), because neither one's rows show a work column —
+    /// only the cross-work ALL scope does. Without it the title says what KIND
+    /// of division you are browsing but not which work's. An empty abbrev (no
+    /// work loaded) degrades to the bare noun rather than a dangling dash.
+    ///
+    /// `Author` is titled ALL because that scope is the widest list the picker
+    /// can show — every work by the author plus the corpus notes — and reads as
+    /// a superset, not as a claim about authorship. It takes NO abbrev: its
+    /// rows span works, so naming one would be wrong.
+    pub(crate) fn label(self, work_type: &str, work_abbrev: &str) -> String {
+        let with_work = |noun: String| {
+            if work_abbrev.is_empty() {
+                noun
+            } else {
+                format!("{noun} — {work_abbrev}")
+            }
+        };
         match self {
-            JournalPickerScope::Scene => "SCENE",
-            JournalPickerScope::Work => "WORK",
-            JournalPickerScope::Author => "AUTHOR",
+            JournalPickerScope::Scene => {
+                with_work(crate::gloss::genre_unit(work_type).1.to_uppercase())
+            }
+            JournalPickerScope::Work => with_work("WORK".to_string()),
+            JournalPickerScope::Author => "ALL".to_string(),
         }
     }
 }
@@ -1222,6 +1247,38 @@ mod tests {
         assert_eq!(S::Scene.next(), S::Work);
         assert_eq!(S::Work.next(), S::Author);
         assert_eq!(S::Author.next(), S::Scene);
+    }
+
+    /// The header names the tightest scope with the WORK'S OWN division noun,
+    /// so a novel reads CHAPTER where a play reads SCENE. Work scope names the
+    /// work; the widest scope is ALL.
+    #[test]
+    fn journal_picker_scope_label_uses_the_works_own_noun() {
+        use super::JournalPickerScope as S;
+        // Prose: the screenshot case — Bleak House is chaptered, not scened.
+        assert_eq!(S::Scene.label("prose", "BH-Barrett"), "CHAPTER — BH-Barrett");
+        assert_eq!(S::Scene.label("prose_book", "BH-Barrett"), "CHAPTER — BH-Barrett");
+        // Plays keep SCENE, the pre-change noun.
+        assert_eq!(S::Scene.label("play", "Cym"), "SCENE — Cym");
+        // Other genres follow genre_unit rather than a prose/verse binary.
+        assert_eq!(S::Scene.label("epic", "Il"), "BOOK — Il");
+        assert_eq!(S::Scene.label("sonnet_sequence", "Son"), "SONNET — Son");
+        // Unknown/blank work_type degrades to the neutral noun, never a
+        // wrong-but-specific one.
+        assert_eq!(S::Scene.label("", "X"), "SECTION — X");
+        // No work loaded: the bare noun, never a dangling dash.
+        assert_eq!(S::Scene.label("prose", ""), "CHAPTER");
+
+        // Work scope names the work, whose column the rows omit in this scope.
+        assert_eq!(S::Work.label("prose", "BH-Barrett"), "WORK — BH-Barrett");
+        assert_eq!(S::Work.label("play", "Cym"), "WORK — Cym");
+        // No abbrev (no work loaded) degrades to a bare WORK, not "WORK — ".
+        assert_eq!(S::Work.label("prose", ""), "WORK");
+
+        // The widest scope is ALL regardless of work or genre.
+        assert_eq!(S::Author.label("prose", "BH-Barrett"), "ALL");
+        assert_eq!(S::Author.label("play", "Cym"), "ALL");
+        assert_eq!(S::Author.label("", ""), "ALL");
     }
 
     /// The picker always OPENS on Work — today's behavior, so existing

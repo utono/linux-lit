@@ -3157,7 +3157,17 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
         .collect();
 
     s.journal_picker.set_items(rows);
-    s.journal_picker.set_header_scope(s.journal_picker_scope.label());
+    // The header's scope noun comes from the LOADED work, not from a row: the
+    // per-row `work_type` is only populated in AUTHOR scope (see the quad
+    // comment above), so SCENE scope would otherwise fall back to the neutral
+    // "SECTION" for every work.
+    let header_work_type = s
+        .current_work
+        .as_ref()
+        .map(|w| w.work_type.clone())
+        .unwrap_or_default();
+    s.journal_picker
+        .set_header_scope(&s.journal_picker_scope.label(&header_work_type, &work_abbrev));
     // Clear the search filter text. Row sets differ between scopes, so a stale
     // filter silently hiding a scope's contents reads as "this scope is empty".
     //
