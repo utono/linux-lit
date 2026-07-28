@@ -1700,16 +1700,16 @@ impl GlossOverlay {
         self.set_gloss_title_style();
         // Reset the top margin in case `show_glossing` widened it (shared title).
         self.title.set_margin_top(24);
-        // Indent the title and the diff/error labels to match the inset used by
-        // the loading ("Glossing…") and result cards for the current work type:
-        // card_width/5 for prose, card_width/4 for verse. Reuse the last rendered
-        // card width (an error/toast always follows a card render); fall back to
-        // the container's own width if a card was never shown.
+        // Indent the title and the diff/error labels to the SAME inset the
+        // loading ("Glossing…") and result cards use — `column_side_margin`,
+        // now card/8 for every work type. Reuse the last rendered card width (an
+        // error/toast always follows a card render); fall back to the
+        // container's own width if a card was never shown.
         let card_width = match self.last_card_size.get().0 {
             w if w > 0 => w,
             _ => self.container.width().max(self.container.width_request()),
         };
-        let left = crate::ui::prose_column_margin(card_width);
+        let left = self.column_side_margin(card_width);
         self.title.set_margin_start(left);
         self.orig_header.set_margin_start(left);
         self.original_label.set_margin_start(left);
@@ -1764,12 +1764,12 @@ impl GlossOverlay {
         // A fresh gloss render closes any open add/edit ask card and clears its
         // focus highlight (e.g. after an add/edit completes or n/p navigates).
         self.ask_host.card().close();
-        // Side margins follow the JOURNAL's rule (card/8 on prose works, card/5
-        // on verse/plays — see `column_side_margin`) so a gloss and a journal
-        // answer occupy the same column on the same card. Anchor to the actual
-        // card width (the overlay is full-screen), NOT the fixed column_width
-        // (1050) — otherwise on a wide card the margin stays tiny and the text
-        // runs nearly edge to edge.
+        // Side margins are card/8 for every work type (`column_side_margin`), so
+        // a gloss and a journal answer occupy the same column on the same card —
+        // and a play's gloss reads at the same measure as a novel's. Anchor to
+        // the actual card width (the overlay is full-screen), NOT the fixed
+        // column_width (1050) — otherwise on a wide card the margin stays tiny
+        // and the text runs nearly edge to edge.
         let left = self.column_side_margin(card_width);
         self.set_prose_margins(left);
         // The gloss card carries the same running head as the synopsis view
@@ -1830,20 +1830,21 @@ impl GlossOverlay {
         glib::idle_add_local_once(move || bar.queue_draw());
     }
 
-    /// The gloss column's side inset — the JOURNAL's rule, so the two overlays
-    /// render the same measure on the same card. Prose works get the MAIN
-    /// reading card's tighter `prose_reading_card_margin` (card/8) so the
-    /// overlay column matches the 1-col prose layout; verse/plays keep the
-    /// uniform overlay `prose_column_margin` (card/5), where card/8 of a wide
-    /// play card would overshoot a readable measure. Mirrors
-    /// `JournalOverlay::size_card`; `prose_source` is the same
-    /// `is_prose_work(work_type)` the journal's `prose_reading` carries.
+    /// The gloss column's side inset: the MAIN reading card's
+    /// `prose_reading_card_margin` (card/8), for EVERY work type.
+    ///
+    /// Verse/plays used to take a narrower `prose_column_margin` (card/5) on the
+    /// theory that card/8 of a wide play card overshoots a readable measure. In
+    /// practice that made one overlay render two different column widths
+    /// depending on the work, which read as an inconsistency rather than as
+    /// tuning — so the prose margin now applies throughout. Mirrors
+    /// `JournalOverlay::size_card`, which uses the same single rule.
+    ///
+    /// Kept as a method (rather than inlining the call) so the three gloss show
+    /// paths and the diff/error view stay pinned to ONE definition of the
+    /// column edge.
     fn column_side_margin(&self, card_width: i32) -> i32 {
-        if self.prose_source.get() {
-            crate::ui::prose_reading_card_margin(card_width)
-        } else {
-            crate::ui::prose_column_margin(card_width)
-        }
+        crate::ui::prose_reading_card_margin(card_width)
     }
 
     /// `left` is the COLUMN edge (where the accent bar sits). The body is
