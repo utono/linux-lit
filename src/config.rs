@@ -253,6 +253,11 @@ pub const FONT_CYCLE: &[&str] = &[
     // to it also renders the OP-IPA gloss pronunciations without the mid-word
     // fallback the other families take.
     "Junicode SemiExp",
+    // The journal Q&A's own face. Cycling the reader ONTO it is safe: the
+    // journal detects the collision and swaps to Charter for as long as the
+    // reader holds Gentium (`journal_overlay::journal_family_for_reader`), so
+    // the Q&A never renders in the same family as the card behind it.
+    "Gentium Book",
     // TeX Gyre: metric-compatible clones of the classic book types. Parked
     // (2026-07-28) alongside the five above — all installed and resolving,
     // uncomment to restore.
