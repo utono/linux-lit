@@ -614,6 +614,69 @@ offset is always 0.
 MATCH'S OWN wrapped row, not the line's first row, so a match on a later row is
 not hidden under the bottom clip. Different rule, not duplication.
 
+#### Audit of every close-to-reader path (2026-07-27)
+
+All overlay Escape paths were swept after the fix. **Every overlay close is
+correct** — the remaining off-grid landings are elsewhere. Three shapes exist;
+knowing which one a path uses tells you immediately whether it can go off-grid:
+
+- **(A) restore** — `restore_saved_position_resnap` (`app/mod.rs`). Safe: it
+  sets the saved triple then calls BOTH resnaps. Used by the overlay cycle and
+  by every "peek-and-Escape" branch.
+- **(B) jump** — `navigation::jump_to_line`. Safe since this fix (it reads
+  `canonical_page_top_offset_for`). Used by the gloss/journal source-jumps.
+- **(C) neither** — sets `page_top_line`/scroll by other means, or only calls
+  `return_to_reader_mode`. **`return_to_reader_mode` does NOT restore position**
+  — it only sets `input_mode`, `last_overlay`, gloss tint, and the cursor flash.
+  A (C) path is a BUG only if that surface actually MOVED the reader.
+
+Verified safe (A/B): gloss overlay, journal overlay, overlay cycle (`\`),
+journal→synopsis return, bookmark-picker confirm.
+
+Verified safe because the surface NEVER MOVES THE READER — a bare
+`return_to_reader_mode` is correct here, do not "fix" these:
+
+- **Synopsis overlay.** `scene_synopsis.rs` contains no assignment to
+  `current_line`/`page_top_line` at all; it has no return-position field
+  because it needs none.
+- **All pickers** (journal, recent-Q&A, gloss, library, term input). Display-
+  only while open. `journal.return_pos` IS captured on picker open and dropped
+  unused on Escape — harmless, since nothing moved; it exists for the CONFIRM
+  path, which reveals the overlay.
+- **Chat panel, echo Escape, SegmentVim, vocab_add.** No position surface.
+
+**Genuinely off-grid, and NOT on any Escape path** (both predate this fix and
+are untouched by it):
+
+1. **`display_work_at_with_prepared` target branch** (`app/mod.rs`, the
+   `if let Some(target_id) = target_line_id` block) does
+   `state.page_top_line = buf_idx` — the target line forced as the page top,
+   no offset, no table consult. This is the shared root of every CROSS-WORK
+   jump landing: concordance `r`/`R` across works, echo source jumps, and
+   `toggle_previous_work`/`load_work_at` when a target line is passed. Live on
+   all 13 prose works that have pinned tables.
+2. **`update_highlight_and_center`** (`highlight.rs`) computes
+   `current_line - lpp/2` then `set_page_instant` — a pure geometric guess.
+   Reached by the concordance same-work landing
+   (`concordance_position_cursor`), `pickers::jump_to_line_mapping_id`, and the
+   echo jump in `keymap.rs`. Both should read
+   `canonical_page_top_offset_for` + `set_page_instant_offset`.
+
+**Latent only — do not chase without a repro:** `hide_translations`
+(`app/translations.rs`) remaps `current_line`/`page_top_line` through
+`map_line_before_insert` and never assigns `page_top_offset`, then anchors the
+single-column path by a raw pixel `adj.set_value(...)`. Structurally the same
+defect, but currently unreachable: all 43 works with `line_translations` rows
+are plays, and ZERO have a `prose_pages` table. It becomes live the day a prose
+work gets translations. Confirm before chasing:
+
+```sql
+SELECT DISTINCT lm.work_abbrev FROM line_translations lt
+JOIN line_mapping lm ON lm.id = lt.line_mapping_id
+WHERE EXISTS (SELECT 1 FROM prose_pages pp
+              WHERE pp.work_abbrev = lm.work_abbrev);
+```
+
 **Same defect, second site.** `display_work` recomputed the resume page as
 `current_line - 1` — off-grid by construction. Every launch opened mid-page and
 depended on `resnap_prose_to_table` to fix it; in one reproduction the corrected
