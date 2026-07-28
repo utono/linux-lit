@@ -4319,18 +4319,34 @@ pub fn display_work_at_with_prepared(
         // so the viewport fills instead of showing only the trailing lines.
         let lpp = crate::input::viewport::lines_per_page(state);
         let near_end = state.current_line + lpp >= line_count;
-        let page_top = if near_end && state.text_view.height() > 0 {
+        let (page_top, page_off) = if near_end && state.text_view.height() > 0 {
             // Near the end with layout ready: open on the CANONICAL final spread
             // (the same page G and forward-paging land on — tail in the right
             // column, both columns full) instead of a rough `current_line - lpp`
             // guess that renders a non-canonical mid-page spread.
-            crate::input::navigation::last_page_top(state)
+            (crate::input::navigation::last_page_top(state), 0)
         } else if near_end {
-            state.current_line.saturating_sub(lpp)
+            (state.current_line.saturating_sub(lpp), 0)
+        } else if let Some((t, o)) =
+            crate::input::prose_pages::prose_table_boundary_for_line(state, state.current_line)
+        {
+            // Read the PINNED page grid rather than guessing `current_line - 1`.
+            // That guess is off-grid by construction: on BH-Barrett a saved
+            // cursor of 47 produced page_top 46 while the stored page starts at
+            // (42, 603), so every launch opened mid-page and depended on
+            // `resnap_prose_to_table` to correct it — once 23.6s later, leaving
+            // the WRONG page on screen until the late paint (2026-07-27).
+            (t, o)
         } else {
-            state.current_line.saturating_sub(1)
+            // No pinned prose grid (plays, live-engine prose): keep the original
+            // guess. Startup runs BEFORE the layout settles, so the live
+            // forward-walk this could call instead would measure an unsettled
+            // viewport — deliberately not routed through
+            // `canonical_page_top_offset_for` here.
+            (state.current_line.saturating_sub(1), 0)
         };
         state.page_top_line = page_top;
+        state.page_top_offset = page_off;
 
         // If cursor is on a scene boundary, scroll back to show the
         // scene/act heading lines above the first dialogue line.
@@ -4338,12 +4354,16 @@ pub fn display_work_at_with_prepared(
             let top = scene_heading_start(state, state.current_line);
             if top < state.page_top_line {
                 state.page_top_line = top;
+                // The offset belongs to the page top computed above; once we
+                // back up to a DIFFERENT line it would scroll into the wrong
+                // row of the heading. Start that line at its top.
+                state.page_top_offset = 0;
             }
         }
 
         crate::logging::log(&format!(
-            "DISPLAY_WORK: resumed saved position current_line={} page_top={}",
-            state.current_line, state.page_top_line
+            "DISPLAY_WORK: resumed saved position current_line={} page_top={} page_off={}",
+            state.current_line, state.page_top_line, state.page_top_offset
         ));
     }
 

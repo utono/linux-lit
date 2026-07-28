@@ -554,6 +554,56 @@ Key files:
 - `src/db/models.rs` — `Line.div1` / `div2` / `line_in_div` (the authoritative
   per-line act/scene metadata)
 
+### A landing that drops out of table mode (2026-07-27)
+
+**Tell.** After some jump, the reader shows the target line pinned to the TOP
+of the card instead of sitting mid-page where the grid puts it. The log switches
+engines at that moment:
+
+```
+BOTTOM_CLIP_EXACT:   page_top=42 top_off=603   <- before (pinned table)
+BOTTOM_CLIP_ROWFILL: page_top=47               <- after  (live row-fill)
+```
+
+`PAINT: first frame for page_top=<the CURSOR line>` is the giveaway — a stored
+page top is rarely the line you jumped to.
+
+**Root cause.** `canonical_page_top_for` consulted only the PLAY table
+(`active_page_table`). On prose that returns `None`, so it fell through to the
+live geometric walk, which disagrees with the pinned `prose_pages` grid. It also
+returned a bare `usize`, but prose page tops are `(line, row-offset px)` PAIRS —
+so even the right line still mis-framed by the offset (603px here).
+
+Two call sites had already worked around this LOCALLY rather than fixing the
+helper (`search.rs snap_match_to_prose_grid`, `chapter_jump_land_ereader`).
+`jump_to_line` was the third that needed it and never got one — which is how the
+journal picker's Escape source-jump landed off-grid.
+
+**Fix.** `canonical_page_top_offset_for` (`navigation.rs`) is the single choke
+point: prose table → play table → live walk, returning `(top, offset)`. Callers
+on a prose grid MUST use it and pass the offset to `set_page_instant_offset`.
+`canonical_page_top_for` remains a wrapper for the play/live callers, where the
+offset is always 0.
+
+`search.rs` is deliberately NOT collapsed into it: that path anchors to the
+MATCH'S OWN wrapped row, not the line's first row, so a match on a later row is
+not hidden under the bottom clip. Different rule, not duplication.
+
+**Same defect, second site.** `display_work` recomputed the resume page as
+`current_line - 1` — off-grid by construction. Every launch opened mid-page and
+depended on `resnap_prose_to_table` to fix it; in one reproduction the corrected
+frame did not paint for 23.6s, leaving the WRONG page on screen. Startup now
+reads the table directly. Note the resnap is KEPT as defence-in-depth (it still
+catches positions predating a table regeneration) — but it should no longer fire
+on a clean launch. `PAGES_PROSE: resnap off-grid` at startup now means something
+upstream still guessed.
+
+**Still latent.** `is_line_fully_visible` (`viewport.rs`) is also prose-table-
+blind on the single-column path — it reads the geometric `last_visible_range`
+cache. It gates `jump_to_line`'s early return, so a jump to a line that is
+visually on-screen but belongs to a DIFFERENT stored page skips the snap. Not
+observed in the wild yet; fix it there if a jump ever "does nothing" on prose.
+
 ## page_back_stack rules
 
 Every function that changes `page_top_line` must interact with the stack:

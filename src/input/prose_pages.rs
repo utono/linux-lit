@@ -964,4 +964,58 @@ mod tests {
         let c = ProseValidateCtx { line_count: 2, heights: &h, usable_height: 120, fit_slack: 0, chapter_starts: &[] };
         assert_eq!(validate_prose_pages(&p, &c), Ok(()));
     }
+
+    /// The canonical landing for a line is the STORED PAGE containing it —
+    /// never the line itself, and never a geometric guess like `line - 1`.
+    ///
+    /// Real BH-Barrett case (2026-07-27), reproduced twice with identical
+    /// numbers. Cursor line 47 lives on the page that starts at `(42, 603)`.
+    /// Two separate sites computed a landing geometrically instead of reading
+    /// this table and both produced an off-grid top:
+    ///
+    ///   - `display_work` recomputed `page_top = current_line - 1` = 46,
+    ///     so startup opened off-grid and `resnap_prose_to_table` had to
+    ///     correct it (once 23.6s later — the reader showed the WRONG page
+    ///     until the late paint landed).
+    ///   - `jump_to_line` (journal picker -> Escape source-jump) routed
+    ///     through the prose-table-unaware `canonical_page_top_for` and landed
+    ///     on 47, the cursor line, dropping the reader out of table mode
+    ///     (`BOTTOM_CLIP_ROWFILL page_top=47` instead of
+    ///     `BOTTOM_CLIP_EXACT page_top=42 top_off=603`).
+    ///
+    /// Both now read this rule via `canonical_page_top_offset_for`. The
+    /// `start_off` half is the part a bare-`usize` helper structurally cannot
+    /// carry: returning 42 alone still mis-frames the page by 603px.
+    #[test]
+    fn canonical_landing_is_the_stored_page_not_the_line() {
+        // Page 8 of the real table: (42,603) covers the paragraph that runs
+        // through line 47; the next page opens at (48, 0).
+        let pages = vec![
+            ProsePage { start_line: 36, start_off: 0,   end_line: 42, end_off: 603 },
+            ProsePage { start_line: 42, start_off: 603, end_line: 48, end_off: 0 },
+            ProsePage { start_line: 48, start_off: 0,   end_line: 54, end_off: 120 },
+        ];
+
+        // The cursor line resolves to the page CONTAINING it...
+        let i = prose_page_for_line(&pages, 47).expect("line 47 is covered");
+        assert_eq!(
+            (pages[i].start_line, pages[i].start_off),
+            (42, 603),
+            "line 47 must land on the stored page (42,603)"
+        );
+
+        // ...not on the line itself (the jump_to_line bug), and not on the
+        // `current_line - 1` guess (the display_work bug).
+        assert_ne!(pages[i].start_line, 47, "must not land on the cursor line");
+        assert_ne!(pages[i].start_line, 46, "must not land on current_line - 1");
+
+        // The off-grid guesses both resolve INTO this same page, which is why
+        // resnap could paper over them — and why the fix belongs at the source.
+        assert_eq!(prose_page_for_position(&pages, 46, 0), Some(1));
+        assert_eq!(prose_page_for_position(&pages, 47, 0), Some(1));
+
+        // The stored top is already canonical: a landing there is a no-op, so
+        // the corrected path must not trigger a resnap at all.
+        assert_eq!(prose_page_for_position(&pages, 42, 603), Some(1));
+    }
 }

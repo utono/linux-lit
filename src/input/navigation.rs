@@ -366,15 +366,56 @@ pub fn jump_to_end(state: &mut AppState) {
 ///
 /// Used by bookmark and structural jumps so they land on the canonical spread
 /// rather than a top-aligned page that disagrees with the natural pagination.
+///
+/// Returns only the LINE. Prose page tops are `(line, row-offset px)` pairs, so
+/// callers on a pinned prose grid must use `canonical_page_top_offset_for` —
+/// dropping the offset mis-frames the page by that many pixels. This wrapper
+/// stays for the play/live-engine callers, where the offset is always 0.
 pub(crate) fn canonical_page_top_for(state: &AppState, target: usize) -> usize {
+    canonical_page_top_offset_for(state, target).0
+}
+
+/// `canonical_page_top_for` plus the row offset, reading the PINNED tables
+/// before falling back to live geometry. Order of authority: prose table ->
+/// play table -> live forward walk.
+///
+/// The prose branch is why this exists. `canonical_page_top_for` consulted only
+/// the PLAY table, so on prose `active_page_table` returned None and it walked
+/// the live engine — which disagrees with the stored `prose_pages` grid. Two
+/// call sites had already grown their own local workarounds for exactly this
+/// (`search.rs snap_match_to_prose_grid`, and the chapter-jump landing below);
+/// `jump_to_line` was the third that needed one and never got it, which is the
+/// journal-picker Escape bug (2026-07-27): the landing dropped to the cursor
+/// line and out of table mode entirely. Reading the table here fixes the whole
+/// class at one choke point.
+///
+/// Non-prose paths return `(top, 0)` — byte-identical to the old behaviour.
+pub(crate) fn canonical_page_top_offset_for(state: &AppState, target: usize) -> (usize, i32) {
     let line_count = state.effective_line_count();
     if line_count == 0 {
-        return 0;
+        return (0, 0);
+    }
+    // Pinned prose grid wins: it is authoritative metadata, and its tops carry
+    // a row offset the live walk cannot express.
+    if let Some((top, off)) =
+        crate::input::prose_pages::prose_table_boundary_for_line(state, target.min(line_count - 1))
+    {
+        return (top, off);
     }
     if let Some(table) = crate::input::page_table::active_page_table(state) {
         if let Some(i) = crate::input::page_table::page_for_line(&table, target.min(line_count - 1)) {
-            return table[i].left_start;
+            return (table[i].left_start, 0);
         }
+    }
+    (canonical_page_top_live(state, target), 0)
+}
+
+/// The live forward-walk fallback, split out so `canonical_page_top_offset_for`
+/// reads as the three-tier authority chain it is.
+fn canonical_page_top_live(state: &AppState, target: usize) -> usize {
+    let line_count = state.effective_line_count();
+    if line_count == 0 {
+        return 0;
     }
     let target = target.min(line_count - 1);
     // Start from a real page boundary at or before the target: the SECTION/SCENE
@@ -1877,13 +1918,16 @@ pub fn jump_to_prev_chapter(state: &mut AppState) {
 /// EReader landing shared by the chapter jumps. With an active prose grid the
 /// landing is the STORED page containing the target — for a chapter heading
 /// that page STARTS at the heading (chapter-at-top rule), so the header opens
-/// the page. `canonical_page_top_for` is prose-table-unaware (it consults only
-/// the play table, then walks the live whole-line engine), so routing prose
-/// through it landed off-grid pages with the heading mid-page.
+/// the page.
+///
+/// The prose-table lookup this used to hand-roll now lives in
+/// `canonical_page_top_offset_for`, which reads the same table with the same
+/// first-row rule (2026-07-27). Kept as a distinct landing because the
+/// already-there case must NOT re-scroll: an unchanged top only refreshes the
+/// highlight, so a chapter jump onto the current page doesn't jolt the view.
 fn chapter_jump_land_ereader(state: &mut AppState, line_idx: usize) {
-    if let Some((pt, po)) =
-        crate::input::prose_pages::prose_table_boundary_for_line(state, line_idx)
-    {
+    if crate::input::prose_pages::active_prose_page_table(state).is_some() {
+        let (pt, po) = canonical_page_top_offset_for(state, line_idx);
         if state.page_top_line == pt && state.page_top_offset == po {
             update_highlight_only(state);
         } else {
@@ -3027,11 +3071,17 @@ pub fn jump_to_line(state: &mut AppState, buffer_line: usize) {
     // Land on the CANONICAL spread for this line — the same page paging through
     // the work shows — so the bookmark sits where natural pagination places it,
     // not force-top-aligned (which page_turn_top_state would do).
-    let top = canonical_page_top_for(state, buffer_line);
+    //
+    // Must carry the row OFFSET, not just the line: on a pinned prose grid the
+    // page top is a `(line, px)` pair. Landing on `(top, 0)` when the stored
+    // page starts at `(42, 603)` mis-frames by 603px AND drops the reader out
+    // of table mode into the live row-fill engine — the journal-picker Escape
+    // bug (2026-07-27), which landed on the cursor line 47 instead.
+    let (top, off) = canonical_page_top_offset_for(state, buffer_line);
     match state.config.navigation_mode {
         crate::config::NavigationMode::Scroll => center_cursor(state),
         crate::config::NavigationMode::EReader => {
-            set_page_instant(state, top);
+            crate::input::scroll::set_page_instant_offset(state, top, off);
         }
     }
     after_page_change(state, PageChangeReason::JumpToBookmark);
