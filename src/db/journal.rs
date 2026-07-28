@@ -584,9 +584,9 @@ pub fn find_vocab_page(
     rows.next().transpose()
 }
 
-/// Distinct `(start_citation, end_citation)` ranges of every passage-scope
-/// Q&A entry for a work. Feeds the main-card line tint: a line covered by a
-/// journal passage Q&A is colored exactly like a reader-glossed line
+/// Distinct `(start_citation, end_citation)` ranges of every Q&A entry that
+/// carries one, whatever its filing scope. Feeds the main-card line tint: a
+/// line covered by a journal Q&A is colored exactly like a reader-glossed line
 /// (`apply_reader_gloss_highlighting`). Callers pass `Work.canonical_abbrev`,
 /// like every other journal path.
 pub fn find_passage_citation_ranges(
@@ -595,7 +595,7 @@ pub fn find_passage_citation_ranges(
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT start_citation, end_citation FROM journal_entries
-         WHERE work_abbrev = ?1 AND scope = 'passage'
+         WHERE work_abbrev = ?1
            AND start_citation IS NOT NULL AND end_citation IS NOT NULL",
     )?;
     let rows = stmt.query_map([work_abbrev], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -822,6 +822,28 @@ mod tests {
                 ("Rom.2.2.25".to_string(), "Rom.2.2.25".to_string()),
                 ("Rom.2.2.33".to_string(), "Rom.2.2.36".to_string()),
             ]
+        );
+    }
+
+    /// The line tint (`apply_reader_gloss_highlighting`) marks lines covered
+    /// by a journal Q&A. It read the same `scope='passage'` filter as the `\`
+    /// probe, so scene-filed entries left their lines untinted — the reader
+    /// had no on-page sign the Q&A existed.
+    #[test]
+    fn citation_ranges_include_scene_scoped_entries() {
+        let conn = mem();
+        insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.48", "BH.2.0.48");
+        insert_cited(&conn, "BH", 3, 0, "passage", "BH.3.0.80", "BH.3.0.82");
+
+        let mut ranges = find_passage_citation_ranges(&conn, "BH").unwrap();
+        ranges.sort();
+        assert_eq!(
+            ranges,
+            vec![
+                ("BH.2.0.48".to_string(), "BH.2.0.48".to_string()),
+                ("BH.3.0.80".to_string(), "BH.3.0.82".to_string()),
+            ],
+            "scene-filed entries with a span must tint their lines too"
         );
     }
 
