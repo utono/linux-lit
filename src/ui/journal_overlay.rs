@@ -335,17 +335,21 @@ const JOURNAL_BODY_INDENT: i32 = crate::ui::gloss_render::QUOTE_BODY_INDENT;
 /// SIZE, so `+`/`-` scales the journal with everything else.
 const JOURNAL_FONT_FAMILY: &str = "Gentium Book";
 
-/// Point offset applied to the reader's size for the journal only. Zero: Gentium
-/// at the reader's own size is the closest match on BOTH axes that still packs.
-/// Measured with Pango against the longest MM-Arkangel verse line — Charter 17 =
-/// 487px/29px line, Gentium 17 = 475px/29px, Gentium 18 = 494px/30px. Gentium 18
-/// is the closer WIDTH match, but its extra line height pushed a passage Q&A's
-/// source block + first question to 519px against a 515px page budget, so page 1
-/// rendered the source alone and orphaned the question. At 17 the line height
-/// matches Charter's exactly and the page packs. Pagination measures real line
-/// heights, so the budget follows this automatically — re-verify packing on a
-/// passage Q&A if this constant ever changes.
-const JOURNAL_FONT_SIZE_DELTA: i32 = 0;
+/// Point offset applied to the reader's size for the journal only. +1: Gentium
+/// runs slightly narrower than the `FONT_CYCLE` serifs at the same nominal point
+/// (against the longest MM-Arkangel verse line, Charter 17 = 487px vs Gentium 17
+/// = 475px), so a point up restores the reader's apparent size instead of
+/// reading a shade small beside the gloss.
+///
+/// PACKING CAVEAT: each point costs line height (Gentium 16 = 27px, 17 = 29px,
+/// 18 = 30px), and a passage Q&A must fit its source block AND the first
+/// question on page 1 or the question is orphaned onto page 2. That is a
+/// function of the CARD height, not the font alone: against a 515px page budget
+/// (a 720p headless card) this +1 overflows by ~4px, while a full-height card
+/// absorbs it comfortably. Pagination measures real line heights, so the budget
+/// follows automatically — but re-verify a passage Q&A on a REAL card, not just
+/// headless, if this constant grows again.
+const JOURNAL_FONT_SIZE_DELTA: i32 = 1;
 
 impl JournalOverlay {
     pub fn new(column_width: u32, text_margins: u32) -> Self {
