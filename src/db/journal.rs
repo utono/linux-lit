@@ -636,7 +636,7 @@ pub fn find_journal_page_for_line(
     // them for `land_on_page`; the citation says where the passage LIVES.
     let mut stmt = conn.prepare(
         "SELECT div1, div2, id, start_citation, end_citation FROM journal_entries \
-         WHERE work_abbrev = ?1 AND scope = 'passage' \
+         WHERE work_abbrev = ?1 \
            AND start_citation IS NOT NULL AND end_citation IS NOT NULL",
     )?;
     let rows = stmt.query_map([work_abbrev], |row| {
@@ -1416,6 +1416,83 @@ mod tests {
         // A plain passage Q&A (kind='qa') must never satisfy the vocab lookup.
         save_passage_page(&conn, "Cym", 3, 4, "Cym.3.4.1", "Cym.3.4.2", "s", "Q?", "A.", "m").unwrap();
         assert!(find_vocab_page(&conn, "Cym", 3, 4, "franklin").unwrap().is_none());
+    }
+
+    /// Insert a journal entry with an explicit scope AND a citation span.
+    /// `save_journal_page` takes no citations and `save_passage_page` forces
+    /// `scope='passage'`, so neither can build the row this bug is about: a
+    /// `scope='scene'` entry that still carries a span (what a litdb
+    /// re-import leaves behind — 19 such rows in lit.db).
+    fn insert_cited(
+        conn: &Connection,
+        work: &str,
+        div1: i64,
+        div2: i64,
+        scope: &str,
+        start: &str,
+        end: &str,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO journal_entries
+                (work_abbrev, div1, div2, question, answer, claude_model,
+                 scope, start_citation, end_citation, source_text)
+             VALUES (?1, ?2, ?3, 'Q?', 'A.', 'm', ?4, ?5, ?6, 'src')",
+            rusqlite::params![work, div1, div2, scope, start, end],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// The reported bug (2026-07-27, both reports). A `scope='scene'` entry
+    /// whose citation span covers the cursor line must be reachable: the `\`
+    /// cycle probes through this function, and BH's entries are ALL
+    /// scene-filed, so the journal stop was dead on that work.
+    #[test]
+    fn scene_scoped_entry_with_a_span_is_found() {
+        let conn = mem();
+        // Mirrors lit.db id 24: filed under band (2,0), citing BH.2.0.48.
+        let id = insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.48", "BH.2.0.48");
+
+        let hit = find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap();
+        assert_eq!(
+            hit,
+            Some((2, 0, id)),
+            "a scene-filed entry whose span covers the line must be found"
+        );
+    }
+
+    /// Guard: the fix must not widen into "any entry in the band". An entry
+    /// with no citation carries no location, so it stays unreachable by `\`
+    /// (Ctrl+j and the picker still reach it).
+    #[test]
+    fn entry_without_citations_is_still_not_found() {
+        let conn = mem();
+        save_journal_page(&conn, "BH", 2, 0, "Q?", "A.", "m", "scene", "qa").unwrap();
+
+        assert_eq!(find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap(), None);
+    }
+
+    /// Guard: segment scoping is intact. A span that does not cover the
+    /// anchor must not match, whatever its scope — this is the 2026-07-27
+    /// rule that stopped `\` opening a Q&A about a different passage.
+    #[test]
+    fn span_not_covering_the_anchor_is_not_found() {
+        let conn = mem();
+        insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.10", "BH.2.0.20");
+
+        assert_eq!(find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap(), None);
+    }
+
+    /// Both scopes are candidates now, so the existing priority rule must
+    /// still pick the NARROWEST enclosing span (largest start <= line).
+    #[test]
+    fn narrowest_span_wins_across_mixed_scopes() {
+        let conn = mem();
+        insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.40", "BH.2.0.60");
+        let narrow = insert_cited(&conn, "BH", 2, 0, "passage", "BH.2.0.47", "BH.2.0.49");
+
+        let hit = find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap();
+        assert_eq!(hit, Some((2, 0, narrow)), "nearest start must still win");
     }
 
     #[test]
