@@ -221,14 +221,20 @@ pub struct Config {
     pub tag_extract_model: String,
 }
 
+/// The reading family a config with no `font_family` starts on, and therefore
+/// `FONT_CYCLE`'s first entry (`font_cycle_starts_at_the_default_family` keeps
+/// the two in step). Charis over the long-standing Charter because it covers the
+/// archaic sorts and the IPA that Charter lacks — see the FONT_CYCLE comment.
 fn default_font_family() -> String {
-    "Charter".to_string()
+    "Charis".to_string()
 }
 
 /// Reading families cycled by `F` (forward) and `Ctrl+Shift+f` (backward) —
-/// plain `f` is `OpenJournalTermInput`, not a font key. Charter MUST stay first
-/// — it is `default_font_family`, and `font_cycle_starts_at_the_default_family`
-/// asserts the pair stays in step.
+/// plain `f` is `OpenJournalTermInput`, not a font key. The FIRST entry must
+/// equal `default_font_family` (currently Charis), so cycling forward from a
+/// fresh config starts where it is already sitting;
+/// `font_cycle_starts_at_the_default_family` asserts the pair stays in step. To
+/// reorder the head of this list, change that function too.
 ///
 /// Every entry must be an INSTALLED family that Pango resolves, because a name
 /// it cannot resolve does not warn — it silently renders the fontconfig fallback
@@ -242,14 +248,15 @@ fn default_font_family() -> String {
 /// Sans). `font_cycle_entries_resolve_to_themselves` catches these, but only
 /// on a machine where the font is installed.
 pub const FONT_CYCLE: &[&str] = &[
-    "Charter",
-    // Charis SIL. The Pango family is "Charis" — asking for "Charis SIL"
-    // resolves to Noto Sans, silently. A legibility-first publishing serif with
-    // FULL coverage of both the archaic sorts (yogh, long-s) and the IPA, so
-    // cycling to it also renders the OP-IPA gloss pronunciations without the
-    // mid-word fallback Charter takes. 463px on the reference line against
-    // Charter's 457 — near enough to need no size compensation.
+    // Charis SIL — the default (`default_font_family`), so it MUST stay first.
+    // The Pango family is "Charis"; asking for "Charis SIL" resolves to Noto
+    // Sans, silently. A legibility-first publishing serif with FULL coverage of
+    // both the archaic sorts (yogh, long-s) and the IPA, so it renders the
+    // OP-IPA gloss pronunciations without the mid-word fallback Charter takes.
+    // 463px on the reference line against Charter's 457 — near enough that the
+    // swap needs no size compensation.
     "Charis",
+    "Charter",
     // Parked (2026-07-28) — kept here rather than deleted so the set can be
     // restored by uncommenting. All five are installed and resolve; they were
     // taken out of rotation to make `f` a short cycle over the faces below.
@@ -621,14 +628,14 @@ mod merge_tests {
     }
 
     #[test]
-    fn default_font_is_charter_16() {
+    fn default_font_is_charis_16() {
         // A config with no font fields falls back to the compiled defaults.
         let c = cfg();
-        assert_eq!(c.font_family, "Charter");
+        assert_eq!(c.font_family, "Charis");
         assert_eq!(c.font_size, 16);
         // The default helpers agree (they feed both the serde default and the
         // Default impl).
-        assert_eq!(default_font_family(), "Charter");
+        assert_eq!(default_font_family(), "Charis");
         assert_eq!(default_font_size(), 16);
     }
 
