@@ -2950,7 +2950,7 @@ fn ask_claude(state_rc: &Rc<RefCell<AppState>>, question: &str) {
                     ),
                     JournalBand::Division(d1, d2) => crate::db::journal::save_journal_page(
                         &conn, &work_abbrev, *d1, *d2,
-                        &question_owned, &answer, &model_for_db, "scene", "qa",
+                        &question_owned, &answer, &model_for_db, "division", "qa",
                     ),
                     JournalBand::Passage { div1, div2, start, end } => {
                         crate::db::journal::save_passage_page(

@@ -552,8 +552,118 @@ pub fn refile_journal_bands_from_citations(
     Ok(refiled)
 }
 
+/// Marker key claimed by `migrate_scene_scope_to_division` so the value
+/// rewrite runs exactly once across the DB's lifetime.
+const SCENE_SCOPE_TO_DIVISION_KEY: &str = "scene-scope-to-division-2026-07-28";
+
+/// One-time rewrite of the stored `journal_entries.scope` value `'scene'` ->
+/// `'division'`, completing the vocabulary change whose identifier half landed
+/// in d3c09c2c.
+///
+/// COUPLED, NOT INDEPENDENT. Five production queries in `db/journal.rs` filter
+/// this value (two on `scope IN (...)`, three on `scope = ...`), and
+/// `save_journal_page`'s caller writes it. Those changed in the SAME commit as
+/// this migration. Shipping the data without the predicates — or the reverse —
+/// makes the `\` overlay cycle and the journal band silently return NOTHING:
+/// no error, just missing entries. That exact failure was repaired twice on
+/// 2026-07-27 (670ec5d4, 2293a3d1) before its cause was understood.
+///
+/// The two EARLIER migrations in this file still filter `scope = 'scene'`.
+/// That is correct and must not be "fixed": they are historical repairs whose
+/// keys are already claimed, so they never run again, and they described the
+/// data as it was when they were written.
+///
+/// Claims `SCENE_SCOPE_TO_DIVISION_KEY` inside the transaction; returns
+/// `Ok(0)` when already claimed.
+pub fn migrate_scene_scope_to_division(conn: &Connection) -> Result<usize, rusqlite::Error> {
+    let tx = conn.unchecked_transaction()?;
+    let claimed = tx.execute(
+        "INSERT OR IGNORE INTO one_time_migrations (key) VALUES (?1)",
+        [SCENE_SCOPE_TO_DIVISION_KEY],
+    )?;
+    if claimed == 0 {
+        return Ok(0);
+    }
+    let n = tx.execute(
+        "UPDATE journal_entries SET scope = 'division' WHERE scope = 'scene'",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// The value rewrite, and the coupling that makes it dangerous alone.
+    #[test]
+    fn scene_scope_becomes_division() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        crate::db::journal::save_journal_page(
+            &conn, "BH", 1, 0, "Q?", "A.", "m", "scene", "qa",
+        )
+        .unwrap();
+
+        assert_eq!(migrate_scene_scope_to_division(&conn).unwrap(), 1);
+
+        let divisions: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM journal_entries WHERE scope = 'division'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(divisions, 1);
+        let stale: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM journal_entries WHERE scope = 'scene'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale, 0, "no row may keep the old value");
+    }
+
+    /// THE COUPLING GUARD. After the migration the band query must still find
+    /// the entry. If someone reverts db/journal.rs's predicate to 'scene'
+    /// while leaving this migration in place, the `\` cycle and the journal
+    /// band go silently empty — the 2026-07-27 failure. This test goes red
+    /// instead.
+    #[test]
+    fn migrated_rows_are_still_found_by_the_band_query() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        crate::db::journal::save_journal_page(
+            &conn, "BH", 2, 0, "Q?", "A.", "m", "scene", "qa",
+        )
+        .unwrap();
+
+        migrate_scene_scope_to_division(&conn).unwrap();
+
+        let found = crate::db::journal::find_division_band_pages(&conn, "BH", 2, 0).unwrap();
+        assert_eq!(
+            found.len(), 1,
+            "the band query must match the migrated value — a mismatch here is \
+             the silent-empty bug, not a test detail"
+        );
+    }
+
+    /// Claim-keyed, like every migration in this file.
+    #[test]
+    fn scene_scope_migration_runs_only_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        crate::db::journal::save_journal_page(
+            &conn, "BH", 1, 0, "Q?", "A.", "m", "scene", "qa",
+        )
+        .unwrap();
+
+        assert_eq!(migrate_scene_scope_to_division(&conn).unwrap(), 1);
+        assert_eq!(migrate_scene_scope_to_division(&conn).unwrap(), 0);
+    }
+
     use super::*;
 
     /// Minimal in-memory `journal_entries` shape (only the columns the purge
@@ -787,7 +897,13 @@ mod tests {
         assert_eq!(n, 1);
         assert_eq!(band_of(&conn, mis_filed), (1, 0), "refiled to the cited chapter");
 
-        // The whole point: the band render now finds it.
+        // The whole point: the band render now finds it. The row is seeded
+        // `scope='scene'` because THIS migration is the historical repair and
+        // that was the value at the time — so the band query, which now
+        // filters `'division'`, only finds it once the 2026-07-28 scope
+        // migration has also run. Both must land for an entry to be
+        // reachable; that pairing is the thing under test.
+        migrate_scene_scope_to_division(&conn).unwrap();
         let ch1 = crate::db::journal::find_division_band_pages(&conn, "BH", 1, 0).unwrap();
         assert_eq!(ch1.len(), 1, "chapter 1's band now returns the entry");
         let ch0 = crate::db::journal::find_division_band_pages(&conn, "BH", 0, 0).unwrap();

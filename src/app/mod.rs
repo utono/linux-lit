@@ -3539,6 +3539,10 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::migrations::purge_stale_passage_journal_audio(&conn);
             let _ = crate::db::migrations::retag_passage_scoped_journal_entries(&conn);
             let _ = crate::db::migrations::refile_journal_bands_from_citations(&conn);
+            // MUST stay paired with db/journal.rs's `scope IN ('division', …)`
+            // predicates — see the migration's doc comment. Data and filters
+            // changed together; splitting them empties the `\` cycle silently.
+            let _ = crate::db::migrations::migrate_scene_scope_to_division(&conn);
         }
     });
 
