@@ -1247,13 +1247,17 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// fewer row per page — the pinned play_pages/prose_pages tables must be
 /// regenerated at the new geometry to match (LIT_GEN_PAGE_TABLE / re-import).
 ///
-/// 74 -> 64 -> 59 (2026-07-28, in two passes): the gap under the running head
-/// read as too airy on both the one- and two-column layouts. The 15px is not
-/// reclaimed as extra text — it moves to the foot, where the two bottom
-/// reserves each rise by the same 15 (`SINGLE_COLUMN_BOTTOM_MARGIN`,
-/// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 37), so the usable height is unchanged and
+/// 74 -> 64 -> 59 -> 54 (2026-07-28, in three passes): the gap under the
+/// running head read as too airy on both the one- and two-column layouts. The
+/// 20px is not reclaimed as extra text — it moves to the foot, where the two
+/// bottom reserves each rise by the same 20 (`SINGLE_COLUMN_BOTTOM_MARGIN`,
+/// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 42), so the usable height is unchanged and
 /// the row grid is preserved. Keep the three in step.
-pub const TOP_SPACER_HEIGHT: i32 = 59;
+///
+/// FLOOR: the strip holds the 14px running-head labels AND the `card_focus_rule`
+/// at margin-top 36 (+2px tall = 38). Below ~40 the rule would collide with the
+/// first text line, so further reductions need that margin moved too.
+pub const TOP_SPACER_HEIGHT: i32 = 54;
 
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
