@@ -1246,7 +1246,13 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// shrinks the columns' usable height, so the live pagination engine fits one
 /// fewer row per page — the pinned play_pages/prose_pages tables must be
 /// regenerated at the new geometry to match (LIT_GEN_PAGE_TABLE / re-import).
-pub const TOP_SPACER_HEIGHT: i32 = 74;
+///
+/// 74 -> 64 (2026-07-28): the gap under the running head read as too airy on
+/// both the one- and two-column layouts. The 10px is not reclaimed as extra
+/// text — it moves to the foot, where the two bottom reserves each rise by the
+/// same 10 (`SINGLE_COLUMN_BOTTOM_MARGIN`, `TWO_COLUMN_BOTTOM_MARGIN`), so the
+/// usable height is unchanged and the row grid is preserved.
+pub const TOP_SPACER_HEIGHT: i32 = 64;
 
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
