@@ -41,11 +41,6 @@ pub struct AskCard {
     /// Insert-mode caret blink timer (GTK won't blink a non-editable view's
     /// caret natively). `Some` only while the vim engine is in Insert mode.
     blink: std::cell::RefCell<Option<glib::SourceId>>,
-    /// True when the host overlay's text column uses the main prose reading
-    /// card's margin (card/8) rather than the uniform overlay margin (card/5),
-    /// so `open` insets the card to the same column. Set by the journal
-    /// overlay's `set_prose_reading`; gloss/synopsis leave the default false.
-    prose_reading: Cell<bool>,
     /// Fixed container width for the right-floated ask card (gloss 2-column
     /// layout). 0 = unset (the card uses the overlay's prose-column insets in
     /// `open_in_mode`). Set by `AskCardHost` in float mode.
@@ -141,7 +136,6 @@ impl AskCard {
             return_focus: return_focus.clone().upcast(),
             vim: std::cell::RefCell::new(None),
             blink: std::cell::RefCell::new(None),
-            prose_reading: Cell::new(false),
             float_width: Cell::new(0),
         }
     }
@@ -267,14 +261,12 @@ impl AskCard {
             // Calibrated on the real render.
             self.title.set_margin_top(FLOAT_TITLE_TOP_MARGIN);
         } else if card_width > 0 {
-            // Match the host overlay's text column: card/8 when the journal is
-            // showing a prose work at the main reading card's margin, card/5
-            // otherwise (see `prose_reading`).
-            let margin = if self.prose_reading.get() {
-                crate::ui::prose_reading_card_margin(card_width)
-            } else {
-                crate::ui::prose_column_margin(card_width)
-            };
+            // Match the host overlay's text column, which is now card/8 for
+            // EVERY work type (see `JournalOverlay::size_card` /
+            // `GlossOverlay::column_side_margin`) — so this card no longer
+            // branches on `prose_reading` either. A play's ask input would
+            // otherwise sit at card/5 while the doc behind it used card/8.
+            let margin = crate::ui::prose_reading_card_margin(card_width);
             self.container.set_margin_start(margin);
             self.container.set_margin_end(margin);
         }
@@ -290,14 +282,6 @@ impl AskCard {
         self.set_focus(AskFocus::Ask);
         let _ = self.input.grab_focus();
         self.mirror_vim();
-    }
-
-    /// Inset the card at the main prose reading card's margin (card/8) instead
-    /// of the uniform overlay margin (card/5) on subsequent `open`s. The
-    /// journal overlay forwards its own prose flag here so the ask card and
-    /// the Q&A column stay on the same edges.
-    pub fn set_prose_reading(&self, prose: bool) {
-        self.prose_reading.set(prose);
     }
 
     /// Feed one key to the input's vim engine, mirror, and return the

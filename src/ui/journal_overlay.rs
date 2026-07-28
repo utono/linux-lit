@@ -73,11 +73,10 @@ pub struct JournalOverlay {
     text_margins: i32,
     column_width: i32,
     /// True when the CURRENT work is prose (set by the journal action layer
-    /// before each show). Prose works match the main reading card's tighter
-    /// `prose_reading_card_margin` (card/8) so the overlay column equals the
-    /// 1-col prose layout; verse/play cards keep the uniform overlay
-    /// `prose_column_margin` (card/5) — card/8 of a wide play card would be
-    /// far past a readable measure.
+    /// before each show). NOT a margin input any more — every work type uses
+    /// card/8 (`size_card`). Its only remaining job is the source quote's verse
+    /// hang-indent: a prose quote is ONE long wrapped line, so the hang indent
+    /// would ragged-left every wrapped row (`apply_source_style`).
     prose_reading: Cell<bool>,
     font_family: RefCell<String>,
     font_size: Cell<i32>,
@@ -824,10 +823,13 @@ impl JournalOverlay {
         self.head_scene.set_text(position);
     }
 
+    /// Record whether the current work is prose. Now used ONLY to decide the
+    /// source quote's verse hang-indent (`apply_source_style`) — the column
+    /// margin no longer branches on it (every work type uses card/8), and the
+    /// ask card derives its own inset from that same single rule, so there is
+    /// nothing to forward.
     pub fn set_prose_reading(&self, prose: bool) {
         self.prose_reading.set(prose);
-        // The ask card insets itself on open; keep it on the same column.
-        self.ask_host.card().set_prose_reading(prose);
     }
 
     fn size_card(&self, card_width: i32, card_height: i32) {
@@ -873,16 +875,14 @@ impl JournalOverlay {
         // Anchor the text to a card-relative margin rather than the small fixed
         // `text_margins` — otherwise the Q&A prose runs nearly edge to edge on
         // a wide card. Card SIZE is unchanged; only the inner padding grows.
-        // Prose works use the MAIN reading card's `prose_reading_card_margin`
-        // (card/8) so the overlay column exactly matches the 1-col prose
-        // layout; verse/play cards keep the uniform overlay
-        // `prose_column_margin` (card/5 — audit #27), where card/8 of the wide
-        // play card would overshoot a readable measure.
-        let side = if self.prose_reading.get() {
-            crate::ui::prose_reading_card_margin(card_width)
-        } else {
-            crate::ui::prose_column_margin(card_width)
-        };
+        //
+        // ONE margin for every work type: the MAIN reading card's
+        // `prose_reading_card_margin` (card/8), so the overlay column matches
+        // the 1-col prose layout AND a play's Q&A sits at the same measure as a
+        // novel's. Verse/plays previously took the narrower `prose_column_margin`
+        // (card/5), which made the same overlay render two different column
+        // widths depending on the work — the inconsistency this removes.
+        let side = crate::ui::prose_reading_card_margin(card_width);
         // Indent the body right of the accent bar (bar sits in the gutter),
         // matching gloss. Left-only; the right margin stays `side`.
         self.view.set_left_margin(side + JOURNAL_BODY_INDENT);

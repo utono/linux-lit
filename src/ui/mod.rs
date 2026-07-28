@@ -73,7 +73,7 @@ pub(crate) fn copy_to_clipboard(text: &str) {
 /// The verse reading card's side margin: a quarter of the *live* card width.
 /// Since the 2026-07-02 overlay readability pass this is the MAIN card's
 /// margin only — the gloss/journal/synopsis overlays and the ask card use
-/// `prose_column_margin` (card/5) uniformly, regardless of work type.
+/// `prose_reading_card_margin` (card/8) uniformly, regardless of work type.
 ///
 /// CRITICAL: this is anchored to the on-screen `card_width`, NOT the fixed
 /// `column_width`. The echo view deliberately uses `column_width / 8` instead
@@ -84,28 +84,17 @@ pub(crate) fn card_side_margin(card_width: i32) -> i32 {
     card_width / 4
 }
 
-/// Symmetric inset (both sides) for the NYTimes-style centered prose column:
-/// card_width/5, a ~60% reading measure (vs `card_side_margin`'s 50%). Used
-/// by every gloss/journal/synopsis overlay surface and the ask card REGARDLESS
-/// of work type (2026-07-02 readability pass — the overlay column no longer
-/// narrows to card/4 on verse works). NOTE: the MAIN prose reading card no
-/// longer uses this — it uses the tighter `prose_reading_card_margin` (less
-/// left/right padding, wider text). Keep the two distinct.
-pub(crate) fn prose_column_margin(card_width: i32) -> i32 {
-    card_width / 5
-}
-
-/// Divisor for the MAIN prose reading card's symmetric side inset. `card/8`
-/// (~75% reading measure) instead of the overlays' `card/5` (~60%), so prose
-/// works like Bleak House get noticeably less left/right padding and wider
-/// text. `app::layout::prose_card_width_px` MUST invert the matching measure
-/// with this same divisor, or the `PROSE_MEASURE_CHARS` guarantee breaks — the
-/// card is sized so its centered measure holds N average chars.
+/// Divisor for the prose reading card's symmetric side inset: `card/8`, a ~75%
+/// reading measure, so prose works like Bleak House get noticeably less
+/// left/right padding and wider text than the verse card's `card/4`.
+/// `app::layout::prose_card_width_px` MUST invert the matching measure with this
+/// same divisor, or the `PROSE_MEASURE_CHARS` guarantee breaks — the card is
+/// sized so its centered measure holds N average chars.
 pub(crate) const PROSE_READING_CARD_MARGIN_DIVISOR: i32 = 8;
 
-/// Symmetric inset (both sides) for the MAIN prose reading card. Tighter than
-/// `prose_column_margin` so prose text fills more of the card width. See
-/// `PROSE_READING_CARD_MARGIN_DIVISOR`.
+/// Symmetric inset (both sides) for the MAIN prose reading card — and, since the
+/// overlay columns were unified, for EVERY gloss/journal/synopsis surface and
+/// the ask card on every work type. See `PROSE_READING_CARD_MARGIN_DIVISOR`.
 pub(crate) fn prose_reading_card_margin(card_width: i32) -> i32 {
     card_width / PROSE_READING_CARD_MARGIN_DIVISOR
 }
@@ -914,21 +903,26 @@ mod font_string_tests {
 
 #[cfg(test)]
 mod prose_column_tests {
-    use super::prose_column_margin;
+    use super::prose_reading_card_margin;
+
+    // ONE overlay column rule: every gloss/journal/synopsis surface and the ask
+    // card inset by card/8, regardless of work type. (The card/5
+    // `prose_column_margin` that verse/plays used to take was retired when the
+    // two branches were unified — one overlay must not render two widths.)
 
     #[test]
-    fn fifth_of_card_each_side() {
-        // Default 1050px card -> 210px each side -> ~630px centered column.
-        assert_eq!(prose_column_margin(1050), 210);
+    fn eighth_of_card_each_side() {
+        // Default 1050px card -> 131px each side -> ~788px centered column.
+        assert_eq!(prose_reading_card_margin(1050), 131);
     }
 
     #[test]
     fn wide_card_scales() {
-        assert_eq!(prose_column_margin(1660), 332);
+        assert_eq!(prose_reading_card_margin(1660), 207);
     }
 
     #[test]
     fn zero_card_is_zero() {
-        assert_eq!(prose_column_margin(0), 0);
+        assert_eq!(prose_reading_card_margin(0), 0);
     }
 }
