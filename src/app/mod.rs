@@ -3533,6 +3533,7 @@ pub fn display_work_at_with_prepared(
             let _ = crate::db::migrations::ensure_grammatical_terms_table(&conn);
             let _ = crate::db::migrations::purge_stale_passage_journal_audio(&conn);
             let _ = crate::db::migrations::retag_passage_scoped_journal_entries(&conn);
+            let _ = crate::db::migrations::refile_journal_bands_from_citations(&conn);
         }
     });
 
