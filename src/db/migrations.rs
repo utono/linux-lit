@@ -423,6 +423,60 @@ pub fn purge_stale_passage_journal_audio(conn: &Connection) -> Result<usize, rus
     )
 }
 
+/// Marker key claimed by `retag_passage_scoped_journal_entries` so the retag
+/// runs exactly once across the DB's lifetime. Bump the date suffix if a
+/// future re-import mis-files entries again.
+const RETAG_PASSAGE_SCOPE_KEY: &str = "retag-passage-scope-2026-07-27";
+
+/// One-time repair for journal entries whose `scope` a litdb re-import
+/// overwrote. `save_passage_page` and `save_vocab_page` both hardcode
+/// `scope='passage'`, yet lit.db holds vocab entries reading `scope='scene'` —
+/// the same event that left two rows reading `unassigned-after-reimport`
+/// rewrote them.
+///
+/// The signature of a passage-created entry is a citation pair PLUS a
+/// non-NULL `source_text`: only those two writers store source_text. A
+/// chapter-level question saved from the reader has a placeholder `.0`
+/// citation and no source_text, so it is correctly left alone.
+///
+/// This is a data repair, not a correctness dependency: `find_passage_citation_ranges`
+/// selects on the citation span alone, and `find_journal_page_for_line` only
+/// restricts to the scopes the band render can display (`scene`, `passage`) —
+/// neither depends on `scope` distinguishing 'scene' from 'passage'. It exists
+/// so `scope` again means what it says for the paths that legitimately filter
+/// on it (`find_passage_pages`, `find_journal_pages`).
+///
+/// Claims `RETAG_PASSAGE_SCOPE_KEY` in `one_time_migrations` (caller must
+/// `ensure_one_time_migrations_table` first) before writing anything; if the
+/// marker was already claimed, returns `Ok(0)` without touching a row.
+pub fn retag_passage_scoped_journal_entries(
+    conn: &Connection,
+) -> Result<usize, rusqlite::Error> {
+    // Claim + UPDATE run in one transaction so a crash (or UPDATE failure)
+    // between the two cannot consume the key without doing the retag: either
+    // both commit together, or neither does and the key stays unclaimed for
+    // the next launch to retry.
+    let tx = conn.unchecked_transaction()?;
+    let claimed = tx.execute(
+        "INSERT OR IGNORE INTO one_time_migrations (key) VALUES (?1)",
+        [RETAG_PASSAGE_SCOPE_KEY],
+    )?;
+    if claimed == 0 {
+        return Ok(0);
+    }
+    let n = tx.execute(
+        "UPDATE journal_entries
+            SET scope = 'passage'
+          WHERE scope = 'scene'
+            AND start_citation IS NOT NULL
+            AND end_citation IS NOT NULL
+            AND source_text IS NOT NULL",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,5 +591,77 @@ mod tests {
         ensure_journal_audio_table(&conn).unwrap();
         ensure_one_time_migrations_table(&conn).unwrap();
         assert!(purge_stale_passage_journal_audio(&conn).is_err());
+    }
+
+    /// The migration retags entries a re-import mis-filed, and ONLY those.
+    /// The signature of a passage-created entry is citations + source_text
+    /// (only save_passage_page / save_vocab_page write source_text).
+    #[test]
+    fn retag_only_touches_cited_entries_with_source_text() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+
+        let insert = |scope: &str, cite: Option<&str>, src: Option<&str>| {
+            conn.execute(
+                "INSERT INTO journal_entries
+                    (work_abbrev, div1, div2, question, answer, claude_model,
+                     scope, start_citation, end_citation, source_text)
+                 VALUES ('BH', 2, 0, 'Q?', 'A.', 'm', ?1, ?2, ?2, ?3)",
+                rusqlite::params![scope, cite, src],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+
+        // Mis-filed by a re-import: cited AND has source_text -> retag.
+        let mis_filed = insert("scene", Some("BH.2.0.48"), Some("How Alexander wept…"));
+        // Genuinely chapter-level: placeholder citation, no source_text -> leave.
+        let chapter_q = insert("scene", Some("BH.1.0.0"), None);
+        // No citation at all -> leave.
+        let bare = insert("scene", None, None);
+        // Already correct -> untouched, and not double-counted.
+        let already = insert("passage", Some("BH.3.0.80"), Some("src"));
+
+        let n = retag_passage_scoped_journal_entries(&conn).unwrap();
+        assert_eq!(n, 1, "exactly the mis-filed row is retagged");
+
+        let scope_of = |id: i64| -> String {
+            conn.query_row(
+                "SELECT scope FROM journal_entries WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(scope_of(mis_filed), "passage");
+        assert_eq!(scope_of(chapter_q), "scene", "chapter-level Q stays scene");
+        assert_eq!(scope_of(bare), "scene", "uncited entry stays scene");
+        assert_eq!(scope_of(already), "passage");
+    }
+
+    /// Claim-keyed: a second run is a no-op, matching
+    /// purge_stale_passage_journal_audio's contract.
+    #[test]
+    fn retag_runs_only_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::journal::ensure_journal_table(&conn).unwrap();
+        ensure_one_time_migrations_table(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO journal_entries
+                (work_abbrev, div1, div2, question, answer, claude_model,
+                 scope, start_citation, end_citation, source_text)
+             VALUES ('BH', 2, 0, 'Q?', 'A.', 'm', 'scene',
+                     'BH.2.0.48', 'BH.2.0.48', 'src')",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(retag_passage_scoped_journal_entries(&conn).unwrap(), 1);
+        assert_eq!(
+            retag_passage_scoped_journal_entries(&conn).unwrap(),
+            0,
+            "the claim key must make a second run a no-op"
+        );
     }
 }
