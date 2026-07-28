@@ -836,11 +836,12 @@ pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 /// clip, and last-visible-line site must use this constant — a mismatch makes
 /// the clip disagree with the fill (or the prose validator reject the grid).
 ///
-/// 22 -> 32 (2026-07-28): the 10px taken off `TOP_SPACER_HEIGHT` moves here, so
-/// the page keeps the SAME usable height (and therefore the same row grid)
-/// while the foot gains the breathing room the head gave up. Raising this alone
-/// would cost a line per page; the two constants must move together.
-pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 32;
+/// 22 -> 37 (2026-07-28, in two passes): the 15px taken off
+/// `TOP_SPACER_HEIGHT` (74 -> 59) moves here, so the page keeps the SAME usable
+/// height (and therefore the same row grid) while the foot gains the breathing
+/// room the head gave up. Raising this alone would cost a line per page; the
+/// two constants must move together.
+pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 37;
 
 /// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
 /// single-column path (whose clip covers the full descender_guard +
@@ -855,10 +856,11 @@ pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 32;
 /// back toward 40. The two-column fill sites AND `validate_spreads` must both use
 /// this constant or generation falls back to no-table.
 ///
-/// 22 -> 32 (2026-07-28): mirrors `SINGLE_COLUMN_BOTTOM_MARGIN` — the 10px
-/// removed from `TOP_SPACER_HEIGHT` moves to the foot on this layout too, so
-/// the two-column spread keeps its usable height and line count.
-pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 32;
+/// 22 -> 37 (2026-07-28, in two passes): mirrors
+/// `SINGLE_COLUMN_BOTTOM_MARGIN` — the 15px removed from `TOP_SPACER_HEIGHT`
+/// moves to the foot on this layout too, so the two-column spread keeps its
+/// usable height and line count.
+pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 37;
 
 /// The pixel reserve the two-column fill leaves BELOW the last possible line:
 /// `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` — exactly the band
