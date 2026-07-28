@@ -110,14 +110,14 @@ pub(crate) fn vocab_user_message(
     title: &str,
     author: &str,
     unit_label: &str,
-    scene_label: &str,
+    synopsis_division_label: &str,
     word: &str,
     segment: &str,
     corpus_block: &str,
     request: &str,
 ) -> String {
     format!(
-        "Work type: {genre}\nWork: \"{title}\" by {author}\n{unit_label}: {scene_label}\nVocabulary word: {word}\n\n\
+        "Work type: {genre}\nWork: \"{title}\" by {author}\n{unit_label}: {synopsis_division_label}\nVocabulary word: {word}\n\n\
          Segment (the reader's cursor segment, verbatim):\n{segment}\n\n\
          CORPUS OCCURRENCES \u{2014} lines containing the word elsewhere in {author}'s works:\n{corpus_block}\n\n\
          Reader's request:\n{request}",
@@ -209,7 +209,7 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
     // journal ask flow runs. Its error path falls back to the seed, so the
     // main ask proceeds either way. The improved phrasing is both what the
     // model answers and what the entry stores as its question.
-    let scene_label = crate::app::scene_synopsis::scene_label(div1, div2);
+    let synopsis_division_label = crate::app::division_synopsis::synopsis_division_label(div1, div2);
     let keep_terms = vec![word.clone()];
     crate::input::actions::journal::improve_question(
         state_rc,
@@ -230,7 +230,7 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                 &title,
                 &author,
                 &unit_label,
-                &scene_label,
+                &synopsis_division_label,
                 &word,
                 &segment,
                 &corpus_block,

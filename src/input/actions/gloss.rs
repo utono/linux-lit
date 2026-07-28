@@ -1010,7 +1010,7 @@ fn apply_ipa_fix(
             let gloss_text = gloss.gloss_text.clone();
             let source_text = ctx.source_text.clone();
             let root_color = s.theme.root_color.clone();
-            let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+            let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
             s.gloss_overlay.show_gloss_with_color(
                 &source_text,
                 &gloss_text,
@@ -1111,7 +1111,7 @@ pub(crate) fn render_gloss_row(s: &mut AppState, new_idx: usize) {
     let source_text = ctx.source_text.clone();
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
-    let head = crate::app::scene_synopsis::synopsis_head(s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &source_text, &gloss_text, cw, h,
         Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
@@ -1205,7 +1205,7 @@ fn persist_and_render_gloss(
     let mut s = state_rc.borrow_mut();
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, full_gloss, cw, h,
         Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
@@ -1281,7 +1281,7 @@ fn update_and_render_gloss_in_place(
     s.gloss_active_voice = 0;
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, full_gloss, cw, h,
         Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
@@ -1469,7 +1469,7 @@ pub(crate) fn undo_gloss_edit(state_rc: &Rc<RefCell<AppState>>) {
     s.gloss_active_voice = 0;
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, &original, cw, h,
         Some(&s.theme.root_color), &pairs, (&head.0, &head.1),
@@ -1540,7 +1540,7 @@ pub(crate) fn persist_render_install_gloss(
 
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let pairs = ctx.source_line_pairs();
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(&ctx.source_text, text, cw, h, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
     // This install path re-populates the buffer but does NOT run
     // `recolor_cached_blocks` (unlike the display sites), so tint vocab here.
@@ -1979,7 +1979,7 @@ pub(crate) fn recolor_cached_blocks(s: &AppState) {
     // `synth_all_synopsis_blocks`) so synopsis audio is shared across editions
     // (`2H6`/`2H6-Amb`) the same way the synopsis TEXT is — `synopsis_cache` is
     // itself loaded under the base abbrev, so the audio key must match it.
-    let (div1, div2) = s.synopsis_overlay_scene;
+    let (div1, div2) = s.synopsis_overlay_division;
     let work_abbrev = match s.current_work.as_ref() {
         Some(w) => w.canonical_abbrev.clone(),
         None => return,
@@ -2325,7 +2325,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
     }
     let (work_abbrev, div1, div2, blocks, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
+        let (div1, div2) = s.synopsis_overlay_division;
         let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
             Some(t) => t.clone(),
             None => return,
@@ -2412,7 +2412,7 @@ pub(crate) fn synth_all_synopsis_blocks(state_rc: &Rc<RefCell<AppState>>) {
 fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
     let (work_abbrev, div1, div2, text, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
+        let (div1, div2) = s.synopsis_overlay_division;
         let synopsis = match s.synopsis_cache.get(&(div1, div2)) {
             Some(t) => t.clone(),
             None => return,
@@ -3133,7 +3133,7 @@ pub(crate) fn open_gloss_overlay(
 
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
     let source_lines: Vec<(String, i64)> = Vec::new();
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text,
         &all_glosses[idx].gloss_text,

@@ -265,8 +265,8 @@ fn describe(label: &str) -> Option<&'static str> {
         // ── Chapters / scenes ──
         "prev ch" => "Action::JumpToPrevChapter — src/input/navigation.rs",
         "next ch" => "Action::JumpToNextChapter — src/input/navigation.rs",
-        "prev scene" => "Action::JumpToPrevScene — src/input/navigation.rs",
-        "next scene" => "Action::JumpToNextScene — src/input/navigation.rs",
+        "prev scene" => "Action::JumpToPrevDivision — src/input/navigation.rs",
+        "next scene" => "Action::JumpToNextDivision — src/input/navigation.rs",
 
         // ── Bookmarks ──
         "bookmark" => "Action::ToggleBookmark — src/input/actions/bookmarks.rs",

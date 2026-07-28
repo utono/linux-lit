@@ -43,7 +43,7 @@ pub struct GlossOverlay {
     title: Label,
     /// Right half of the synopsis running head ("Chapter 10"); hidden in every
     /// other overlay mode, where `title` alone spans the row.
-    title_scene: Label,
+    title_division: Label,
     orig_header: Label,
     original_label: Label,
     corr_header: Label,
@@ -290,8 +290,8 @@ impl GlossOverlay {
 
         // The title sits in a horizontal row so the synopsis view can show a
         // main-card-style running head: `title` = work abbrev (left),
-        // `title_scene` = position (right). Every other mode hides
-        // `title_scene`; `title` hexpands so its halign behaves as before.
+        // `title_division` = position (right). Every other mode hides
+        // `title_division`; `title` hexpands so its halign behaves as before.
         let title_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
         let title = Label::new(Some("Gloss"));
         title.add_css_class("gloss-title");
@@ -300,12 +300,12 @@ impl GlossOverlay {
         title.set_margin_end(text_margins as i32);
         title.set_margin_top(24);
         title_row.append(&title);
-        let title_scene = Label::new(None);
-        title_scene.add_css_class("running-head-scene");
-        title_scene.set_halign(Align::End);
-        title_scene.set_valign(Align::Center);
-        title_scene.set_visible(false);
-        title_row.append(&title_scene);
+        let title_division = Label::new(None);
+        title_division.add_css_class("running-head-division");
+        title_division.set_halign(Align::End);
+        title_division.set_valign(Align::Center);
+        title_division.set_visible(false);
+        title_row.append(&title_division);
         container.append(&title_row);
 
         // Left margin for these diff/error labels is set per-display in `show()`
@@ -724,7 +724,7 @@ impl GlossOverlay {
             scrim,
             container,
             title,
-            title_scene,
+            title_division,
             orig_header,
             original_label,
             corr_header,
@@ -1660,13 +1660,13 @@ impl GlossOverlay {
         self.title.add_css_class("gloss-title");
         self.title.set_margin_bottom(0);
         // The running head's right half never shows on the loading/diff cards.
-        self.title_scene.set_visible(false);
+        self.title_division.set_visible(false);
     }
 
     /// Style the title row as the main card's RUNNING HEAD, not a chapter
     /// heading: work abbrev at the start, position ("Chapter 10" /
     /// "Act N, Scene M") at the end, in the same small-caps
-    /// `running-head-work`/`running-head-scene` styles the reading card uses.
+    /// `running-head-work`/`running-head-division` styles the reading card uses.
     /// Shared by the synopsis AND gloss-result views; the loading/diff paths
     /// restore gloss-title and hide the right label (`set_gloss_title_style`).
     /// Both labels stay visible together, so `title_pref_h` (margins included)
@@ -1685,11 +1685,11 @@ impl GlossOverlay {
         self.title.set_margin_start(40);
         self.title.set_margin_top(24);
         self.title.set_margin_bottom(12);
-        self.title_scene.set_text(position);
-        self.title_scene.set_margin_end(40);
-        self.title_scene.set_margin_top(24);
-        self.title_scene.set_margin_bottom(12);
-        self.title_scene.set_visible(true);
+        self.title_division.set_text(position);
+        self.title_division.set_margin_end(40);
+        self.title_division.set_margin_top(24);
+        self.title_division.set_margin_bottom(12);
+        self.title_division.set_visible(true);
     }
 
     pub fn show(&self, original: &str, corrected: &str) {
@@ -2006,7 +2006,7 @@ impl GlossOverlay {
         self.ask_host.card().close();
         self.title.set_visible(false);
         // The running head's right half must not leak into the echo view.
-        self.title_scene.set_visible(false);
+        self.title_division.set_visible(false);
         let left = self.column_width / 8;
         self.title.set_margin_start(left);
         self.gloss_view.set_left_margin(left);

@@ -14,7 +14,7 @@ pub struct JournalOverlay {
     /// matching the main card strip and the synopsis/gloss overlays. Set via
     /// `set_running_head` before each show; measured by `size_card`.
     head_work: Label,
-    head_scene: Label,
+    head_division: Label,
     scrolled: gtk4::ScrolledWindow,
     view: gtk4::TextView,
     /// Underline tag for the overlay `-` family (`overlay_word_copy`).
@@ -423,14 +423,14 @@ impl JournalOverlay {
         head_work.set_margin_top(24);
         head_work.set_margin_bottom(12);
         head_row.append(&head_work);
-        let head_scene = Label::new(None);
-        head_scene.add_css_class("running-head-scene");
-        head_scene.set_halign(gtk4::Align::End);
-        head_scene.set_valign(gtk4::Align::Center);
-        head_scene.set_margin_end(40);
-        head_scene.set_margin_top(24);
-        head_scene.set_margin_bottom(12);
-        head_row.append(&head_scene);
+        let head_division = Label::new(None);
+        head_division.add_css_class("running-head-division");
+        head_division.set_halign(gtk4::Align::End);
+        head_division.set_valign(gtk4::Align::Center);
+        head_division.set_margin_end(40);
+        head_division.set_margin_top(24);
+        head_division.set_margin_bottom(12);
+        head_row.append(&head_division);
 
         let scrolled = gtk4::ScrolledWindow::new();
         scrolled.set_hscrollbar_policy(gtk4::PolicyType::Never);
@@ -746,7 +746,7 @@ impl JournalOverlay {
             scrim,
             container,
             head_work,
-            head_scene,
+            head_division,
             scrolled,
             view,
             word_underline_tag,
@@ -860,7 +860,7 @@ impl JournalOverlay {
     /// row at its real height.
     pub fn set_running_head(&self, work: &str, position: &str) {
         self.head_work.set_text(work);
-        self.head_scene.set_text(position);
+        self.head_division.set_text(position);
     }
 
     /// Record whether the current work is prose. Now used ONLY to decide the
@@ -882,7 +882,7 @@ impl JournalOverlay {
         // scroll (preferred size includes its 24/12 margins), the scroll_overlay
         // margins (UNACCOUNTED_CHROME_MARGINS = 44, which `preferred_size()`
         // omits), and the footer. Without the head's height the `valign=Center`
-        // container grows PAST `card_height` (the gloss overlay's title_scene bug).
+        // container grows PAST `card_height` (the gloss overlay's title_division bug).
         let (_, head_h) = self.head_work.preferred_size();
         let (_, footer_h) = self.footer_container.preferred_size();
         self.ask_host.size(

@@ -32,8 +32,8 @@ pub struct NavTestState {
 enum Step {
     PageForward,
     PageBackward,
-    NextScene,
-    PrevScene,
+    NextDivision,
+    PrevDivision,
     NextChapter,
     PrevChapter,
     NextBookmark, // & — forward to next bookmarked line (canonical spread)
@@ -63,7 +63,7 @@ impl Step {
     /// ALL_STEPS" from a human checklist into a guarantee.
     const EVERY: [Step; 14] = [
         Step::PageForward, Step::PageBackward,
-        Step::NextScene, Step::PrevScene,
+        Step::NextDivision, Step::PrevDivision,
         Step::NextChapter, Step::PrevChapter,
         Step::NextBookmark, Step::PrevBookmark,
         Step::JumpTop, Step::JumpEnd,
@@ -77,7 +77,7 @@ impl Step {
     const fn in_coverage(self) -> bool {
         match self {
             Step::PageForward | Step::PageBackward
-            | Step::NextScene | Step::PrevScene
+            | Step::NextDivision | Step::PrevDivision
             | Step::NextChapter | Step::PrevChapter
             | Step::NextBookmark | Step::PrevBookmark
             | Step::JumpTop | Step::JumpEnd
@@ -122,8 +122,8 @@ fn build_script() -> Vec<Step> {
     s.extend_from_slice(&[Step::PageForward; 5]);
     s.extend_from_slice(&[Step::PageBackward; 5]);
     s.extend_from_slice(&[Step::PageForward; 3]);
-    s.push(Step::NextScene); s.push(Step::PageBackward);
-    s.push(Step::PrevScene); s.push(Step::PageBackward);
+    s.push(Step::NextDivision); s.push(Step::PageBackward);
+    s.push(Step::PrevDivision); s.push(Step::PageBackward);
     s.extend_from_slice(&[Step::PageForward; 5]);
     s.push(Step::SearchJump); s.push(Step::PageBackward);
     s.push(Step::NextChapter); s.push(Step::PageBackward);
@@ -144,7 +144,7 @@ fn all_coverage_steps() -> Vec<Step> {
 /// the random seed. Anchors are reached by replayable jumps:
 ///   - work start (gg),
 ///   - work end (G),
-///   - each act/scene boundary, reached by gg then N× NextScene,
+///   - each act/scene boundary, reached by gg then N× NextDivision,
 ///   - the mid-point of a page (a few NextDialogue off an anchor).
 /// After landing on each anchor we fire every Step once (the invariants in
 /// `run_step` then check the landing). This is what makes the fuzz test "all
@@ -159,18 +159,18 @@ fn build_coverage_prelude() -> Vec<Step> {
     // 2. From the END, every action (the final-spread / EPILOGUE scenarios).
     for &st in &actions { s.push(Step::JumpEnd); s.push(st); }
 
-    // 3. Sweep scene boundaries: gg, then k× NextScene to reach scene k, then
+    // 3. Sweep scene boundaries: gg, then k× NextDivision to reach scene k, then
     //    every action from there. 24 scenes covers the longest Folger plays;
-    //    NextScene past the last scene is a harmless no-op the invariants allow.
+    //    NextDivision past the last scene is a harmless no-op the invariants allow.
     for k in 1..=24usize {
         s.push(Step::JumpTop);
-        for _ in 0..k { s.push(Step::NextScene); }
+        for _ in 0..k { s.push(Step::NextDivision); }
         for &st in &actions { s.push(st);
             // Return to the same scene anchor before the next action so each
             // action starts from the boundary, not from wherever the prior one
             // left the cursor.
             s.push(Step::JumpTop);
-            for _ in 0..k { s.push(Step::NextScene); }
+            for _ in 0..k { s.push(Step::NextDivision); }
         }
     }
 
@@ -221,7 +221,7 @@ fn build_fuzz_script() -> Vec<Step> {
     let mut rng = Lcg(fuzz_seed());
     let setups = [
         Step::PageForward, Step::PageForward,
-        Step::NextScene, Step::PrevScene,
+        Step::NextDivision, Step::PrevDivision,
         Step::NextChapter, Step::PrevChapter,
         Step::JumpEnd, Step::JumpTop,
         Step::NextDialogue, Step::NextDialogue, Step::NextDialogue,
@@ -247,7 +247,7 @@ fn build_fuzz_script() -> Vec<Step> {
         // Jump end, page back once, then forward — round-trip at the tail.
         &[Step::JumpEnd, Step::PageBackward, Step::PageForward],
         // Scene-jump to the last scene then x/y around it.
-        &[Step::NextScene, Step::NextScene, Step::JumpEnd, Step::PageBackward, Step::PageForward],
+        &[Step::NextDivision, Step::NextDivision, Step::JumpEnd, Step::PageBackward, Step::PageForward],
     ];
     // Random body appends to the coverage prelude (do NOT re-init `s`).
     while s.len() < MAX_STEPS {
@@ -428,8 +428,8 @@ fn run_step(s: &mut AppState) {
     match step {
         Step::PageForward => navigation::page_forward(s),
         Step::PageBackward => navigation::page_backward(s),
-        Step::NextScene => navigation::jump_to_next_scene(s),
-        Step::PrevScene => navigation::jump_to_prev_scene(s),
+        Step::NextDivision => navigation::jump_to_next_division(s),
+        Step::PrevDivision => navigation::jump_to_prev_division(s),
         Step::NextChapter => navigation::jump_to_next_chapter(s),
         Step::PrevChapter => navigation::jump_to_prev_chapter(s),
         Step::NextBookmark => navigation::next_bookmark(s),
@@ -596,7 +596,7 @@ fn run_step(s: &mut AppState) {
         } else if fwd < pre_top {
             // A gap between the back-page's end and `pre_top` is only a real GAP if
             // the skipped lines contain DIALOGUE. When `pre_top` is a SCENE-START
-            // landing (reached by 2/3 NextScene), the lines between are the scene
+            // landing (reached by 2/3 NextDivision), the lines between are the scene
             // TRANSITION block — a trailing `[They exit.]` stage direction, blanks,
             // and the ACT/SCENE heading — not skipped reading content. Confirmed
             // by diagnostics on 1H4 (gap lines 124-126 = blank / '[They exit.]' /
@@ -659,7 +659,7 @@ fn run_step(s: &mut AppState) {
         // scene-opening line filling the right column before the rest of that
         // scene continues next page (2H6 4.8 `split == page_end == boundary`).
         // Scan the right column plus the next-page top for any section start.
-        let clamped_at_scene = {
+        let clamped_at_division = {
             let lo = cs.split;
             let hi = (cs.next_page_top + 1).min(line_count);
             (lo..hi).any(|i| s.is_section_start(i))
@@ -668,7 +668,7 @@ fn run_step(s: &mut AppState) {
         // more content that could have filled it AND it didn't clamp at a scene.
         // A sanctioned empty-right table page (stored split == None) is exempt:
         // its right column renders empty by design, so "balance" is undefined.
-        if more_below && !clamped_at_scene && !table_empty_right
+        if more_below && !clamped_at_division && !table_empty_right
             && right_lines * 3 < left_lines && left_lines >= 12 {
             fail(s, step_num, step, &format!(
                 "UNBALANCED SPREAD: top={} left={} lines right={} lines (more content below) split={} page_end={}",
@@ -688,7 +688,7 @@ fn run_step(s: &mut AppState) {
     // `post_top`, not `post_line` (which can sit mid-page and, near the final
     // overlapping spread, resolve ambiguously).
     //
-    // Any OTHER step (JumpTop, JumpEnd, NextScene, NextChapter, bookmarks,
+    // Any OTHER step (JumpTop, JumpEnd, NextDivision, NextChapter, bookmarks,
     // NextDialogue/PrevDialogue, SyncAdvance, SearchJump) legitimately
     // repositions the page outside the ±1 relationship — those are jumps, not
     // page turns. `last_page_no` tracking must therefore span only an
@@ -900,13 +900,13 @@ fn run_step(s: &mut AppState) {
         // + speaker with no ACT/SCENE chrome line. A boundary anywhere in the
         // visible spread or at the next page's top means this spread is bounded by
         // a scene edge, not under-filled by a pagination bug.
-        let clamped_at_scene = {
+        let clamped_at_division = {
             let lo = post_top;
             let hi = (cs.next_page_top + 1).min(line_count);
             (lo..hi).any(|i| s.is_section_start(i))
         };
         if !tail_fits_one_col
-            && !clamped_at_scene
+            && !clamped_at_division
             && left_lines < 6
             && right_lines < 8
             && cs.next_page_top < line_count
@@ -945,7 +945,7 @@ fn run_step(s: &mut AppState) {
     let moved = post_top != pre_top || post_line != pre_line;
     let is_jump = matches!(
         step,
-        Step::NextScene | Step::PrevScene | Step::NextChapter | Step::PrevChapter
+        Step::NextDivision | Step::PrevDivision | Step::NextChapter | Step::PrevChapter
             | Step::NextBookmark | Step::PrevBookmark
             | Step::JumpTop | Step::JumpEnd
     );
@@ -1087,7 +1087,7 @@ fn run_step(s: &mut AppState) {
 /// `left_start` (page_forward's actual landing), not `end + 1`: trimmed
 /// non-dialogue gap lines (blanks / exit stage-directions before a scene
 /// marker) legitimately sit between one page's `end` and the next page's
-/// top, and the `clamped_at_scene` scans must reach the marker beyond that
+/// top, and the `clamped_at_division` scans must reach the marker beyond that
 /// gap (with `end + 1` they stop short and false-positive UNBALANCED at
 /// scene edges, e.g. MND page top=300).
 /// Last buffer line RENDERED on the page whose top is `top`, for the fuzz's

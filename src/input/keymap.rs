@@ -2074,12 +2074,12 @@ fn handle_journal_key(
     if is_alt {
         match key_name {
             "n" => {
-                crate::input::actions::journal::nav_scene(state, 1);
+                crate::input::actions::journal::nav_division(state, 1);
                 refresh_overlay_vocab_scope(state);
                 return true;
             }
             "p" => {
-                crate::input::actions::journal::nav_scene(state, -1);
+                crate::input::actions::journal::nav_division(state, -1);
                 refresh_overlay_vocab_scope(state);
                 return true;
             }
@@ -2093,7 +2093,7 @@ fn handle_journal_key(
             // on. Returns to the reading position's scene from the author/work
             // band without closing and reopening the overlay.
             "s" => {
-                crate::input::actions::journal::nav_to_scene_band(state);
+                crate::input::actions::journal::nav_to_division_band(state);
                 refresh_overlay_vocab_scope(state);
                 return true;
             }
@@ -3016,10 +3016,10 @@ fn handle_translation_overlay_key(state: &Rc<RefCell<AppState>>, key_name: &str,
         "x" => { overlay_page_turn(state, true); true }
         "y" => { overlay_page_turn(state, false); true }
         // [ / { jump to the prev / next scene (same as the main card's
-        // JumpToPrevScene / JumpToNextScene). sync_translation_overlay sees the
+        // JumpToPrevDivision / JumpToNextDivision). sync_translation_overlay sees the
         // scene change and rebuilds the overlay for the new scene.
-        "bracketleft" => { overlay_nav(state, navigation::jump_to_prev_scene); true }
-        "braceleft" => { overlay_nav(state, navigation::jump_to_next_scene); true }
+        "bracketleft" => { overlay_nav(state, navigation::jump_to_prev_division); true }
+        "braceleft" => { overlay_nav(state, navigation::jump_to_next_division); true }
         // Playback (same as the main card): Space plays from the cursor line's
         // start time and `a` is the pause toggle, for all work types (no swap).
         // No cursor move → no re-highlight. Tab is dropped by request.
@@ -3077,9 +3077,9 @@ fn show_no_timestamp_toast(s: &AppState) {
 /// Run a main-card navigation function (moves `current_line` + seeks MPV via
 /// `after_page_change`), then re-highlight and follow in the translation overlay.
 fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
-    let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
+    let division_before = crate::app::division_synopsis::current_division_divs(&state.borrow());
     nav_fn(&mut state.borrow_mut());
-    crate::app::translations::sync_translation_overlay(state, scene_before);
+    crate::app::translations::sync_translation_overlay(state, division_before);
 }
 
 /// Turn the translation overlay's page forward/backward (x/y), moving the reader
@@ -3092,7 +3092,7 @@ fn overlay_nav(state: &Rc<RefCell<AppState>>, nav_fn: fn(&mut AppState)) {
 /// `sync_translation_overlay` re-page + re-highlight the overlay.
 fn overlay_page_turn(state: &Rc<RefCell<AppState>>, forward: bool) {
     let target_work_idx = state.borrow().translation_overlay.page_turn_target(forward);
-    let scene_before = crate::app::scene_synopsis::current_scene_divs(&state.borrow());
+    let division_before = crate::app::division_synopsis::current_division_divs(&state.borrow());
     match target_work_idx {
         Some(work_idx) => {
             let mut s = state.borrow_mut();
@@ -3109,13 +3109,13 @@ fn overlay_page_turn(state: &Rc<RefCell<AppState>>, forward: bool) {
         None => {
             let mut s = state.borrow_mut();
             if forward {
-                navigation::jump_to_next_scene(&mut s);
+                navigation::jump_to_next_division(&mut s);
             } else {
-                navigation::jump_to_prev_scene(&mut s);
+                navigation::jump_to_prev_division(&mut s);
             }
         }
     }
-    crate::app::translations::sync_translation_overlay(state, scene_before);
+    crate::app::translations::sync_translation_overlay(state, division_before);
 }
 
 fn handle_synopsis_overlay_key(
@@ -3187,7 +3187,7 @@ fn handle_synopsis_overlay_key(
         // Leaving the overlay silences any playing paragraph TTS (harmless
         // no-op when nothing is playing) — matches the gloss overlay's close.
         s.tts.stop();
-        let scene = s.synopsis_overlay_scene;
+        let scene = s.synopsis_overlay_division;
         let cursor = s.gloss_overlay.full_cursor();
         s.synopsis_cursor_memory.insert(scene, cursor);
         s.gloss_overlay.hide();
@@ -3231,7 +3231,7 @@ fn handle_synopsis_overlay_key(
         // lap — a band surface gets a band-scoped toggle. A miss toasts and
         // leaves the synopsis open.
         "backslash" if !is_ctrl && !is_alt => {
-            crate::input::actions::journal::open_scene_qa_from_synopsis(state);
+            crate::input::actions::journal::open_division_qa_from_synopsis(state);
             true
         }
         // `a`: play/stop the cursor paragraph's TTS (swapped with space by
@@ -3311,11 +3311,11 @@ fn handle_synopsis_overlay_key(
         "j" if is_ctrl => true,
         // (Font-size adjust removed: overlays are locked to GLOSS_DEFAULT_FONT_SIZE.)
         "n" if is_ctrl && !is_shift => {
-            crate::app::scene_synopsis::cycle_synopsis(state, 1);
+            crate::app::division_synopsis::cycle_synopsis(state, 1);
             true
         }
         "p" if is_ctrl && !is_shift => {
-            crate::app::scene_synopsis::cycle_synopsis(state, -1);
+            crate::app::division_synopsis::cycle_synopsis(state, -1);
             true
         }
         "g" if is_alt => {
@@ -3984,7 +3984,7 @@ fn handle_echoes_overlay_key(
         // non-toggling surface fn — the `+` handler would hide a shown
         // persistent toast instead of surfacing the scene.
         "semicolon" => {
-            navigation::surface_current_scene_toast(&mut state.borrow_mut());
+            navigation::surface_current_division_toast(&mut state.borrow_mut());
             true
         }
         "Escape" => {
@@ -4377,7 +4377,7 @@ fn copy_work_division(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
     let Some(work) = s.current_work.as_ref() else { return };
     let abbrev = work.abbrev.clone();
-    let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(&s);
+    let (d1, d2) = crate::app::division_synopsis::current_division_divs(&s);
     drop(s);
     let clip = if d1 == 0 {
         abbrev
@@ -4437,8 +4437,8 @@ fn dispatch_action(
         JumpToPrevSpeaker => navigation::jump_to_prev_speaker(&mut state.borrow_mut()),
         JumpToNextChapter => navigation::jump_to_next_chapter(&mut state.borrow_mut()),
         JumpToPrevChapter => navigation::jump_to_prev_chapter(&mut state.borrow_mut()),
-        JumpToNextScene => navigation::jump_to_next_section(&mut state.borrow_mut()),
-        JumpToPrevScene => navigation::jump_to_prev_section(&mut state.borrow_mut()),
+        JumpToNextDivision => navigation::jump_to_next_section(&mut state.borrow_mut()),
+        JumpToPrevDivision => navigation::jump_to_prev_section(&mut state.borrow_mut()),
 
         // Bookmarks
         ToggleBookmark => crate::input::actions::bookmarks::toggle_bookmark(state, tokio_handle),
@@ -4767,7 +4767,7 @@ fn dispatch_action(
             s.title_bar.set_visible(!visible);
             s.config.title_bar_visible = !visible;
             if !visible {
-                crate::app::scene_synopsis::update_title_bar_scene(&s);
+                crate::app::division_synopsis::update_title_bar_division(&s);
             }
             crate::config::save(&s.config);
         }
@@ -4931,8 +4931,8 @@ fn dispatch_action(
                 crate::input::search::reactivate_and_step(state, false);
             }
         }
-        ToggleSynopsis => crate::app::scene_synopsis::toggle_synopsis(&mut state.borrow_mut()),
-        ShowSynopsisOverlay => crate::app::scene_synopsis::show_synopsis_overlay(state),
+        ToggleSynopsis => crate::app::division_synopsis::toggle_synopsis(&mut state.borrow_mut()),
+        ShowSynopsisOverlay => crate::app::division_synopsis::show_synopsis_overlay(state),
         ShowTranslationOverlay => crate::app::translations::show_translation_overlay(state),
         ToggleImageView => crate::app::toggle_image_view(state),
         EnterPageCalibration => crate::app::enter_page_calibration(state),

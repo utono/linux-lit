@@ -7,8 +7,8 @@ pub mod text_prep;
 use self::text_prep::{PreparedText, SnapshotOrPrep, prepare_text_only, prepare_text_for_display};
 pub mod formatting;
 use self::formatting::{apply_dialogue_formatting, apply_authorship_formatting, apply_scansion_marks};
-pub mod scene_synopsis;
-use self::scene_synopsis::{is_first_line_of_scene, scene_heading_start};
+pub mod division_synopsis;
+use self::division_synopsis::{is_first_line_of_division, division_heading_start};
 pub mod translations;
 pub mod layout;
 use self::layout::{apply_tiled_mode, apply_card_sizing, line_number_gutter_geometry, overlay_card_size};
@@ -220,11 +220,11 @@ pub enum JournalPromptMode {
 }
 
 /// Which "band" of the journal is currently shown. The Work band holds
-/// whole-work pages (scope='work'); a Scene band holds one (div1,div2)'s pages.
+/// whole-work pages (scope='work'); a Division band holds one (div1,div2)'s pages.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalBand {
     Work,
-    Scene(i64, i64),
+    Division(i64, i64),
     Passage { div1: i64, div2: i64, start: String, end: String },
     /// Author/corpus band: holds scope='author' pages keyed by the author name.
     Author(String),
@@ -339,13 +339,13 @@ pub struct AppState {
     pub bottom_clip: gtk4::Box,
     pub top_spacer: gtk4::Box,
     /// Running-head strip labels living inside `top_spacer` (the card's top
-    /// band). `running_head_work` is the work abbrev (left); `running_head_scene`
+    /// band). `running_head_work` is the work abbrev (left); `running_head_division`
     /// is the position label (right) — act/scene for plays, chapter for prose.
     /// Both are refreshed on every cursor move and on work load via
-    /// `scene_synopsis::update_running_heads`, on ALL works. Blank only when no
+    /// `division_synopsis::update_running_heads`, on ALL works. Blank only when no
     /// work is loaded. Replaces the persistent bottom-center position toast.
     pub running_head_work: gtk4::Label,
-    pub running_head_scene: gtk4::Label,
+    pub running_head_division: gtk4::Label,
     pub card_vbox: gtk4::Box,
     pub scrolled_window: ScrolledWindow,
     /// Left-column container. Carries the divider-hug left margin in two-column
@@ -358,7 +358,7 @@ pub struct AppState {
     /// Dim "Next: Act N, Scene M" label shown centered in an empty right
     /// column (scene ended in the left column). Overlay child of
     /// `right_scrolled_overlay`; hidden in every other case.
-    pub next_scene_watermark: gtk4::Label,
+    pub next_division_watermark: gtk4::Label,
     pub columns_hbox: gtk4::Box,
     /// Thin vertical rule between the two columns; visible only in two-column mode.
     pub column_divider: gtk4::Separator,
@@ -645,7 +645,7 @@ pub struct AppState {
     pub echo_picker: crate::ui::echo_picker::EchoPicker,
     pub echo_turns_picker: crate::ui::echo_turns_picker::EchoTurnsPicker,
     pub pending_echo_context: Option<crate::gloss::GlossContext>,
-    pub pending_echo_scene_lines: Vec<crate::db::models::Line>,
+    pub pending_echo_division_lines: Vec<crate::db::models::Line>,
     /// `<speaker>`/`<segment>` markup for the passage being glossed, stashed with
     /// the pending inner-monologue call so the post-picker "Glossing…" loading
     /// card can render the passage (like reader-gloss) instead of a bare label.
@@ -694,7 +694,7 @@ pub struct AppState {
     pub synopsis_visible: bool,
     /// The (div1, div2) scene currently displayed in the synopsis overlay. n/p
     /// step this through the work's scenes; the `A` amend targets it too.
-    pub synopsis_overlay_scene: (i64, i64),
+    pub synopsis_overlay_division: (i64, i64),
     /// The `(div1, div2)` band a synopsis→journal `\` hop came FROM, or None
     /// when the journal was opened any other way. Set on the hop, TAKEN on the
     /// return hop, and cleared wherever a journal session ends — a stale
@@ -708,7 +708,7 @@ pub struct AppState {
     /// — scene keys collide across works.
     pub synopsis_cursor_memory: HashMap<(i64, i64), usize>,
     /// The (div1, div2) scene whose synopsis the open `A` amend prompt targets.
-    pub synopsis_amend_scene: (i64, i64),
+    pub synopsis_amend_division: (i64, i64),
     /// Single-level undo for the `A` amend flow: the scene and its synopsis text
     /// from immediately before the last amendment. `u` in the synopsis overlay
     /// restores it. Cleared once consumed.
@@ -759,7 +759,7 @@ pub struct AppState {
     pub concordance_bar: crate::ui::concordance_bar::ConcordanceBar,
     pub title_bar: gtk4::Box,
     pub title_bar_label: gtk4::Label,
-    pub title_bar_scene_label: gtk4::Label,
+    pub title_bar_division_label: gtk4::Label,
     pub chat_panel: crate::ui::chat_panel::ChatPanel,
     pub chat: crate::input::actions::chat::ChatState,
     /// Index of the current sentence group (for prose with text_file).
@@ -767,7 +767,7 @@ pub struct AppState {
     /// Tracks the start line of the current paragraph to detect transitions.
     pub current_paragraph_start: Option<usize>,
     /// Tracks (div1, div2) of the last synced dialogue line to detect scene transitions.
-    pub current_sync_scene: Option<(i64, i64)>,
+    pub current_sync_division: Option<(i64, i64)>,
     pub nav_test: crate::input::nav_test::NavTestState,
     pub sync_enabled: bool,
     pub mpv_connected: bool,
@@ -1589,12 +1589,12 @@ pub fn build_window(
     // child (NOT buffer text — buffer text is measured by pagination and would
     // corrupt the right-column clip). Centered; hidden until snap_scroll_to_line
     // detects an empty right column with a following scene.
-    let next_scene_watermark = gtk4::Label::new(None);
-    next_scene_watermark.set_halign(gtk4::Align::Center);
-    next_scene_watermark.set_valign(gtk4::Align::Center);
-    next_scene_watermark.set_visible(false);
-    next_scene_watermark.add_css_class("next-scene-watermark");
-    right_scrolled_overlay.add_overlay(&next_scene_watermark);
+    let next_division_watermark = gtk4::Label::new(None);
+    next_division_watermark.set_halign(gtk4::Align::Center);
+    next_division_watermark.set_valign(gtk4::Align::Center);
+    next_division_watermark.set_visible(false);
+    next_division_watermark.add_css_class("next-scene-watermark");
+    right_scrolled_overlay.add_overlay(&next_division_watermark);
 
     // Columns row: left | divider | right. Right starts hidden (1-column
     // default); the divider is a thin vertical rule shown only in two-column
@@ -1634,15 +1634,15 @@ pub fn build_window(
     // and invisible. (The symmetric margin_start on the scene label balances it.)
     running_head_work.set_margin_end(16);
 
-    let running_head_scene = gtk4::Label::new(None);
-    running_head_scene.set_halign(gtk4::Align::End);
-    running_head_scene.set_valign(gtk4::Align::Center);
-    running_head_scene.set_hexpand(true);
-    running_head_scene.add_css_class("running-head-scene");
-    running_head_scene.set_margin_start(16);
+    let running_head_division = gtk4::Label::new(None);
+    running_head_division.set_halign(gtk4::Align::End);
+    running_head_division.set_valign(gtk4::Align::Center);
+    running_head_division.set_hexpand(true);
+    running_head_division.add_css_class("running-head-division");
+    running_head_division.set_margin_start(16);
 
     top_spacer.append(&running_head_work);
-    top_spacer.append(&running_head_scene);
+    top_spacer.append(&running_head_division);
 
     // Vertical card assembly: top spacer + scrolled area. No bottom spacer —
     // the scrolled area's card-bottom CSS provides the rounded bottom.
@@ -2016,14 +2016,14 @@ pub fn build_window(
     title_bar_label.set_hexpand(true);
     title_bar_label.add_css_class("title-bar-label");
 
-    let title_bar_scene_label = gtk4::Label::new(None);
-    title_bar_scene_label.set_halign(gtk4::Align::End);
-    title_bar_scene_label.set_hexpand(true);
-    title_bar_scene_label.add_css_class("title-bar-hint");
+    let title_bar_division_label = gtk4::Label::new(None);
+    title_bar_division_label.set_halign(gtk4::Align::End);
+    title_bar_division_label.set_hexpand(true);
+    title_bar_division_label.add_css_class("title-bar-hint");
 
     title_bar.append(&title_bar_left_spacer);
     title_bar.append(&title_bar_label);
-    title_bar.append(&title_bar_scene_label);
+    title_bar.append(&title_bar_division_label);
     title_bar.set_visible(config.title_bar_visible);
 
     // Search bar floats over the TOP of the card — overlay panel, not in the
@@ -2204,7 +2204,7 @@ pub fn build_window(
         bottom_clip,
         top_spacer,
         running_head_work,
-        running_head_scene,
+        running_head_division,
         card_vbox,
         scrolled_window: scrolled,
         scrolled_overlay,
@@ -2212,7 +2212,7 @@ pub fn build_window(
         right_scrolled_window: right_scrolled,
         right_scrolled_overlay,
         right_bottom_clip,
-        next_scene_watermark,
+        next_division_watermark,
         columns_hbox,
         column_divider,
         right_line_number_renderer: None,
@@ -2301,7 +2301,7 @@ pub fn build_window(
         journal_move_picker,
         journal_term_input,
         recent_qa_picker,
-        journal_band: JournalBand::Scene(0, 0),
+        journal_band: JournalBand::Division(0, 0),
         journal: crate::input::actions::journal::JournalState {
             pages: Vec::new(),
             page_index: 0,
@@ -2354,7 +2354,7 @@ pub fn build_window(
         echo_picker,
         echo_turns_picker,
         pending_echo_context: None,
-        pending_echo_scene_lines: Vec::new(),
+        pending_echo_division_lines: Vec::new(),
         pending_echo_passage_doc: String::new(),
         echo_overlay: crate::input::actions::echoes::EchoOverlayState::default(),
         echo_session: None,
@@ -2384,10 +2384,10 @@ pub fn build_window(
         sidebar_mode: SidebarMode::Vocab,
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
-        synopsis_overlay_scene: (0, 0),
+        synopsis_overlay_division: (0, 0),
         journal_from_synopsis: None,
         synopsis_cursor_memory: HashMap::new(),
-        synopsis_amend_scene: (0, 0),
+        synopsis_amend_division: (0, 0),
         synopsis_undo: None,
         synopsis_prompt_kind: SynopsisPromptKind::Ask,
         concordance_picker,
@@ -2409,12 +2409,12 @@ pub fn build_window(
         concordance_bar,
         title_bar,
         title_bar_label,
-        title_bar_scene_label,
+        title_bar_division_label,
         chat_panel,
         chat: Default::default(),
         current_sentence_group: None,
         current_paragraph_start: None,
-        current_sync_scene: None,
+        current_sync_division: None,
         nav_test: crate::input::nav_test::NavTestState::default(),
         sync_enabled: true,
         mpv_connected: false,
@@ -2918,7 +2918,7 @@ pub fn build_window(
                                             crate::input::actions::gloss::toggle_overlay(&st)
                                         }
                                         "synopsis" => {
-                                            crate::app::scene_synopsis::show_synopsis_overlay(&st)
+                                            crate::app::division_synopsis::show_synopsis_overlay(&st)
                                         }
                                         _ => {}
                                     }
@@ -3569,7 +3569,7 @@ pub fn display_work_at_with_prepared(
     crate::input::search::clear_search(state);
     state.search_bar.hide();
     state.current_time_pos = 0.0;
-    state.current_sync_scene = None;
+    state.current_sync_division = None;
     // Task 9: a scheduled prose page crossing is tied to the OLD work's grid and
     // media; drop it so it can't fire against the freshly loaded work.
     state.pending_prose_cross = None;
@@ -3613,7 +3613,7 @@ pub fn display_work_at_with_prepared(
     };
     state.window.set_title(Some(&window_title));
     state.title_bar_label.set_text(&format!("{}, {}", work.author, work.title));
-    state.title_bar_scene_label.set_text("");
+    state.title_bar_division_label.set_text("");
     if state.concordance_state.is_none() {
         state.title_bar.set_visible(state.config.title_bar_visible);
     }
@@ -4199,15 +4199,15 @@ pub fn display_work_at_with_prepared(
     // first-dialogue defaults below by taking the saved-position snap branch.
     // On an unresolvable scene, logs a clear error and leaves the cursor where it
     // was (the driver script fails loudly on the missing log line).
-    let mut scene_override = false;
+    let mut division_override = false;
     if target_line_id.is_none() {
-        if let Ok(scene_spec) = std::env::var("LIT_START_SCENE") {
-            let scene_spec = scene_spec.trim();
-            if !scene_spec.is_empty() {
-                match parse_scene_spec(scene_spec) {
+        if let Ok(division_spec) = std::env::var("LIT_START_SCENE") {
+            let division_spec = division_spec.trim();
+            if !division_spec.is_empty() {
+                match parse_division_spec(division_spec) {
                     Some((div1, div2)) => {
                         let resolved = state.current_work.as_ref().and_then(|w| {
-                            resolve_scene_start_line(&w.lines, state.line_map.as_ref(), div1, div2)
+                            resolve_division_start_line(&w.lines, state.line_map.as_ref(), div1, div2)
                         });
                         match resolved {
                             Some(line) => {
@@ -4219,15 +4219,15 @@ pub fn display_work_at_with_prepared(
                                 }
                                 crate::logging::log(&format!(
                                     "STARTUP: LIT_START_SCENE={} resolved to buffer line {}",
-                                    scene_spec, line
+                                    division_spec, line
                                 ));
                                 state.current_line = line;
-                                scene_override = true;
+                                division_override = true;
                             }
                             None => {
                                 crate::logging::log(&format!(
                                     "STARTUP: ERROR LIT_START_SCENE={} unresolvable — no ({},{}) scene in this work",
-                                    scene_spec, div1, div2
+                                    division_spec, div1, div2
                                 ));
                             }
                         }
@@ -4235,7 +4235,7 @@ pub fn display_work_at_with_prepared(
                     None => {
                         crate::logging::log(&format!(
                             "STARTUP: ERROR LIT_START_SCENE='{}' malformed (want div1.div2)",
-                            scene_spec
+                            division_spec
                         ));
                     }
                 }
@@ -4246,7 +4246,7 @@ pub fn display_work_at_with_prepared(
     // Part F: when resuming (no explicit concordance target), prefer the
     // citation-stable line_mapping_id over the legacy raw buffer index, so a
     // lit.db re-import / repagination doesn't land on the wrong speech.
-    if !scene_override && target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
+    if !division_override && target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
         if let Some(work) = &state.current_work {
             if let Some(&saved_id) = state.config.work_position_ids.get(&work.abbrev) {
                 if let Some(work_idx) = work.lines.iter().position(|l| l.id == saved_id) {
@@ -4361,8 +4361,8 @@ pub fn display_work_at_with_prepared(
 
         // If cursor is on a scene boundary, scroll back to show the
         // scene/act heading lines above the first dialogue line.
-        if !state.synopsis_cache.is_empty() && is_first_line_of_scene(state) {
-            let top = scene_heading_start(state, state.current_line);
+        if !state.synopsis_cache.is_empty() && is_first_line_of_division(state) {
+            let top = division_heading_start(state, state.current_line);
             if top < state.page_top.line() {
                 // Backing up to a DIFFERENT line: the offset computed above
                 // belonged to the old top and would scroll into the wrong row
@@ -4450,7 +4450,7 @@ pub fn display_work_at_with_prepared(
 
     // Populate the running-head strip for the freshly-loaded work (both labels).
     // Cursor-move updates keep it fresh afterward; this covers the first paint.
-    crate::app::scene_synopsis::update_running_heads(state);
+    crate::app::division_synopsis::update_running_heads(state);
 
     // Karaoke: tint the phrase that will begin to play (the resume line's
     // start time) so it's visible before playback starts.
@@ -5674,7 +5674,7 @@ pub fn exit_page_calibration(state: &std::rc::Rc<std::cell::RefCell<AppState>>, 
 /// Parse a `LIT_START_SCENE` spec `"div1.div2"` into `(div1, div2)`. Returns
 /// `None` on anything that isn't exactly two non-negative integers separated by
 /// a single dot. Used by the headless known-scene driver.
-fn parse_scene_spec(spec: &str) -> Option<(i64, i64)> {
+fn parse_division_spec(spec: &str) -> Option<(i64, i64)> {
     let mut parts = spec.trim().splitn(2, '.');
     let div1 = parts.next()?.trim().parse::<i64>().ok()?;
     let div2 = parts.next()?.trim().parse::<i64>().ok()?;
@@ -5690,7 +5690,7 @@ fn parse_scene_spec(spec: &str) -> Option<(i64, i64)> {
 /// `line_map.work_to_buffer` (falling back to the raw work index when there is no
 /// line map, matching the 1:1 assumption used elsewhere). Returns `None` when no
 /// line carries that scene. Used by the headless known-scene driver.
-fn resolve_scene_start_line(
+fn resolve_division_start_line(
     lines: &[crate::db::models::Line],
     line_map: Option<&crate::text_file_map::LineMap>,
     div1: i64,
@@ -5733,7 +5733,7 @@ mod reader_gloss_range_tests {
     }
 
     #[test]
-    fn line_matches_only_inside_a_passage_range_in_same_scene() {
+    fn line_matches_only_inside_a_passage_range_in_same_division() {
         // One glossed passage: 2H6 1.4.43–50.
         let passages = [("2H6.1.4.43".to_string(), "2H6.1.4.50".to_string())];
 
@@ -5764,8 +5764,8 @@ mod reader_gloss_range_tests {
 }
 
 #[cfg(test)]
-mod known_scene_driver_tests {
-    use super::{parse_scene_spec, resolve_scene_start_line};
+mod known_division_driver_tests {
+    use super::{parse_division_spec, resolve_division_start_line};
     use crate::db::models::Line;
 
     fn line(id: i64, div1: i64, div2: i64) -> Line {
@@ -5788,30 +5788,30 @@ mod known_scene_driver_tests {
     }
 
     #[test]
-    fn parse_scene_spec_accepts_two_ints() {
-        assert_eq!(parse_scene_spec("1.4"), Some((1, 4)));
-        assert_eq!(parse_scene_spec(" 2.1 "), Some((2, 1)));
-        assert_eq!(parse_scene_spec("0.0"), Some((0, 0)));
+    fn parse_division_spec_accepts_two_ints() {
+        assert_eq!(parse_division_spec("1.4"), Some((1, 4)));
+        assert_eq!(parse_division_spec(" 2.1 "), Some((2, 1)));
+        assert_eq!(parse_division_spec("0.0"), Some((0, 0)));
     }
 
     #[test]
-    fn parse_scene_spec_rejects_malformed() {
-        assert_eq!(parse_scene_spec("1"), None);
-        assert_eq!(parse_scene_spec("1.2.3"), None);
-        assert_eq!(parse_scene_spec("a.b"), None);
-        assert_eq!(parse_scene_spec(""), None);
-        assert_eq!(parse_scene_spec("1."), None);
+    fn parse_division_spec_rejects_malformed() {
+        assert_eq!(parse_division_spec("1"), None);
+        assert_eq!(parse_division_spec("1.2.3"), None);
+        assert_eq!(parse_division_spec("a.b"), None);
+        assert_eq!(parse_division_spec(""), None);
+        assert_eq!(parse_division_spec("1."), None);
     }
 
     #[test]
-    fn resolve_finds_first_matching_scene_no_line_map() {
+    fn resolve_finds_first_matching_division_no_line_map() {
         // Two scenes: (1,1) at work indices 0..=1, (1,2) at 2..=3.
         let lines = vec![line(1, 1, 1), line(2, 1, 1), line(3, 1, 2), line(4, 1, 2)];
         // No line map: buffer index == work index.
-        assert_eq!(resolve_scene_start_line(&lines, None, 1, 1), Some(0));
-        assert_eq!(resolve_scene_start_line(&lines, None, 1, 2), Some(2));
+        assert_eq!(resolve_division_start_line(&lines, None, 1, 1), Some(0));
+        assert_eq!(resolve_division_start_line(&lines, None, 1, 2), Some(2));
         // Missing scene.
-        assert_eq!(resolve_scene_start_line(&lines, None, 9, 9), None);
+        assert_eq!(resolve_division_start_line(&lines, None, 9, 9), None);
     }
 
     #[test]
@@ -5827,8 +5827,8 @@ mod known_scene_driver_tests {
             chapter_breaks: Vec::new(),
             section_starts: Vec::new(),
         };
-        assert_eq!(resolve_scene_start_line(&lines, Some(&lm), 1, 2), Some(7));
-        assert_eq!(resolve_scene_start_line(&lines, Some(&lm), 1, 1), Some(3));
+        assert_eq!(resolve_division_start_line(&lines, Some(&lm), 1, 2), Some(7));
+        assert_eq!(resolve_division_start_line(&lines, Some(&lm), 1, 1), Some(3));
     }
 }
 

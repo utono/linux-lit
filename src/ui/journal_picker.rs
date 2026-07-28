@@ -10,7 +10,7 @@ pub struct JournalRow {
     pub id: i64,
     pub band: JournalBand,
     pub question_prefix: String,
-    pub scene_label: String,
+    pub synopsis_division_label: String,
     /// `Some(work title)` in AUTHOR scope only — it is the one cross-work
     /// list, where two identically-worded questions from different works are
     /// otherwise indistinguishable. `None` in scene/work scope leaves the
@@ -33,7 +33,7 @@ pub struct JournalRow {
     pub type_label: String,
     /// The division column in the WORK'S OWN noun — "Ch. 2" for prose,
     /// "1.4" for a play, "Preface" for prose front matter. Distinct from
-    /// `scene_label`, which already embeds the TYPE ("1.4 passage") and would
+    /// `synopsis_division_label`, which already embeds the TYPE ("1.4 passage") and would
     /// print it twice beside `type_label`. AUTHOR scope only.
     pub div_label: String,
 }
@@ -149,12 +149,12 @@ impl JournalQaPicker {
                 // Filter against what the row DISPLAYS. In author scope that
                 // is the five columns — so typing a surname ("dickens") or a
                 // division ("ch. 2") narrows, which is the natural gesture on
-                // a global cross-work list. `scene_label` stays in the target
+                // a global cross-work list. `synopsis_division_label` stays in the target
                 // for the two-column scopes, where it IS the visible detail.
                 let target = format!(
                     "{} {} {} {}",
                     item.author_label.as_deref().unwrap_or(""),
-                    item.scene_label,
+                    item.synopsis_division_label,
                     item.div_label,
                     primary,
                 )
@@ -170,14 +170,14 @@ impl JournalQaPicker {
                     author,
                     work,
                     &item.question_prefix,
-                    // `div_label`, NOT `scene_label` — the latter already
+                    // `div_label`, NOT `synopsis_division_label` — the latter already
                     // embeds the type ("1.4 passage") and would print it
                     // twice beside the type column.
                     &item.div_label,
                     &item.type_label,
                 ),
                 // Scene/work scope: byte-identical to before this change.
-                _ => crate::ui::picker_nav::two_label_row(&primary, &item.scene_label),
+                _ => crate::ui::picker_nav::two_label_row(&primary, &item.synopsis_division_label),
             };
 
             let row = ListBoxRow::builder().child(&hbox).build();

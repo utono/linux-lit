@@ -39,7 +39,7 @@ pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
     if s.gloss_overlay.ask_is_open() {
         return;
     }
-    let scene = s.synopsis_overlay_scene;
+    let scene = s.synopsis_overlay_division;
     s.gloss_overlay.open_ask_card_with(
         "Edit this scene",
         "Describe the edit (split/merge paragraphs, reword, reorder)  \u{00b7}  Ctrl+Enter submit",
@@ -49,7 +49,7 @@ pub(crate) fn show_edit_prompt(state_rc: &Rc<RefCell<AppState>>) {
     );
     drop(s);
     let mut s = state_rc.borrow_mut();
-    s.synopsis_amend_scene = scene;
+    s.synopsis_amend_division = scene;
     s.synopsis_prompt_kind = crate::app::SynopsisPromptKind::Edit;
 }
 
@@ -106,7 +106,7 @@ fn run_synopsis_revision(
     fallback_prompt: &'static str,
     log_verb: &'static str,
 ) {
-    let (div1, div2) = state_rc.borrow().synopsis_amend_scene;
+    let (div1, div2) = state_rc.borrow().synopsis_amend_division;
 
     let (work_title, work_abbrev, head_work, original, model, label) = {
         let s = state_rc.borrow();
@@ -119,7 +119,7 @@ fn run_synopsis_revision(
             Some(t) => t.clone(),
             None => return,
         };
-        let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
+        let label = crate::app::division_synopsis::synopsis_label(&s, div1, div2);
         (
             work.title.clone(),
             abbrev,
@@ -164,9 +164,9 @@ fn run_synopsis_revision(
             let cw = s.content_hbox.width();
             let h = crate::app::layout::overlay_card_height(&s);
             let root_color = s.theme.root_color.clone();
-            let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
+            let prose_card = crate::app::division_synopsis::prose_synopsis_card(&s, cw);
             s.gloss_overlay.show_synopsis(&head_work, &label, &revised, Some(&root_color), cw, h, prose_card);
-            s.synopsis_overlay_scene = (div1, div2);
+            s.synopsis_overlay_division = (div1, div2);
             crate::input::actions::gloss::recolor_cached_blocks(&s);
             s.input_mode = crate::app::InputMode::SynopsisOverlay;
             crate::logging::log(&format!(
@@ -179,9 +179,9 @@ fn run_synopsis_revision(
             let cw = s.content_hbox.width();
             let h = crate::app::layout::overlay_card_height(&s);
             let root_color = s.theme.root_color.clone();
-            let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
+            let prose_card = crate::app::division_synopsis::prose_synopsis_card(&s, cw);
             s.gloss_overlay.show_synopsis(&head_work_err, &label_err, msg, Some(&root_color), cw, h, prose_card);
-            s.synopsis_overlay_scene = (div1, div2);
+            s.synopsis_overlay_division = (div1, div2);
             crate::input::actions::gloss::recolor_cached_blocks(&s);
             s.input_mode = crate::app::InputMode::SynopsisOverlay;
         },
@@ -247,11 +247,11 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
     s.synopsis_undo = None;
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
-    let (head_work, head_pos) = crate::app::scene_synopsis::synopsis_head(&s, div1, div2);
+    let (head_work, head_pos) = crate::app::division_synopsis::synopsis_head(&s, div1, div2);
     let root_color = s.theme.root_color.clone();
-    let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
+    let prose_card = crate::app::division_synopsis::prose_synopsis_card(&s, cw);
     s.gloss_overlay.show_synopsis(&head_work, &head_pos, &original, Some(&root_color), cw, h, prose_card);
-    s.synopsis_overlay_scene = (div1, div2);
+    s.synopsis_overlay_division = (div1, div2);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
     crate::logging::log(&format!("SYNOPSIS: undid amend ({},{})", div1, div2));
 }
@@ -266,8 +266,8 @@ pub(crate) fn undo_amend(state_rc: &Rc<RefCell<AppState>>) {
 pub(crate) fn copy_synopsis_id(state: &Rc<RefCell<AppState>>) {
     let lookup = {
         let s = state.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
-        let label = crate::app::scene_synopsis::synopsis_label(&s, div1, div2);
+        let (div1, div2) = s.synopsis_overlay_division;
+        let label = crate::app::division_synopsis::synopsis_label(&s, div1, div2);
         s.current_work.as_ref().map(|w| {
             (
                 w.canonical_abbrev.clone(),
@@ -338,7 +338,7 @@ pub(crate) fn copy_synopsis_id(state: &Rc<RefCell<AppState>>) {
 /// to the synopsis persistence. No-op + toast if no cached synopsis.
 pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
     let mut s = state.borrow_mut();
-    let (div1, div2) = s.synopsis_overlay_scene;
+    let (div1, div2) = s.synopsis_overlay_division;
     let raw = match s.synopsis_cache.get(&(div1, div2)) {
         Some(t) => t.clone(),
         None => {
@@ -356,11 +356,11 @@ pub(crate) fn begin_edit(state: &Rc<RefCell<AppState>>) {
 /// callback. Caller holds no borrow.
 fn render_synopsis(state: &Rc<RefCell<AppState>>, div1: i64, div2: i64, text: &str) {
     let s = state.borrow_mut();
-    let (head_work, head_pos) = crate::app::scene_synopsis::synopsis_head(&s, div1, div2);
+    let (head_work, head_pos) = crate::app::division_synopsis::synopsis_head(&s, div1, div2);
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
     let root_color = s.theme.root_color.clone();
-    let prose_card = crate::app::scene_synopsis::prose_synopsis_card(&s, cw);
+    let prose_card = crate::app::division_synopsis::prose_synopsis_card(&s, cw);
     s.gloss_overlay
         .show_synopsis(&head_work, &head_pos, text, Some(&root_color), cw, h, prose_card);
     crate::input::actions::gloss::recolor_cached_blocks(&s);
@@ -374,7 +374,7 @@ pub(crate) fn vim_save(state: &Rc<RefCell<AppState>>, quit: bool) {
     let raw = raw.trim_end().to_string();
     let (div1, div2, abbrev, model, original) = {
         let s = state.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
+        let (div1, div2) = s.synopsis_overlay_division;
         let abbrev = match s.current_work.as_ref() {
             Some(w) => w.canonical_abbrev.clone(),
             None => return,
@@ -418,7 +418,7 @@ pub(crate) fn vim_cancel(state: &Rc<RefCell<AppState>>, force: bool) {
     }
     let (div1, div2, stored) = {
         let s = state.borrow();
-        let (div1, div2) = s.synopsis_overlay_scene;
+        let (div1, div2) = s.synopsis_overlay_division;
         let stored = s
             .synopsis_cache
             .get(&(div1, div2))
@@ -451,7 +451,7 @@ pub(crate) fn begin_rewrite(state: &Rc<RefCell<AppState>>) {
 /// having a gloss of the current type) and Alt+n/p (within a passage) work
 /// afterwards.
 pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
-    let (div1, div2) = state_rc.borrow().synopsis_overlay_scene;
+    let (div1, div2) = state_rc.borrow().synopsis_overlay_division;
     let work_abbrev = {
         let s = state_rc.borrow();
         match s.current_work.as_ref() {
@@ -516,7 +516,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     let cw = s.content_hbox.width();
     let h = crate::app::layout::overlay_card_height(&s);
     let gloss_text = all_glosses[0].gloss_text.clone();
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay.show_gloss_with_color(
         &ctx.source_text, &gloss_text, cw, h, Some(&s.theme.root_color), &[], (&head.0, &head.1),
     );

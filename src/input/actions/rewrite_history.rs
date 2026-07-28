@@ -322,7 +322,7 @@ fn render_gloss_position(state: &Rc<RefCell<AppState>>, pos: usize) {
         .map(|m| crate::ui::gloss_overlay::GlossOverlay::full_rendered_gloss_text(&m));
 
     // Render the target revision (the version the user is viewing).
-    let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
     s.gloss_overlay
         .show_gloss_with_color(&source_text, &target_markup, cw, h, Some(&root), &pairs, (&head.0, &head.1));
     s.gloss_overlay.set_position(idx, total);
@@ -361,7 +361,7 @@ fn render_journal_position(state: &Rc<RefCell<AppState>>, pos: usize) {
     let count = s.journal.pages.len().max(1);
     let (cw, h) = crate::app::layout::overlay_card_size(&s);
 
-    let head = crate::app::scene_synopsis::cursor_head(&s);
+    let head = crate::app::division_synopsis::cursor_head(&s);
     s.journal_overlay.set_running_head(&head.0, &head.1);
     s.journal_overlay
         .show_page("", page_index, count, &question, &answer, "qa", None, cw, h);
@@ -453,7 +453,7 @@ fn render_gloss_live(s: &mut AppState, idx: usize) {
     let pairs = ctx.source_line_pairs();
     let total = s.gloss_list.len();
     let root = s.theme.root_color.clone();
-    let head = crate::app::scene_synopsis::synopsis_head(s, ctx.act, ctx.scene);
+    let head = crate::app::division_synopsis::synopsis_head(s, ctx.act, ctx.scene);
     s.gloss_overlay
         .show_gloss_with_color(&source_text, &gloss_text, cw, h, Some(&root), &pairs, (&head.0, &head.1));
     s.gloss_overlay.set_position(idx, total);

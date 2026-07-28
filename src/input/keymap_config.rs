@@ -242,11 +242,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // former number-row duplicates (`4`/`5`, `2`/`3`, shifted forms) and
         // the AE04/AE05 symbol binds (`(`/`&`) were dropped as redundant; bookmarks
         // moved fully to the `;`/`'` home-region pair below.
-        (KeyCombo::plain("bracketleft"), Action::JumpToPrevScene),
+        (KeyCombo::plain("bracketleft"), Action::JumpToPrevDivision),
         // Ctrl+[ sets an audio track/chapter mark (moved off Ctrl+c, which now
         // toggles the previous work).
         (KeyCombo::ctrl("bracketleft"), Action::SetChapter),
-        (KeyCombo::plain("braceleft"), Action::JumpToNextScene),
+        (KeyCombo::plain("braceleft"), Action::JumpToNextDivision),
         (KeyCombo::plain("C"), Action::ShowCurrentChapter),
         // Shift+; emits ("colon", shift=true) on this layout (same class as
         // Shift+, → "less") — toggle playback speed. The bare-name form is
@@ -793,6 +793,29 @@ mod tests {
     /// (`ShowEchoes`/`ReopenEchoes`/`ShowEchoTurns`) sat dead in the file
     /// until the 2026-07-26 stale-name sweep. Skips silently when the stowed
     /// file is absent (fresh checkout / CI).
+    /// The stowed keymap.json lives in ANOTHER repo (tty-dotfiles) and is
+    /// symlinked into ~/.config, so it cannot be renamed atomically with this
+    /// crate. An unknown action name there is skipped with only a warning —
+    /// the bind silently disappears. The serde aliases on
+    /// JumpToNext/PrevDivision keep the pre-rename spelling parsing; this
+    /// pins that so a later cleanup cannot drop them without a red test.
+    #[test]
+    fn pre_rename_scene_action_names_still_parse() {
+        assert_eq!(
+            parse_action("JumpToNextScene"),
+            Some(crate::input::actions::Action::JumpToNextDivision),
+        );
+        assert_eq!(
+            parse_action("JumpToPrevScene"),
+            Some(crate::input::actions::Action::JumpToPrevDivision),
+        );
+        // The new spelling obviously works too.
+        assert_eq!(
+            parse_action("JumpToNextDivision"),
+            Some(crate::input::actions::Action::JumpToNextDivision),
+        );
+    }
+
     #[test]
     fn stowed_keymap_json_action_names_all_parse() {
         let path = config_path();
@@ -867,7 +890,7 @@ mod tests {
         // previous scene. Same for {/3 and the next scene.
         assert_eq!(
             km.lookup("bracketleft", false, false, false),
-            Some(Action::JumpToPrevScene),
+            Some(Action::JumpToPrevDivision),
         );
         // The number-row (`2`/`3`/`4`/`5`) and `&` duplicates were dropped.
         assert_eq!(km.lookup("2", false, true, false), None);
@@ -883,7 +906,7 @@ mod tests {
         assert_eq!(km.lookup("bracketright", false, false, false), None);
         assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogue));
         assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
-        assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextScene));
+        assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextDivision));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` copies
         // the work + division to the clipboard (was ShowCurrentChapter, which
         // stays on `C`).

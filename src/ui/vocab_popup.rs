@@ -349,20 +349,20 @@ impl VocabPopup {
     }
 
     /// Render a scene synopsis in the popup.
-    pub fn update_synopsis(&self, scene_label: &str, synopsis: &str) {
+    pub fn update_synopsis(&self, synopsis_division_label: &str, synopsis: &str) {
         self.clear_content();
 
         self.header_label.set_text("SYNOPSIS");
         self.header_label.set_visible(true);
         self.counter_label.set_visible(false);
 
-        let scene_label_widget = Label::builder()
+        let synopsis_division_label_widget = Label::builder()
             .halign(gtk4::Align::Start)
             .margin_bottom(12)
             .build();
-        scene_label_widget.add_css_class("definition-word");
-        scene_label_widget.set_text(scene_label);
-        self.content_box.append(&scene_label_widget);
+        synopsis_division_label_widget.add_css_class("definition-word");
+        synopsis_division_label_widget.set_text(synopsis_division_label);
+        self.content_box.append(&synopsis_division_label_widget);
 
         let synopsis_label = Label::builder()
             .halign(gtk4::Align::Start)

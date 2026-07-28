@@ -70,7 +70,7 @@ pub fn ensure_journal_table(conn: &Connection) -> Result<(), rusqlite::Error> {
             kind        TEXT    NOT NULL DEFAULT 'qa',
             timestamp   TEXT    NOT NULL DEFAULT (datetime('now'))
         );
-        CREATE INDEX IF NOT EXISTS idx_journal_work_scene
+        CREATE INDEX IF NOT EXISTS idx_journal_work_division
             ON journal_entries(work_abbrev, div1, div2, timestamp);",
     )?;
     // Idempotent migration for any DB whose table predates the scope column.
@@ -248,7 +248,7 @@ pub fn find_journal_pages(
 /// passage was selected), so the journal overlay pages through scene + passage
 /// Q&As together via `Ctrl+n/p`. `find_journal_pages` (scene only) is still used
 /// by the ask-save reload path; this is the band-render path.
-pub fn find_scene_band_pages(
+pub fn find_division_band_pages(
     conn: &Connection,
     work_abbrev: &str,
     div1: i64,
@@ -273,7 +273,7 @@ pub fn find_scene_band_pages(
 /// "Newest" is newest CREATED. `timestamp` is a creation stamp; journal
 /// entries have no last-viewed tracking, and this deliberately does not add
 /// any. `id DESC` breaks ties for rows written in the same second.
-pub fn find_newest_scene_page(
+pub fn find_newest_division_page(
     conn: &Connection,
     work_abbrev: &str,
     div1: i64,
@@ -699,7 +699,7 @@ pub fn find_passage_citation_ranges(
 /// in a wider one): NEAREST START — the largest `start_line <= line_in_div` wins
 /// (`ORDER BY start_line DESC`), so the most specific containing entry is chosen.
 /// Ties (same start line) break to the NEWEST entry (`id DESC`). Returns the
-/// entry's own `(div1, div2, id)`; the caller builds `JournalBand::Scene(div1,
+/// entry's own `(div1, div2, id)`; the caller builds `JournalBand::Division(div1,
 /// div2)` and lands on `id`.
 pub fn find_journal_page_for_line(
     conn: &Connection,
@@ -715,7 +715,7 @@ pub fn find_journal_page_for_line(
     // other. The band columns still say where the entry is FILED, so return
     // them for `land_on_page`; the citation says where the passage LIVES.
     //
-    // The scope list here MUST stay in sync with `find_scene_band_pages`
+    // The scope list here MUST stay in sync with `find_division_band_pages`
     // (the render this probe feeds via `land_on_page`). Probing a scope the
     // band render can't display would let `\` promise content it then can't
     // land on — `position()` in the render's page list finds nothing and
@@ -762,7 +762,7 @@ pub fn find_journal_page_for_line(
     Ok(best.map(|(_, id, bd1, bd2)| (bd1, bd2, id)))
 }
 
-pub fn find_journal_scenes(
+pub fn find_journal_divisions(
     conn: &Connection,
     work_abbrev: &str,
 ) -> Result<Vec<(i64, i64)>, rusqlite::Error> {
@@ -859,20 +859,20 @@ mod tests {
     }
 
     #[test]
-    fn scene_pages_roundtrip_and_exclude_work() {
+    fn division_pages_roundtrip_and_exclude_work() {
         let conn = mem();
         save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "claude-opus-4-8", "scene", "qa").unwrap();
         save_journal_page(&conn, "Ham", 1, 2, "Q2?", "A2.", "claude-opus-4-8", "scene", "qa").unwrap();
         // A work page in the same work must NOT appear in scene queries.
         save_journal_page(&conn, "Ham", -1, -1, "WQ?", "WA.", "claude-opus-4-8", "work", "qa").unwrap();
 
-        let scene_pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
-        assert_eq!(scene_pages.len(), 2);
-        assert_eq!(scene_pages[0].question, "Q1?");
-        assert_eq!(scene_pages[1].question, "Q2?");
+        let division_pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
+        assert_eq!(division_pages.len(), 2);
+        assert_eq!(division_pages[0].question, "Q1?");
+        assert_eq!(division_pages[1].question, "Q2?");
 
-        // find_journal_scenes lists only scene-scoped rows.
-        let scenes = find_journal_scenes(&conn, "Ham").unwrap();
+        // find_journal_divisions lists only scene-scoped rows.
+        let scenes = find_journal_divisions(&conn, "Ham").unwrap();
         assert_eq!(scenes, vec![(1, 2)]);
     }
 
@@ -899,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn work_pages_roundtrip_and_exclude_scene() {
+    fn work_pages_roundtrip_and_exclude_division() {
         let conn = mem();
         save_journal_page(&conn, "Ham", -1, -1, "WQ1?", "WA1.", "claude-opus-4-8", "work", "qa").unwrap();
         save_journal_page(&conn, "Ham", -1, -1, "WQ2?", "WA2.", "claude-opus-4-8", "work", "qa").unwrap();
@@ -941,7 +941,7 @@ mod tests {
     /// probe, so scene-filed entries left their lines untinted — the reader
     /// had no on-page sign the Q&A existed.
     #[test]
-    fn citation_ranges_include_scene_scoped_entries() {
+    fn citation_ranges_include_division_scoped_entries() {
         let conn = mem();
         insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.48", "BH.2.0.48");
         insert_cited(&conn, "BH", 3, 0, "passage", "BH.3.0.80", "BH.3.0.82");
@@ -989,7 +989,7 @@ mod tests {
     }
 
     #[test]
-    fn all_pages_ordered_work_first_then_scenes() {
+    fn all_pages_ordered_work_first_then_divisions() {
         let conn = mem();
         // Insert out of order; expect: work pages (by time), then scene pages
         // grouped by (div1,div2) then by time.
@@ -1106,7 +1106,7 @@ mod tests {
     }
 
     #[test]
-    fn passage_pages_roundtrip_and_isolate_from_scene_work() {
+    fn passage_pages_roundtrip_and_isolate_from_division_work() {
         let conn = mem();
         let id = save_passage_page(
             &conn, "2H6", 1, 4, "2H6.1.4.43", "2H6.1.4.50",
@@ -1222,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn scene_band_pages_merge_scene_and_passages_in_time_order() {
+    fn division_band_pages_merge_division_and_passages_in_time_order() {
         let conn = mem();
         // Scene Q&A first, then two passage Q&As, all in (1, 0) — interleaved
         // with an unrelated scene/passage and a work page that must be excluded.
@@ -1243,7 +1243,7 @@ mod tests {
         // Whole-work page — must NOT appear.
         save_journal_page(&conn, "BH", -1, -1, "WorkQ?", "x", "m", "work", "qa").unwrap();
 
-        let pages = find_scene_band_pages(&conn, "BH", 1, 0).unwrap();
+        let pages = find_division_band_pages(&conn, "BH", 1, 0).unwrap();
         let qs: Vec<&str> = pages.iter().map(|p| p.question.as_str()).collect();
         assert_eq!(qs, vec!["SceneQ?", "PassQ1?", "PassQ2?"]);
         // Passage rows carry their citations; the scene row does not.
@@ -1276,7 +1276,7 @@ mod tests {
     }
 
     #[test]
-    fn move_page_changes_band_scene_to_work_and_back() {
+    fn move_page_changes_band_division_to_work_and_back() {
         let conn = mem();
         let id = save_journal_page(&conn, "Ham", 1, 2, "Q?", "A.", "m", "scene", "qa").unwrap();
 
@@ -1298,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn author_pages_roundtrip_and_exclude_work_scene() {
+    fn author_pages_roundtrip_and_exclude_work_division() {
         let conn = mem();
         let nid = save_author_page(&conn, "Shakespeare", "", "## Cry\n\n**load** it", "m", "note").unwrap();
         save_author_page(&conn, "Shakespeare", "Corpus Q?", "Corpus A.", "m", "qa").unwrap();
@@ -1542,7 +1542,7 @@ mod tests {
         assert_eq!(find_vocab_page(&conn, "Cym", 3, 2, "franklin").unwrap().unwrap().id, id2);
 
         // Vocab rows ride the passage scope into the scene band render.
-        let band = find_scene_band_pages(&conn, "Cym", 3, 2).unwrap();
+        let band = find_division_band_pages(&conn, "Cym", 3, 2).unwrap();
         assert_eq!(band.len(), 2);
         assert!(band.iter().all(|p| p.kind == "vocab"));
 
@@ -1581,7 +1581,7 @@ mod tests {
     /// cycle probes through this function, and BH's entries are ALL
     /// scene-filed, so the journal stop was dead on that work.
     #[test]
-    fn scene_scoped_entry_with_a_span_is_found() {
+    fn division_scoped_entry_with_a_span_is_found() {
         let conn = mem();
         // Mirrors lit.db id 24: filed under band (2,0), citing BH.2.0.48.
         let id = insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.48", "BH.2.0.48");
@@ -1632,7 +1632,7 @@ mod tests {
     }
 
     /// Regression (final review, 2026-07-27): the probe must not match a scope
-    /// the BAND RENDER cannot display. `find_scene_band_pages` filters
+    /// the BAND RENDER cannot display. `find_division_band_pages` filters
     /// `scope IN ('scene','passage')`, so an `unassigned-after-reimport` row
     /// (two exist in lit.db, both citation-bearing) would be probed as content,
     /// then filtered out of the band — landing the overlay on the wrong entry
@@ -1652,7 +1652,7 @@ mod tests {
     /// The branch's core fix must survive Fix 1: scene-filed entries with a
     /// span are still found.
     #[test]
-    fn scene_scope_still_found_after_render_alignment() {
+    fn division_scope_still_found_after_render_alignment() {
         let conn = mem();
         let id = insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.48", "BH.2.0.48");
 

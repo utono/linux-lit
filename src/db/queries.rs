@@ -464,7 +464,7 @@ pub fn load_translations(
 pub fn load_synopses(conn: &Connection, work_abbrev: &str) -> HashMap<(i64, i64), String> {
     let mut map = HashMap::new();
     let mut stmt = match conn.prepare(
-        "SELECT div1, div2, synopsis FROM scene_synopses WHERE work_abbrev = ?1"
+        "SELECT div1, div2, synopsis FROM division_synopses WHERE work_abbrev = ?1"
     ) {
         Ok(s) => s,
         Err(_) => return map,
@@ -492,7 +492,7 @@ pub fn save_synopsis(
     claude_model: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO scene_synopses (work_abbrev, div1, div2, synopsis, claude_model) \
+        "INSERT INTO division_synopses (work_abbrev, div1, div2, synopsis, claude_model) \
          VALUES (?1, ?2, ?3, ?4, ?5) \
          ON CONFLICT(work_abbrev, div1, div2) DO UPDATE SET \
              synopsis = excluded.synopsis, claude_model = excluded.claude_model",
@@ -514,7 +514,7 @@ pub fn restore_synopsis_text(
     synopsis: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "UPDATE scene_synopses SET synopsis = ?4 \
+        "UPDATE division_synopses SET synopsis = ?4 \
          WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3",
         rusqlite::params![work_abbrev, div1, div2, synopsis],
     )?;
@@ -531,7 +531,7 @@ pub struct SynopsisDebugInfo {
     pub has_tiers: bool,
 }
 
-/// Look up the `scene_synopses` row for a scene, keyed by `(work, div1, div2)`.
+/// Look up the `division_synopses` row for a scene, keyed by `(work, div1, div2)`.
 /// Returns `None` when no synopsis row exists for that scene yet. Used by the
 /// synopsis overlay's `c` (copy debug info) bind.
 pub fn synopsis_debug_info(
@@ -543,7 +543,7 @@ pub fn synopsis_debug_info(
     conn.query_row(
         "SELECT id, claude_model, \
                 (gist IS NOT NULL AND precis IS NOT NULL AND account IS NOT NULL) \
-         FROM scene_synopses \
+         FROM division_synopses \
          WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3",
         rusqlite::params![work_abbrev, div1, div2],
         |row| {
@@ -1036,7 +1036,7 @@ fn citation_abbrev(citation: &str) -> Option<&str> {
 /// journal entries whose `work_abbrev` was already the base but whose
 /// citations carried the variant prefix from `GlossContext`).
 pub fn ensure_canonical_artifact_abbrevs(conn: &Connection) -> Result<(), rusqlite::Error> {
-    for table in ["passages", "journal_entries", "scene_synopses"] {
+    for table in ["passages", "journal_entries", "division_synopses"] {
         let abbrevs: Vec<String> = conn
             .prepare(&format!(
                 "SELECT DISTINCT work_abbrev FROM {table} WHERE work_abbrev LIKE '%-%'"
@@ -1051,16 +1051,16 @@ pub fn ensure_canonical_artifact_abbrevs(conn: &Connection) -> Result<(), rusqli
             crate::log_fmt!("MIGRATE-ABBREV: {table} {old} -> {new}");
             match table {
                 "passages" => migrate_variant_passages(conn, &old, &new)?,
-                "scene_synopses" => {
+                "division_synopses" => {
                     // UNIQUE(work_abbrev, div1, div2): keep an existing base
                     // row, drop the variant duplicate it collides with.
                     conn.execute(
-                        "UPDATE OR IGNORE scene_synopses SET work_abbrev = ?1 \
+                        "UPDATE OR IGNORE division_synopses SET work_abbrev = ?1 \
                          WHERE work_abbrev = ?2",
                         rusqlite::params![new, old],
                     )?;
                     conn.execute(
-                        "DELETE FROM scene_synopses WHERE work_abbrev = ?1",
+                        "DELETE FROM division_synopses WHERE work_abbrev = ?1",
                         [&old],
                     )?;
                 }
@@ -3953,7 +3953,7 @@ mod passages_div1_div2_tests {
                 question TEXT, answer TEXT, scope TEXT,
                 start_citation TEXT, end_citation TEXT, source_text TEXT
              );
-             CREATE TABLE scene_synopses (
+             CREATE TABLE division_synopses (
                 id INTEGER PRIMARY KEY, work_abbrev TEXT, div1 INTEGER, div2 INTEGER,
                 synopsis TEXT, UNIQUE(work_abbrev, div1, div2)
              );
@@ -3965,7 +3965,7 @@ mod passages_div1_div2_tests {
              INSERT INTO journal_entries (id, work_abbrev, div1, div2, question, answer, scope, start_citation, end_citation)
                 VALUES (1, 'Cym', 1, 1, 'q', 'a', 'passage', 'Cym-BBC.1.1.1', 'Cym-BBC.1.1.3');
              -- variant synopsis colliding with an existing base row: base wins
-             INSERT INTO scene_synopses (work_abbrev, div1, div2, synopsis) VALUES
+             INSERT INTO division_synopses (work_abbrev, div1, div2, synopsis) VALUES
                 ('Cym', 1, 1, 'base'), ('Cym-BBC', 1, 1, 'variant'), ('Cym-BBC', 1, 2, 'only-variant');"
         ))
         .unwrap();
@@ -4003,7 +4003,7 @@ mod passages_div1_div2_tests {
 
         // Synopses: collision keeps the base row, non-colliding variant re-keyed.
         let rows: Vec<(String, i64, i64, String)> = conn
-            .prepare("SELECT work_abbrev, div1, div2, synopsis FROM scene_synopses ORDER BY div1, div2")
+            .prepare("SELECT work_abbrev, div1, div2, synopsis FROM division_synopses ORDER BY div1, div2")
             .unwrap()
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .unwrap()
@@ -4019,7 +4019,7 @@ mod passages_div1_div2_tests {
     }
 
     #[test]
-    fn neighbor_glosses_same_scene_nearest_two_each_side() {
+    fn neighbor_glosses_same_division_nearest_two_each_side() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE passages (id INTEGER PRIMARY KEY, hash TEXT, \

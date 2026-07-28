@@ -1,7 +1,7 @@
 use crate::input::page_top::PageTop;
 use super::AppState;
 use crate::app::layout::{apply_column_layout, overlay_card_size};
-use crate::app::scene_synopsis::{current_scene_divs, synopsis_label};
+use crate::app::division_synopsis::{current_division_divs, synopsis_label};
 use crate::app::font::{reapply_font, rebuild_line_number_gutter};
 use gtk4::prelude::*;
 
@@ -608,21 +608,21 @@ pub fn show_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppState>
 /// `Rc` so it can manage its own borrows (rebuild needs an unborrowed handle).
 pub fn sync_translation_overlay(
     state: &std::rc::Rc<std::cell::RefCell<AppState>>,
-    scene_before: (i64, i64),
+    division_before: (i64, i64),
 ) {
     // Cheap visibility + scene check under a short borrow.
-    let (visible, scene_after, cursor_w) = {
+    let (visible, division_after, cursor_w) = {
         let s = state.borrow();
         (
             s.translation_overlay.is_visible(),
-            current_scene_divs(&s),
+            current_division_divs(&s),
             s.work_line_for_buffer(s.current_line),
         )
     };
     if !visible {
         return;
     }
-    if scene_after != scene_before {
+    if division_after != division_before {
         rebuild_translation_overlay(state);
         return;
     }
@@ -642,16 +642,16 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         None => return false,
     };
 
-    let (div1, div2) = current_scene_divs(&s);
+    let (div1, div2) = current_division_divs(&s);
 
     // Collect this scene's lines (preserving order) with their work indices.
-    let scene_lines: Vec<crate::db::models::Line> = work
+    let division_lines: Vec<crate::db::models::Line> = work
         .lines
         .iter()
         .filter(|l| l.div1 == div1 && l.div2 == div2)
         .cloned()
         .collect();
-    if scene_lines.is_empty() {
+    if division_lines.is_empty() {
         return false;
     }
     // Index of the first scene line within work.lines, for idx_of mapping.
@@ -661,8 +661,8 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         .position(|l| l.div1 == div1 && l.div2 == div2)
         .unwrap_or(0);
 
-    let blocks = crate::ui::translation_overlay::group_scene_into_blocks(
-        &scene_lines,
+    let blocks = crate::ui::translation_overlay::group_division_into_blocks(
+        &division_lines,
         |i| base + i,
         |id| s.translations.get(&id).cloned(),
     );

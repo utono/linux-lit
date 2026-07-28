@@ -926,24 +926,24 @@ pub fn build_user_message(
 
 pub fn build_inner_monologue_message(
     ctx: &GlossContext,
-    scene_lines: &[Line],
+    division_lines: &[Line],
 ) -> String {
     // Budget the scene like the journal scene ask: whole scene up to
-    // SCENE_TEXT_MAX_CHARS, else a ±VERSE_WINDOW_RADIUS-line excerpt around
+    // DIVISION_TEXT_MAX_CHARS, else a ±VERSE_WINDOW_RADIUS-line excerpt around
     // the highlighted passage. The passage itself is always sent whole in
     // its own section below, so the excerpt only bounds surrounding context.
-    let full = render_scene_lines(scene_lines);
-    let scene_text = if full.len() <= crate::app::scene_synopsis::SCENE_TEXT_MAX_CHARS {
+    let full = render_division_lines(division_lines);
+    let division_text = if full.len() <= crate::app::division_synopsis::DIVISION_TEXT_MAX_CHARS {
         full
     } else {
-        let anchor = scene_lines
+        let anchor = division_lines
             .iter()
             .position(|l| l.citation == ctx.start_citation)
-            .unwrap_or(scene_lines.len() / 2);
-        let (lo, hi) = crate::app::scene_synopsis::window_range(
+            .unwrap_or(division_lines.len() / 2);
+        let (lo, hi) = crate::app::division_synopsis::window_range(
             anchor,
-            crate::app::scene_synopsis::VERSE_WINDOW_RADIUS,
-            scene_lines.len(),
+            crate::app::division_synopsis::VERSE_WINDOW_RADIUS,
+            division_lines.len(),
         );
         let mut out = String::new();
         if lo > 0 {
@@ -951,8 +951,8 @@ pub fn build_inner_monologue_message(
                 "[\u{2026} scene continues above \u{2014} excerpt around the highlighted passage \u{2026}]\n",
             );
         }
-        out.push_str(render_scene_lines(&scene_lines[lo..=hi]).trim_end());
-        if hi + 1 < scene_lines.len() {
+        out.push_str(render_division_lines(&division_lines[lo..=hi]).trim_end());
+        if hi + 1 < division_lines.len() {
             out.push_str("\n[\u{2026} scene continues below \u{2026}]");
         }
         out
@@ -963,25 +963,25 @@ pub fn build_inner_monologue_message(
          --- FULL SCENE ---\n{}\n\
          --- HIGHLIGHTED PASSAGE ---\n{}",
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
-        scene_text.trim(),
+        division_text.trim(),
         ctx.source_text,
     )
 }
 
 /// Speaker-interleaved scene render used by the inner-monologue message.
-fn render_scene_lines(scene_lines: &[Line]) -> String {
-    let mut scene_text = String::new();
+fn render_division_lines(division_lines: &[Line]) -> String {
+    let mut division_text = String::new();
     let mut last_speaker: Option<&str> = None;
-    for line in scene_lines {
+    for line in division_lines {
         if let Some(ref s) = line.speaker {
             if last_speaker != Some(s.as_str()) {
-                scene_text.push_str(&format!("\n{}\n", s));
+                division_text.push_str(&format!("\n{}\n", s));
                 last_speaker = Some(s);
             }
         }
-        scene_text.push_str(&format!("  {}\n", line.text));
+        division_text.push_str(&format!("  {}\n", line.text));
     }
-    scene_text
+    division_text
 }
 
 pub fn build_inner_monologue_add_message(
@@ -1644,7 +1644,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_citation_unique_match_returns_title_and_scene() {
+    fn lookup_citation_unique_match_returns_title_and_division() {
         let conn = citation_test_db(&[
             ("Ham", "Hamlet", 3, 1, "To be, or not to be"),
         ]);
@@ -1665,7 +1665,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_citation_same_work_glossed_scene_is_never_citable() {
+    fn lookup_citation_same_work_glossed_division_is_never_citable() {
         // The line lives only in the source work, IN the glossed scene (its
         // -Amb duplicate collapses onto it) → self-citation guard → None.
         let conn = citation_test_db(&[
@@ -1677,7 +1677,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_citation_same_work_other_scene_is_citable() {
+    fn lookup_citation_same_work_other_division_is_citable() {
         // A loadable line from the character's own words ELSEWHERE in the
         // work — a different scene than the one being glossed — verifies.
         let conn = citation_test_db(&[
@@ -1726,7 +1726,7 @@ mod tests {
     }
 
     #[test]
-    fn lookup_citation_same_work_multiple_scenes_is_ambiguous() {
+    fn lookup_citation_same_work_multiple_divisions_is_ambiguous() {
         // One work, two different scenes carry the line → which scene is a guess
         // → None. (Distinct (work,div1,div2) tuples, even within a work.)
         let conn = citation_test_db(&[
@@ -1813,7 +1813,7 @@ mod journal_qa_prompt_tests {
 }
 
 #[cfg(test)]
-mod scene_budget_tests {
+mod division_budget_tests {
     use super::*;
 
     fn line(i: usize, speaker: &str, width: usize) -> Line {
@@ -1835,7 +1835,7 @@ mod scene_budget_tests {
         }
     }
 
-    fn scene(n: usize, width: usize) -> Vec<Line> {
+    fn division(n: usize, width: usize) -> Vec<Line> {
         (0..n)
             .map(|i| line(i, if (i / 4) % 2 == 0 { "FIRST" } else { "SECOND" }, width))
             .collect()
@@ -1859,9 +1859,9 @@ mod scene_budget_tests {
     }
 
     #[test]
-    fn under_budget_scene_renders_whole() {
+    fn under_budget_division_renders_whole() {
         // 100 lines x 40 chars ~ 4.6k chars < budget.
-        let lines = scene(100, 40);
+        let lines = division(100, 40);
         let msg = build_inner_monologue_message(&ctx("T 1.1.50"), &lines);
         assert!(msg.contains(&format!("{:040}", 0)), "first line present");
         assert!(msg.contains(&format!("{:040}", 99)), "last line present");
@@ -1870,9 +1870,9 @@ mod scene_budget_tests {
     }
 
     #[test]
-    fn over_budget_scene_windows_around_passage() {
+    fn over_budget_division_windows_around_passage() {
         // 400 lines x 60 chars ~ 25k chars > budget; passage starts at 200.
-        let lines = scene(400, 60);
+        let lines = division(400, 60);
         let msg = build_inner_monologue_message(&ctx("T 1.1.200"), &lines);
         assert!(msg.contains("scene continues above"));
         assert!(msg.contains("scene continues below"));
@@ -1883,8 +1883,8 @@ mod scene_budget_tests {
     }
 
     #[test]
-    fn unknown_citation_falls_back_to_scene_middle() {
-        let lines = scene(400, 60);
+    fn unknown_citation_falls_back_to_division_middle() {
+        let lines = division(400, 60);
         let msg = build_inner_monologue_message(&ctx("NOPE 9.9.9"), &lines);
         assert!(msg.contains(&format!("{:060}", 200)), "middle line present");
         assert!(msg.contains("scene continues above"));
