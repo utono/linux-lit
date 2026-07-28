@@ -322,7 +322,7 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     s.nav_test.active = true;
     s.nav_test.step = 0;
     s.nav_test.failures = 0;
-    s.nav_test.prev_top = s.page_top_line;
+    s.nav_test.prev_top = s.page_top.line();
     s.nav_test.expect_return = None;
     s.nav_test.last_page_no = None;
     // Opt into the long random fuzz script via env (for headless 5-min runs).
@@ -330,7 +330,7 @@ pub fn toggle(state_rc: &Rc<RefCell<AppState>>) {
     crate::log_fmt!(
         "NAV_TEST: started ({}) at page_top={} current_line={}",
         if s.nav_test.fuzz { "fuzz" } else { "jumps-only" },
-        s.page_top_line, s.current_line,
+        s.page_top.line(), s.current_line,
     );
     if s.nav_test.fuzz {
         // Print the resolved seed so a FAIL can be replayed exactly with
@@ -399,9 +399,9 @@ fn run_step(s: &mut AppState) {
     let script_idx = s.nav_test.step % script.len();
     let step = script[script_idx];
     let step_num = s.nav_test.step;
-    let pre_top = s.page_top_line;
+    let pre_top = s.page_top.line();
     let pre_line = s.current_line;
-    let pre_off = s.page_top_offset;
+    let pre_off = s.page_top.offset();
     s.nav_test.prev_top = pre_top;
 
     // Record an expected `y` return ONLY when the very next step is PageBackward,
@@ -466,7 +466,7 @@ fn run_step(s: &mut AppState) {
                 // No usable word on the target line (blank/short) — fall back
                 // to the old simulated jump so the step still moves.
                 s.current_line = target;
-                let entry = (s.page_top_line, s.page_top_offset);
+                let entry = s.page_top;
                 if s.page_back_stack.last() != Some(&entry) {
                     s.page_back_stack.push(entry);
                 }
@@ -484,9 +484,9 @@ fn run_step(s: &mut AppState) {
         }
     }
 
-    let post_top = s.page_top_line;
+    let post_top = s.page_top.line();
     let post_line = s.current_line;
-    let post_off = s.page_top_offset;
+    let post_off = s.page_top.offset();
     let line_count = s.effective_line_count();
 
     // If a navigation was a no-op (no target found, or at end of work),
@@ -1035,7 +1035,7 @@ fn run_step(s: &mut AppState) {
         // rendered line (which is only partially shown by design). In table mode
         // read both bounds from the stored page (table-authoritative); live mode
         // falls back to the trimmed live range.
-        let top_off = if post_top == s.page_top_line { s.page_top_offset } else { 0 };
+        let top_off = if post_top == s.page_top.line() { s.page_top.offset() } else { 0 };
         let table_active =
             crate::input::prose_pages::active_prose_page_table(s).is_some();
         let clip_bottom = crate::input::prose_pages::prose_table_last_whole_line_for_top(
@@ -1101,7 +1101,7 @@ fn run_step(s: &mut AppState) {
 /// `section_starts` assertion fix. Live mode (no table) is unchanged.
 fn assert_last_visible_line(s: &AppState, top: usize) -> usize {
     if s.column_count() == 1 && s.is_prose() {
-        let top_off = if top == s.page_top_line { s.page_top_offset } else { 0 };
+        let top_off = if top == s.page_top.line() { s.page_top.offset() } else { 0 };
         if let Some(end) =
             crate::input::prose_pages::prose_table_last_line_for_top(s, top, top_off)
         {

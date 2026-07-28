@@ -1182,8 +1182,8 @@ pub(crate) fn last_fully_visible_line(state: &AppState, top: usize) -> usize {
     // first line's charged height by it — the same adjustment
     // `is_line_start_visible` makes) so the walk counts the right number of
     // lines. Two-column already returned above; non-prose keeps offset 0.
-    if is_prose && top == state.page_top_line && state.page_top_offset > 0 {
-        usable_height += state.page_top_offset;
+    if is_prose && top == state.page_top.line() && state.page_top.offset() > 0 {
+        usable_height += state.page_top.offset();
     }
     let range = visible_range(&state.text_view, &state.buffer, top, line_count, usable_height);
     // Trim because this function feeds page-boundary placement decisions
@@ -1699,14 +1699,14 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     if state.loading_work.get() {
         return true;
     }
-    if line < state.page_top_line {
+    if line < state.page_top.line() {
         return false;
     }
     if state.column_count() == 2 {
         // Table mode renders the stored spread; see table_end_for_top.
-        let end = crate::input::page_table::table_end_for_top(state, state.page_top_line)
-            .unwrap_or_else(|| column_split(state, state.page_top_line).page_end);
-        return line >= state.page_top_line && line <= end;
+        let end = crate::input::page_table::table_end_for_top(state, state.page_top.line())
+            .unwrap_or_else(|| column_split(state, state.page_top.line()).page_end);
+        return line >= state.page_top.line() && line <= end;
     }
     // F4: fast path — consult the cache (raw range — every line genuinely
     // rendered on screen, no F9 trim applied because "is line N drawn?" is
@@ -1720,13 +1720,13 @@ pub(crate) fn is_line_fully_visible(state: &AppState, line: usize) -> bool {
     if widget_height <= 0 {
         return true;
     }
-    let descender_guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let descender_guard = descender_guard_px(&state.text_view, state.page_top.line());
     let usable_height = widget_height - descender_guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let line_count = state.effective_line_count();
     let range = visible_range(
         &state.text_view,
         &state.buffer,
-        state.page_top_line,
+        state.page_top.line(),
         line_count,
         usable_height,
     );
@@ -1757,21 +1757,21 @@ pub(crate) fn is_line_start_visible(state: &AppState, line: usize) -> bool {
     if state.loading_work.get() {
         return true;
     }
-    if line < state.page_top_line {
+    if line < state.page_top.line() {
         return false;
     }
-    if line == state.page_top_line {
+    if line == state.page_top.line() {
         // The paragraph's own first visual row is only ON this page when the
         // page top offset is 0 — a nonzero offset means this page begins
         // partway down the SAME over-tall paragraph, i.e. the paragraph's
         // start rendered on an earlier page.
-        return state.page_top_offset == 0;
+        return state.page_top.offset() == 0;
     }
     let widget_height = state.text_view.height();
     if widget_height <= 0 {
         return true;
     }
-    let guard = descender_guard_px(&state.text_view, state.page_top_line);
+    let guard = descender_guard_px(&state.text_view, state.page_top.line());
     let usable = widget_height - guard - SINGLE_COLUMN_BOTTOM_MARGIN;
     let line_count = state.effective_line_count();
     // Walk from page_top exactly like `visible_range`'s own break condition
@@ -1781,11 +1781,11 @@ pub(crate) fn is_line_start_visible(state: &AppState, line: usize) -> bool {
     // the already-consumed offset so a later page of the SAME straddling
     // paragraph only counts its remaining height.
     let mut total: i32 = 0;
-    for i in state.page_top_line..line_count {
+    for i in state.page_top.line()..line_count {
         let Some(iter) = state.buffer.iter_at_line(i as i32) else { break };
         let (_y, h) = state.text_view.line_yrange(&iter);
-        let charged = if i == state.page_top_line {
-            (h - state.page_top_offset).max(0)
+        let charged = if i == state.page_top.line() {
+            (h - state.page_top.offset()).max(0)
         } else {
             h
         };
@@ -1809,7 +1809,7 @@ pub(crate) fn lines_per_page(state: &AppState) -> usize {
     }
 
     let line_count = state.effective_line_count();
-    let start = state.page_top_line;
+    let start = state.page_top.line();
 
     if line_count == 0 || start >= line_count {
         return 15;

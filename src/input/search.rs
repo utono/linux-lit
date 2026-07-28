@@ -274,7 +274,7 @@ pub fn clear_search(state: &mut AppState) {
 // --- internal helpers ---
 
 fn push_page_back_dedup(state: &mut AppState) {
-    let entry = (state.page_top_line, state.page_top_offset);
+    let entry = state.page_top;
     if state.page_back_stack.last() != Some(&entry) {
         state.page_back_stack.push(entry);
     }
@@ -487,10 +487,10 @@ fn snap_match_to_prose_grid(state: &mut AppState) {
     .max(0);
     if let Some(i) = crate::input::prose_pages::prose_page_for_position(&table, line, off) {
         let (t, o) = (table[i].start_line, table[i].start_off);
-        if (t, o) != (state.page_top_line, state.page_top_offset) {
+        if (t, o) != (state.page_top.line(), state.page_top.offset()) {
             crate::logging::log(&format!(
                 "SEARCH: prose-grid landing ({},{}) -> ({},{}) match=({},{})",
-                state.page_top_line, state.page_top_offset, t, o, line, off
+                state.page_top.line(), state.page_top.offset(), t, o, line, off
             ));
             crate::input::scroll::set_page_instant_offset(state, t, o);
         }

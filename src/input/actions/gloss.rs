@@ -3308,7 +3308,7 @@ pub(crate) fn open_passage_qa_float(state: &Rc<RefCell<AppState>>) {
         // eventual ask_claude reads the right band + pending_passage — but do
         // NOT open the journal overlay or switch input_mode (we stay in the
         // gloss overlay; its ask-card intercept routes the typed keys).
-        s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+        s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
         s.journal.entry_page_id = None;
         s.journal.prompt_mode = crate::app::JournalPromptMode::Ask;
         let band = crate::app::JournalBand::Passage { div1, div2, start, end };
@@ -3533,7 +3533,7 @@ pub(crate) fn try_open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
     // All resolution done; mutate state and open the overlay under one borrow.
     let mut s = state.borrow_mut();
     // Remember the reader page so Escape returns here.
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     // Opened from the reader cursor, not the picker (from_picker = false): Escape
     // uses the saved reader page, not the picker return path.
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
@@ -3628,7 +3628,7 @@ pub(crate) fn try_open_syntax_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> 
     }
 
     let mut s = state.borrow_mut();
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
     true
 }
@@ -3853,7 +3853,7 @@ fn open_gloss_overlay_by_start(
     }
 
     let mut s = state.borrow_mut();
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     open_gloss_overlay(
         &mut s,
         passages,
@@ -3966,7 +3966,7 @@ pub(crate) fn open_last_gloss(state: &Rc<RefCell<AppState>>) {
 
     let mut s = state.borrow_mut();
     // Remember the reader page so Escape returns here (from_picker = false).
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     open_gloss_overlay(
         &mut s,
         passages,

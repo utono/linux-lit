@@ -1,3 +1,4 @@
+use crate::input::page_top::PageTop;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::AnimationExt;
@@ -78,8 +79,8 @@ fn clear_old_page_dim(state: &AppState) {
     let tag = &state.dim_tag;
     let lpp = lines_per_page(state);
     let margin = 5;
-    let old_start = state.page_top_line.saturating_sub(margin);
-    let old_end = (state.page_top_line + lpp + margin)
+    let old_start = state.page_top.line().saturating_sub(margin);
+    let old_end = (state.page_top.line() + lpp + margin)
         .min(state.effective_line_count());
     let start_iter = buffer.iter_at_line(old_start as i32)
         .unwrap_or_else(|| buffer.start_iter());
@@ -144,24 +145,24 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
     if !state.page_turn_lock.try_acquire() {
         log_fmt!(
             "PAGE_TURN: SKIPPED (locked=true) new_top={} old_top={} requested_dir={:?}",
-            new_top, state.page_top_line, direction
+            new_top, state.page_top.line(), direction
         );
         return;
     }
     crate::logging::log_always(&format!(
         "PAGE_TURN: new_top={} old_top={} current_line={} transition={:?}",
-        new_top, state.page_top_line, state.current_line, state.config.transition_style
+        new_top, state.page_top.line(), state.current_line, state.config.transition_style
     ));
 
-    // A whole-line page turn always lands line-aligned; reset any over-tall
-    // sub-line offset (a forward step WITHIN an over-tall paragraph does NOT go
-    // through set_page — it uses set_page_instant_offset).
-    state.page_top_offset = 0;
+    // A whole-line page turn always lands line-aligned. Each branch below
+    // assigns `PageTop::at_line_start(new_top)`, which carries that guarantee
+    // in the value itself — a forward step WITHIN an over-tall paragraph does
+    // NOT go through set_page (it uses set_page_instant_offset).
 
     match state.config.transition_style {
         crate::config::TransitionStyle::Instant => {
             clear_old_page_dim(state);
-            state.page_top_line = new_top;
+            state.page_top = PageTop::at_line_start(new_top);
             snap_scroll_to_line(state, new_top);
             state.page_turn_lock.release();
         }
@@ -169,7 +170,7 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
             // Capture static snapshot of current page
             let Some(snapshot_pic) = capture_page_snapshot(state) else {
                 clear_old_page_dim(state);
-                state.page_top_line = new_top;
+                state.page_top = PageTop::at_line_start(new_top);
                 snap_scroll_to_line(state, new_top);
                 state.page_turn_lock.release();
                 return;
@@ -185,7 +186,7 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
             // card_vbox), so hiding card_vbox doesn't hide the snapshot.
             state.card_vbox.set_opacity(0.0);
             clear_old_page_dim(state);
-            state.page_top_line = new_top;
+            state.page_top = PageTop::at_line_start(new_top);
             snap_scroll_to_line(state, new_top);
 
             // Gentle crossfade: value goes 1.0 → 0.0 over 800ms.
@@ -226,7 +227,7 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
             // Capture static snapshot of current page
             let Some(snapshot_pic) = capture_page_snapshot(state) else {
                 clear_old_page_dim(state);
-                state.page_top_line = new_top;
+                state.page_top = PageTop::at_line_start(new_top);
                 snap_scroll_to_line(state, new_top);
                 state.page_turn_lock.release();
                 return;
@@ -242,7 +243,7 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
             // Hide card while GTK scrolls to the new position
             state.card_vbox.set_opacity(0.0);
             clear_old_page_dim(state);
-            state.page_top_line = new_top;
+            state.page_top = PageTop::at_line_start(new_top);
             snap_scroll_to_line(state, new_top);
             state.card_vbox.set_margin_start(0);
             state.card_vbox.set_margin_end(0);
@@ -302,7 +303,7 @@ pub(crate) fn set_page(state: &mut AppState, new_top: usize, direction: PageDire
 pub fn resnap_page(state: &mut AppState) {
     // Offset-aware: a prose row-fill page top can sit mid-paragraph; snapping
     // to the line's row 0 re-anchored the page above its stored boundary.
-    snap_scroll_to_line_offset(state, state.page_top_line, state.page_top_offset);
+    snap_scroll_to_line_offset(state, state.page_top.line(), state.page_top.offset());
 }
 
 /// Exclusive `exact_end` for a single-column PROSE page in table mode: the
@@ -327,8 +328,8 @@ pub(crate) fn prose_exact_end_for_current_page(state: &AppState) -> Option<usize
     }
     crate::input::prose_pages::prose_table_last_line_for_top(
         state,
-        state.page_top_line,
-        state.page_top_offset,
+        state.page_top.line(),
+        state.page_top.offset(),
     )
     .map(|last| last + 1)
 }
@@ -345,11 +346,11 @@ pub(crate) fn prose_exact_end_for_current_page(state: &AppState) -> Option<usize
 /// stepped back one, so the last rendered line IS whole and there is no head to
 /// apply — hence `None`, not `Some(0)`.
 pub(crate) fn prose_bottom_head_for_current_page(state: &AppState) -> Option<i32> {
-    prose_bottom_head_for(state, state.page_top_line, state.page_top_offset)
+    prose_bottom_head_for(state, state.page_top.line(), state.page_top.offset())
 }
 
 /// `prose_bottom_head_for_current_page` for an EXPLICIT page top. Use this when
-/// the page is still being established — during a snap, `state.page_top_line` /
+/// the page is still being established — during a snap, `state.page_top.line()` /
 /// `page_top_offset` still describe the page being LEFT, so the current-page
 /// form would read the wrong row.
 pub(crate) fn prose_bottom_head_for(
@@ -371,7 +372,7 @@ pub(crate) fn prose_bottom_head_for(
 /// would clobber it.
 pub fn refresh_bottom_clip(state: &AppState) {
     let left_exact_end = if state.column_count() == 2 {
-        Some(super::viewport::column_split(state, state.page_top_line).split)
+        Some(super::viewport::column_split(state, state.page_top.line()).split)
     } else {
         prose_exact_end_for_current_page(state)
     };
@@ -380,11 +381,11 @@ pub fn refresh_bottom_clip(state: &AppState) {
         state.text_view.clone(),
         state.bottom_clip.clone(),
         state.scrolled_window.clone(),
-        state.page_top_line,
+        state.page_top.line(),
         state.effective_line_count(),
         state.is_prose(),
         left_exact_end,
-        state.page_top_offset,
+        state.page_top.offset(),
         prose_bottom_head_for_current_page(state),
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
@@ -404,11 +405,11 @@ pub(crate) fn reschedule_left_clip_for_cursor(state: &AppState) {
         state.text_view.clone(),
         state.bottom_clip.clone(),
         state.scrolled_window.clone(),
-        state.page_top_line,
+        state.page_top.line(),
         state.effective_line_count(),
         state.is_prose(),
         state.left_clip_boundary.get(),
-        state.page_top_offset,
+        state.page_top.offset(),
         prose_bottom_head_for_current_page(state),
         state.section_starts().map(|s| s.to_vec()),
         state.one_section_per_page(),
@@ -476,8 +477,7 @@ fn schedule_bottom_clip_update(
 /// Set the page top line and scroll instantly (no animation). For gg/G/restore.
 pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
     clear_old_page_dim(state);
-    state.page_top_line = new_top;
-    state.page_top_offset = 0;
+    state.page_top = PageTop::at_line_start(new_top);
     state.prose_flash_hold.set(true);
     snap_scroll_to_line(state, new_top);
     log_first_paint(state, new_top);
@@ -488,8 +488,7 @@ pub(crate) fn set_page_instant(state: &mut AppState, new_top: usize) {
 /// `offset == 0` this is identical to `set_page_instant`.
 pub(crate) fn set_page_instant_offset(state: &mut AppState, new_top: usize, offset: i32) {
     clear_old_page_dim(state);
-    state.page_top_line = new_top;
-    state.page_top_offset = offset;
+    state.page_top = PageTop::new(new_top, offset);
     state.prose_flash_hold.set(true);
     snap_scroll_to_line_offset(state, new_top, offset);
     refresh_bottom_clip(state);
@@ -643,7 +642,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
                         );
                         adj.set_value(ly as f64);
                         effective_top = l;
-                        state.page_top_line = l;
+                        state.page_top = PageTop::at_line_start(l);
                         break;
                     }
                 }
@@ -736,7 +735,7 @@ pub(crate) fn snap_scroll_to_line_offset(state: &mut AppState, line: usize, offs
         offset,
         // Bottom head for the page being scrolled TO — looked up from
         // `(effective_top, offset)` rather than via
-        // `prose_bottom_head_for_current_page`, because `state.page_top_line` /
+        // `prose_bottom_head_for_current_page`, because `state.page_top.line()` /
         // `page_top_offset` are not assigned until after this call: reading
         // "current page" here would return the page we are LEAVING.
         prose_bottom_head_for(state, effective_top, offset),
@@ -1485,43 +1484,41 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                 if let Some((pt, po)) =
                     crate::input::prose_pages::prose_table_boundary_for_line(state, target)
                 {
-                    let from = (state.page_top_line, state.page_top_offset);
-                    if (pt, po) != from {
+                    let from = state.page_top;
+                    if (pt, po) != (from.line(), from.offset()) {
                         state.page_back_stack.clear();
                         state.page_back_stack.push(from);
                         log_fmt!(
                             "PAGES_PROSE: jump-fwd table current={} ({},{})->({},{})",
-                            target, from.0, from.1, pt, po
+                            target, from.line(), from.offset(), pt, po
                         );
                         set_page_instant_offset(state, pt, po);
                     }
                     return;
                 }
                 let mut guard = 0usize;
-                let from = (state.page_top_line, state.page_top_offset);
-                while state.page_top_line < target {
+                let from = state.page_top;
+                while state.page_top.line() < target {
                     let Some((nt, no)) = super::navigation::prose_next_boundary(state) else {
                         break;
                     };
                     // Advance the live page state directly; one back entry
                     // for the whole jump (matches the single-entry rule below).
-                    state.page_top_line = nt;
-                    state.page_top_offset = no;
+                    state.page_top = PageTop::new(nt, no);
                     guard += 1;
                     if guard > state.effective_line_count().max(64) {
                         break; // safety: never loop forever
                     }
                 }
-                if (state.page_top_line, state.page_top_offset) != from {
-                    let (nt, no) = (state.page_top_line, state.page_top_offset);
+                if state.page_top != from {
+                    let (nt, no) = (state.page_top.line(), state.page_top.offset());
                     // Restore pre-jump state for the back stack, then land.
-                    state.page_top_line = from.0;
-                    state.page_top_offset = from.1;
+                    state.page_top = from;
                     state.page_back_stack.clear();
                     state.page_back_stack.push(from);
                     log_fmt!(
                         "NAV_PAGE_FWD: prose row-fill current={} ({},{})->({},{})",
-                        state.current_line, from.0, from.1, nt, no
+                        state.current_line, from.line(), from.offset(), nt, no
                     );
                     set_page_instant_offset(state, nt, no);
                 }
@@ -1552,19 +1549,19 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
             let new_top = match super::navigation::redirect_to_final_spread(state, new_top) {
                 Some(anchor) => {
                     log_fmt!("NAV_FWD_LASTPAGE: current={} page_top={} new_top={} -> anchor={}",
-                             state.current_line, state.page_top_line, new_top, anchor);
+                             state.current_line, state.page_top.line(), new_top, anchor);
                     anchor
                 }
                 None => new_top,
             };
-            if new_top != state.page_top_line {
+            if new_top != state.page_top.line() {
                 // A dialogue-nav forward step turned the page. Record the page we
                 // came from so `y` returns to it (a single return entry, like a
                 // structural jump) — otherwise `y` pops a STALE older entry and
                 // jumps somewhere unrelated.
                 state.page_back_stack.clear();
-                state.page_back_stack.push((state.page_top_line, state.page_top_offset));
-                log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top_line, new_top);
+                state.page_back_stack.push(state.page_top);
+                log_fmt!("NAV_PAGE_FWD: current={} old_top={} new_top={}", state.current_line, state.page_top.line(), new_top);
                 set_page_instant(state, new_top);
             } else {
                 // No page turn (the "next page" anchors back to the current top —
@@ -1572,7 +1569,7 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                 // advanced to a line that is NOT visible on this clamped final
                 // spread, which would leave NO highlight on screen. Cap it at the
                 // last fully-visible dialogue line so a line is always highlighted.
-                let visible_end = super::viewport::last_fully_visible_line(state, state.page_top_line);
+                let visible_end = super::viewport::last_fully_visible_line(state, state.page_top.line());
                 if state.current_line > visible_end {
                     let capped = {
                         let stage_lookup = |bi: usize| -> Option<i64> {
@@ -1583,7 +1580,7 @@ pub(crate) fn scroll_after_jump_forward(state: &mut AppState, _prev_line: usize)
                         super::viewport::prev_dialogue_line(
                             &state.buffer, &state.translation_lines, visible_end + 1, state.is_prose(), &stage_lookup,
                         )
-                        .filter(|&d| d >= state.page_top_line && d <= visible_end)
+                        .filter(|&d| d >= state.page_top.line() && d <= visible_end)
                         .unwrap_or(visible_end)
                     };
                     log_fmt!("NAV_FWD_LASTPAGE: cursor {} off-screen, capped to last visible {}",
@@ -1620,20 +1617,20 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 if let Some((pt, po)) = crate::input::prose_pages::prose_table_boundary_for_line(
                     state, state.current_line,
                 ) {
-                    let from = (state.page_top_line, state.page_top_offset);
-                    if (pt, po) != from {
+                    let from = state.page_top;
+                    if (pt, po) != (from.line(), from.offset()) {
                         state.page_back_stack.clear();
                         state.page_back_stack.push(from);
                         log_fmt!(
                             "PAGES_PROSE: jump-bwd table current={} ({},{})->({},{})",
-                            state.current_line, from.0, from.1, pt, po
+                            state.current_line, from.line(), from.offset(), pt, po
                         );
                         set_page_instant_offset(state, pt, po);
                     }
                     return;
                 }
             }
-            if state.current_line < state.page_top_line {
+            if state.current_line < state.page_top.line() {
                 // The cursor stepped above the current page top (it was on the
                 // left column's top line). Turn to the PREVIOUS full page and put
                 // the highlight on the BOTTOM of that page's right column — the
@@ -1649,14 +1646,14 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 // Anchoring there leaves the cursor off-page and the bottom-right
                 // fallback below would snap it onto the blank. Skip past such
                 // spreads to the one that shows the cursor.
-                let old_top = state.page_top_line;
+                let old_top = state.page_top.line();
                 let target = state.current_line;
                 // Table mode: the stored page containing the target dialogue IS
                 // the landing page (same grid as x/y); the live walk below can
                 // land off the canonical grid.
                 if let Some(t) = crate::input::page_table::table_top_for(state, target) {
                     state.page_back_stack.clear();
-                    state.page_back_stack.push((old_top, 0));
+                    state.page_back_stack.push(PageTop::at_line_start(old_top));
                     log_fmt!("NAV_PAGE_BACK: table new_top={} old_top={} cursor={}",
                              t, old_top, target);
                     set_page_instant(state, t);
@@ -1685,7 +1682,7 @@ pub(crate) fn scroll_after_jump_backward(state: &mut AppState) {
                 // `x`/`y` round-trips, and so `y` never pops a stale older entry.
                 state.page_back_stack.clear();
                 // center-cursor lands line-aligned, so the return entry has offset 0.
-                state.page_back_stack.push((old_top, 0));
+                state.page_back_stack.push(PageTop::at_line_start(old_top));
                 set_page_instant(state, new_top);
                 // If the target now sits on this spread, keep it (it is a real
                 // dialogue line). Otherwise fall back to the spread's bottom-right
@@ -1768,8 +1765,10 @@ pub(crate) fn scroll_cursor_into_view_scrolloff(state: &mut AppState) {
         .clamp(0.0, max_scroll);
     adj.set_value(new_val);
     // Keep page_top_line consistent with the new scroll position.
+    // SCROLL mode, not e-reader pagination: the value was just snapped to a
+    // line top by `snap_value_to_line_top`, so line-start is exact.
     if let Some(top_line) = line_at_value(state, new_val) {
-        state.page_top_line = top_line;
+        state.page_top = PageTop::at_line_start(top_line);
     }
     // Cover the partial line straddling the bottom edge. The main card's paged
     // update_bottom_clip is page_top-relative and assumes a snapped page; the
@@ -1966,7 +1965,7 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
     if state.page_turn_lock.is_locked() {
         crate::logging::log(&format!(
             "PARA_SCROLL: SKIP (page_turn_locked) para_start={} page_top={}",
-            para_start, state.page_top_line
+            para_start, state.page_top.line()
         ));
         return;
     }
@@ -1986,7 +1985,7 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
             // Only page-turn if the paragraph start is off-screen AND ahead
             // of the current page. Never scroll backward to a paragraph that
             // started on a previous page — that would undo a user page turn.
-            if para_start >= state.page_top_line
+            if para_start >= state.page_top.line()
                 && !super::viewport::is_line_on_screen(state, para_start)
             {
                 // Table mode: land on the stored page containing the paragraph
@@ -1996,7 +1995,7 @@ pub fn scroll_paragraph_to_top(state: &mut AppState, para_start: usize) {
                     .unwrap_or(para_start);
                 crate::logging::log_always(&format!(
                     "SYNC_PARA_TURN: para_start={} page_top={} new_top={}",
-                    para_start, state.page_top_line, new_top
+                    para_start, state.page_top.line(), new_top
                 ));
                 set_page(state, new_top, PageDirection::Forward);
             }

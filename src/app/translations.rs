@@ -1,3 +1,4 @@
+use crate::input::page_top::PageTop;
 use super::AppState;
 use crate::app::layout::{apply_column_layout, overlay_card_size};
 use crate::app::scene_synopsis::{current_scene_divs, synopsis_label};
@@ -19,7 +20,7 @@ pub fn toggle_translations(state: &mut AppState) {
         state.buffer.line_count(),
         state.translations.len(),
         state.current_line,
-        state.page_top_line,
+        state.page_top.line(),
         state.line_map.is_some(),
     ));
 
@@ -61,7 +62,7 @@ fn show_translations(state: &mut AppState) {
     crate::logging::log(&format!(
         "TRANSLATIONS_SHOW: pre-insert adj val={} upper={} page={} current_line={} page_top={}",
         pre_adj_value as i64, pre_adj_upper as i64, pre_adj_page as i64,
-        state.current_line, state.page_top_line,
+        state.current_line, state.page_top.line(),
     ));
 
     // Build a list of (buffer_line, translation_text) pairs
@@ -164,11 +165,11 @@ fn show_translations(state: &mut AppState) {
 
     // Adjust current_line and page_top_line to account for inserted lines
     let old_current = state.current_line;
-    let old_top = state.page_top_line;
+    let old_top = state.page_top.line();
     // Save the pre-toggle reader position so hide can restore it exactly.
     state.pre_translation_page = Some((old_current, old_top));
     state.current_line = map_line_after_insert(state.current_line, &inserts);
-    state.page_top_line = map_line_after_insert(state.page_top_line, &inserts);
+    state.page_top = PageTop::at_line_start(map_line_after_insert(state.page_top.line(), &inserts));
 
     // Remap the section-start bitmap onto the inflated buffer so the
     // section-break clamp (and the one-section-per-page clip for sonnets) lands
@@ -194,7 +195,7 @@ fn show_translations(state: &mut AppState) {
         && state.translation_lines[state.current_line];
     crate::logging::log(&format!(
         "TRANSLATIONS_SHOW: line remap current {}→{} page_top {}→{} (inserts={}) cursor_on_translation={}",
-        old_current, state.current_line, old_top, state.page_top_line, inserts.len(),
+        old_current, state.current_line, old_top, state.page_top.line(), inserts.len(),
         cursor_on_translation,
     ));
 
@@ -329,7 +330,7 @@ fn show_translations(state: &mut AppState) {
         old_current,
         state.current_line,
         old_top,
-        state.page_top_line,
+        state.page_top.line(),
         lm_len_after,
         line_map_stale,
         pre_adj_value as i64,
@@ -401,9 +402,9 @@ fn hide_translations(state: &mut AppState) {
         // and produces the one correct resnap.
         apply_column_layout(state);
         let (cur, top) = saved_pre_toggle
-            .unwrap_or((state.current_line, state.page_top_line));
+            .unwrap_or((state.current_line, state.page_top.line()));
         state.current_line = cur;
-        state.page_top_line = top;
+        state.page_top = PageTop::at_line_start(top);
         // When we restored the FAITHFUL pre-toggle spread, tell the RESIZE_TICK
         // re-snap to trust it verbatim — skip snap_near_end_to_canonical, which
         // would re-derive the page from the saved cursor and (when the cursor is
@@ -515,18 +516,19 @@ fn strip_translation_lines(state: &mut AppState) {
 
     // Reverse-map current_line and page_top_line
     let old_current = state.current_line;
-    let old_top = state.page_top_line;
+    let old_top = state.page_top.line();
     state.current_line = map_line_before_insert(old_current, &state.translation_lines);
-    state.page_top_line = map_line_before_insert(old_top, &state.translation_lines);
-    // The remapped top is a LINE index; any offset belonged to the
+    // The remap yields a LINE index; any offset belonged to the
     // translations-visible layout and is meaningless against the restored
-    // buffer. Zero it so a stale value cannot survive the toggle — the
-    // single-column caller re-derives the real one from the grid.
-    state.page_top_offset = 0;
+    // buffer, so this is a genuine line start. The single-column caller
+    // re-derives the real offset from the grid. (Before `PageTop` this was two
+    // statements and the offset one was missing entirely — the latent bug.)
+    state.page_top =
+        PageTop::at_line_start(map_line_before_insert(old_top, &state.translation_lines));
 
     crate::logging::log(&format!(
         "TRANSLATIONS_HIDE: line remap current {}→{} page_top {}→{} buf_lines {}→{}",
-        old_current, state.current_line, old_top, state.page_top_line,
+        old_current, state.current_line, old_top, state.page_top.line(),
         pre_hide_buf_lines, state.buffer.line_count(),
     ));
 
