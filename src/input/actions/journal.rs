@@ -1358,7 +1358,7 @@ pub(crate) fn open_journal_scene(
         s.journal_overlay.clear_search_tags();
         s.journal.search = None;
         s.journal.last_pattern = None;
-        s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+        s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
         s.input_mode = InputMode::JournalOverlay;
         // The passage entry is stored under its own scene band; land ON it by id.
         land_on_page(&mut s, JournalBand::Scene(pd1, pd2), entry_id);
@@ -1418,7 +1418,7 @@ pub(crate) fn open_journal_scene(
     s.journal_overlay.clear_search_tags();
     s.journal.search = None;
     s.journal.last_pattern = None;
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.journal_band = JournalBand::Scene(d1, d2);
     s.journal.page_index = 0;
     s.input_mode = InputMode::JournalOverlay;
@@ -1493,7 +1493,7 @@ pub(crate) fn open_scene_qa_from_synopsis(state: &Rc<RefCell<AppState>>) -> bool
     s.journal_overlay.clear_search_tags();
     s.journal.search = None;
     s.journal.last_pattern = None;
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.journal_from_synopsis = Some((div1, div2));
     s.input_mode = InputMode::JournalOverlay;
     let id = page.id;
@@ -1580,7 +1580,7 @@ pub(crate) fn open_overlay_at_entry(s: &mut AppState, div1: i64, div2: i64, entr
     s.journal_overlay.clear_search_tags();
     s.journal.search = None;
     s.journal.last_pattern = None;
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.input_mode = InputMode::JournalOverlay;
     land_on_page(s, JournalBand::Scene(div1, div2), entry_id);
     s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
@@ -1816,7 +1816,7 @@ pub(crate) fn begin_passage_ask(
     source_text: String,
 ) {
     let mut s = state.borrow_mut();
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.prompt_mode = JournalPromptMode::Ask;
     let band = JournalBand::Passage { div1, div2, start, end };
@@ -3090,7 +3090,7 @@ pub(crate) fn open_picker_from_reader(state: &Rc<RefCell<AppState>>) {
     if s.current_work.is_none() {
         return;
     }
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     s.journal.entry_page_id = None; // this open is itself navigation: close may source-jump
     s.journal.picker_from_reader = true;
     if !populate_and_show_picker(&mut s) {
@@ -3136,7 +3136,7 @@ pub(crate) fn open_recent_qa_picker(state: &Rc<RefCell<AppState>>) {
     }
     // Save the reader position so Escape (and the post-open overlay's Escape)
     // returns there.
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
 
     let matches = crate::db::queries::open_db()
         .ok()

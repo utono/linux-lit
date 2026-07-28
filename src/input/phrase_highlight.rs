@@ -825,7 +825,7 @@ pub fn phrase_step_seek(s: &mut AppState, forward: bool) -> bool {
     if target_wi != spoken_wi || target_wi != cursor_wi {
         if let Some(tb) = s.buffer_line_for_work(target_wi) {
             s.current_line = tb;
-            let off_page = tb < s.page_top_line
+            let off_page = tb < s.page_top.line()
                 || s
                     .last_visible_range
                     .get()
@@ -875,8 +875,8 @@ fn turn_to_phrase_page(s: &mut AppState, bl: usize, char_off: usize) {
     };
     let Some(cur) = crate::input::prose_pages::prose_page_for_position(
         &table,
-        s.page_top_line,
-        s.page_top_offset,
+        s.page_top.line(),
+        s.page_top.offset(),
     ) else {
         return;
     };
@@ -907,7 +907,7 @@ fn turn_to_phrase_page(s: &mut AppState, bl: usize, char_off: usize) {
         let p = table[target];
         crate::logging::log_always(&format!(
             "PAGES_PROSE: phrase-step turn bl={} char={} row_px={} ({},{})->({},{})",
-            bl, char_off, row_top, s.page_top_line, s.page_top_offset, p.start_line, p.start_off
+            bl, char_off, row_top, s.page_top.line(), s.page_top.offset(), p.start_line, p.start_off
         ));
         crate::input::scroll::set_page_instant_offset(s, p.start_line, p.start_off);
     }

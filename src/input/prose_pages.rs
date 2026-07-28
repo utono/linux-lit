@@ -5,6 +5,7 @@
 //! `end` is EXCLUSIVE and must equal the next page's `start` exactly —
 //! zero gaps, zero overlaps: the machine-checked no-text-loss guarantee.
 
+use crate::input::page_top::PageTop;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProsePage {
     pub start_line: usize,
@@ -262,21 +263,19 @@ pub fn record_prose_pages(
         }
     }
     // Drive the walk through the real page state, then restore it.
-    let saved = (state.page_top_line, state.page_top_offset);
-    state.page_top_line = 0;
-    state.page_top_offset = 0;
+    let saved = state.page_top;
+    state.page_top = PageTop::at_line_start(0);
     let mut pages: Vec<ProsePage> = Vec::new();
     let mut guard = 0usize;
     loop {
-        let start = (state.page_top_line, state.page_top_offset);
+        let start = (state.page_top.line(), state.page_top.offset());
         match crate::input::navigation::prose_next_boundary(state) {
             Some((nl, no)) => {
                 pages.push(ProsePage {
                     start_line: start.0, start_off: start.1,
                     end_line: nl, end_off: no,
                 });
-                state.page_top_line = nl;
-                state.page_top_offset = no;
+                state.page_top = PageTop::new(nl, no);
             }
             None => {
                 // Final page: ends at the document's pixel end.
@@ -293,13 +292,11 @@ pub fn record_prose_pages(
         }
         guard += 1;
         if guard > line_count.max(64) * 4 {
-            state.page_top_line = saved.0;
-            state.page_top_offset = saved.1;
+            state.page_top = saved;
             return Err("determinism: forward chain did not terminate".into());
         }
     }
-    state.page_top_line = saved.0;
-    state.page_top_offset = saved.1;
+    state.page_top = saved;
     Ok(pages)
 }
 
@@ -552,9 +549,9 @@ pub fn prose_table_boundary_for_line(
 /// page_top_offset)). None = current position is off-grid or no table.
 pub fn prose_table_page_end(state: &crate::app::AppState) -> Option<(usize, i32)> {
     let table = active_prose_page_table(state)?;
-    let i = prose_page_for_position(&table, state.page_top_line, state.page_top_offset)?;
+    let i = prose_page_for_position(&table, state.page_top.line(), state.page_top.offset())?;
     let p = &table[i];
-    (p.start_line == state.page_top_line && p.start_off == state.page_top_offset)
+    (p.start_line == state.page_top.line() && p.start_off == state.page_top.offset())
         .then_some((p.end_line, p.end_off))
 }
 
@@ -636,9 +633,9 @@ pub fn prose_table_line_on_current_page(
     line: usize,
 ) -> Option<bool> {
     let table = active_prose_page_table(state)?;
-    let i = prose_page_for_position(&table, state.page_top_line, state.page_top_offset)?;
+    let i = prose_page_for_position(&table, state.page_top.line(), state.page_top.offset())?;
     let p = &table[i];
-    if p.start_line != state.page_top_line || p.start_off != state.page_top_offset {
+    if p.start_line != state.page_top.line() || p.start_off != state.page_top.offset() {
         return None; // not a canonical page top — live path
     }
     Some(line_on_stored_page(p, line))
@@ -703,9 +700,9 @@ fn whole_line_or_none(candidate: usize, start_line: usize, start_off: i32) -> Op
 /// line is not covered by the table.
 pub fn resnap_prose_to_table(state: &mut crate::app::AppState) {
     let Some(table) = active_prose_page_table(state) else { return };
-    if prose_page_for_position(&table, state.page_top_line, state.page_top_offset)
+    if prose_page_for_position(&table, state.page_top.line(), state.page_top.offset())
         .map(|i| (table[i].start_line, table[i].start_off)
-            == (state.page_top_line, state.page_top_offset))
+            == (state.page_top.line(), state.page_top.offset()))
         .unwrap_or(false)
     {
         return; // already on the grid
@@ -714,7 +711,7 @@ pub fn resnap_prose_to_table(state: &mut crate::app::AppState) {
     let (t, o) = (table[i].start_line, table[i].start_off);
     crate::logging::log(&format!(
         "PAGES_PROSE: resnap off-grid ({},{}) -> ({},{}) (cursor {})",
-        state.page_top_line, state.page_top_offset, t, o, state.current_line
+        state.page_top.line(), state.page_top.offset(), t, o, state.current_line
     ));
     crate::input::scroll::set_page_instant_offset(state, t, o);
 }

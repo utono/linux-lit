@@ -1,3 +1,4 @@
+use crate::input::page_top::PageTop;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::AnimationExt;
@@ -50,7 +51,7 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
             // yanking the view backward to an earlier page even though the
             // cursor's line was already visible right here. See Important #2
             // in final-review.md.
-            let already_on_page = state.current_line == state.page_top_line;
+            let already_on_page = state.current_line == state.page_top.line();
             if !already_on_page && !is_line_fully_visible(state, state.current_line) {
                 // Prose table mode is TABLE-AUTHORITATIVE: land on the stored
                 // page (offset-aware) containing the cursor line. Only when no
@@ -59,10 +60,10 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
                 if let Some((pt, po)) = crate::input::prose_pages::prose_table_boundary_for_line(
                     state, state.current_line,
                 ) {
-                    if (pt, po) != (state.page_top_line, state.page_top_offset) {
+                    if (pt, po) != (state.page_top.line(), state.page_top.offset()) {
                         log_fmt!(
                             "PAGES_PROSE: ensure_visible current={} ({},{})->({},{})",
-                            state.current_line, state.page_top_line, state.page_top_offset, pt, po
+                            state.current_line, state.page_top.line(), state.page_top.offset(), pt, po
                         );
                         set_page_instant_offset(state, pt, po);
                     }
@@ -73,7 +74,7 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
                     // back to the live computation when no table serves this line.
                     let new_top = crate::input::page_table::table_top_for(state, state.current_line)
                         .unwrap_or_else(|| {
-                            if state.current_line >= state.page_top_line {
+                            if state.current_line >= state.page_top.line() {
                                 page_turn_top_state(state, state.current_line)
                             } else {
                                 state.current_line
@@ -81,9 +82,9 @@ pub fn update_highlight_and_ensure_visible(state: &mut AppState) {
                         });
                     log_fmt!(
                         "SYNC_PAGE: ensure_visible triggered, current_line={} page_top={} new_top={}",
-                        state.current_line, state.page_top_line, new_top
+                        state.current_line, state.page_top.line(), new_top
                     );
-                    let dir = if state.current_line >= state.page_top_line { PageDirection::Forward } else { PageDirection::Backward };
+                    let dir = if state.current_line >= state.page_top.line() { PageDirection::Forward } else { PageDirection::Backward };
                     set_page(state, new_top, dir);
                 }
             }
@@ -140,11 +141,11 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                             state, state.current_line,
                         )
                     {
-                        if (pt, po) != (state.page_top_line, state.page_top_offset) {
+                        if (pt, po) != (state.page_top.line(), state.page_top.offset()) {
                             crate::logging::log_always(&format!(
                                 "PAGES_PROSE: sync page-turn current={} ({},{})->({},{})",
-                                state.current_line, state.page_top_line,
-                                state.page_top_offset, pt, po
+                                state.current_line, state.page_top.line(),
+                                state.page_top.offset(), pt, po
                             ));
                             set_page_instant_offset(state, pt, po);
                         }
@@ -153,7 +154,7 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 auto_show_vocab_popup(state);
                 return;
             }
-            let last_vis = last_raw_visible_line(state, state.page_top_line);
+            let last_vis = last_raw_visible_line(state, state.page_top.line());
             if state.current_line > last_vis {
                 // Table mode: the stored page containing the spoken line IS the
                 // landing page — same grid as x/y, and the table's final page
@@ -177,7 +178,7 @@ pub fn update_highlight_and_advance_page(state: &mut AppState) {
                 };
                 crate::logging::log_always(&format!(
                     "SYNC_PAGE_TURN: current={} last_vis={} old_top={} new_top={}",
-                    state.current_line, last_vis, state.page_top_line, new_top,
+                    state.current_line, last_vis, state.page_top.line(), new_top,
                 ));
                 set_page(state, new_top, PageDirection::Forward);
             }
@@ -194,12 +195,12 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     // stays at the top of the page; do not scroll down to the first dialogue
     // line. Consume the flag so subsequent navigation behaves normally.
     let top_anchored = state.pending_top_anchor.replace(false);
-    if state.page_top_line == 0
+    if state.page_top.line() == 0
         && state.current_line > 0
         && !state.pending_synopsis.get()
         && !top_anchored
     {
-        state.page_top_line = state.current_line;
+        state.page_top = PageTop::at_line_start(state.current_line);
     }
     update_highlight(state);
 
@@ -209,13 +210,13 @@ pub fn update_highlight_and_show(state: &mut AppState) {
     // "# - 1" flash. The resize tick refreshes the label once layout
     // settles (see app.rs deferred-layout-refresh branch).
 
-    let scroll_to = state.page_top_line;
+    let scroll_to = state.page_top.line();
     // A prose page top is `(line, row-offset px)`. Scrolling to the LINE's top
     // and dropping the offset would discard the cross-work jump landing's snap
     // (see display_work_at_with_prepared) and render a window the pagination
     // never chose. `+ 0` for every pre-existing caller — page_top_offset is 0
     // unless a prose grid put a boundary mid-paragraph.
-    let scroll_off = state.page_top_offset;
+    let scroll_off = state.page_top.offset();
     let line_count = state.effective_line_count();
     let is_prose = state.is_prose();
     let one_section_per_page = state.one_section_per_page();
@@ -369,8 +370,8 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     // Compute visible range with margin for scroll overshoot
     let lpp = lines_per_page(state);
     let margin = 5;
-    let vis_start = state.page_top_line.saturating_sub(margin);
-    let vis_end = (state.page_top_line + lpp + margin)
+    let vis_start = state.page_top.line().saturating_sub(margin);
+    let vis_end = (state.page_top.line() + lpp + margin)
         .min(state.effective_line_count());
 
     // Get iters for visible range

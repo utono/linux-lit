@@ -162,7 +162,7 @@ fn open_gloss_hit(state: &Rc<RefCell<AppState>>, gloss_id: i64, pattern: &str) {
     let mut s = state.borrow_mut();
     // No saved reader position to restore beyond whatever the load left; keep
     // the current reader page so Escape lands sensibly.
-    s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     // Open the overlay. from_picker=true so Escape returns to the reader (the
     // popup is gone), not a hidden overlay.
     crate::input::actions::gloss::open_gloss_overlay(
@@ -218,7 +218,7 @@ pub(crate) fn open_journal_hit(state: &Rc<RefCell<AppState>>, entry_id: i64, pat
 
     let mut s = state.borrow_mut();
     // Save the reader position so Escape returns there.
-    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal.return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     // A one-match filter renders exactly this entry via render_filtered_match.
     // The "term" is the search pattern so the footer orients the reader.
     s.journal.filter = Some(crate::input::actions::journal::JournalFilter {

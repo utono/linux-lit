@@ -494,7 +494,7 @@ pub fn concordance_jump_to_current(
                             "CONC_JUMP: CROSS-WORK loaded '{}' lines={} timestamps={} \
                              current_line={} page_top={} auto_media={:?}",
                             work_title, lines_count, ts_count,
-                            s.current_line, s.page_top_line,
+                            s.current_line, s.page_top.line(),
                             auto_media.as_ref().map(|(_, id)| id),
                         ));
                     }
@@ -642,14 +642,14 @@ fn concordance_position_cursor(state: &mut AppState, line_mapping_id: i64) {
         .map(|ts| crate::input::navigation::preroll_seek_time(ts.start));
 
     let lpp = crate::input::viewport::lines_per_page(state);
-    let cursor_offset = state.current_line.saturating_sub(state.page_top_line);
+    let cursor_offset = state.current_line.saturating_sub(state.page_top.line());
     crate::logging::log(&format!(
         "CONC_POS: word='{}' line_id={} buf_idx={} contains_word={} \
          seek_time={} page_top={} cursor={} lpp={} offset_from_top={} \
          text='{}'",
         conc_word, line_mapping_id, buf_idx, contains_word,
         hit_seek_time.map(|t| format!("{:.1}", t)).unwrap_or_else(|| "NONE".to_string()),
-        state.page_top_line, state.current_line, lpp, cursor_offset,
+        state.page_top.line(), state.current_line, lpp, cursor_offset,
         if line_text.len() > 80 { &line_text[..80] } else { &line_text },
     ));
 

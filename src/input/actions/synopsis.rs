@@ -530,7 +530,7 @@ pub(crate) fn open_work_glosses(state_rc: &Rc<RefCell<AppState>>) {
     // Remember the reader page so Escape returns here (unless an earlier step,
     // e.g. a picker, already recorded a position to return to).
     if s.gloss_return_pos.is_none() {
-        s.gloss_return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+        s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
     }
     s.input_mode = crate::app::InputMode::GlossOverlay;
     crate::logging::log(&format!("SYNOPSIS: opened work glosses, scene ({},{}) first", div1, div2));

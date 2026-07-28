@@ -367,11 +367,11 @@ pub(crate) fn line_in_right_column(line: usize, split: Option<usize>, end: usize
 pub(crate) fn cursor_in_right_column(s: &AppState) -> bool {
     let line = s.current_line;
     if let Some(table) = crate::input::page_table::active_page_table(s) {
-        if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top_line) {
+        if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top.line()) {
             return line_in_right_column(line, sp.split, sp.end);
         }
     }
-    let cs = crate::input::viewport::column_split(s, s.page_top_line);
+    let cs = crate::input::viewport::column_split(s, s.page_top.line());
     // Live ColumnSplit encodes "no right column" as split > page_end
     // (see the table synthesis in scroll.rs); normalize to Option.
     let split = (cs.split <= cs.page_end).then_some(cs.split);
@@ -421,11 +421,11 @@ fn placement_for_selection(s: &AppState, start: usize, end: usize) -> ChatPlacem
         return ChatPlacement::FloatRight;
     }
     if let Some(table) = crate::input::page_table::active_page_table(s) {
-        if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top_line) {
+        if let Some(sp) = crate::input::page_table::spread_for_top(&table, s.page_top.line()) {
             return placement_for_range(start, end, sp.split, sp.end);
         }
     }
-    let cs = crate::input::viewport::column_split(s, s.page_top_line);
+    let cs = crate::input::viewport::column_split(s, s.page_top.line());
     let split = (cs.split <= cs.page_end).then_some(cs.split);
     placement_for_range(start, end, split, cs.page_end)
 }

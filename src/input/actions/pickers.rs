@@ -129,7 +129,7 @@ pub(crate) fn load_selected_work(
                         crate::app::display_work_at_with_prepared(&mut s, work, None, prepared);
                         crate::logging::log(&format!(
                             "PICKER: after display_work current_line={} page_top={} line_map={} effective_lines={}",
-                            s.current_line, s.page_top_line, s.line_map.is_some(), s.effective_line_count()
+                            s.current_line, s.page_top.line(), s.line_map.is_some(), s.effective_line_count()
                         ));
                     }
                     // After display_work: on cache miss with valid prep, write snapshot.

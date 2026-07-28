@@ -174,7 +174,7 @@ pub fn validate_spreads(spreads: &[Spread], ctx: &ValidateCtx) -> Result<(), Str
 /// jumping ahead to the anchor until the forward-nav guard actually fires.
 ///
 /// EXCEPTION: `line` that is itself a page's own `left_start` (a page TOP —
-/// e.g. `state.page_top_line`, used by nav to ask "which page am I currently
+/// e.g. `state.page_top.line()`, used by nav to ask "which page am I currently
 /// on") always resolves to THAT page, never to an earlier page that merely
 /// happens to overlap it. Without this, `page_backward`/`page_forward`
 /// looking up their own current page top would be redirected to the earlier
@@ -643,15 +643,15 @@ pub fn table_top_for(state: &crate::app::AppState, line: usize) -> Option<usize>
 /// not covered by the table.
 pub fn resnap_to_table(state: &mut crate::app::AppState) {
     let Some(table) = active_page_table(state) else { return };
-    if spread_for_top(&table, state.page_top_line).is_some() {
+    if spread_for_top(&table, state.page_top.line()).is_some() {
         return; // already on the active grid
     }
     let Some(i) = page_for_line(&table, state.current_line) else { return };
     let t = table[i].left_start;
-    if t != state.page_top_line {
+    if t != state.page_top.line() {
         crate::logging::log(&format!(
             "PAGES: resnap off-grid page_top {} -> {} (cursor {})",
-            state.page_top_line, t, state.current_line
+            state.page_top.line(), t, state.current_line
         ));
         crate::input::scroll::set_page_instant(state, t);
     }

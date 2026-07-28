@@ -261,7 +261,7 @@ fn main() {
                                 line_idx,
                                 buffer_line,
                                 s.current_line,
-                                s.page_top_line,
+                                s.page_top.line(),
                                 s.translations_visible,
                                 s.buffer.line_count(),
                             ));
@@ -314,10 +314,10 @@ fn main() {
                                             {
                                                 top = crate::input::navigation::last_page_top(&s);
                                             }
-                                            if top != s.page_top_line {
+                                            if top != s.page_top.line() {
                                                 crate::logging::log_always(&format!(
                                                     "SYNC_SCENE_SCROLL: {:?}->{:?} top={} current={} page_top={}",
-                                                    old_scene, scene, top, buffer_line, s.page_top_line
+                                                    old_scene, scene, top, buffer_line, s.page_top.line()
                                                 ));
                                                 crate::input::scroll::set_page_instant(&mut s, top);
                                                 scene_scrolled = true;
@@ -339,7 +339,7 @@ fn main() {
                             if paragraph_changed && !scene_scrolled {
                                 crate::logging::log_always(&format!(
                                     "SYNC_PARA_SCROLL: para_start={} page_top={} on_screen={}",
-                                    para.start, s.page_top_line, crate::input::navigation::is_line_on_screen(&s, para.start)
+                                    para.start, s.page_top.line(), crate::input::navigation::is_line_on_screen(&s, para.start)
                                 ));
                                 crate::input::navigation::scroll_paragraph_to_top(
                                     &mut s, para.start,
@@ -379,7 +379,7 @@ fn main() {
                                 crate::input::prose_pages::active_prose_page_table(&s)
                             {
                                 if let Some(pi) = crate::input::prose_pages::prose_page_for_position(
-                                    &table, s.page_top_line, s.page_top_offset)
+                                    &table, s.page_top.line(), s.page_top.offset())
                                 {
                                     let p = table[pi];
                                     // Straddles: this page ENDS inside the cursor's
@@ -427,7 +427,7 @@ fn main() {
                                                 // the TimePos fire path) instead of
                                                 // scheduling.
                                                 let np = table[pi + 1];
-                                                if (s.page_top_line, s.page_top_offset)
+                                                if (s.page_top.line(), s.page_top.offset())
                                                     != (np.start_line, np.start_off)
                                                 {
                                                     crate::logging::log_always(&format!(
@@ -575,7 +575,7 @@ fn main() {
                                         if let Some(p) = table.get(page_idx).copied() {
                                             // Only turn if we're not already there
                                             // (a resnap may have advanced the page).
-                                            if (s.page_top_line, s.page_top_offset)
+                                            if (s.page_top.line(), s.page_top.offset())
                                                 != (p.start_line, p.start_off)
                                             {
                                                 crate::logging::log_always(&format!(

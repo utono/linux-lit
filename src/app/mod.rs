@@ -1,3 +1,4 @@
+use crate::input::page_top::PageTop;
 pub mod vocab_popup;
 pub mod italics;
 pub mod font;
@@ -283,17 +284,18 @@ pub struct AppState {
     /// the band's top edge as a colored sliver (see `descender_allowance`).
     pub left_clip_boundary: std::cell::Cell<Option<usize>>,
     pub right_clip_boundary: std::cell::Cell<Option<usize>>,
-    pub page_top_line: usize,
-    /// Pixels scrolled PAST `page_top_line`'s pixel top. 0 in the normal
-    /// (line-aligned) case; non-zero only while paging WITHIN an over-tall prose
-    /// paragraph (one buffer line taller than the viewport) — the viewport top is
-    /// `line_yrange(page_top_line).y + page_top_offset`. See
+    /// Top of the rendered page: a buffer line PLUS the pixel offset into that
+    /// line's first display row. The offset is 0 in the normal (line-aligned)
+    /// case and non-zero only when a pinned prose page begins mid-paragraph, or
+    /// while paging WITHIN an over-tall prose paragraph — the viewport top is
+    /// `line_yrange(page_top.line()).y + page_top.offset()`. See
     /// `docs/troubleshooting/page-turning-mechanics.md` → "Prose over-tall paragraph".
-    pub page_top_offset: i32,
-    /// History of `(page_top_line, page_top_offset)` so `y` round-trips a
-    /// mid-paragraph forward turn exactly. Pushed by `page_forward`, popped by
-    /// `page_backward`.
-    pub page_back_stack: Vec<(usize, i32)>,
+    ///
+    /// One value, not two fields: see `input::page_top` for why.
+    pub page_top: crate::input::page_top::PageTop,
+    /// History of page tops so `y` round-trips a mid-paragraph forward turn
+    /// exactly. Pushed by `page_forward`, popped by `page_backward`.
+    pub page_back_stack: Vec<crate::input::page_top::PageTop>,
     pub dim_tag: gtk4::TextTag,
     pub cursor_line_tag: gtk4::TextTag,
     pub cursor_fade_tag: gtk4::TextTag,
@@ -2177,8 +2179,7 @@ pub fn build_window(
         prose_page_table_gen_attempted: std::cell::Cell::new(false),
         left_clip_boundary: std::cell::Cell::new(None),
         right_clip_boundary: std::cell::Cell::new(None),
-        page_top_line: 0,
-        page_top_offset: 0,
+        page_top: crate::input::page_top::PageTop::at_line_start(0),
         page_back_stack: Vec::new(),
         dim_tag,
         cursor_line_tag,
@@ -2480,7 +2481,7 @@ pub fn build_window(
         if let Ok(mut s) = state.try_borrow_mut() {
             crate::input::scroll::ensure_scroll_range(&s);
             snap_near_end_to_canonical(&mut s);
-            let (top, off) = (s.page_top_line, s.page_top_offset);
+            let (top, off) = (s.page_top.line(), s.page_top.offset());
             crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
             // Startup orientation cue: karaoke-tint the phrase that will play
             // (the resume line's start time) instead of flashing the cursor
@@ -2851,7 +2852,7 @@ pub fn build_window(
                 // boundary after the startup resnap, rendering rows the page
                 // table (and the bottom clip) doesn't account for — the
                 // "clipped partial row at the bottom on startup" bug.
-                let (top, off) = (s.page_top_line, s.page_top_offset);
+                let (top, off) = (s.page_top.line(), s.page_top.offset());
                 crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
                 // The synchronous snap above can race ahead of GTK's layout pass:
                 // when a buffer swap (a scansion toggle) changes the content
@@ -2865,7 +2866,7 @@ pub fn build_window(
                     if let Ok(mut s) = state_idle.try_borrow_mut() {
                         crate::input::navigation::invalidate_page_tops(&s);
                         crate::input::scroll::ensure_scroll_range(&s);
-                        let (top, off) = (s.page_top_line, s.page_top_offset);
+                        let (top, off) = (s.page_top.line(), s.page_top.offset());
                         crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
                     }
                 });
@@ -2876,7 +2877,7 @@ pub fn build_window(
                 if do_reveal {
                     crate::log_fmt!("STARTUP: revealing vbox (sw_h={})", s.scrolled_window.height());
                     vbox_for_tick.set_opacity(1.0);
-                    let (top, off) = (s.page_top_line, s.page_top_offset);
+                    let (top, off) = (s.page_top.line(), s.page_top.offset());
                     crate::input::scroll::snap_scroll_to_line_offset(&mut s, top, off);
                     // Headless UI test harness: emit the reading viewport's
                     // rectangle in window (== screenshot) coordinates so the
@@ -3407,12 +3408,12 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
             crate::input::viewport::next_dialogue_from(&s.buffer, top, line_count, s.is_prose(), &stage_lookup)
                 .min(line_count.saturating_sub(1))
         };
-        if top != s.page_top_line || first != s.current_line {
+        if top != s.page_top.line() || first != s.current_line {
             crate::logging::log(&format!(
                 "STARTUP: snap one-section page_top {} -> {} (cursor {} -> {})",
-                s.page_top_line, top, s.current_line, first
+                s.page_top.line(), top, s.current_line, first
             ));
-            s.page_top_line = top;
+            s.page_top = PageTop::at_line_start(top);
             s.current_line = first;
         }
         return;
@@ -3426,7 +3427,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
     // the cursor visible on a near-empty, non-canonical spread — e.g. H8 4192 on
     // top of the sparse 4191 spread — that differs from the canonically-tiled
     // spread the user actually quit on, where the cursor sat in the right column.)
-    if crate::input::viewport::page_top_containing(s, s.current_line) == s.page_top_line {
+    if crate::input::viewport::page_top_containing(s, s.current_line) == s.page_top.line() {
         return;
     }
     // The canonical spread that DISPLAYS the cursor — the page boundary you'd
@@ -3448,7 +3449,7 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
     };
     if containing_reaches_end {
         let canonical = crate::input::navigation::last_page_top(s);
-        if canonical == s.page_top_line {
+        if canonical == s.page_top.line() {
             return;
         }
         let cs = crate::input::viewport::column_split(s, canonical);
@@ -3466,9 +3467,9 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
         };
         crate::logging::log(&format!(
             "STARTUP: snap near-end page_top {} -> canonical {} (cursor {})",
-            s.page_top_line, canonical, cursor
+            s.page_top.line(), canonical, cursor
         ));
-        s.page_top_line = canonical;
+        s.page_top = PageTop::at_line_start(canonical);
         s.current_line = cursor;
         return;
     }
@@ -3478,12 +3479,12 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
     // two-column play spread), instead of the pre-layout `current_line - 1` guess
     // that forces the cursor to the top-left and renders a sparse, off spread. Do
     // NOT move the cursor; only the page.
-    if containing != s.page_top_line {
+    if containing != s.page_top.line() {
         crate::logging::log(&format!(
             "STARTUP: snap to containing page_top {} -> {} (cursor {})",
-            s.page_top_line, containing, s.current_line
+            s.page_top.line(), containing, s.current_line
         ));
-        s.page_top_line = containing;
+        s.page_top = PageTop::at_line_start(containing);
     }
 }
 
@@ -3567,7 +3568,7 @@ pub fn display_work_at_with_prepared(
     // the new work's page top — a half-cut first line, and in two-column mode a
     // left column that duplicates the right column's opening lines. The prose
     // resnap re-derives the offset for a prose target from its own table.
-    state.page_top_offset = 0;
+    state.page_top = PageTop::at_line_start(state.page_top.line());
     // The open/last gloss's context (citations, source text, work_abbrev) all
     // address the OLD work. Left stale, the `\` cycle's probe
     // (`gloss_covers_cursor`) reads the displayed span out of it and queries
@@ -3763,7 +3764,7 @@ pub fn display_work_at_with_prepared(
     }
 
     state.current_line = saved_line;
-    state.page_top_line = 0;
+    state.page_top = PageTop::at_line_start(0);
     state.page_back_stack.clear();
     state.last_visible_range.set(None);
     *state.page_tops.borrow_mut() = None;
@@ -4274,7 +4275,7 @@ pub fn display_work_at_with_prepared(
         ));
         if let Some(target) = first_dialogue {
             state.current_line = target;
-            state.page_top_line = 0;
+            state.page_top = PageTop::at_line_start(0);
             // First open with no saved position: keep the opening Act/Prologue
             // header pinned to the top of the page. Without this, the page_top==0
             // guard in update_highlight_and_show would scroll down to the first
@@ -4345,25 +4346,23 @@ pub fn display_work_at_with_prepared(
             // `canonical_page_top_offset_for` here.
             (state.current_line.saturating_sub(1), 0)
         };
-        state.page_top_line = page_top;
-        state.page_top_offset = page_off;
+        state.page_top = PageTop::new(page_top, page_off);
 
         // If cursor is on a scene boundary, scroll back to show the
         // scene/act heading lines above the first dialogue line.
         if !state.synopsis_cache.is_empty() && is_first_line_of_scene(state) {
             let top = scene_heading_start(state, state.current_line);
-            if top < state.page_top_line {
-                state.page_top_line = top;
-                // The offset belongs to the page top computed above; once we
-                // back up to a DIFFERENT line it would scroll into the wrong
-                // row of the heading. Start that line at its top.
-                state.page_top_offset = 0;
+            if top < state.page_top.line() {
+                // Backing up to a DIFFERENT line: the offset computed above
+                // belonged to the old top and would scroll into the wrong row
+                // of the heading, so this is a genuine line start.
+                state.page_top = PageTop::at_line_start(top);
             }
         }
 
         crate::logging::log(&format!(
             "DISPLAY_WORK: resumed saved position current_line={} page_top={} page_off={}",
-            state.current_line, state.page_top_line, state.page_top_offset
+            state.current_line, state.page_top.line(), state.page_top.offset()
         ));
     }
 
@@ -4382,7 +4381,7 @@ pub fn display_work_at_with_prepared(
                     work_idx
                 };
                 state.current_line = buf_idx;
-                state.page_top_line = buf_idx;
+                state.page_top = PageTop::at_line_start(buf_idx);
             }
         }
     }
@@ -4423,8 +4422,7 @@ pub fn display_work_at_with_prepared(
     if target_line_id.is_some() {
         let (top, off) =
             crate::input::navigation::canonical_page_top_offset_for(state, state.current_line);
-        state.page_top_line = top;
-        state.page_top_offset = off;
+        state.page_top = PageTop::new(top, off);
     }
 
     // Persistent bottom toast retired: the running-head strip is now the
@@ -5339,8 +5337,7 @@ pub(crate) fn return_to_reader_mode(state: &mut AppState) {
 pub(crate) fn restore_saved_position_resnap(s: &mut AppState, pos: Option<(usize, usize, i32)>) {
     if let Some((line, top, off)) = pos {
         s.current_line = line;
-        s.page_top_line = top;
-        s.page_top_offset = off;
+        s.page_top = PageTop::new(top, off);
         // Re-anchor onto the PINNED page grid before scrolling (2026-07-27).
         // `resnap_page` scrolls to whatever (line, offset) it is handed — it
         // does not check that pair against the active table. A saved position

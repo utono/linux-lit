@@ -75,6 +75,7 @@ impl PageTop {
     /// True when this position sits at a line's top — i.e. carries no
     /// sub-line offset. Not the same as "on the grid": a stored prose page can
     /// legitimately start at offset 0.
+    #[allow(dead_code)] // read by tests; kept as part of the type's vocabulary
     pub fn is_line_aligned(self) -> bool {
         self.offset == 0
     }

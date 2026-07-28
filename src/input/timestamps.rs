@@ -305,7 +305,7 @@ pub fn play_current_line(state: &mut AppState) -> bool {
     // from the start would park the narration and karaoke tint above the
     // fold. Turn back to the page holding the segment's first row first —
     // the cursor stays on the segment and playback is visible from its start.
-    if state.is_prose() && state.current_line == state.page_top_line && state.page_top_offset > 0 {
+    if state.is_prose() && state.current_line == state.page_top.line() && state.page_top.offset() > 0 {
         if let Some(table) = crate::input::prose_pages::active_prose_page_table(state) {
             if let Some(pi) = crate::input::prose_pages::prose_page_for_position(
                 &table,
@@ -313,7 +313,7 @@ pub fn play_current_line(state: &mut AppState) -> bool {
                 0,
             ) {
                 let p = table[pi];
-                if (state.page_top_line, state.page_top_offset) != (p.start_line, p.start_off) {
+                if (state.page_top.line(), state.page_top.offset()) != (p.start_line, p.start_off) {
                     crate::logging::log(&format!(
                         "PLAY_LINE: straddler at page top — back to page {} top=({},{})",
                         pi + 1,
