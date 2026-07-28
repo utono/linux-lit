@@ -386,8 +386,18 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("bar"), Action::AdjustFontSizeUp),
         (KeyCombo::plain("0"), Action::ResetFontSize),
         // `f`: open the cross-work journal term filter (tag/term Q&A search),
-        // matching the journal overlay's `f`. Font cycling used to live here.
+        // matching the journal overlay's `f`. Font cycling moved to the shifted
+        // cap: plain("F") is the shifted `f` (cf. plain("G") normalization
+        // above), keeping the whole font family on the one cap.
         (KeyCombo::plain("f"), Action::OpenJournalTermInput),
+        (KeyCombo::plain("F"), Action::CycleFontForward),
+        // Ctrl+Shift+F cycles back. lookup() only strips the redundant shift
+        // for uppercase letters when ctrl and alt are BOTH off, so a real
+        // Ctrl+Shift chord arrives as lowercase ("f", ctrl=true, shift=true)
+        // — GTK does not capitalize once Ctrl is held. Bind both cases so the
+        // chord matches regardless of which form the layout delivers.
+        (KeyCombo::ctrl_shift("f"), Action::CycleFontBackward),
+        (KeyCombo::ctrl_shift("F"), Action::CycleFontBackward),
         (KeyCombo::plain("l"), Action::ToggleSignColumn),
         // Chat panel disabled 2026-07-23 (Ctrl+l ChatPanelFlipSide commented out
         // below; `-` freed for word-copy in app_bindings).
@@ -960,9 +970,15 @@ mod tests {
         assert_eq!(km.lookup("Tab", false, false, false), None);
         assert_eq!(km.lookup("Tab", true, false, false), None);
         // Plain f opens the journal term filter (matching the journal overlay);
-        // Shift+F is unbound (font cycling removed); Ctrl+f is the corpus search.
+        // Shift+F cycles the font forward and Ctrl+Shift+F cycles it back;
+        // Ctrl+f is the corpus search.
         assert_eq!(km.lookup("f", false, false, false), Some(Action::OpenJournalTermInput));
-        assert_eq!(km.lookup("F", false, false, false), None);
+        assert_eq!(km.lookup("F", false, false, false), Some(Action::CycleFontForward));
+        // Ctrl+Shift arrives lowercase from GTK (shift is only stripped when
+        // ctrl/alt are off), so the lowercase form is the one that fires in
+        // practice; both are bound.
+        assert_eq!(km.lookup("f", true, true, false), Some(Action::CycleFontBackward));
+        assert_eq!(km.lookup("F", true, true, false), Some(Action::CycleFontBackward));
         assert_eq!(km.lookup("f", true, false, false), Some(Action::OpenCorpusSearch));
         assert_eq!(km.lookup("o", true, false, false), None);
         assert_eq!(km.lookup("a", false, false, false), Some(Action::TogglePause));
