@@ -3,6 +3,22 @@
 Reference for debugging page-forward (`x`), page-backward (`y`), and related
 navigation in e-reader mode.
 
+Consolidated 2026-07-28 — this file absorbed three former siblings, which are
+now sections rather than separate documents:
+
+- `testing-pinned-play-pagination.md` → *Testing pinned play pagination
+  (the three tiers)*, below the general *Testing* section.
+- `page-marker-positioning.md` → *The floating page marker*, near the end.
+- `blank-line-spacing-too-tall.md` → *Dialogue spacing failures (plays)*.
+  Its "Aftermath" half is the fingerprint blind spot that pairs with the
+  font section below: per-tag `pixels_above_lines` are NOT fingerprinted, so
+  a table recorded under broken typography still reads as a valid table hit.
+
+A fourth section, *How changing the font affects pagination*, was written at
+the same time to gather the font/pagination coupling that was previously
+scattered across the staleness triggers, the prose-grid lessons, and the
+testing notes.
+
 ## The authoritative-boundary principle (read this BEFORE touching pagination)
 
 Every line in `lit.db` carries `(div1, div2)` (act, scene). **A scene/section
@@ -354,8 +370,12 @@ changes without a work reload:
 - **Font size/family change:** `adjust_font_size` / `reset_font_size` /
   `cycle_font` (`app/font.rs`) revalidate (drop + reload) BEFORE the resnap —
   the window size doesn't change, so the resize path never fires. Look for
-  `PAGES: dropped table (layout changed)`; the new font's fingerprint then runs
-  live (and may regenerate).
+  `PAGES: dropped table (layout changed)`; the new font's fingerprint then
+  loads a matching stored table if one exists. **It does NOT regenerate on
+  prose** — unlike the resize tick, the font path never clears the
+  once-per-session generation latch, so the first font change usually drops
+  the reader to the live engine for the rest of the session. See *How
+  changing the font affects pagination* below, which covers this whole path.
 - **Re-import:** the per-row `db_fingerprint` check at load fails closed.
 
 To check which engine a RUNNING instance is on, use the
@@ -397,6 +417,181 @@ Key files: `src/input/page_table.rs` (`validate_spreads`, `layout_fingerprint`,
 `page_for_line`), `src/db/play_pages.rs` (rw layer, per-edition abbrev key),
 `src/app/font.rs` (font-change revalidation), `src/app/mod.rs` (resize-tick
 revalidation), `docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md`.
+
+## How changing the font affects pagination
+
+Changing the font is not a cosmetic operation — it invalidates the entire
+page grid. Every stored page in `play_pages` / `prose_pages` was recorded at
+one specific set of font metrics, and a different family or size means
+different line heights, different wrap points, and therefore different page
+boundaries. This section is the map of what actually happens on a font
+change and which failures to expect.
+
+**The binds.** `Shift+F` cycles the family forward through
+`config::FONT_CYCLE` (Charter → Crimson Pro → Noto Serif → Source Serif 4 →
+IBM Plex Serif → Cormorant Garamond, wrapping); `Ctrl+Shift+F` cycles back.
+Size is `Ctrl+|` / `Ctrl+!`, reset is `0`. All four land in `app/font.rs`
+and run the same sequence.
+
+### Why the font is part of the fingerprint
+
+`page_table::layout_fingerprint` hashes the font DIRECTLY (`font_family`,
+`font_size`) **and** three derived Pango metrics — `ascent`, `descent`,
+`approximate_char_width` — read from the live `pango_context`. The derived
+metrics matter as much as the name: two families at the same nominal point
+size have different ascent/descent, so they fit a different number of lines
+in the same viewport. `prose_layout_fingerprint` builds on that base and
+adds `cw` (the font-adaptive effective card width) and the `pvN` boundary
+version, because the prose card is measured in characters and therefore
+moves with font metrics too.
+
+A real fingerprint, from a live log line, with the fields named in
+`fingerprint_string` order:
+
+```
+fp=v5|Crimson Pro|16|19|4|8|1920x1200|6|40|1|74|1098|uh1072|cw1050|pv5
+```
+
+- `v5` schema version, then `font_family`, `font_size`, `ascent`, `descent`,
+  `char_width` — the first six fields, four of them font-derived.
+- `1920x1200` window width×height, then `line_spacing`, `text_margins`,
+  `columns`, `top_spacer_height`, `view_height`.
+- `uh…`, `cw…`, `pv5` are the PROSE suffix (usable height, effective card
+  width, boundary version) appended by `prose_layout_fingerprint`; a play
+  fingerprint ends at `view_height`.
+
+The consequence: **a font change is a guaranteed fingerprint miss.** There
+is no partial invalidation and no attempt to re-fit the old boundaries —
+the stored grid is simply not for this font.
+
+**What the fingerprint does NOT cover:** per-tag `pixels_above_lines` (the
+speaker / stage-direction / act-header gaps). Those change how many rows fit
+a column while leaving the fingerprint identical, so a table generated while
+dialogue formatting was broken — or after retuning a gap value — is accepted
+as a valid hit. See *Dialogue spacing failures (plays) → Aftermath*.
+
+### What happens on a font change, in order
+
+All three functions (`cycle_font` for the family, `adjust_font_size` and
+`reset_font_size` for the size) run the same sequence, and the ORDER is the
+load-bearing part:
+
+1. `config.font_family` / `font_size` is updated.
+2. `reapply_font` rebuilds the `font-size` tag on the buffer (this also
+   restyles the translation overlay, which follows the reader font).
+3. `page_table::revalidate_on_resize` + `prose_pages::revalidate_prose_on_resize`
+   — fingerprint the new layout, DROP a table that no longer matches, and
+   attempt a reload.
+4. `pending_prose_cross = None` — a scheduled phrase-boundary page turn was
+   computed against the OLD grid's boundary and must not fire against the new
+   one.
+5. `resnap_page` + `resnap_prose_to_table` — re-anchor the current position
+   onto whatever grid is now active.
+6. `config::save` and a `notify-send` toast showing `family` + `position/6`.
+
+**Steps 3–5 must stay in this order.** Resnapping before revalidating would
+anchor the reader to the grid that is about to be dropped. This is the same
+"any path that SETS a page top must land on the stored grid" rule from the
+prose-grid lessons, applied to the font path.
+
+### The prose regeneration gap (verified 2026-07-28)
+
+**`revalidate_*_on_resize` drops and RELOADS; it does not generate.** On a
+prose work that has no stored table at the new font's fingerprint, the drop
+therefore leaves the reader on the live engine — and because
+`generate_and_store_prose` is latched by `prose_page_table_gen_attempted`
+(a once-per-session one-shot, cleared only on WORK LOAD and by the RESIZE
+tick, never by `app/font.rs`), nothing regenerates it for the rest of the
+session.
+
+There is a second, sharper consequence that is easy to miss: after the drop,
+`state.prose_page_table` is `None`, and **both revalidate functions return
+early when their table is already `None`.** So the very first font change
+disables the revalidation path itself. Cycling onward — even cycling all the
+way back to the ORIGINAL font, whose table is still sitting in lit.db — never
+reloads it.
+
+Observed end-to-end while adding the `Shift+F` bind, on BH-Barrett:
+
+```
+PAGES_PROSE: table hit (942 pages) for BH-Barrett
+PAGES_PROSE: dropped table (layout changed)
+PAGES_PROSE: no table for BH-Barrett fp=v5|Crimson Pro|16|…|pv5
+FONT: cycled to Crimson Pro
+FONT: cycled to Noto Serif          <- no dropped/hit/generated lines after this
+… seven more cycles, back through Charter …
+```
+
+Nine font changes, exactly one `dropped` line, and no `generated` line at
+all. The reader spent the whole session on the live engine, including the
+return to Charter.
+
+**Diagnostic tell:** a font change followed by `BOTTOM_CLIP_ROWFILL` where
+you previously had `BOTTOM_CLIP_EXACT` means you have fallen to the live
+row-fill engine. That is EXPECTED after a font change on prose today — do
+not go hunting for an off-grid-top bug (the *A landing that drops out of
+table mode* section) until you have confirmed a table is actually active.
+
+**If you are fixing this**, the fix is to clear the latch and regenerate the
+way the resize tick already does (`app/mod.rs`, guarded on "actually
+dropped" so a no-op never triggers a full-document walk on a 7300-line
+novel) — not to remove the early return, which exists so an inactive engine
+costs nothing. Note the cost is real: regenerating a novel's grid walks the
+whole document, and a font CYCLE can fire that repeatedly as the user taps
+through six families.
+
+### Plays behave differently from prose
+
+- **Plays** revalidate and reload cleanly, and `generate_and_store` is not
+  behind the same session latch, so a two-column play is more likely to end
+  up back in table mode after a font change.
+- **Prose** hits the gap above.
+
+So "did my font change break pagination?" has different answers by work
+type. Establish which engine is live FIRST (`PAGES:` vs `PAGES_PROSE:` log
+lines, or the `check-page-table-usage` skill) — the two-engines warning at
+the top of this file applies with full force here, because a font change is
+the most common way a reader crosses between them mid-session.
+
+### Consequences for reading position
+
+A font change does NOT preserve the page number, and cannot: page 40 of 942
+in Charter is not page 40 of some other count in Cormorant Garamond. What is
+preserved is the CURSOR's line, with the page re-derived around it by the
+resnap. Expect the visible page to shift — that is correct behaviour, not a
+page-turn bug.
+
+Two real effects follow:
+
+- **Larger fonts mean more pages** and can push a work from "fits" to
+  "over-tall" on a long prose paragraph — the sub-line paging path (*Prose
+  over-tall paragraph*) becomes reachable at a size where it wasn't before.
+- **A scheduled sync page turn is cancelled** (`pending_prose_cross = None`).
+  If audio is playing across a font change, the next turn is re-derived from
+  the new layout; a turn that seems "missed" at exactly the moment of a font
+  change is this, not a sync bug.
+
+### Testing a font-related pagination change
+
+The font is a fingerprint input, so a headless run at the wrong font
+paginates differently — the same trap as the wrong GEOMETRY (see *Headless
+runs at production geometry*). Two rules:
+
+- The headless config is `config-dev.json` (via `LIT_DEV=1`). Its
+  `font_family` is what the run actually uses; a run that cycles the font
+  REWRITES that value on exit, so a fuzz run can silently leave the next run
+  on a different font. Check it before trusting a comparison.
+- To exercise the TABLE path after a font change, force generation with
+  `LIT_GEN_PAGE_TABLE=1` — otherwise the prose latch above means you are
+  testing the live engine while believing you are testing the grid.
+
+Key files: `src/app/font.rs` (`cycle_font`, `adjust_font_size`,
+`reset_font_size`, `reapply_font`), `src/config.rs` (`FONT_CYCLE`),
+`src/input/page_table.rs` (`layout_fingerprint`, `revalidate_on_resize`),
+`src/input/prose_pages.rs` (`prose_layout_fingerprint`,
+`revalidate_prose_on_resize`, `generate_and_store_prose` + the
+`prose_page_table_gen_attempted` latch), `src/app/mod.rs` (the resize tick,
+which DOES clear the latch — the model for fixing the gap above).
 
 ## Prose over-tall paragraph (sub-line paging)
 
@@ -1177,6 +1372,103 @@ actual line wrapping, real section-break clamping with pixel measurements,
 viewport fill percentage, set_page/set_page_instant scroll plumbing,
 page_turn_lock interaction with animation timing.
 
+### Testing pinned play pagination (the three tiers)
+
+(Formerly `testing-pinned-play-pagination.md`. Design:
+`docs/superpowers/specs/2026-07-04-pinned-play-pagination-design.md`; plan:
+`docs/superpowers/plans/2026-07-04-pinned-play-pagination.md`.)
+
+Once pages are rows in lit.db, testing moves BELOW the GUI: the slow headless
+fuzz becomes the last line of defense rather than the primary proof.
+
+**Tier 1 — data-level audits (no app, no display).** Most of what the nav-fuzz
+used to prove by driving the GUI for ~330 seconds per work becomes a data audit
+running in seconds for every play at once: full coverage (every dialogue line in
+exactly one page interval), monotone non-overlapping gap-free intervals, tail
+reachability, sane boundaries (`left_start ≤ split ≤ end`; empty-right watermark
+pages only where the next page opens a real `(div1,div2)` section), and row/meta
+consistency. Read-only — never writes lit.db:
+
+```bash
+.claude/skills/validate-play-pages/validate-play-pages.sh --all
+```
+
+```bash
+.claude/skills/validate-play-pages/validate-play-pages.sh MND
+```
+
+Run it after any lit.db re-import, font/layout change, or suspected drift. FAIL
+means delete that work's rows (the script prints the command) and let the app
+regenerate on next load. Staleness against the current text (`db_fingerprint`)
+and the geometric fit/determinism invariants are enforced by the app itself at
+load/generation time — a stale table logs `PAGES: fallback (...)` and is
+replaced on the next load.
+
+**Tier 2 — pure unit and property tests (no GTK).** Navigation over the table is
+index arithmetic, so properties that historically only the fuzz could check are
+millisecond `cargo test` targets in `src/input/page_table.rs`: the invariant
+suite itself (`validate_spreads`), `page_for_line` binary search, fingerprint
+composition (deterministic, sensitive to every layout input), and round-trip
+properties (`x` then `y` returns to the same page; `G` is idempotent;
+cursor-landing picks an on-page line).
+
+```bash
+cargo test --bin linux-lit page_table
+```
+
+**Tier 3 — headless e2e (the watchdog).** The cage + grim + wtype fuzz stays,
+with a `PAGES: page N/M` assertion (must move exactly ±1 on `x`/`y`, or pin at
+the first/last page) and two engine-selecting env flags:
+
+```bash
+LIT_GEN_PAGE_TABLE=1 ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --start-work MND
+```
+
+```bash
+LIT_NO_PAGE_TABLE=1 ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz.sh --start-work MND
+```
+
+`LIT_GEN_PAGE_TABLE=1` forces generation at the current (headless) geometry so
+the fuzz exercises the TABLE path; `LIT_NO_PAGE_TABLE=1` forces the LIVE engine
+so the fallback path (font changes, translations, scroll mode, other machines)
+keeps its own coverage. Pixel-level clip checks are unchanged
+(`tests/line_clipping.rs`, `tests/overlay_clipping.rs`).
+
+**What each tier catches:** unreachable tail, non-idempotent `G`, page
+gaps/overlaps → Tier 1 (instantly, all plays) and Tier 2 (per property);
+navigation landing/cursor rules, engine selection, fallback behaviour → Tier 2 +
+Tier 3; rendering, clipping, focus/input, reveal timing → Tier 3 only (pixels).
+
+Generated test tables carry a headless fingerprint key so they can never clobber
+production rows. Clean up after a run:
+
+```bash
+sqlite3 ~/utono/litdb/data/lit.db "DELETE FROM play_pages WHERE layout_fingerprint LIKE '%|1280x720|%'; DELETE FROM play_pages_meta WHERE layout_fingerprint LIKE '%|1280x720|%';"
+```
+
+#### Headless runs at PRODUCTION geometry
+
+Cage's virtual output defaults to **1280×720** (the wlroots headless backend's
+built-in mode; cage has no size flag). A 720p run paginates differently than the
+real session, and with page tables it exercises only the fallback engine (the
+fingerprint won't match). Cage implements wlr-output-management, so resize the
+output live (verified 2026-07-04):
+
+```bash
+wlr-randr --output HEADLESS-1 --custom-mode 1920x1236
+```
+
+Issue it after the cage launch, then give the app a few seconds to re-paginate,
+whenever the criterion depends on production geometry: page-table
+generation/consumption, spread boundaries, spread balance. **Use 1236, not
+1200** — pagination keys on the TEXT VIEW height, and only 1236 reproduces
+production's `text_view.height = 1098` (the repo CLAUDE.md has the full
+rationale; 1200 gives 1062, a 36px miss that changes the page grid and can hide
+a bug entirely).
+
+**The font is a fingerprint input too.** Matching the geometry is only half of
+matching production — see *Testing a font-related pagination change* above.
+
 ## Playback sync
 
 Playback sync advances the cursor to match MPV audio position. The pipeline:
@@ -1478,6 +1770,269 @@ which scan backward up to 20 lines for an unclosed `[` opener.
 Key files: `src/db/line_types.rs` (all classification functions),
 `src/input/viewport.rs` (`is_dialogue_line`, `is_inside_stage_direction`),
 `src/db/queries.rs` (assignment at load time)
+
+## The floating page marker (the Label-in-Overlay saga)
+
+(Formerly `page-marker-positioning.md`.)
+
+The floating page marker is the small glyph at the bottom-center of a paginated
+overlay page: **`⌄`** when more pages follow, **`•`** on the last page, nothing
+on single-page content. It sits just below the last rendered line. Both the
+**journal** and **gloss/synopsis** overlays have one.
+
+This records why it is **drawn with Cairo on the accent-bar `DrawingArea`**
+rather than positioned as a `Label` — the Label approach failed in a way that
+took several rounds to diagnose, and the wrong fix is tempting.
+
+### TL;DR
+
+- **Do NOT** re-introduce a `Label` positioned by `set_margin_top` inside the
+  scroll `Overlay`. Its **allocation lags the margin change by several frames**,
+  so on a page turn to a shorter page the glyph paints at the *previous* page's
+  y (off the short page) until an unrelated relayout.
+- The marker is drawn in `ui::draw_page_marker_glyph` from **both overlays'
+  `bar_drawing` `set_draw_func`**. The draw reads live `buffer_to_window_coords`
+  every paint, so there is no allocation step and no timing race.
+- Render the glyph via **Pango** (`pangocairo::functions::show_layout`), NOT
+  `cairo::Context::show_text`. Cairo's toy text API does no font fallback, so
+  `⌄` (U+2304) rendered as a **tofu box** on fonts lacking the glyph.
+
+### The symptoms (in the order they appeared)
+
+1. **Chevron stranded mid-page.** The marker sat far above the last line.
+2. **Chevron missing on the last page** until the user pressed `j` (block-nav),
+   which forced a fresh render.
+3. **Reappeared after toggling the dwl tag** with the app — an unrelated full
+   relayout fixed it. The decisive clue: the *geometry* was right, the
+   *timing/allocation* was wrong.
+4. After switching to Cairo: **tofu box** instead of the glyph.
+
+### Root causes (three, stacked)
+
+**1. `marker.preferred_size()` as the footer reserve (stranding).** The clamp
+`top = (bottom+gap).min(viewport_h - reserve)` used
+`marker.preferred_size().height()` as `reserve`. For an `Overlay` child with
+`set_measure_overlay(false)`, that measured height **balloons to the whole
+overlay allocation (~800px)**, so `viewport_h - reserve` went tiny and `top` was
+clamped far above the last line. (Fixed at the time with a fixed 28px reserve;
+now moot.)
+
+**2. Overlay-child allocation lags `set_margin_top` (the core bug).** The Label
+was `valign=Start` inside the scroll `Overlay`; its y was `margin_top`. On a page
+turn we measured the new last-line bottom and called `set_margin_top(new_y)`.
+**Logging proved** `set_margin_top(449)` was called while the Label's
+*allocation* stayed at `y=810` (the previous full page's bottom) for several
+frames:
+
+```
+MARKER-POS: bottom=441 top=449 ... alloc=(762,810,12,25)   # margin says 449, alloc still 810
+```
+
+`queue_resize()` did not force a synchronous re-allocation — GTK batches layout,
+and an `Overlay` child's allocation is driven by the parent's layout pass, which
+had not run yet. A single `idle_add_local_once` reposition **races the reflow**;
+and because these overlays always render a page that FITS, the scroll range does
+not change between same-fitting pages, so the `vadjustment::changed` "settle"
+hook never fires to correct it. Only an unrelated relayout re-allocated the child
+— hence "reappears after toggling the tag."
+
+Attempts that did **not** fully fix it (don't repeat these):
+
+- One-shot idle reposition — races the reflow.
+- Tick-callback that stops on the first non-zero measurement — accepts the stale
+  *previous-page* geometry (a valid non-zero value) before the reflow.
+- Tick-callback that waits for two stable frames — correct but "slow to appear."
+- `queue_resize()` after `set_margin_top` — the allocation still lagged.
+
+The real problem is not *when we measure* but that **`set_margin_top` on an
+overlay child does not take effect this frame**. GTK-rs does not expose
+`OverlayLayout` / a `get_child_position` vfunc, so there is no declarative way to
+place the child synchronously either.
+
+**3. Cairo toy fonts don't fall back (tofu).** `cr.show_text("⌄")` produced a
+missing-glyph box: `cairo::Context::show_text` uses the toy font API with **no
+font substitution**, and the selected face lacked U+2304. The fix is to render a
+`pango::Layout` (automatic font fallback, exactly like the old CSS-styled Label)
+via `pangocairo::functions::show_layout`. Added the `pangocairo` dependency
+(0.20, matching `pango` 0.20).
+
+### The fix (current design)
+
+- `ui::measure_last_line_bottom(view)` — last text line's bottom in **widget
+  coords** (`line_yrange(end_iter)` → `buffer_to_window_coords(Widget, …)`), the
+  same scroll-aware path the accent bar uses.
+- `ui::draw_page_marker_glyph(cr, view, area_w, glyph, rgb, alpha, gap)` — draws
+  the glyph centered horizontally, `gap` px below the last line, via a Pango
+  layout at ~20px in the theme dim color. No-op when `glyph` is `None` or
+  geometry isn't up yet (the next repaint catches it).
+- Each overlay holds `marker_glyph: Rc<RefCell<Option<&'static str>>>` and
+  `marker_color`, drawn at the **top** of its `bar_drawing` draw func (before the
+  selection-bar early-return, so it shows while editing too).
+- `update_page_marker` sets `marker_glyph` from `pagination::page_marker`, then
+  `bar_drawing.queue_draw()` **plus** an `idle_add_local_once(queue_draw)` so the
+  bar also repaints after the page-turn reflow (the scroll range may be
+  unchanged).
+- Color is `theme.dim_fg`, threaded via `set_marker_color` at startup and in
+  `apply_theme_to_state` (responsive to a dwl theme change).
+
+The accent bar has always been reliable because it draws this same way; the
+marker now inherits that reliability.
+
+### Rules for the future
+
+- **Keep the marker in the Cairo draw path.** To move/restyle it, edit
+  `draw_page_marker_glyph` and the per-overlay `marker_glyph`/`marker_color`
+  state — do not add a positioned widget.
+- **Never position a floating overlay child by `set_margin_top` and expect it to
+  take effect the same frame.** The allocation lags. Draw it, or accept a
+  multi-frame settle.
+- **Draw text over the text view with Pango, not `cairo::show_text`** — you need
+  font fallback for non-ASCII glyphs.
+- Any change here is **pixel-level**: verify on screen (page down to a *short*
+  last page, page up, and after a highlight `;wq`), not from logs.
+
+## Dialogue spacing failures (plays)
+
+(Formerly `blank-line-spacing-too-tall.md`.) Frequency-ordered. Check #1 first —
+it presents as "spacing is GONE" rather than "spacing is wrong", and it is
+load-order dependent, so it does NOT reproduce when you open the affected play
+directly.
+
+### 1. NO dialogue formatting at all — stale `block_indent_tiers` (2026-07-25)
+
+**Tell.** A two-column play renders with **every** dialogue affordance missing at
+once: speaker labels (KING, LAERTES) in plain body text instead of small-caps, no
+gap above speakers, dialogue not indented, stage directions upright instead of
+italic, act/scene headers not bold, blank lines at full height. "All of it
+missing" is the diagnostic signature — when gaps are merely too tall or too
+short, see #2 below (a tuning problem; this is a total no-op).
+
+Confirm from the log before touching any code:
+
+```bash
+rg -n "TEXT_FILE:|FORMATTING:|TIMING: apply_dialogue" linux-lit-dev.log
+```
+
+- Healthy: `FORMATTING: applied dialogue formatting (N lines)` present and
+  `TIMING: apply_dialogue_formatting` non-zero (~40ms for Hamlet).
+- Broken: **no `FORMATTING:` line at all** and `TIMING: apply_dialogue_formatting
+  0ms` for a multi-thousand-line play — the function early-returned without
+  touching the buffer.
+
+**Root cause.** `state.block_indent_tiers` left over from the PREVIOUSLY loaded
+work. `apply_dialogue_formatting` (`src/app/formatting.rs`) early-returns
+outright when that vec is non-empty — the guard added in `6cdc8490` so
+block-aware verse typography isn't clobbered:
+
+```rust
+if !state.block_indent_tiers.is_empty() { return; }
+```
+
+The off-thread text-file fast path in `display_work_at_with_prepared`
+(`src/app/mod.rs`) set `buffer` + `line_map` but never cleared the field, so
+tiers from a block-aware work survived into the next work. Every branch in
+`rebuild_buffer_text` cleared it; that one path did not.
+
+Reproduction is a **work switch**, not a single load: (1) load a block-aware work
+— one with non-prose `line_mapping.block_type` rows (BH-Barrett has 135 `heading`
++ 20 `blockquote`; LoJ likewise); (2) switch to a text-file play (Ham-Arkangel)
+via the library picker; (3) the play loads through the off-thread fast path with
+the tiers still set. Launching straight into the play formats correctly — which
+is why "it works when I open it directly" is not evidence against it.
+
+**Fix.** `state.clear_block_typography_state()` in the off-thread fast path,
+alongside the `line_map` assignment. The helper resets all three fields keyed by
+buffer-line index: `block_indent_tiers`, `italic_offset_map`,
+`italic_line_spans`. Guarded by `block_typography_reset_tests` in
+`src/app/mod.rs`, which asserts every buffer-fill branch performs the reset.
+
+**General rule.** Any state keyed by **buffer-line index** must be reset by
+**every** buffer-fill path. A guard that reads such state is only as safe as the
+least careful fill branch.
+
+#### Aftermath: pinned tables generated while formatting was broken
+
+Fixing #1 exposes a second, separate symptom — **one row too many at the bottom
+of each column**, the last line clipped by the card edge (sometimes with a
+scrollbar). The formatting is correct; the PAGINATION is stale.
+
+A table generated while dialogue formatting was suppressed measured rows with NO
+speaker gaps (14px) and NO stage-direction gaps (8px), so it packed more rows per
+column than now fit once those gaps came back.
+
+**The layout fingerprint does NOT catch this** — and this is the important
+lesson, because it is the one blind spot in the otherwise-thorough fingerprint
+described in *How changing the font affects pagination*. `layout_fingerprint()`
+hashes font family/size, ascent/descent, char width, window geometry, line
+spacing, margins, columns, and top-spacer height — **nothing about whether
+per-tag `pixels_above_lines` are applied.** A table generated under broken
+formatting still reads as a valid `PAGES: table hit` and is accepted. So: the
+fingerprint protects you from font and geometry drift, but NOT from a table
+recorded while the typography itself was wrong.
+
+Tell: `PAGES: table hit (N pages)` where the generation timestamp falls inside
+the window when formatting was broken.
+
+```bash
+sqlite3 ~/utono/litdb/data/lit.db \
+  "SELECT work_abbrev, layout_fingerprint, page_count, generated_at
+     FROM play_pages_meta
+    WHERE CAST(REPLACE(generated_at,'epoch:','') AS INTEGER) > <epoch>;"
+```
+
+Fix: delete the affected rows from BOTH `play_pages` and `play_pages_meta`
+(matching `work_abbrev` + exact `layout_fingerprint`); the app regenerates on
+next load at that geometry. Back up lit.db first and make sure no instance is
+running (it rewrites config/state on exit).
+
+Concretely on 2026-07-25/26: Ham-Arkangel's `v4 … 1920x1200` table was generated
+at 21:52, one minute before the bug report, and pinned **81** pages. Regenerated
+with formatting restored it is **85** — four more spreads for the same text. It
+was the only affected play table.
+
+Regenerating headlessly has two traps: `page_table_gen_attempted` is a
+**one-shot latch per session** (`generate_and_store`), so resizing AFTER the
+first layout settles never regenerates — resize during startup, before the layout
+settles. And `LIT_GEN_PAGE_TABLE=1` does not override an existing table whose
+fingerprint still matches — delete the rows first, then let it generate. (Same
+latch family as the prose gap in the font section above.)
+
+### 2. Blank lines between speakers/stage directions too tall
+
+**Symptom.** In dialogue-formatted works, the blank lines separating speakers,
+and between dialogue and stage directions, consumed too much vertical space — the
+gap was roughly a full text line tall instead of a compact separator.
+
+**Root cause.** In `apply_dialogue_formatting()`, blank lines were detected by
+`line_types::is_blank()` and then skipped with `continue`. No formatting tag was
+applied, so GTK rendered them at the full font height. Speaker names carried a
+`speaker-gap` tag with `pixels_above_lines(speaker_gap * 5)` and stage directions
+`stage-direction-gap` with `pixels_above_lines(10)`; those pixel gaps stacked on
+top of the full-height blank line, doubling the separation.
+
+**Fix, in four rounds** (the intermediate states are recorded because two of them
+overshot in opposite directions):
+
+1. **Shrink blank lines** — added a `blank-line` tag with `scale(0.25)` and
+   applied it instead of skipping. Registered in the cleanup list so it is
+   removed and recreated when formatting re-applies.
+2. **Remove redundant pixel gaps** — dropped `pixels_above_lines` from both tags.
+   Result: too little space; speakers ran into each other.
+3. **Restore moderate gaps** — `pixels_above_lines(8)` on both `speaker-gap` and
+   `stage-direction-gap`. Combined with the scaled blank line this gives a
+   compact but visible break.
+4. **Reduce the act/scene header gap** — `pixels_above_lines(20)` combined with
+   the blanks above and below created too much whitespace around scene
+   transitions; reduced to 8 to match.
+
+**Final values:** blank lines `scale(0.25)`; speaker names, stage directions, and
+act/scene headers all `pixels_above_lines(8)` (headers also `weight(700)`); the
+`speaker_gap` variable (formerly `line_spacing * 5`) removed.
+
+**Pagination note:** these gaps are exactly the per-tag `pixels_above_lines` the
+fingerprint does not hash, so retuning any of them changes how many rows fit a
+column WITHOUT invalidating stored tables. After changing a spacing value, delete
+and regenerate the affected tables as in the Aftermath section above.
 
 ## Synopsis/gloss overlay anti-clipping
 
