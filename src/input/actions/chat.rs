@@ -775,16 +775,16 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
         let source_markup =
             crate::input::actions::echoes::build_source_header(&seg.cursor_lines, &gctx.speaker);
         let (genre, unit, _units) = crate::gloss::genre_unit(&work.work_type);
-        // Derive genre/unit_label/scene_label EXACTLY as `ask_claude` does, so
+        // Derive genre/unit_label/synopsis_division_label EXACTLY as `ask_claude` does, so
         // the shared `build_qa_answer_message` produces the journal Passage
         // band's message byte-for-byte (titlecase_first, not make_ascii_uppercase;
-        // scene_label(div1,div2), not synopsis_label — the two surfaces stay in
+        // synopsis_division_label(div1,div2), not synopsis_label — the two surfaces stay in
         // sync by construction).
         let unit_label = crate::input::actions::journal::titlecase_first(unit);
-        let scene_label = crate::app::scene_synopsis::scene_label(seg.div1, seg.div2);
+        let synopsis_division_label = crate::app::division_synopsis::synopsis_division_label(seg.div1, seg.div2);
         // The full scene text is the SAME window the journal Passage band sends
         // (anchored on the journal's saved reader position via journal_band).
-        let scene_text = crate::input::actions::journal::current_scene_text(&s);
+        let division_text = crate::input::actions::journal::current_scene_text(&s);
         let chip: String = seg.segments[seg.cursor_index].chars().take(120).collect();
         // Everything build_qa_answer_message needs to (re)build the user message
         // once the question has been rewritten. Captured by value so the answer
@@ -795,8 +795,8 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
             title: work.title.clone(),
             author: work.author.clone(),
             unit_label,
-            scene_label,
-            scene_text,
+            synopsis_division_label,
+            division_text,
         };
         let meta = (
             seg.div1,
@@ -873,8 +873,8 @@ pub(crate) fn submit_chat_prompt(state_rc: &Rc<RefCell<AppState>>) {
                 &msg_ctx.title,
                 &msg_ctx.author,
                 &msg_ctx.unit_label,
-                &msg_ctx.scene_label,
-                &msg_ctx.scene_text,
+                &msg_ctx.synopsis_division_label,
+                &msg_ctx.division_text,
                 &source_markup,
                 &improved,
             );
@@ -995,8 +995,8 @@ struct ChatMsgCtx {
     title: String,
     author: String,
     unit_label: String,
-    scene_label: String,
-    scene_text: String,
+    synopsis_division_label: String,
+    division_text: String,
 }
 
 /// Build the transcript rows. Returns `(rows, cursor_row, row_owner)`:
@@ -2574,7 +2574,7 @@ pub(crate) fn consolidate_chat(state_rc: &Rc<RefCell<AppState>>) {
         }
         let Some(work) = s.current_work.as_ref() else { return };
         let first = &s.chat.exchanges[0];
-        let scene = crate::app::scene_synopsis::synopsis_label(&s, first.div1, first.div2);
+        let scene = crate::app::division_synopsis::synopsis_label(&s, first.div1, first.div2);
         let transcript = consolidate_transcript(&s.chat.exchanges);
         let user_msg = format!(
             "Work: \"{}\" by {}\nThis conversation is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nConversation:\n{}Consolidate this conversation into a single cohesive journal Q&A: one question capturing what the conversation was really asking, one answer synthesizing its insights (drop dead ends, false starts, and meta-chatter). Return the consolidated Q&A in exactly this format:\nQ: <question>\nA: <answer>",
@@ -2942,7 +2942,7 @@ pub(crate) mod chat_revision {
                 return;
             };
             let Some(work) = s.current_work.as_ref() else { return };
-            let scene = crate::app::scene_synopsis::synopsis_label(&s, e.div1, e.div2);
+            let scene = crate::app::division_synopsis::synopsis_label(&s, e.div1, e.div2);
             let context = format!(
                 "Work: \"{}\" by {}\nThis Q&A is filed under a PASSAGE in {}\n\nPassage:\n{}\n\nReturn the revised Q&A in exactly this format:\nQ: <revised question>\nA: <revised answer>",
                 work.title, work.author, scene, e.source_markup,

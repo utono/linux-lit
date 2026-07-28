@@ -479,8 +479,8 @@ pub(crate) fn update_highlight(state: &mut AppState) {
         crate::input::visual::apply_selection_highlight(state);
         state.prev_highlight_line.set(Some(state.current_line));
         repaint_reader_gloss_visible(state);
-        crate::app::scene_synopsis::update_title_bar_scene(state);
-        crate::app::scene_synopsis::update_running_heads(state);
+        crate::app::division_synopsis::update_title_bar_scene(state);
+        crate::app::division_synopsis::update_running_heads(state);
         crate::input::navigation::refresh_persistent_chapter_toast(state);
         return;
     }
@@ -521,8 +521,8 @@ pub(crate) fn update_highlight(state: &mut AppState) {
     state.prev_highlight_line.set(Some(state.current_line));
 
     repaint_reader_gloss_visible(state);
-    crate::app::scene_synopsis::update_title_bar_scene(state);
-    crate::app::scene_synopsis::update_running_heads(state);
+    crate::app::division_synopsis::update_title_bar_scene(state);
+    crate::app::division_synopsis::update_running_heads(state);
     crate::input::navigation::refresh_persistent_chapter_toast(state);
 }
 

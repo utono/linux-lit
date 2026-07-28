@@ -4,8 +4,8 @@ use crate::app::layout::overlay_card_size;
 use crate::app::vocab_popup::{open_vocab_popup, close_vocab_popup, position_vocab_popup};
 use crate::logging::log;
 
-/// Scene-key sentinel for the whole-work synopsis (not a real (div1,div2)
-/// scene). Sorts before all real scenes in the synopsis picker; `whole_work_label`
+/// Division-key sentinel for the whole-work synopsis (not a real (div1,div2)
+/// division). Sorts before all real divisions in the synopsis picker; `whole_work_label`
 /// maps it to "Whole work". Distinct from the journal whole-work key, which lives
 /// in a separate table and disambiguates by its `scope` column.
 pub(crate) const SYNOPSIS_WHOLE_WORK: (i64, i64) = (-2, 0);
@@ -92,14 +92,14 @@ pub fn synopsis_label(state: &AppState, div1: i64, div2: i64) -> String {
     if is_chapter_work(state) {
         chapter_label(div1)
     } else {
-        scene_label_for(state, div1, div2)
+        synopsis_division_label_for(state, div1, div2)
     }
 }
 
 /// The synopsis overlay's running-head pair `(work, position)`: the work's
 /// DISPLAY abbrev (left, e.g. "BH-Barrett" — same as the main card's strip,
 /// which shows `w.abbrev`, not the canonical base) and the terse
-/// scene/chapter label (right, "Chapter 10" / "Act N, Scene M").
+/// division/chapter label (right, "Chapter 10" / "Act N, Scene M").
 pub fn synopsis_head(state: &AppState, div1: i64, div2: i64) -> (String, String) {
     let work = state
         .current_work
@@ -109,7 +109,7 @@ pub fn synopsis_head(state: &AppState, div1: i64, div2: i64) -> (String, String)
     (work, synopsis_label(state, div1, div2))
 }
 
-/// Running-head pair for the reader cursor's scene — the gloss/journal
+/// Running-head pair for the reader cursor's division — the gloss/journal
 /// overlays open at the cursor, so this is their `synopsis_head` equivalent
 /// when no per-gloss (act, scene) context is at hand.
 pub fn cursor_head(state: &AppState) -> (String, String) {
@@ -117,8 +117,8 @@ pub fn cursor_head(state: &AppState) -> (String, String) {
     synopsis_head(state, d1, d2)
 }
 
-/// Get the (div1, div2) of the scene at the current line.
-/// When current_line is on an unmapped buffer line (scene header, separator,
+/// Get the (div1, div2) of the division at the current line.
+/// When current_line is on an unmapped buffer line (division header, separator,
 /// stage direction), walks forward then backward to find the nearest mapped line.
 pub fn current_scene_divs(state: &AppState) -> (i64, i64) {
     let work = match state.current_work.as_ref() {
@@ -155,7 +155,7 @@ pub fn current_scene_divs(state: &AppState) -> (i64, i64) {
 /// reading the DB-backed `Line` metadata — never inferred from buffer text.
 /// Walks forward from `buffer_line` to the first DB-mapped line (the marker /
 /// `=====` chrome lines are unmapped), then backward as a fallback. Returns
-/// `(0, 0)` when nothing is mapped (treated as "Prologue" by `scene_label`).
+/// `(0, 0)` when nothing is mapped (treated as "Prologue" by `synopsis_division_label`).
 pub fn divs_at_buffer_line(state: &AppState, buffer_line: usize) -> (i64, i64) {
     let work = match state.current_work.as_ref() {
         Some(w) => w,
@@ -226,7 +226,7 @@ fn division_indices(work: &crate::db::models::Work, div1: i64, div2: i64) -> Vec
 /// Pure prose-window renderer: collects the work-line indices for the given
 /// division, finds `anchor_work_line`'s position within it (fallback 0), slices
 /// ±`radius` via `window_range`, and renders the selected paragraphs with the
-/// same speaker-interleave logic as `scene_text_for`.
+/// same speaker-interleave logic as `play_scene_text_lean`.
 pub(crate) fn prose_window_text(
     work: &crate::db::models::Work,
     div1: i64,
@@ -295,12 +295,12 @@ pub(crate) fn play_scene_text_lean(
     out
 }
 
-/// Like `scene_text_for`, but sized for a Claude ask. PROSE works return only
+/// Like `play_scene_text_lean`, but sized for a Claude ask. PROSE works return only
 /// the paragraphs around `anchor_work_line` (±`radius`, clamped to the
 /// division). Non-prose works (plays) return the whole scene when it fits
 /// `SCENE_TEXT_MAX_CHARS`, else the `play_scene_text_lean` anchored excerpt —
 /// the tail of long scenes (up to ~10k tokens) is what this bounds.
-pub fn scene_text_windowed(
+pub fn division_text_windowed(
     state: &AppState,
     div1: i64,
     div2: i64,
@@ -349,7 +349,7 @@ pub fn is_first_line_of_scene(state: &AppState) -> bool {
 /// Walk backwards from `buf_line` past unmapped buffer lines (headers,
 /// separators, blanks, stage directions) to find where the scene heading
 /// block begins. Returns the buffer line to use as page_top.
-pub(crate) fn scene_heading_start(state: &AppState, buf_line: usize) -> usize {
+pub(crate) fn division_heading_start(state: &AppState, buf_line: usize) -> usize {
     let mut top = buf_line;
     while top > 0 {
         let prev = top - 1;
@@ -372,8 +372,8 @@ pub fn show_synopsis(state: &mut AppState) {
     // synopsis starts from a clean Definition view.
     state.vocab_popup.view = crate::ui::vocab_popup::VocabView::Definition;
     if let Some(synopsis) = state.synopsis_cache.get(&(div1, div2)) {
-        let scene_label = synopsis_label(state, div1, div2);
-        state.vocab_popup.popup.update_synopsis(&scene_label, synopsis);
+        let synopsis_division_label = synopsis_label(state, div1, div2);
+        state.vocab_popup.popup.update_synopsis(&synopsis_division_label, synopsis);
         state.vocab_popup.popup.show();
         position_vocab_popup(state);
         state.sidebar_mode = SidebarMode::Synopsis;
@@ -494,9 +494,9 @@ pub fn prose_synopsis_card(state: &AppState, card_width: i32) -> Option<crate::u
 ///
 /// Note: `(N,0)` is ambiguous without the work — it is a *Chorus* only when act
 /// N also has numbered scenes; a standalone `(N,0)` past the last act is an
-/// *Epilogue*. Prefer `scene_label_for` when an `AppState` is available so the
+/// *Epilogue*. Prefer `synopsis_division_label_for` when an `AppState` is available so the
 /// epilogue is labelled correctly; this pure form falls back to "Act N, Chorus".
-pub fn scene_label(div1: i64, div2: i64) -> String {
+pub fn synopsis_division_label(div1: i64, div2: i64) -> String {
     if div1 == 0 && div2 == 0 {
         "Prologue".to_string()
     } else if div2 == 0 {
@@ -509,8 +509,8 @@ pub fn scene_label(div1: i64, div2: i64) -> String {
 /// Work-aware scene label that resolves the `(N,0)` ambiguity using the
 /// authoritative `(div1,div2)` metadata: a `(N,0)` whose act N has no numbered
 /// scenes (`div2 > 0`) in the work is an *Epilogue*, not a Chorus. `(0,0)` is
-/// always the Prologue. Falls back to the pure `scene_label` shape otherwise.
-pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
+/// always the Prologue. Falls back to the pure `synopsis_division_label` shape otherwise.
+pub fn synopsis_division_label_for(state: &AppState, div1: i64, div2: i64) -> String {
     if div2 == 0 && div1 > 0 {
         let has_scenes = state
             .current_work
@@ -521,7 +521,7 @@ pub fn scene_label_for(state: &AppState, div1: i64, div2: i64) -> String {
             return "Epilogue".to_string();
         }
     }
-    scene_label(div1, div2)
+    synopsis_division_label(div1, div2)
 }
 
 /// Put the whole-work synopsis key (SYNOPSIS_WHOLE_WORK) first when it exists, otherwise
@@ -990,6 +990,6 @@ mod synopsis_tests {
         }
         // Note: play-equality half is omitted as it would require constructing
         // a full AppState. The prose-shrinking gate (is_prose_work check in
-        // scene_text_windowed) is already covered by code inspection.
+        // division_text_windowed) is already covered by code inspection.
     }
 }

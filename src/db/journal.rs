@@ -699,7 +699,7 @@ pub fn find_passage_citation_ranges(
 /// in a wider one): NEAREST START — the largest `start_line <= line_in_div` wins
 /// (`ORDER BY start_line DESC`), so the most specific containing entry is chosen.
 /// Ties (same start line) break to the NEWEST entry (`id DESC`). Returns the
-/// entry's own `(div1, div2, id)`; the caller builds `JournalBand::Scene(div1,
+/// entry's own `(div1, div2, id)`; the caller builds `JournalBand::Division(div1,
 /// div2)` and lands on `id`.
 pub fn find_journal_page_for_line(
     conn: &Connection,
@@ -866,10 +866,10 @@ mod tests {
         // A work page in the same work must NOT appear in scene queries.
         save_journal_page(&conn, "Ham", -1, -1, "WQ?", "WA.", "claude-opus-4-8", "work", "qa").unwrap();
 
-        let scene_pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
-        assert_eq!(scene_pages.len(), 2);
-        assert_eq!(scene_pages[0].question, "Q1?");
-        assert_eq!(scene_pages[1].question, "Q2?");
+        let division_pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
+        assert_eq!(division_pages.len(), 2);
+        assert_eq!(division_pages[0].question, "Q1?");
+        assert_eq!(division_pages[1].question, "Q2?");
 
         // find_journal_scenes lists only scene-scoped rows.
         let scenes = find_journal_scenes(&conn, "Ham").unwrap();

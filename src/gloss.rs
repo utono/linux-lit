@@ -926,24 +926,24 @@ pub fn build_user_message(
 
 pub fn build_inner_monologue_message(
     ctx: &GlossContext,
-    scene_lines: &[Line],
+    division_lines: &[Line],
 ) -> String {
     // Budget the scene like the journal scene ask: whole scene up to
     // SCENE_TEXT_MAX_CHARS, else a ±VERSE_WINDOW_RADIUS-line excerpt around
     // the highlighted passage. The passage itself is always sent whole in
     // its own section below, so the excerpt only bounds surrounding context.
-    let full = render_scene_lines(scene_lines);
-    let scene_text = if full.len() <= crate::app::scene_synopsis::SCENE_TEXT_MAX_CHARS {
+    let full = render_division_lines(division_lines);
+    let division_text = if full.len() <= crate::app::division_synopsis::SCENE_TEXT_MAX_CHARS {
         full
     } else {
-        let anchor = scene_lines
+        let anchor = division_lines
             .iter()
             .position(|l| l.citation == ctx.start_citation)
-            .unwrap_or(scene_lines.len() / 2);
-        let (lo, hi) = crate::app::scene_synopsis::window_range(
+            .unwrap_or(division_lines.len() / 2);
+        let (lo, hi) = crate::app::division_synopsis::window_range(
             anchor,
-            crate::app::scene_synopsis::VERSE_WINDOW_RADIUS,
-            scene_lines.len(),
+            crate::app::division_synopsis::VERSE_WINDOW_RADIUS,
+            division_lines.len(),
         );
         let mut out = String::new();
         if lo > 0 {
@@ -951,8 +951,8 @@ pub fn build_inner_monologue_message(
                 "[\u{2026} scene continues above \u{2014} excerpt around the highlighted passage \u{2026}]\n",
             );
         }
-        out.push_str(render_scene_lines(&scene_lines[lo..=hi]).trim_end());
-        if hi + 1 < scene_lines.len() {
+        out.push_str(render_division_lines(&division_lines[lo..=hi]).trim_end());
+        if hi + 1 < division_lines.len() {
             out.push_str("\n[\u{2026} scene continues below \u{2026}]");
         }
         out
@@ -963,25 +963,25 @@ pub fn build_inner_monologue_message(
          --- FULL SCENE ---\n{}\n\
          --- HIGHLIGHTED PASSAGE ---\n{}",
         ctx.work_title, ctx.act, ctx.scene, ctx.speaker,
-        scene_text.trim(),
+        division_text.trim(),
         ctx.source_text,
     )
 }
 
 /// Speaker-interleaved scene render used by the inner-monologue message.
-fn render_scene_lines(scene_lines: &[Line]) -> String {
-    let mut scene_text = String::new();
+fn render_division_lines(division_lines: &[Line]) -> String {
+    let mut division_text = String::new();
     let mut last_speaker: Option<&str> = None;
-    for line in scene_lines {
+    for line in division_lines {
         if let Some(ref s) = line.speaker {
             if last_speaker != Some(s.as_str()) {
-                scene_text.push_str(&format!("\n{}\n", s));
+                division_text.push_str(&format!("\n{}\n", s));
                 last_speaker = Some(s);
             }
         }
-        scene_text.push_str(&format!("  {}\n", line.text));
+        division_text.push_str(&format!("  {}\n", line.text));
     }
-    scene_text
+    division_text
 }
 
 pub fn build_inner_monologue_add_message(
@@ -1813,7 +1813,7 @@ mod journal_qa_prompt_tests {
 }
 
 #[cfg(test)]
-mod scene_budget_tests {
+mod division_budget_tests {
     use super::*;
 
     fn line(i: usize, speaker: &str, width: usize) -> Line {

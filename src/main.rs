@@ -253,7 +253,7 @@ fn main() {
                         // Capture the overlay's scene BEFORE the cursor moves so
                         // sync_translation_overlay (end of arm) can detect a
                         // cross-scene move and rebuild rather than just re-highlight.
-                        let ov_scene_before = crate::app::scene_synopsis::current_scene_divs(&s);
+                        let ov_scene_before = crate::app::division_synopsis::current_scene_divs(&s);
 
                         if s.current_line != buffer_line {
                             crate::logging::log_always(&format!(
@@ -270,7 +270,7 @@ fn main() {
                             // Detect scene transition (plays only): when
                             // playback crosses into a new scene, snap the
                             // viewport so the scene header is at the top.
-                            let mut scene_scrolled = false;
+                            let mut division_scrolled = false;
                             if let Some(ref work) = s.current_work {
                                 if !crate::db::line_types::is_prose_work(&work.work_type) {
                                     let wi = s.work_line_for_buffer(buffer_line).unwrap_or(line_idx);
@@ -300,7 +300,7 @@ fn main() {
                                                 &s, buffer_line,
                                             )
                                             .unwrap_or_else(|| {
-                                                crate::input::viewport::scene_header_top_state(
+                                                crate::input::viewport::division_header_top_state(
                                                     &s, buffer_line,
                                                 )
                                             });
@@ -320,7 +320,7 @@ fn main() {
                                                     old_scene, scene, top, buffer_line, s.page_top.line()
                                                 ));
                                                 crate::input::scroll::set_page_instant(&mut s, top);
-                                                scene_scrolled = true;
+                                                division_scrolled = true;
                                             }
                                         }
                                     }
@@ -336,7 +336,7 @@ fn main() {
                             let paragraph_changed = old_para_start.is_some()
                                 && old_para_start != Some(para.start);
 
-                            if paragraph_changed && !scene_scrolled {
+                            if paragraph_changed && !division_scrolled {
                                 crate::logging::log_always(&format!(
                                     "SYNC_PARA_SCROLL: para_start={} page_top={} on_screen={}",
                                     para.start, s.page_top.line(), crate::input::navigation::is_line_on_screen(&s, para.start)
@@ -614,7 +614,7 @@ fn main() {
                                     s.pending_advance_ignore_bl = Some(s.current_line);
                                     s.pending_advance = None;
                                     if s.current_line != next_bl {
-                                        ov_moved = Some(crate::app::scene_synopsis::current_scene_divs(&s));
+                                        ov_moved = Some(crate::app::division_synopsis::current_scene_divs(&s));
                                         s.current_line = next_bl;
                                         crate::input::navigation::update_highlight_and_advance_page(
                                             &mut s,
@@ -630,9 +630,9 @@ fn main() {
 
                         // Mirror the advanced cursor into the translation overlay.
                         // Only when pending_advance moved it; drop the borrow first.
-                        if let Some(scene_before) = ov_moved {
+                        if let Some(division_before) = ov_moved {
                             drop(s);
-                            crate::app::translations::sync_translation_overlay(&state_for_events, scene_before);
+                            crate::app::translations::sync_translation_overlay(&state_for_events, division_before);
                         } else {
                             drop(s);
                         }

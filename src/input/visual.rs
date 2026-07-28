@@ -661,7 +661,7 @@ pub(crate) fn syntax_gloss_for_lines(
         // rendered wider than the gloss/journal overlays, which already size
         // from `overlay_card_size`.
         let (card_width, card_height) = crate::app::layout::overlay_card_size(&s);
-        let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+        let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -822,7 +822,7 @@ fn action_reader_gloss(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
         let card_height = crate::app::layout::overlay_card_height(&s);
-        let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+        let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -1081,7 +1081,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
         let card_height = crate::app::layout::overlay_card_height(&s);
-        let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+        let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -1142,7 +1142,7 @@ fn action_gloss_with_claude(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>
 }
 
 fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
-    let (ctx, scene_lines, tokio_handle, all_glosses, passage_doc) = {
+    let (ctx, division_lines, tokio_handle, all_glosses, passage_doc) = {
         let state = state_rc.borrow();
         let (start, end) = match &state.visual_selection {
             Some(s) => s.range(),
@@ -1165,7 +1165,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
             None => return,
         };
 
-        let scene_lines: Vec<crate::db::models::Line> = work.lines.iter()
+        let division_lines: Vec<crate::db::models::Line> = work.lines.iter()
             .filter(|l| l.div1 == ctx.act && l.div2 == ctx.scene)
             .cloned()
             .collect();
@@ -1183,7 +1183,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         // same single-column way as the reader-gloss loading card + gloss result.
         let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
 
-        (ctx, scene_lines, state.tokio_handle.clone(), all_glosses, passage_doc)
+        (ctx, division_lines, state.tokio_handle.clone(), all_glosses, passage_doc)
     };
 
     exit_visual_mode(&mut state_rc.borrow_mut());
@@ -1196,7 +1196,7 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         let gloss_text = &all_glosses[idx].gloss_text;
         let card_width = s.content_hbox.width();
         let card_height = crate::app::layout::overlay_card_height(&s);
-        let head = crate::app::scene_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
+        let head = crate::app::division_synopsis::synopsis_head(&s, ctx.act, ctx.scene);
         s.gloss_overlay.show_gloss_with_color(&ctx.source_text, gloss_text, card_width, card_height, Some(&s.theme.root_color), &pairs, (&head.0, &head.1));
         s.gloss_overlay.set_position(idx, all_glosses.len());
         s.gloss_overlay.set_citation(&ctx.start_citation, &ctx.end_citation);
@@ -1222,12 +1222,12 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
         s.gloss_overlay.show_glossing(&passage_doc, cw, h, Some(&s.theme.root_color), Some("inner-monologue"));
         s.input_mode = crate::app::InputMode::GlossOverlay;
         s.pending_echo_context = Some(ctx.clone());
-        s.pending_echo_scene_lines = scene_lines.clone();
+        s.pending_echo_scene_lines = division_lines.clone();
         s.pending_echo_passage_doc = passage_doc;
     }
 
     // Build the enriched query: "{SPEAKER} to {ADDRESSEE}: {text}".
-    let query_text = build_echo_query(&ctx, &scene_lines);
+    let query_text = build_echo_query(&ctx, &division_lines);
     // Raw selected text (not the enriched query) for the affect axis.
     let affect_text = ctx.source_text.clone();
     let affect_weight = state_rc.borrow().config.echo_affect_weight;
@@ -1281,10 +1281,10 @@ fn action_inner_monologue(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) 
 
 /// Build the enriched query string for semantic echo search, matching the
 /// "{SPEAKER} to {ADDRESSEE}: {text}" format used during pre-computation.
-fn build_echo_query(ctx: &crate::gloss::GlossContext, scene_lines: &[crate::db::models::Line]) -> String {
+fn build_echo_query(ctx: &crate::gloss::GlossContext, division_lines: &[crate::db::models::Line]) -> String {
     // Addressee: first speaker in the scene different from ctx.speaker.
     let primary_speaker = ctx.speaker.split(',').next().unwrap_or("").trim();
-    let addressee = scene_lines
+    let addressee = division_lines
         .iter()
         .filter_map(|l| l.speaker.as_deref())
         .find(|sp| *sp != primary_speaker)
@@ -1320,13 +1320,13 @@ fn run_pending_inner_monologue_blocking(
     tokio_handle: &tokio::runtime::Handle,
     selected: Option<crate::db::echoes::EchoCandidate>,
 ) {
-    let (ctx, scene_lines, model, titles) = {
+    let (ctx, division_lines, model, titles) = {
         let mut s = state_rc.borrow_mut();
         let ctx = match s.pending_echo_context.take() {
             Some(c) => c,
             None => return,
         };
-        let scene_lines = std::mem::take(&mut s.pending_echo_scene_lines);
+        let division_lines = std::mem::take(&mut s.pending_echo_scene_lines);
         // Re-show the passage on the loading card (the echo picker hid the
         // overlay, or we skipped it) so generation reads as the reader-gloss
         // loading card, not a bare "Glossing…" label.
@@ -1340,10 +1340,10 @@ fn run_pending_inner_monologue_blocking(
         }
         s.input_mode = crate::app::InputMode::GlossOverlay;
         let titles = crate::db::queries::load_work_titles_or_default();
-        (ctx, scene_lines, s.config.claude_model.clone(), titles)
+        (ctx, division_lines, s.config.claude_model.clone(), titles)
     };
 
-    let mut user_msg = crate::gloss::build_inner_monologue_message(&ctx, &scene_lines);
+    let mut user_msg = crate::gloss::build_inner_monologue_message(&ctx, &division_lines);
     if let Some(ref echo) = selected {
         let title = titles.get(&echo.work_abbrev).cloned().unwrap_or_else(|| echo.work_abbrev.clone());
         user_msg.push_str(&format!(

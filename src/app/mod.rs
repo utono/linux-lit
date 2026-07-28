@@ -7,8 +7,8 @@ pub mod text_prep;
 use self::text_prep::{PreparedText, SnapshotOrPrep, prepare_text_only, prepare_text_for_display};
 pub mod formatting;
 use self::formatting::{apply_dialogue_formatting, apply_authorship_formatting, apply_scansion_marks};
-pub mod scene_synopsis;
-use self::scene_synopsis::{is_first_line_of_scene, scene_heading_start};
+pub mod division_synopsis;
+use self::division_synopsis::{is_first_line_of_scene, division_heading_start};
 pub mod translations;
 pub mod layout;
 use self::layout::{apply_tiled_mode, apply_card_sizing, line_number_gutter_geometry, overlay_card_size};
@@ -220,11 +220,11 @@ pub enum JournalPromptMode {
 }
 
 /// Which "band" of the journal is currently shown. The Work band holds
-/// whole-work pages (scope='work'); a Scene band holds one (div1,div2)'s pages.
+/// whole-work pages (scope='work'); a Division band holds one (div1,div2)'s pages.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalBand {
     Work,
-    Scene(i64, i64),
+    Division(i64, i64),
     Passage { div1: i64, div2: i64, start: String, end: String },
     /// Author/corpus band: holds scope='author' pages keyed by the author name.
     Author(String),
@@ -342,7 +342,7 @@ pub struct AppState {
     /// band). `running_head_work` is the work abbrev (left); `running_head_scene`
     /// is the position label (right) — act/scene for plays, chapter for prose.
     /// Both are refreshed on every cursor move and on work load via
-    /// `scene_synopsis::update_running_heads`, on ALL works. Blank only when no
+    /// `division_synopsis::update_running_heads`, on ALL works. Blank only when no
     /// work is loaded. Replaces the persistent bottom-center position toast.
     pub running_head_work: gtk4::Label,
     pub running_head_scene: gtk4::Label,
@@ -2301,7 +2301,7 @@ pub fn build_window(
         journal_move_picker,
         journal_term_input,
         recent_qa_picker,
-        journal_band: JournalBand::Scene(0, 0),
+        journal_band: JournalBand::Division(0, 0),
         journal: crate::input::actions::journal::JournalState {
             pages: Vec::new(),
             page_index: 0,
@@ -2918,7 +2918,7 @@ pub fn build_window(
                                             crate::input::actions::gloss::toggle_overlay(&st)
                                         }
                                         "synopsis" => {
-                                            crate::app::scene_synopsis::show_synopsis_overlay(&st)
+                                            crate::app::division_synopsis::show_synopsis_overlay(&st)
                                         }
                                         _ => {}
                                     }
@@ -4199,12 +4199,12 @@ pub fn display_work_at_with_prepared(
     // first-dialogue defaults below by taking the saved-position snap branch.
     // On an unresolvable scene, logs a clear error and leaves the cursor where it
     // was (the driver script fails loudly on the missing log line).
-    let mut scene_override = false;
+    let mut division_override = false;
     if target_line_id.is_none() {
-        if let Ok(scene_spec) = std::env::var("LIT_START_SCENE") {
-            let scene_spec = scene_spec.trim();
-            if !scene_spec.is_empty() {
-                match parse_scene_spec(scene_spec) {
+        if let Ok(division_spec) = std::env::var("LIT_START_SCENE") {
+            let division_spec = division_spec.trim();
+            if !division_spec.is_empty() {
+                match parse_scene_spec(division_spec) {
                     Some((div1, div2)) => {
                         let resolved = state.current_work.as_ref().and_then(|w| {
                             resolve_scene_start_line(&w.lines, state.line_map.as_ref(), div1, div2)
@@ -4219,15 +4219,15 @@ pub fn display_work_at_with_prepared(
                                 }
                                 crate::logging::log(&format!(
                                     "STARTUP: LIT_START_SCENE={} resolved to buffer line {}",
-                                    scene_spec, line
+                                    division_spec, line
                                 ));
                                 state.current_line = line;
-                                scene_override = true;
+                                division_override = true;
                             }
                             None => {
                                 crate::logging::log(&format!(
                                     "STARTUP: ERROR LIT_START_SCENE={} unresolvable — no ({},{}) scene in this work",
-                                    scene_spec, div1, div2
+                                    division_spec, div1, div2
                                 ));
                             }
                         }
@@ -4235,7 +4235,7 @@ pub fn display_work_at_with_prepared(
                     None => {
                         crate::logging::log(&format!(
                             "STARTUP: ERROR LIT_START_SCENE='{}' malformed (want div1.div2)",
-                            scene_spec
+                            division_spec
                         ));
                     }
                 }
@@ -4246,7 +4246,7 @@ pub fn display_work_at_with_prepared(
     // Part F: when resuming (no explicit concordance target), prefer the
     // citation-stable line_mapping_id over the legacy raw buffer index, so a
     // lit.db re-import / repagination doesn't land on the wrong speech.
-    if !scene_override && target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
+    if !division_override && target_line_id.is_none() && std::env::var("LIT_START_POS").is_err() {
         if let Some(work) = &state.current_work {
             if let Some(&saved_id) = state.config.work_position_ids.get(&work.abbrev) {
                 if let Some(work_idx) = work.lines.iter().position(|l| l.id == saved_id) {
@@ -4362,7 +4362,7 @@ pub fn display_work_at_with_prepared(
         // If cursor is on a scene boundary, scroll back to show the
         // scene/act heading lines above the first dialogue line.
         if !state.synopsis_cache.is_empty() && is_first_line_of_scene(state) {
-            let top = scene_heading_start(state, state.current_line);
+            let top = division_heading_start(state, state.current_line);
             if top < state.page_top.line() {
                 // Backing up to a DIFFERENT line: the offset computed above
                 // belonged to the old top and would scroll into the wrong row
@@ -4450,7 +4450,7 @@ pub fn display_work_at_with_prepared(
 
     // Populate the running-head strip for the freshly-loaded work (both labels).
     // Cursor-move updates keep it fresh afterward; this covers the first paint.
-    crate::app::scene_synopsis::update_running_heads(state);
+    crate::app::division_synopsis::update_running_heads(state);
 
     // Karaoke: tint the phrase that will begin to play (the resume line's
     // start time) so it's visible before playback starts.

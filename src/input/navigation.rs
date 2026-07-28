@@ -32,7 +32,7 @@ pub use super::highlight::{
 use super::viewport::{
     last_fully_visible_line, next_page_top, prev_page_top, NextPage,
     back_up_for_speaker_state, page_turn_top_state,
-    scene_header_top_state,
+    division_header_top_state,
     is_dialogue_line,
     next_dialogue_line, prev_dialogue_line, buffer_line_text,
     next_dialogue_from, is_line_fully_visible, lines_per_page,
@@ -118,8 +118,8 @@ pub(crate) enum PageChangeReason {
     JumpToBookmark,
     /// User jumped to a chapter via [ ] keys.
     Chapter,
-    /// User jumped to a scene via 2 / 3 keys (plays).
-    Scene,
+    /// User jumped to a division via 2 / 3 keys.
+    Division,
     /// User jumped to a vocab match.
     Vocab,
     /// A segment bind that SEEKS audio — `q`/`J`/`'`/`Down` forward,
@@ -425,9 +425,9 @@ fn canonical_page_top_live(state: &AppState, target: usize) -> usize {
     // section break immediately above (e.g. a match mid-scene). That speaker line
     // sits mid-page, so the walk's first spread "contains" the target and returns
     // a too-late top (the bug: match line 4043 -> speaker 4042 instead of the
-    // real page boundary 4032). scene_header_top backs all the way to the scene's
+    // real page boundary 4032). division_header_top backs all the way to the scene's
     // section-break line, a true anchor that the forward chain passes through.
-    let mut top = scene_header_top_state(state, target).min(target);
+    let mut top = division_header_top_state(state, target).min(target);
     let two_col = state.column_count() == 2;
     let mut guard = 0;
     loop {
@@ -762,7 +762,7 @@ pub fn toggle_column_layout(state: &mut AppState) {
 /// marker, with no earlier dialogue of that scene on the spread), return the
 /// right column's start line so `x` can turn the page by moving that scene to
 /// the top of the left column. Returns `None` otherwise (normal page turn).
-fn scene_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
+fn division_snap_top(state: &AppState, line_count: usize) -> Option<usize> {
     use crate::db::line_types;
     if state.column_count() != 2 {
         return None;
@@ -1131,7 +1131,7 @@ pub fn page_forward(state: &mut AppState) {
 
     // Scene-aware turn: if the right column opens a new scene, move that scene
     // to the top of the left column instead of paging by viewport height.
-    if let Some(snap_top) = scene_snap_top(state, line_count) {
+    if let Some(snap_top) = division_snap_top(state, line_count) {
         // Near the document end the scene start may sit past the scroll ceiling,
         // so set_page would clamp it back below page_top_line — leaving the view
         // stuck on the same spread (page_top never advances, x oscillates).
@@ -2133,7 +2133,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
                 // so the scene begins the LEFT column — even if the cursor line
                 // is already on screen. Otherwise keep the cheap highlight-only
                 // path when the cursor is fully visible.
-                if scene_starts_in_right_column(state, top) {
+                if division_starts_in_right_column(state, top) {
                     set_page_instant(state, top);
                 } else if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
@@ -2143,7 +2143,7 @@ pub fn jump_to_prev_scene(state: &mut AppState) {
                 ensure_cursor_visible_ereader(state, cursor_idx);
             }
         }
-        after_page_change(state, PageChangeReason::Scene);
+        after_page_change(state, PageChangeReason::Division);
     }
 }
 
@@ -2172,21 +2172,21 @@ pub(crate) fn ensure_cursor_visible_ereader(state: &mut AppState, cursor_idx: us
     }
 }
 
-/// In two-column mode, return true when the scene whose page-top is `scene_top`
-/// would currently render in the RIGHT column — i.e. `scene_top` is not already
+/// In two-column mode, return true when the scene whose page-top is `division_top`
+/// would currently render in the RIGHT column — i.e. `division_top` is not already
 /// the left-column top of the current page. Single-column always returns false
 /// (no left/right distinction). Used to force a re-pagination so a scene jumped
 /// to by `2`/`3` starts the left column instead of the right.
-fn scene_starts_in_right_column(state: &AppState, scene_top: usize) -> bool {
+fn division_starts_in_right_column(state: &AppState, division_top: usize) -> bool {
     if state.column_count() != 2 {
         return false;
     }
-    if scene_top == state.page_top.line() {
+    if division_top == state.page_top.line() {
         return false;
     }
     let cs = column_split(state, state.page_top.line());
     // The scene's header sits in the right column of the current page.
-    scene_top >= cs.split && scene_top <= cs.page_end
+    division_top >= cs.split && division_top <= cs.page_end
 }
 
 /// Given a scene/act marker line, return the line that should sit at the page
@@ -2585,7 +2585,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
                 // In two-column mode, if the new scene would render in the RIGHT
                 // column, re-page so it begins the LEFT column even when the
                 // cursor line is already on screen (see jump_to_prev_scene).
-                if scene_starts_in_right_column(state, marker_idx) {
+                if division_starts_in_right_column(state, marker_idx) {
                     set_page_instant(state, marker_idx);
                 } else if is_line_fully_visible(state, cursor_idx) {
                     update_highlight_only(state);
@@ -2595,7 +2595,7 @@ pub fn jump_to_next_scene(state: &mut AppState) {
                 ensure_cursor_visible_ereader(state, cursor_idx);
             }
         }
-        after_page_change(state, PageChangeReason::Scene);
+        after_page_change(state, PageChangeReason::Division);
     }
 }
 
@@ -2658,8 +2658,8 @@ pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
 
     // Plays/verse: authoritative act/scene label, never "Chapter N of M".
     if !state.is_prose() {
-        let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
-        let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
+        let (div1, div2) = crate::app::division_synopsis::current_scene_divs(state);
+        let label = crate::app::division_synopsis::synopsis_division_label_for(state, div1, div2);
         return format!("{} — {}", abbrev, label);
     }
 
@@ -2676,8 +2676,8 @@ pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
 
     // Prose without chapter markers: scene-label fallback.
     if chapter_lines.is_empty() {
-        let (div1, div2) = crate::app::scene_synopsis::current_scene_divs(state);
-        let label = crate::app::scene_synopsis::scene_label_for(state, div1, div2);
+        let (div1, div2) = crate::app::division_synopsis::current_scene_divs(state);
+        let label = crate::app::division_synopsis::synopsis_division_label_for(state, div1, div2);
         return format!("{} — {}", abbrev, label);
     }
 
@@ -2696,7 +2696,7 @@ pub(crate) fn compute_current_chapter_text(state: &AppState) -> String {
 
     // Chapter number and total come from the authoritative div1 metadata,
     // never from counting heading lines in the buffer.
-    let (div1, _) = crate::app::scene_synopsis::current_scene_divs(state);
+    let (div1, _) = crate::app::division_synopsis::current_scene_divs(state);
     let max_div1 = work.lines.iter().map(|l| l.div1).max().unwrap_or(0);
 
     // The displayed heading text still comes from the nearest marker line at
@@ -4308,7 +4308,7 @@ mod page_turn_tests {
     }
 
     /// Find all scene marker indices in a play.
-    fn scene_marker_indices(lines: &[String]) -> Vec<usize> {
+    fn division_marker_indices(lines: &[String]) -> Vec<usize> {
         lines.iter().enumerate()
             .filter(|(_, l)| line_types::is_act_scene_marker(l.trim()))
             .map(|(i, _)| i)
@@ -4395,7 +4395,7 @@ mod page_turn_tests {
             let lines = load_play_lines(path);
             let line_count = lines.len();
             if line_count == 0 { continue; }
-            let markers = scene_marker_indices(&lines);
+            let markers = division_marker_indices(&lines);
             if markers.len() < 3 { continue; }
             let first = match next_dialogue(&lines, 0) {
                 Some(d) => d,
@@ -4431,7 +4431,7 @@ mod page_turn_tests {
         let lines = load_troilus_lines();
         let page_size = 30;
         // Find chapter-like markers (act/scene markers serve as chapter boundaries)
-        let markers = scene_marker_indices(&lines);
+        let markers = division_marker_indices(&lines);
         assert!(markers.len() >= 3, "Expected at least 3 scene markers");
         // Page forward to build up a position
         let first = next_dialogue(&lines, 0).unwrap();
@@ -4464,7 +4464,7 @@ mod page_turn_tests {
     fn test_x_x_x_scene_jump_y_y_sequence() {
         let lines = load_troilus_lines();
         let page_size = 30;
-        let markers = scene_marker_indices(&lines);
+        let markers = division_marker_indices(&lines);
         assert!(markers.len() >= 3);
         let first = next_dialogue(&lines, 0).unwrap();
         let mut page_top = back_up_for_speaker(&lines, first);
@@ -4501,7 +4501,7 @@ mod page_turn_tests {
     fn test_chained_scene_jumps_only_last_origin_survives() {
         let lines = load_troilus_lines();
         let page_size = 30;
-        let markers = scene_marker_indices(&lines);
+        let markers = division_marker_indices(&lines);
         assert!(markers.len() >= 5);
         let first = next_dialogue(&lines, 0).unwrap();
         let mut page_top = back_up_for_speaker(&lines, first);
@@ -4614,7 +4614,7 @@ mod after_page_change_tests {
         assert!(PageChangeReason::JumpToLine.should_seek());
         assert!(PageChangeReason::JumpToBookmark.should_seek());
         assert!(PageChangeReason::Chapter.should_seek());
-        assert!(PageChangeReason::Scene.should_seek());
+        assert!(PageChangeReason::Division.should_seek());
     }
 
     #[test]

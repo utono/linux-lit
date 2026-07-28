@@ -13,7 +13,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+f", "corpus_search: all Q&As / glosses"),
     ("Ctrl+a", "begin_ask: new Q&A in this band"),
     ("Ctrl+Tab", "toggle focus: ask card ↔ journal card (2-col)"),
-    ("Alt+s", "JournalBand::Scene (cursor scene)"),
+    ("Alt+s", "JournalBand::Division (cursor scene)"),
     ("Alt+w", "JournalBand::Work"),
     ("Alt+a", "JournalBand::Author (corpus)"),
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),

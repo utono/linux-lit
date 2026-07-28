@@ -50,8 +50,8 @@ impl GlossPickerFilter {
 /// listed before scopes existed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum JournalPickerScope {
-    /// Entries anchored to the cursor's (div1, div2) band — scene + passage.
-    Scene,
+    /// Entries anchored to the cursor's (div1, div2) band — division + passage.
+    Division,
     /// Every entry for the current work. The default, and the pre-scope
     /// behavior.
     #[default]
@@ -64,9 +64,9 @@ pub(crate) enum JournalPickerScope {
 impl JournalPickerScope {
     pub(crate) fn next(self) -> Self {
         match self {
-            JournalPickerScope::Scene => JournalPickerScope::Work,
+            JournalPickerScope::Division => JournalPickerScope::Work,
             JournalPickerScope::Work => JournalPickerScope::Author,
-            JournalPickerScope::Author => JournalPickerScope::Scene,
+            JournalPickerScope::Author => JournalPickerScope::Division,
         }
     }
 
@@ -96,7 +96,7 @@ impl JournalPickerScope {
             }
         };
         match self {
-            JournalPickerScope::Scene => {
+            JournalPickerScope::Division => {
                 with_work(crate::gloss::genre_unit(work_type).1.to_uppercase())
             }
             JournalPickerScope::Work => with_work("WORK".to_string()),
@@ -1138,14 +1138,14 @@ pub(crate) fn author_surname(author: &str) -> &str {
 /// Plays keep `act.scene` numerals, where both numbers are meaningful.
 ///
 /// `div1 <= 0` on a prose work is the FRONT MATTER, not a chapter zero: it
-/// renders "Preface", the same convention `scene_synopsis::chapter_label`
+/// renders "Preface", the same convention `division_synopsis::chapter_label`
 /// already uses for the synopsis overlay. Six live entries have `div1 = 0`
 /// and would otherwise read "Ch. 0".
 ///
 /// Takes the ROW'S OWN `work_type`, not the loaded work's: author scope is
 /// cross-work, so a play row and a novel row appear in the same list and must
 /// be labelled by their own kind. That is why this is a pure string predicate
-/// rather than `scene_synopsis::is_chapter_work`, which reads `AppState`.
+/// rather than `division_synopsis::is_chapter_work`, which reads `AppState`.
 ///
 /// The noun comes from `gloss::genre_unit`, the SAME source the picker header
 /// uses (`JournalPickerScope::label`), so a row and the title above it can
@@ -1169,7 +1169,7 @@ pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
         return format!("{div1}.{div2}");
     }
     // Division 0 on a one-level work is the FRONT MATTER, not a chapter zero —
-    // the same convention `scene_synopsis::chapter_label` already uses.
+    // the same convention `division_synopsis::chapter_label` already uses.
     if div1 == 0 {
         return "Preface".to_string();
     }
@@ -1270,9 +1270,9 @@ mod tests {
     #[test]
     fn journal_picker_scope_cycles_scene_work_author() {
         use super::JournalPickerScope as S;
-        assert_eq!(S::Scene.next(), S::Work);
+        assert_eq!(S::Division.next(), S::Work);
         assert_eq!(S::Work.next(), S::Author);
-        assert_eq!(S::Author.next(), S::Scene);
+        assert_eq!(S::Author.next(), S::Division);
     }
 
     /// The header names the tightest scope with the WORK'S OWN division noun,
@@ -1282,18 +1282,18 @@ mod tests {
     fn journal_picker_scope_label_uses_the_works_own_noun() {
         use super::JournalPickerScope as S;
         // Prose: the screenshot case — Bleak House is chaptered, not scened.
-        assert_eq!(S::Scene.label("prose", "BH-Barrett"), "CHAPTER — BH-Barrett");
-        assert_eq!(S::Scene.label("prose_book", "BH-Barrett"), "CHAPTER — BH-Barrett");
+        assert_eq!(S::Division.label("prose", "BH-Barrett"), "CHAPTER — BH-Barrett");
+        assert_eq!(S::Division.label("prose_book", "BH-Barrett"), "CHAPTER — BH-Barrett");
         // Plays keep SCENE, the pre-change noun.
-        assert_eq!(S::Scene.label("play", "Cym"), "SCENE — Cym");
+        assert_eq!(S::Division.label("play", "Cym"), "SCENE — Cym");
         // Other genres follow genre_unit rather than a prose/verse binary.
-        assert_eq!(S::Scene.label("epic", "Il"), "BOOK — Il");
-        assert_eq!(S::Scene.label("sonnet_sequence", "Son"), "SONNET — Son");
+        assert_eq!(S::Division.label("epic", "Il"), "BOOK — Il");
+        assert_eq!(S::Division.label("sonnet_sequence", "Son"), "SONNET — Son");
         // Unknown/blank work_type degrades to the neutral noun, never a
         // wrong-but-specific one.
-        assert_eq!(S::Scene.label("", "X"), "SECTION — X");
+        assert_eq!(S::Division.label("", "X"), "SECTION — X");
         // No work loaded: the bare noun, never a dangling dash.
-        assert_eq!(S::Scene.label("prose", ""), "CHAPTER");
+        assert_eq!(S::Division.label("prose", ""), "CHAPTER");
 
         // Work scope names the work, whose column the rows omit in this scope.
         assert_eq!(S::Work.label("prose", "BH-Barrett"), "WORK — BH-Barrett");
