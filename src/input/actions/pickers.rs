@@ -42,6 +42,44 @@ impl GlossPickerFilter {
     }
 }
 
+/// Which slice of the journal the Q&A picker lists. Cycled in place with
+/// Alt+t while the picker is open (the same bind the gloss picker uses for
+/// its type filter). Tightest -> widest, wrapping.
+///
+/// NOT persisted: the picker always opens on `Work`, which is what it
+/// listed before scopes existed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum JournalPickerScope {
+    /// Entries anchored to the cursor's (div1, div2) band — scene + passage.
+    Scene,
+    /// Every entry for the current work. The default, and the pre-scope
+    /// behavior.
+    #[default]
+    Work,
+    /// Every entry from every work by this work's author, plus that
+    /// author's corpus notes.
+    Author,
+}
+
+impl JournalPickerScope {
+    pub(crate) fn next(self) -> Self {
+        match self {
+            JournalPickerScope::Scene => JournalPickerScope::Work,
+            JournalPickerScope::Work => JournalPickerScope::Author,
+            JournalPickerScope::Author => JournalPickerScope::Scene,
+        }
+    }
+
+    /// Suffix for the picker header, so the active scope is always visible.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            JournalPickerScope::Scene => "SCENE",
+            JournalPickerScope::Work => "WORK",
+            JournalPickerScope::Author => "AUTHOR",
+        }
+    }
+}
+
 /// Load the selected work in the library picker, hide the picker, and
 /// display the new work. Spawns an async task to query the DB.
 pub(crate) fn load_selected_work(
@@ -1078,5 +1116,21 @@ mod tests {
         assert!(seen.contains(&"teacher-generic"));
         assert!(seen.contains(&"inner-monologue"));
         assert_eq!(seen.len(), 4, "one entry per type, no duplicates: {seen:?}");
+    }
+
+    /// Tightest -> widest, wrapping. Mirrors GlossPickerFilter's cycle test.
+    #[test]
+    fn journal_picker_scope_cycles_scene_work_author() {
+        use super::JournalPickerScope as S;
+        assert_eq!(S::Scene.next(), S::Work);
+        assert_eq!(S::Work.next(), S::Author);
+        assert_eq!(S::Author.next(), S::Scene);
+    }
+
+    /// The picker always OPENS on Work — today's behavior, so existing
+    /// muscle memory is untouched.
+    #[test]
+    fn journal_picker_scope_defaults_to_work() {
+        assert_eq!(super::JournalPickerScope::default(), super::JournalPickerScope::Work);
     }
 }

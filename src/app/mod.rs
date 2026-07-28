@@ -610,6 +610,10 @@ pub struct AppState {
     /// inner-monologue -> reader-gloss while the picker is open; reset to the
     /// default (teacher-generic) each time the picker is opened.
     pub gloss_picker_filter: crate::input::actions::pickers::GlossPickerFilter,
+    /// Journal-picker scope filter, cycled by Alt+t through scene -> work ->
+    /// author while the picker is open; reset to the default (work) each time
+    /// the picker is opened. NOT persisted across sessions.
+    pub journal_picker_scope: crate::input::actions::pickers::JournalPickerScope,
     /// Which add/edit prompt the stacked gloss input card will submit as.
     pub gloss_prompt_mode: GlossPromptMode,
     pub delete_confirm_container: Option<glib::WeakRef<gtk4::Box>>,
@@ -2332,6 +2336,7 @@ pub fn build_window(
         settings_return_mode: InputMode::Reader,
         keybinds_return_mode: InputMode::Reader,
         gloss_picker_filter: crate::input::actions::pickers::GlossPickerFilter::default(),
+        journal_picker_scope: crate::input::actions::pickers::JournalPickerScope::default(),
         gloss_prompt_mode: GlossPromptMode::Add,
         delete_confirm_container: None,
         delete_confirm_overlay: None,
