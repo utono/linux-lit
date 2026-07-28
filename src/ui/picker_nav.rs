@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Label, ListBox, Orientation, ScrolledWindow};
+use gtk4::{Align, Box as GtkBox, Label, ListBox, Orientation, ScrolledWindow, SizeGroup, SizeGroupMode};
 
 /// Top margin of a top-anchored (`valign: Start`) picker card.
 pub(crate) const PICKER_TOP_MARGIN: i32 = 40;
@@ -193,6 +193,73 @@ pub(crate) fn two_label_row(primary: &str, detail: &str) -> GtkBox {
         .build();
     hbox.append(&text_label);
     hbox.append(&detail_label);
+    hbox
+}
+
+/// Column width groups for the five-column picker rows. One set per picker
+/// instance, shared across all its rows — that is what makes the columns line
+/// up: every label in a group takes the width of the widest member.
+pub(crate) struct PickerColumnGroups {
+    author: SizeGroup,
+    work: SizeGroup,
+    div: SizeGroup,
+    kind: SizeGroup,
+}
+
+impl PickerColumnGroups {
+    pub(crate) fn new() -> Self {
+        let mk = || SizeGroup::new(SizeGroupMode::Horizontal);
+        Self { author: mk(), work: mk(), div: mk(), kind: mk() }
+    }
+}
+
+/// `author · work · tag … div kind` with the four fixed columns width-matched
+/// across every row via `groups`. The TAG column is the only elastic one: it
+/// hexpands and ellipsizes, so a long identifying line shortens rather than
+/// pushing the division and type off the right edge.
+pub(crate) fn five_column_row(
+    groups: &PickerColumnGroups,
+    author: &str,
+    work: &str,
+    tag: &str,
+    div: &str,
+    kind: &str,
+) -> GtkBox {
+    let fixed = |text: &str, group: &SizeGroup, css: &str| {
+        let l = Label::builder()
+            .label(text)
+            .halign(Align::Start)
+            .xalign(0.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .build();
+        l.add_css_class(css);
+        group.add_widget(&l);
+        l
+    };
+
+    let author_l = fixed(author, &groups.author, "picker-item-detail");
+    let work_l = fixed(work, &groups.work, "picker-item-detail");
+
+    let tag_l = Label::builder()
+        .label(tag)
+        .halign(Align::Start)
+        .xalign(0.0)
+        .hexpand(true)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .build();
+
+    let div_l = fixed(div, &groups.div, "picker-item-detail");
+    let kind_l = fixed(kind, &groups.kind, "picker-item-detail");
+
+    let hbox = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(12)
+        .build();
+    hbox.append(&author_l);
+    hbox.append(&work_l);
+    hbox.append(&tag_l);
+    hbox.append(&div_l);
+    hbox.append(&kind_l);
     hbox
 }
 
