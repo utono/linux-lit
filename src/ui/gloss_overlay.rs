@@ -385,9 +385,15 @@ impl GlossOverlay {
         // Inset-panel DrawingArea + its color cell (shared helper, audit #52). The
         // draw_func is wired inside; the caller sets it as the Overlay main child
         // and adds panel_drawing.queue_draw() to its scroll-repaint closure below.
-        // body_indent 0: the gloss view's left_margin IS the column edge (the
-        // explication's +12 body indent is a per-tag margin, not the view's).
-        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(&gloss_view, 0);
+        // The gloss now folds QUOTE_BODY_INDENT into the view's left_margin
+        // (set_prose_margins, adopting the journal's rule), so the panel must
+        // exclude it to anchor at the COLUMN edge — otherwise the panel renders
+        // 12px narrower with its left edge inboard. Same argument as the
+        // journal's `attach_overlay_panel(&view, JOURNAL_BODY_INDENT)`.
+        let (panel_drawing, panel_color) = crate::ui::attach_overlay_panel(
+            &gloss_view,
+            crate::ui::gloss_render::QUOTE_BODY_INDENT,
+        );
         let vim_block_line: crate::ui::VimBlankCursor = Rc::new(RefCell::new(None));
         let bar_x: Rc<RefCell<i32>> = Rc::new(RefCell::new((column_width as i32) / 8));
         let line_numbers: Rc<RefCell<Vec<LineNumber>>> = Rc::new(RefCell::new(Vec::new()));
@@ -1757,12 +1763,13 @@ impl GlossOverlay {
         // A fresh gloss render closes any open add/edit ask card and clears its
         // focus highlight (e.g. after an add/edit completes or n/p navigates).
         self.ask_host.card().close();
-        // Wide side margins (card/5, uniform for all work types) keep the gloss
-        // column at a comfortable reading measure. Anchor to the actual card
-        // width (the overlay is full-screen), NOT the fixed column_width (1050)
-        // — otherwise on a wide card the margin stays tiny and the text runs
-        // nearly edge to edge.
-        let left = crate::ui::prose_column_margin(card_width);
+        // Side margins follow the JOURNAL's rule (card/8 on prose works, card/5
+        // on verse/plays — see `column_side_margin`) so a gloss and a journal
+        // answer occupy the same column on the same card. Anchor to the actual
+        // card width (the overlay is full-screen), NOT the fixed column_width
+        // (1050) — otherwise on a wide card the margin stays tiny and the text
+        // runs nearly edge to edge.
+        let left = self.column_side_margin(card_width);
         self.set_prose_margins(left);
         // The gloss card carries the same running head as the synopsis view
         // (work abbrev left, position right). AFTER set_prose_margins, which
@@ -1822,17 +1829,30 @@ impl GlossOverlay {
         glib::idle_add_local_once(move || bar.queue_draw());
     }
 
-    /// "Glossing…" loading card that shows the passage being glossed, rendered
-    /// single-column with the SAME `<speaker>`/`<segment>` formatting the gloss
-    /// result uses for the original passage. `passage_doc` is the
-    /// `<speaker>`/`<segment>` markup (see `build_source_header`). The "Glossing…"
-    /// status sits as a header above the passage; the result simply replaces this
-    /// view in place when it arrives, so the passage looks identical before/after.
-    /// Shared prose-geometry prefix of the gloss show paths (audit #64 rider):
-    /// title indent + body margins for a prose gloss page.
+    /// The gloss column's side inset — the JOURNAL's rule, so the two overlays
+    /// render the same measure on the same card. Prose works get the MAIN
+    /// reading card's tighter `prose_reading_card_margin` (card/8) so the
+    /// overlay column matches the 1-col prose layout; verse/plays keep the
+    /// uniform overlay `prose_column_margin` (card/5), where card/8 of a wide
+    /// play card would overshoot a readable measure. Mirrors
+    /// `JournalOverlay::size_card`; `prose_source` is the same
+    /// `is_prose_work(work_type)` the journal's `prose_reading` carries.
+    fn column_side_margin(&self, card_width: i32) -> i32 {
+        if self.prose_source.get() {
+            crate::ui::prose_reading_card_margin(card_width)
+        } else {
+            crate::ui::prose_column_margin(card_width)
+        }
+    }
+
+    /// `left` is the COLUMN edge (where the accent bar sits). The body is
+    /// indented one `QUOTE_BODY_INDENT` past it and the right margin stays at
+    /// the column edge — the journal's asymmetry (`size_card`), so a gloss
+    /// explication and a journal answer share a left edge and a column width.
     fn set_prose_margins(&self, left: i32) {
         self.title.set_margin_start(left);
-        self.gloss_view.set_left_margin(left);
+        self.gloss_view
+            .set_left_margin(left + crate::ui::gloss_render::QUOTE_BODY_INDENT);
         self.gloss_view.set_right_margin(left);
         self.gloss_view.set_top_margin(32);
         self.gloss_view.set_pixels_below_lines(4);
@@ -1907,9 +1927,10 @@ impl GlossOverlay {
         self.title.set_margin_top(24);
 
         // Same passage geometry the gloss result uses (`show_gloss_with_color`):
-        // wide side margins anchored to the actual card width, accent bar at
-        // card_width/5 (uniform for all work types).
-        let left = crate::ui::prose_column_margin(card_width);
+        // side margins anchored to the actual card width via the journal's
+        // prose-conditional rule, so the column does not reflow when the result
+        // replaces this loading card.
+        let left = self.column_side_margin(card_width);
         self.set_prose_margins(left);
 
         // No diff labels or echo views while loading.
@@ -2107,18 +2128,17 @@ impl GlossOverlay {
         // width, not the fixed column_width, so the synopsis prose sits at the
         // same ~65-char measure as the gloss instead of running nearly edge to
         // edge.
-        let inset = crate::ui::prose_column_margin(card_width);
-        // Prose synopses use the main card's fixed pixel left padding; plays/verse
-        // anchor the bar at the proportional `card_width/5` inset with the body one
-        // `QUOTE_BODY_INDENT` past it — IDENTICAL to the gloss overlay's explication
-        // (`bar_left + QUOTE_BODY_INDENT`), so a play/verse synopsis line sits at the
-        // same left edge as a gloss explication. (Prose keeps the card's pixel
-        // padding for the body and pulls the bar 60px left of it.)
-        let body_left = prose_card
-            .as_ref()
-            .map(|p| p.left_margin)
-            .unwrap_or(inset + crate::ui::gloss_render::QUOTE_BODY_INDENT);
-        let bar_left = prose_card.as_ref().map(|p| (p.left_margin - 60).max(0)).unwrap_or(inset);
+        let inset = self.column_side_margin(card_width);
+        // Both work types now use the JOURNAL's geometry: the accent bar sits at
+        // the COLUMN edge and the body one `QUOTE_BODY_INDENT` past it. Prose
+        // takes the column edge from the card (`SynopsisProseCard.left_margin` =
+        // `prose_reading_card_margin`, the journal's prose margin); plays/verse
+        // take the proportional `card_width/5` inset. (Prose previously anchored
+        // the body AT the card padding and pulled the bar 60px left of it, which
+        // left the prose synopsis a bar-width off the journal's column.)
+        let column_left = prose_card.as_ref().map(|p| p.left_margin).unwrap_or(inset);
+        let body_left = column_left + crate::ui::gloss_render::QUOTE_BODY_INDENT;
+        let bar_left = column_left;
         self.show_running_head(work, position);
         self.hide_diff_labels();
         self.position_label.set_visible(false);
@@ -2129,10 +2149,10 @@ impl GlossOverlay {
         *self.line_numbers.borrow_mut() = Vec::new();
         *self.echo_lines.borrow_mut() = Vec::new();
 
-        // Body sits at `body_left` (prose: the card's pixel padding; plays: the
-        // proportional inset + 60 past the bar). The bar stays at `bar_left`. The
-        // right margin matches the card too (prose: text_margins+EXTRA_RIGHT;
-        // plays keep the proportional inset for the narrower ~65-char measure).
+        // Body sits one `QUOTE_BODY_INDENT` right of the column edge, the bar AT
+        // it, and the right margin back at the column edge — the journal's
+        // asymmetric geometry for both work types (prose takes the column edge
+        // from the card, plays/verse from the proportional inset).
         let body_right = prose_card.as_ref().map(|p| p.right_margin).unwrap_or(inset);
         self.gloss_view.set_left_margin(body_left);
         self.gloss_view.set_right_margin(body_right);

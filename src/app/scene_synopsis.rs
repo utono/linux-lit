@@ -466,9 +466,10 @@ pub fn show_synopsis_overlay_for(state: &std::rc::Rc<std::cell::RefCell<AppState
 }
 
 /// Card-matching synopsis layout for PROSE works: the main reading card's font
-/// (family + size) and the centered NYTimes-style column inset
-/// (`prose_column_margin(card_width)`, symmetric), so a prose synopsis reads
-/// like its reading card. Returns `None` for plays/verse, which keep the
+/// (family + size) and its column inset
+/// (`prose_reading_card_margin(card_width)` = card/8), so a prose synopsis
+/// reads like its reading card — and like the journal Q&A and prose gloss,
+/// which use that same margin. Returns `None` for plays/verse, which keep the
 /// overlay's Charter + `card_width/4` inset look. Shared by every `show_synopsis`
 /// call (open, amend, edit, undo) so a re-render after an edit keeps the layout.
 pub fn prose_synopsis_card(state: &AppState, card_width: i32) -> Option<crate::ui::gloss_overlay::SynopsisProseCard> {
@@ -478,9 +479,11 @@ pub fn prose_synopsis_card(state: &AppState, card_width: i32) -> Option<crate::u
     if !is_prose {
         return None;
     }
-    // Centered NYTimes-style column: symmetric card_width/5 inset, matching the
-    // prose reading card and the prose gloss/journal overlays.
-    let margin = crate::ui::prose_column_margin(card_width);
+    // Prose column = the MAIN reading card's inset (`card/8`), the same margin
+    // the journal Q&A and the prose gloss use, so all three overlays render one
+    // measure on a prose work. (Was a symmetric `card/5`, which made the prose
+    // synopsis column visibly narrower than the journal's on the same card.)
+    let margin = crate::ui::prose_reading_card_margin(card_width);
     Some(crate::ui::gloss_overlay::SynopsisProseCard {
         font_family: state.config.font_family.clone(),
         font_size: state.config.font_size as i32,
