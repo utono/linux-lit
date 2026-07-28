@@ -689,6 +689,12 @@ pub struct AppState {
     /// The (div1, div2) scene currently displayed in the synopsis overlay. n/p
     /// step this through the work's scenes; the `A` amend targets it too.
     pub synopsis_overlay_scene: (i64, i64),
+    /// The `(div1, div2)` band a synopsis→journal `\` hop came FROM, or None
+    /// when the journal was opened any other way. Set on the hop, TAKEN on the
+    /// return hop, and cleared wherever a journal session ends — a stale
+    /// marker would make a later unrelated journal `\` jump to a synopsis
+    /// instead of advancing the overlay cycle.
+    pub journal_from_synopsis: Option<(i64, i64)>,
     /// Per-scene synopsis overlay cursor memory: the global block index the
     /// cursor sat on when Escape closed the overlay, keyed by (div1, div2).
     /// Ctrl+h on the same scene reopens the overlay at that block (clamped, so
@@ -2373,6 +2379,7 @@ pub fn build_window(
         synopsis_cache: HashMap::new(),
         synopsis_visible: false,
         synopsis_overlay_scene: (0, 0),
+        journal_from_synopsis: None,
         synopsis_cursor_memory: HashMap::new(),
         synopsis_amend_scene: (0, 0),
         synopsis_undo: None,
@@ -3570,6 +3577,13 @@ pub fn display_work_at_with_prepared(
     // toast. `gloss_covers_cursor` also guards on the abbrev; this is the root
     // fix, that is the belt.
     state.gloss_context = None;
+    // Same class: the synopsis→journal `\` toggle's origin band addresses the
+    // OLD work's (div1, div2). Every in-journal work switch today runs
+    // close_overlay first (which clears this), and synopsis_cache is replaced
+    // wholesale below, so a stale band would toast rather than open the wrong
+    // work's synopsis — this makes that structurally true instead of
+    // incidentally true.
+    state.journal_from_synopsis = None;
     // A vocab-sentence loop never survives a work switch (its buffer lines,
     // media id, and ab-loop all belong to the old work).
     crate::input::vocab_loop::exit_vocab_loop(state);

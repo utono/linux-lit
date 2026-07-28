@@ -26,8 +26,9 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
 /// Grouped (key, action) rows. Matches handle_journal_key + journal visual mode.
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
-        ("Ctrl+n / Ctrl+p", "nav_page: next / prev Q&A in band"),
+        ("Ctrl+n / Ctrl+p", "nav_page: next / prev Q&A in the WORK (all scopes)"),
         ("Alt+n / Alt+p", "nav_scene: next / prev scene band"),
+        ("\\", "back to the synopsis (only when entered from one)"),
         ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     ("TTS", &[

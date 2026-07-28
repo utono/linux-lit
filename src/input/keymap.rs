@@ -2386,10 +2386,12 @@ fn handle_journal_key(
             }
             true
         }
-        // `\`: advance the segment-overlay cycle → gloss for the lap's entry
-        // segment (Ctrl+\ = work-wide picker, handled above; Alt+\ excluded).
+        // `\`: return to the synopsis when this session was entered from one;
+        // otherwise advance the segment-overlay cycle as before.
         "backslash" if !is_ctrl && !is_alt => {
-            crate::input::actions::overlay_cycle::cycle_from_journal(state);
+            if !crate::input::actions::journal::return_to_synopsis(state) {
+                crate::input::actions::overlay_cycle::cycle_from_journal(state);
+            }
             true
         }
         // `f`: open the term-browse input (cross-work journal filter by tag/term).
@@ -3214,9 +3216,14 @@ fn handle_synopsis_overlay_key(
         // h: Escape-only close policy — consumed no-op (was: close; h still
         // OPENS the synopsis from the reader).
         "h" => true,
-        // `\`: the synopsis is no longer a stop on the segment-overlay cycle
-        // (lap is gloss → journal → reader). Consumed no-op.
-        "backslash" if !is_ctrl && !is_alt => true,
+        // `\`: toggle to this band's newest scene-scoped Q&A (spec
+        // 2026-07-27-synopsis-journal-toggle). NOT the reader's segment-scoped
+        // lap — a band surface gets a band-scoped toggle. A miss toasts and
+        // leaves the synopsis open.
+        "backslash" if !is_ctrl && !is_alt => {
+            crate::input::actions::journal::open_scene_qa_from_synopsis(state);
+            true
+        }
         // `a`: play/stop the cursor paragraph's TTS (swapped with space by
         // request — space below is the always-restart).
         "a" => {

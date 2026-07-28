@@ -41,6 +41,12 @@ fn lap_anchor_for(s: &AppState) -> usize {
     lap_anchor_line(s.gloss_return_pos, s.journal.return_pos, s.current_line)
 }
 
+/// Take the synopsis-origin band, leaving None. Pure so the take-not-copy
+/// contract is testable without an AppState.
+fn take_synopsis_origin(marker: &mut Option<(i64, i64)>) -> Option<(i64, i64)> {
+    marker.take()
+}
+
 /// Capitalize the first character of `s` (ASCII), leaving the rest unchanged.
 /// Used to turn a unit noun (`chapter`) into a user-message field label
 /// (`Chapter:`). Empty input returns empty. `pub(crate)` so the chat panel
@@ -1429,12 +1435,107 @@ pub(crate) fn close_overlay(state: &Rc<RefCell<AppState>>) {
     // open session (Task 7); a revision browse (Task 8) drops with it.
     state.borrow().journal_overlay.clear_rewrite_diff();
     state.borrow_mut().rewrite_browse = None;
+    // A journal session that ends any other way must not leave an origin
+    // marker for the NEXT journal open to inherit — `\` there would jump to a
+    // synopsis instead of advancing the overlay cycle.
+    state.borrow_mut().journal_from_synopsis = None;
     // Stop any cached-segment TTS still playing, so closing the overlay silences
     // it (mirrors close_gloss_to_reader's s.tts.stop()).
     state.borrow_mut().tts.stop();
     if state.borrow().input_mode == InputMode::JournalOverlay {
         toggle_overlay(state);
     }
+}
+
+/// Synopsis `\`: open the band's newest scene-scoped Q&A. Returns whether an
+/// entry was opened; false means the band has none and the caller keeps the
+/// synopsis open (this function emits the miss toast).
+pub(crate) fn open_scene_qa_from_synopsis(state: &Rc<RefCell<AppState>>) -> bool {
+    let (abbrev, div1, div2, unit) = {
+        let s = state.borrow();
+        if s.current_work.is_none() {
+            return false;
+        }
+        let (d1, d2) = s.synopsis_overlay_scene;
+        // "chapter" for prose, "scene" for plays — match the surface's wording.
+        let unit = if crate::app::scene_synopsis::is_chapter_work(&s) {
+            "chapter"
+        } else {
+            "scene"
+        };
+        (current_work_abbrev(&s), d1, d2, unit)
+    };
+
+    let page = crate::db::queries::open_db()
+        .ok()
+        .and_then(|conn| {
+            crate::db::journal::find_newest_scene_page(&conn, &abbrev, div1, div2).ok()
+        })
+        .flatten();
+
+    let Some(page) = page else {
+        let s = state.borrow();
+        crate::input::navigation::show_chapter_toast_secs(
+            &s,
+            &format!("No journal entry for this {}", unit),
+            3,
+        );
+        return false;
+    };
+
+    let mut s = state.borrow_mut();
+    // Close the synopsis (it renders in the gloss overlay widget) before the
+    // journal takes over.
+    s.gloss_overlay.hide();
+    // Same prior-session cleanup every journal open path performs, so a stale
+    // filter/search never leaks into this session.
+    s.journal.filter = None;
+    s.journal_overlay.clear_search_tags();
+    s.journal.search = None;
+    s.journal.last_pattern = None;
+    s.journal.return_pos = Some((s.current_line, s.page_top_line, s.page_top_offset));
+    s.journal_from_synopsis = Some((div1, div2));
+    s.input_mode = InputMode::JournalOverlay;
+    let id = page.id;
+    land_on_page(&mut s, JournalBand::Scene(div1, div2), id);
+    s.journal.entry_page_id = s.journal.pages.get(s.journal.page_index).map(|p| p.id);
+    true
+}
+
+/// Journal `\` when the session was entered from a synopsis: close the journal
+/// and reopen that synopsis. Returns false when there is no origin marker, so
+/// the caller falls through to the overlay cycle.
+pub(crate) fn return_to_synopsis(state: &Rc<RefCell<AppState>>) -> bool {
+    let origin = {
+        let mut s = state.borrow_mut();
+        take_synopsis_origin(&mut s.journal_from_synopsis)
+    };
+    let Some((div1, div2)) = origin else {
+        return false;
+    };
+    {
+        let mut s = state.borrow_mut();
+        s.journal_overlay.clear_rewrite_diff();
+        s.rewrite_browse = None;
+        s.tts.stop();
+        s.journal_overlay.hide();
+        s.journal.entry_page_id.take();
+        let pos = s.journal.return_pos.take();
+        crate::app::return_to_reader_mode(&mut s);
+        crate::app::restore_saved_position_resnap(&mut s, pos);
+    }
+    // Reopen the band we came from, not wherever the cursor now sits — the
+    // journal session may have crossed a chapter/scene boundary (Ctrl+n/p
+    // traversal, or a jump-to-source that moved return_pos), so recomputing
+    // the band from the post-restore cursor would silently show a different
+    // synopsis than the one this journal session was opened from.
+    //
+    // On cache miss (no synopsis for that band), we're already back in
+    // reader mode (return_to_reader_mode above), so the caller's overlay-cycle
+    // fallthrough would try to open the NEXT overlay in the cycle, not leave
+    // the user stranded with nothing — report false rather than force-opening
+    // whatever `current_synopsis_key` would land on.
+    crate::app::scene_synopsis::show_synopsis_overlay_for(state, div1, div2)
 }
 
 /// Pure step+clamp for cross-band Q&A traversal: from flat index `pos`, move by
@@ -3964,5 +4065,16 @@ mod tests {
     #[test]
     fn lap_anchor_uses_cursor_when_no_overlay_open() {
         assert_eq!(lap_anchor_line(None, None, 979), 979);
+    }
+
+    /// The synopsis→journal hop records its origin band; the return hop TAKES
+    /// it, so a later journal session opened any other way cannot inherit a
+    /// stale marker and hijack `\`.
+    #[test]
+    fn synopsis_origin_is_taken_not_copied() {
+        let mut marker = Some((10, 0));
+        assert_eq!(take_synopsis_origin(&mut marker), Some((10, 0)));
+        assert_eq!(marker, None, "the marker must be consumed");
+        assert_eq!(take_synopsis_origin(&mut marker), None);
     }
 }

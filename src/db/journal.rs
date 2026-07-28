@@ -259,6 +259,34 @@ pub fn find_scene_band_pages(
     rows.collect()
 }
 
+/// The band's most recently CREATED scene-scoped entry — the synopsis `\`
+/// target. Scene-scoped ONLY: passage entries belong to a span inside the
+/// band, and the reader's `\` already reaches those from the passage they
+/// cover (see the 2026-07-27 segment-scoping change).
+///
+/// "Newest" is newest CREATED. `timestamp` is a creation stamp; journal
+/// entries have no last-viewed tracking, and this deliberately does not add
+/// any. `id DESC` breaks ties for rows written in the same second.
+pub fn find_newest_scene_page(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+) -> Result<Option<JournalPage>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {JOURNAL_PAGE_COLUMNS} \
+         FROM journal_entries
+         WHERE work_abbrev = ?1 AND div1 = ?2 AND div2 = ?3 AND scope = 'scene'
+         ORDER BY timestamp DESC, id DESC
+         LIMIT 1",
+    ))?;
+    let mut rows = stmt.query_map(
+        rusqlite::params![work_abbrev, div1, div2],
+        map_journal_page_row,
+    )?;
+    rows.next().transpose()
+}
+
 /// The (div1, div2) sentinel that marks an author/corpus-scope journal row.
 /// Distinct from JOURNAL_WORK_DIV (-1,-1) so author rows never collide with
 /// whole-work rows. `work_abbrev` holds the AUTHOR string for these rows.
