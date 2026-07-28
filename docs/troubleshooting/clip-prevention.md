@@ -1088,7 +1088,9 @@ When a half line clips at the bottom edge of a scrolled surface:
     sliced; too much is shown. The stored `prose_pages` grid is CORRECT and the
     page top is CANONICAL, so both usual suspects check out and the diagnosis
     stalls (see page-turning-mechanics.md for the two off-grid variants that
-    look identical on screen).
+    look identical on screen). **Check the page top against the table before
+    reading further: if it is NOT a stored `start_line`, this is #20, not this
+    entry — the clip is innocent and a landing is at fault.**
     - Tell: the clip line reads `BOTTOM_CLIP_ROWFILL … row_clip=0` on a page
       whose stored end is EARLIER than where the rows stop fitting. An
       `exact_end`-governed page logs `BOTTOM_CLIP_EXACT` instead — so
@@ -1127,6 +1129,37 @@ When a half line clips at the bottom edge of a scrolled surface:
       1098`, then `PAGES_PROSE: page N/M`. The fix's own tell is
       `BOTTOM_CLIP_EXACT … clip=389 page_top=686` where it previously read
       `BOTTOM_CLIP_ROWFILL … row_clip=0`.
+
+20. **`ROWFILL` where `EXACT` belongs, but the CLIP code is innocent — a
+    LANDING put the reader off-grid.** Same engine-swap signature as #19, and
+    the two are easy to confuse. The difference: in #19 the page top is
+    canonical and the clip ignored the stored end; here the clip is working
+    correctly and the PAGE TOP itself is not a stored boundary, so there is no
+    stored page to match and the clip legitimately falls back to row-fill.
+    **Do not debug the clip for this one** — fix wherever the landing came
+    from.
+    - Tell: a `BOTTOM_CLIP_ROWFILL` whose `page_top` equals the CURSOR line,
+      immediately after a jump/overlay-close, on a work that was logging
+      `BOTTOM_CLIP_EXACT` a moment earlier. The paired
+      `PAINT: first frame for page_top=<cursor line>` is the confirmation — a
+      stored page top is rarely the exact line you jumped to.
+    - Distinguish from #19 in one query: look up the page top in the active
+      table. #19's top IS a `start_line`; this one is not (BH-Barrett landed on
+      47 when the stored page was `(42, 603)`).
+    - Root cause: a landing computed its page geometrically instead of reading
+      `prose_pages` — most often via a bare-`usize` page top that structurally
+      cannot carry the row offset a prose boundary needs. Full write-up (three
+      call sites, one shared fix) in **page-turning-mechanics.md, "A landing
+      that drops out of table mode"**.
+    - Fix: land through `navigation::canonical_page_top_offset_for` and pass
+      BOTH halves to `set_page_instant_offset`. Dropping the offset lands on
+      the right line and still mis-frames by up to a full paragraph.
+    - Startup variant: `DISPLAY_WORK: resumed saved position … page_top=N`
+      followed by `PAGES_PROSE: resnap off-grid` means the resume guessed and
+      the safety net corrected it. The net is defence-in-depth, not the
+      mechanism — and it can paint LATE (23.6s in one observed run), leaving
+      the wrong page on screen meanwhile. A resnap on a clean launch is a bug
+      upstream of the clip.
 
 ## The CLIP_WARN tripwire (grep this FIRST)
 
@@ -1175,6 +1208,23 @@ accepted it correctly because its `page_px` already measured it this way.
 same stored row. If `page_px` fits `usable` but `total` does not, the bug is in
 the RENDER-side measurement, not the page table. Chasing the table instead
 costs a session — that is exactly what happened here.
+
+### A SILENT clip-class failure the tripwire cannot catch
+
+`CLIP_WARN` only fires when clip MATH diverges. An off-grid landing (#20) has
+perfectly consistent math — the reader simply isn't on a stored page, so
+row-fill is the correct fallback and nothing warns. **An empty
+`rg CLIP_WARN` does not clear the clip surfaces when the complaint is
+"the page is framed wrong" rather than "a glyph is sliced."** For that class,
+grep the engine instead:
+
+```
+rg "BOTTOM_CLIP_(EXACT|ROWFILL)|PAINT: first frame" linux-lit-dev.log | tail -20
+```
+
+A `ROWFILL` line following a run of `EXACT` lines on the same work marks the
+moment the reader fell off the grid, and the preceding `PAINT` line names the
+page top that did it.
 
 ## Verifying
 

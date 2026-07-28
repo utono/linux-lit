@@ -37,6 +37,26 @@ dialogue, spoken-status): if the DB already encodes it, surface it through
 text. Reconstruction drifts from the data and the drift surfaces as a pagination
 bug three transformations downstream.
 
+**The same principle governs PAGE TOPS, and that half is easier to forget.**
+Text inference is the famous version, but a *geometric* computation is the same
+mistake wearing different clothes: measuring the viewport to decide where a page
+begins re-derives a fact the pinned `play_pages` / `prose_pages` tables already
+state. Five separate bugs in one day (2026-07-27) were this — four page-turn
+cases plus a landing case — each a measurement quietly disagreeing with the
+stored grid. Two structural traps make it recur:
+
+- **A live walk silently substitutes for a missing table.** Helpers that check
+  one table and fall through to geometry look correct on the engine they were
+  written for and go wrong on the other. Check BOTH tables before falling back.
+- **A bare `usize` page top cannot express a prose boundary.** Prose tops are
+  `(line, row-offset px)` pairs; a signature that drops the offset forces every
+  caller to re-derive it, which is how three call sites grew three different
+  private workarounds. Carry the pair.
+
+If you are about to compute a page top from `line - 1`, a page-height estimate,
+or a forward walk — check `canonical_page_top_offset_for` first. See "A landing
+that drops out of table mode" below.
+
 ## The pagination model (read this first)
 
 linux-lit paginates a **flat buffer of lines** into pages. A play renders as a
@@ -567,6 +587,11 @@ BOTTOM_CLIP_ROWFILL: page_top=47               <- after  (live row-fill)
 
 `PAINT: first frame for page_top=<the CURSOR line>` is the giveaway — a stored
 page top is rarely the line you jumped to.
+
+**Arriving from a clipping complaint?** This is clip-prevention.md #20, and the
+distinguishing test is there: if the page top IS a stored `start_line`, you want
+#19 (the clip ignored the stored end) — if it is NOT, you are in the right
+place. Note this class fires NO `CLIP_WARN`, so an empty grep clears nothing.
 
 **Root cause.** `canonical_page_top_for` consulted only the PLAY table
 (`active_page_table`). On prose that returns `None`, so it fell through to the
