@@ -63,9 +63,10 @@ pub(crate) const OVERLAY_BOTTOM_CLEARANCE: i32 = 80;
 fn current_block_text_width(state: &AppState) -> i32 {
     let ctx = state.text_view.create_pango_context();
     let pango_layout = pango::Layout::new(&ctx);
-    let font = pango::FontDescription::from_string(
-        &format!("{} {}", state.config.font_family, state.config.font_size),
-    );
+    let font = pango::FontDescription::from_string(&crate::ui::font_string(
+        &state.config.font_family,
+        state.config.font_size as i32,
+    ));
     pango_layout.set_font_description(Some(&font));
     pango_layout.set_text(SONNET_BLOCK_SAMPLE);
     let (w, _h) = pango_layout.pixel_size();

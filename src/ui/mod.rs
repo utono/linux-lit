@@ -489,6 +489,22 @@ pub(crate) fn apply_cached_coloring(
     }
 }
 
+/// Build a Pango font string for `family` at `size`.
+///
+/// MUST be used instead of `format!("{family} {size}")`. Pango parses a bare
+/// `"Family Size"` string by splitting trailing words off as STYLE keywords, so
+/// any family whose last word happens to be one — Book, Medium, Light, Black,
+/// Roman, Condensed… — loses that word from the family name and then silently
+/// falls back to a default face. "Gentium Book 16" parses as family "Gentium"
+/// (not installed) and renders as Noto Sans, with no error anywhere.
+///
+/// The comma form is the documented escape: everything before the comma is the
+/// family verbatim, so "Gentium Book, 16" resolves correctly. It is harmless for
+/// single-word families, hence no special-casing.
+pub(crate) fn font_string(family: &str, size: i32) -> String {
+    format!("{}, {}", family.trim(), size)
+}
+
 /// Apply a buffer-wide font `TextTag` named `tag_name` (set to `font_str`) over
 /// each view's full buffer, replacing any prior tag of that name, and re-assert
 /// the italic stage/bracket tags above it. The shared body of the gloss and
@@ -860,6 +876,39 @@ mod bottom_clip_tests {
         ];
         let clip = bottom_clip_height(&rows, 1_236_133.0, 1112.0, 1_300_000.0);
         assert_eq!(clip, (1_237_245.0_f64 - 1_237_234.0) as i32); // 11px
+    }
+}
+
+#[cfg(test)]
+mod font_string_tests {
+    use super::font_string;
+
+    /// The trap this helper exists for: Pango reads trailing words of a bare
+    /// `"Family Size"` string as STYLE keywords, so a family ending in one
+    /// ("Gentium Book", "IBM Plex Medium") loses that word and then silently
+    /// falls back to a default face. The comma form keeps the family whole.
+    #[test]
+    fn style_keyword_family_survives_the_parse() {
+        let s = font_string("Gentium Book", 18);
+        let desc = gtk4::pango::FontDescription::from_string(&s);
+        assert_eq!(desc.family().as_deref(), Some("Gentium Book"));
+        assert_eq!(desc.size() / gtk4::pango::SCALE, 18);
+    }
+
+    /// A bare interpolation is what the helper replaces — assert it really does
+    /// mis-parse, so this test fails loudly if Pango ever changes and the
+    /// comma form stops being necessary (or someone reverts to `format!`).
+    #[test]
+    fn bare_interpolation_would_lose_the_last_word() {
+        let desc = gtk4::pango::FontDescription::from_string("Gentium Book 18");
+        assert_eq!(desc.family().as_deref(), Some("Gentium"));
+    }
+
+    #[test]
+    fn single_word_family_is_unaffected() {
+        let desc = gtk4::pango::FontDescription::from_string(&font_string("Charter", 17));
+        assert_eq!(desc.family().as_deref(), Some("Charter"));
+        assert_eq!(desc.size() / gtk4::pango::SCALE, 17);
     }
 }
 

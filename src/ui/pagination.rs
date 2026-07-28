@@ -226,7 +226,11 @@ pub fn measure_text_height(
     width_px: i32,
 ) -> i32 {
     let layout = pango::Layout::new(pctx);
-    let mut desc = pango::FontDescription::from_string(family);
+    // Trailing comma (see `ui::font_string`): parsed bare, a family whose last
+    // word is a Pango style keyword ("Gentium Book") loses that word and
+    // measures in a FALLBACK face, silently diverging from what the view
+    // renders — under-filling or over-packing every page.
+    let mut desc = pango::FontDescription::from_string(&format!("{},", family.trim()));
     desc.set_size(size_pt * pango::SCALE);
     layout.set_font_description(Some(&desc));
     layout.set_width(width_px.max(1) * pango::SCALE);
@@ -248,7 +252,11 @@ pub fn measure_text_height_leaded(
     width_px: i32,
 ) -> i32 {
     let layout = pango::Layout::new(pctx);
-    let mut desc = pango::FontDescription::from_string(family);
+    // Trailing comma (see `ui::font_string`): parsed bare, a family whose last
+    // word is a Pango style keyword ("Gentium Book") loses that word and
+    // measures in a FALLBACK face, silently diverging from what the view
+    // renders — under-filling or over-packing every page.
+    let mut desc = pango::FontDescription::from_string(&format!("{},", family.trim()));
     desc.set_size(size_pt * pango::SCALE);
     layout.set_font_description(Some(&desc));
     layout.set_width(width_px.max(1) * pango::SCALE);

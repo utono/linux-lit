@@ -20,7 +20,7 @@ pub(crate) fn reapply_font(state: &AppState) {
     // rendered 4pt smaller and italic (below), in the same family.
     let font_family = state.config.font_family.as_str();
     let font_size = state.config.font_size;
-    let font_str = format!("{} {}", font_family, font_size);
+    let font_str = crate::ui::font_string(font_family, font_size as i32);
     let tag = gtk4::TextTag::builder()
         .name("font-size")
         .font(&font_str)
@@ -37,8 +37,11 @@ pub(crate) fn reapply_font(state: &AppState) {
     // Keep translation tag in sync (italic, 4pt smaller) and ensure it
     // overrides the freshly re-added font-size tag.
     let trans_size = font_size.saturating_sub(4);
+    // Comma form (see `ui::font_string`): a family ending in a style keyword
+    // (Gentium *Book*, IBM Plex *Medium*…) would otherwise lose that word and
+    // fall back to a default face. The style + size follow the comma.
     let trans_desc = pango::FontDescription::from_string(
-        &format!("{} Italic {}", font_family, trans_size),
+        &format!("{}, Italic {}", font_family.trim(), trans_size),
     );
     state.translation_text_tag.set_font_desc(Some(&trans_desc));
     let highest = state.buffer.tag_table().size() - 1;
