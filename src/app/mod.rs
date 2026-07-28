@@ -3413,6 +3413,8 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
                 "STARTUP: snap one-section page_top {} -> {} (cursor {} -> {})",
                 s.page_top.line(), top, s.current_line, first
             ));
+            // Line-start is correct: sonnet_sequence works only, which are
+            // never `is_prose()`, so no prose grid can be active here.
             s.page_top = PageTop::at_line_start(top);
             s.current_line = first;
         }
@@ -3469,6 +3471,8 @@ fn snap_near_end_to_canonical(s: &mut AppState) {
             "STARTUP: snap near-end page_top {} -> canonical {} (cursor {})",
             s.page_top.line(), canonical, cursor
         ));
+        // Two-column path only (the fn returns early for single column), so
+        // no prose grid — offset is genuinely 0.
         s.page_top = PageTop::at_line_start(canonical);
         s.current_line = cursor;
         return;

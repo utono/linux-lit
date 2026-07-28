@@ -57,6 +57,45 @@ If you are about to compute a page top from `line - 1`, a page-height estimate,
 or a forward walk — check `canonical_page_top_offset_for` first. See "A landing
 that drops out of table mode" below.
 
+### `PageTop` — half this class is now a compile error (2026-07-27)
+
+A page position is ONE value, `input::page_top::PageTop { line, offset }`, with
+PRIVATE fields. It replaced two loose public `AppState` fields
+(`page_top_line` / `page_top_offset`) that had to change together and mostly
+didn't: 29 sites assigned the line, 12 set the offset. That gap produced five
+shipped bugs in a single day.
+
+**You can no longer hand a bare line to `set_page_instant`.** The
+journal-Escape bug and the cross-work landing bug are both compile errors now.
+
+Two constructors, and the choice is the whole point:
+
+- `PageTop::new(line, offset)` — a position read from a pinned table.
+- `PageTop::at_line_start(line)` — offset 0, **a claim that no pinned prose
+  grid can be active here.**
+
+There is deliberately NO `From<usize>`: an implicit conversion would silently
+restore the bug. That makes the audit a grep —
+
+```
+rg "at_line_start" src/
+```
+
+— and every hit is a claim to re-check. When the claim is wrong, it is a fresh
+instance of the landing bug. The 25 existing sites were audited at the
+migration and the non-obvious ones carry a comment saying why offset 0 is
+correct (sonnet-sequence only / two-column only / scroll mode, none of which
+can have a prose grid).
+
+**`page_back_stack` is `Vec<PageTop>`**, not `Vec<(usize, i32)>`. Equality
+compares BOTH halves, which is what resnap-style "am I already on the grid?"
+checks depend on — comparing lines alone is how an off-grid position passes for
+canonical.
+
+The migration was compiler-driven (339 errors, 331 of them mechanical field
+renames) and verified behaviour-identical: the nav-fuzz produced step-for-step
+identical output on both engines, prose (205 steps) and play (192 steps).
+
 ## The pagination model (read this first)
 
 linux-lit paginates a **flat buffer of lines** into pages. A play renders as a

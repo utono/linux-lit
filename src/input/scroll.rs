@@ -1765,6 +1765,8 @@ pub(crate) fn scroll_cursor_into_view_scrolloff(state: &mut AppState) {
         .clamp(0.0, max_scroll);
     adj.set_value(new_val);
     // Keep page_top_line consistent with the new scroll position.
+    // SCROLL mode, not e-reader pagination: the value was just snapped to a
+    // line top by `snap_value_to_line_top`, so line-start is exact.
     if let Some(top_line) = line_at_value(state, new_val) {
         state.page_top = PageTop::at_line_start(top_line);
     }

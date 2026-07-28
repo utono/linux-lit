@@ -1,7 +1,8 @@
 # `PageTop` — implementation plan
 
 Spec: `docs/superpowers/specs/2026-07-27-page-top-type-design.md`
-Branch: `refactor/page-top-type` (worktree `~/utono/linux-lit-wt/refactor/page-top-type`)
+Branch: `refactor/page-top-type`
+Worktree: `~/utono/linux-lit-wt/refactor/page-top-type`
 
 Behaviour-preserving EXCEPT where Task 5 finds a real latent bug. The nav-fuzz
 is the oracle: any unexplained behavioural diff means the refactor is wrong.
@@ -31,7 +32,8 @@ New `src/input/page_top.rs` (or in `scroll.rs` if wiring is simpler):
 pub struct PageTop { line: usize, offset: i32 }
 ```
 
-`at_line_start(line)`, `new(line, offset)`, `line()`, `offset()`. Fields private.
+`at_line_start(line)`, `new(line, offset)`, `line()`, `offset()`.
+Fields private.
 
 Unit tests: accessors round-trip; `at_line_start` yields offset 0; `Default` is
 `(0, 0)`; `Ord`/comparison NOT derived unless a call site needs it (add only if
