@@ -979,7 +979,11 @@ impl JournalOverlay {
                     paras = combined;
                 }
                 *self.all_paragraphs.borrow_mut() = paras;
-                self.cursor_full.set(0);
+                // Start on the QUESTION, not the quoted source: the source
+                // paragraphs are non-stoppable (see `is_stoppable`), so landing
+                // the cursor at 0 would paint the accent bar on the quote and
+                // leave `k` unable to return to it once the reader stepped off.
+                self.cursor_full.set(self.source_para_count.get());
             }
             self.repaginate();
             self.page_idx.set(0);
@@ -2285,15 +2289,16 @@ impl JournalOverlay {
             journal_blocks(&lines)
         };
         self.visual_anchor.set(None);
-        // Project the full cursor onto this page. For notes the cursor can
-        // legitimately sit on ANOTHER page (e.g. a chrome-only opening page at
-        // small sizes): clamping it here painted the bar on a heading — clear
-        // the bar instead; the first j/k turns to the cursor's page.
+        // Project the full cursor onto this page. The cursor can legitimately
+        // sit on ANOTHER page — a chrome-only opening note page at small sizes,
+        // or a Q&A page 0 holding only the quoted source. Clamping it here
+        // painted the bar on a heading (or on the quote); clear the bar instead
+        // and let the first j/k turn to the cursor's own page.
         let cursor_on_page = {
             let c = self.cursor_full.get();
             c >= page_start && c < page_end
         };
-        if is_note && !cursor_on_page {
+        if !cursor_on_page {
             self.cursor_block.set(0);
             self.clear_bar();
         } else {
@@ -2450,20 +2455,35 @@ impl JournalOverlay {
     /// blocks (note headings / rules), turning the page if the new cursor
     /// leaves the current page; otherwise just re-mark the bar. One keypress =
     /// one visible bar move — never a phantom press swallowed by a heading.
+    /// Whether the whole-entry paragraph `i` is a valid cursor stop.
+    ///
+    /// Two kinds of non-stoppable paragraph, both rendered but never landed on:
+    ///
+    /// - the prepended passage SOURCE (speaker, quoted verse/prose, citation) —
+    ///   the first `source_para_count` entries. It is the work's own text quoted
+    ///   above the question, not Q&A prose, so it takes no accent bar and no
+    ///   cursor stop (it is likewise skipped by the batch TTS synth).
+    /// - note chrome (headings, rules), flagged `stoppable == false` on the
+    ///   planned Markdown blocks. Q&A pages have no `note_blocks`, hence the
+    ///   `unwrap_or(true)` default.
+    fn is_stoppable(&self, i: usize) -> bool {
+        if i < self.source_para_count.get() {
+            return false;
+        }
+        self.note_blocks
+            .borrow()
+            .get(i)
+            .map(|b| b.stoppable)
+            .unwrap_or(true)
+    }
+
     fn step_full_cursor(&self, delta: i32) {
         let total = self.all_paragraphs.borrow().len();
         if total == 0 {
             return;
         }
         let cur = self.cursor_full.get().min(total - 1);
-        let next = {
-            let note_blocks = self.note_blocks.borrow();
-            step_skipping_chrome(cur, delta, total, |i| {
-                // Q&A pages have no `note_blocks`, so the note-block `stoppable`
-                // flag defaults every paragraph to stoppable.
-                note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true)
-            })
-        };
+        let next = step_skipping_chrome(cur, delta, total, |i| self.is_stoppable(i));
         let Some(next) = next else { return };
         self.cursor_full.set(next);
         self.sync_cursor_page();
@@ -2506,7 +2526,11 @@ impl JournalOverlay {
         });
         if let Some(idx) = target {
             let total = self.all_paragraphs.borrow().len();
-            if idx < total {
+            // A match inside the quoted source must NOT drag the accent bar onto
+            // it — those paragraphs are non-stoppable (`is_stoppable`). The
+            // search HIGHLIGHT still paints there (reapply_search is independent
+            // of the bar); only the block cursor is held back.
+            if idx < total && self.is_stoppable(idx) {
                 self.cursor_full.set(idx);
                 self.sync_cursor_page();
             }
@@ -2518,15 +2542,10 @@ impl JournalOverlay {
         if total == 0 {
             return;
         }
-        let target = {
-            let note_blocks = self.note_blocks.borrow();
-            let is_stop =
-                |i: usize| note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true);
-            if last {
-                (0..total).rev().find(|&i| is_stop(i)).unwrap_or(total - 1)
-            } else {
-                (0..total).find(|&i| is_stop(i)).unwrap_or(0)
-            }
+        let target = if last {
+            (0..total).rev().find(|&i| self.is_stoppable(i)).unwrap_or(total - 1)
+        } else {
+            (0..total).find(|&i| self.is_stoppable(i)).unwrap_or(0)
         };
         self.cursor_full.set(target);
         self.sync_cursor_page();
@@ -2552,13 +2571,10 @@ impl JournalOverlay {
             (p.start, p.end)
         };
         // Land on the first STOPPABLE block of the target page (skip note
-        // chrome — headings/rules), falling back to the page start.
-        let target = {
-            let note_blocks = self.note_blocks.borrow();
-            (page_start..page_end)
-                .find(|&i| note_blocks.get(i).map(|b| b.stoppable).unwrap_or(true))
-                .unwrap_or(page_start)
-        };
+        // chrome and the quoted passage source), falling back to the page start.
+        let target = (page_start..page_end)
+            .find(|&i| self.is_stoppable(i))
+            .unwrap_or(page_start);
         self.cursor_full.set(target);
         self.sync_cursor_page();
     }
@@ -2839,10 +2855,40 @@ mod step_skipping_chrome_tests {
     }
 
     #[test]
-    fn qa_all_stoppable_steps_one() {
-        // Q&A entries have no chrome — plain ±1 stepping.
+    fn plain_qa_all_stoppable_steps_one() {
+        // A Q&A with no quoted source and no chrome — plain ±1 stepping.
         assert_eq!(step_skipping_chrome(2, 1, 5, |_| true), Some(3));
         assert_eq!(step_skipping_chrome(2, -1, 5, |_| true), Some(1));
+    }
+
+    // A PASSAGE Q&A: paragraphs 0..3 are the prepended source (speaker, quoted
+    // verse, citation), then the question (3) and the answer paragraphs. The
+    // source is non-stoppable, exactly like note chrome — `is_stoppable` returns
+    // false below `source_para_count`.
+    const SOURCE_COUNT: usize = 3;
+    const PASSAGE_TOTAL: usize = 6;
+    fn passage_is_stop(i: usize) -> bool {
+        i >= SOURCE_COUNT
+    }
+
+    #[test]
+    fn k_never_enters_the_quoted_source() {
+        // From the question (3), k has nothing stoppable above → no-op, so the
+        // accent bar can never land on the quote.
+        assert_eq!(step_skipping_chrome(3, -1, PASSAGE_TOTAL, passage_is_stop), None);
+    }
+
+    #[test]
+    fn j_steps_through_the_answer_normally() {
+        assert_eq!(step_skipping_chrome(3, 1, PASSAGE_TOTAL, passage_is_stop), Some(4));
+        assert_eq!(step_skipping_chrome(5, -1, PASSAGE_TOTAL, passage_is_stop), Some(4));
+    }
+
+    #[test]
+    fn gg_lands_on_the_question_not_the_source() {
+        // `full_cursor_to_end(false)` scans for the FIRST stoppable index.
+        let first = (0..PASSAGE_TOTAL).find(|&i| passage_is_stop(i));
+        assert_eq!(first, Some(SOURCE_COUNT));
     }
 }
 
