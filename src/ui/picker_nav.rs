@@ -238,22 +238,10 @@ pub(crate) fn five_column_row(
     div: &str,
     kind: &str,
 ) -> GtkBox {
-    // `Align::Fill`, NOT `Align::Start`. With `Start` a label whose natural
-    // (unellipsized) width is narrower than its SizeGroup-imposed cell shrinks
-    // its own ALLOCATION to that natural width and — empirically, in a
-    // hexpanding row — that allocation can float away from the cell's left
-    // edge rather than sitting flush against it (GTK gives the widget only
-    // the room it asked for, not the SizeGroup's full cell, so its neighbor's
-    // start position drifts row to row). `Fill` forces the widget to actually
-    // occupy its full allocated cell; `xalign(0.0)` then positions the TEXT at
-    // that cell's left edge. Applies to every column here, not just the tag:
-    // the same drift was reproduced on the SizeGroup-linked `work` column,
-    // which was silently absorbing the tag column's missing width and
-    // shifting it rightward on any row short enough to not need ellipsizing.
     let fixed = |text: &str, group: &SizeGroup, css: &str| {
         let l = Label::builder()
             .label(text)
-            .halign(Align::Fill)
+            .halign(Align::Start)
             .xalign(0.0)
             .ellipsize(gtk4::pango::EllipsizeMode::End)
             .build();
@@ -265,15 +253,27 @@ pub(crate) fn five_column_row(
     let author_l = fixed(author, &groups.author, "picker-item-detail");
     let work_l = fixed(work, &groups.work, "picker-item-detail");
 
-    // Same `Align::Fill` reasoning as `fixed` above; this column additionally
-    // hexpands to absorb the row's leftover width.
+    // `max_width_chars(1)` looks backwards for a column meant to hold a full
+    // line of text, but it is the fix, not a mistake: without it, a
+    // NON-truncating tag (its natural width fits without an ellipsis) is
+    // measured and allocated through a different GtkLabel/Pango code path
+    // than a truncating one, and that path does not honor `xalign(0.0)`
+    // consistently inside a `SizeGroup` + `hexpand` row — the text drifts
+    // rightward by an amount that depends on how the OTHER size-grouped
+    // columns happened to settle in an earlier layout pass (reproduced:
+    // "Bow your knees." and "I never saw", both short enough to never
+    // ellipsize, floated ~100px right of every truncating row). Setting
+    // `max_width_chars` forces GTK to always go through the constrained-width
+    // (ellipsize-aware) sizing path regardless of content length, which is
+    // the one that actually respects `xalign`. `hexpand` still lets the
+    // widget grow to fill the row; only the SIZE REQUEST is pinned narrow.
     let tag_l = Label::builder()
         .label(tag)
-        .halign(Align::Fill)
+        .halign(Align::Start)
         .xalign(0.0)
         .hexpand(true)
         .ellipsize(gtk4::pango::EllipsizeMode::End)
-        .max_width_chars(1)
+        .max_width_chars(20)
         .build();
 
     let div_l = fixed(div, &groups.div, "picker-item-detail");
