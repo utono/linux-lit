@@ -1488,8 +1488,11 @@ mod tests {
     #[test]
     fn narrowest_span_wins_across_mixed_scopes() {
         let conn = mem();
-        insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.40", "BH.2.0.60");
-        let narrow = insert_cited(&conn, "BH", 2, 0, "passage", "BH.2.0.47", "BH.2.0.49");
+        // Inverted on purpose: the WIDE span is passage-scoped and the NARROW
+        // one scene-scoped, so the old `scope='passage'` predicate would have
+        // returned the WIDE row. Only span-based selection returns `narrow`.
+        insert_cited(&conn, "BH", 2, 0, "passage", "BH.2.0.40", "BH.2.0.60");
+        let narrow = insert_cited(&conn, "BH", 2, 0, "scene", "BH.2.0.47", "BH.2.0.49");
 
         let hit = find_journal_page_for_line(&conn, "BH", 2, 0, 48).unwrap();
         assert_eq!(hit, Some((2, 0, narrow)), "nearest start must still win");
