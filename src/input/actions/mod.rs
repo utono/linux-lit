@@ -71,7 +71,15 @@ pub enum Action {
     JumpToPrevSpeaker,
     JumpToNextChapter,
     JumpToPrevChapter,
+    // The `Scene` aliases keep a STOWED keymap.json parsing across the
+    // 2026-07-28 scene->division rename. That file lives in another repo
+    // (tty-dotfiles) and is symlinked into ~/.config, so it cannot be updated
+    // atomically with this one — and an unknown action name there is skipped
+    // with only a warning, silently dropping the bind. The alias means either
+    // spelling works, so the two repos can be updated in any order.
+    #[serde(alias = "JumpToNextScene")]
     JumpToNextDivision,
+    #[serde(alias = "JumpToPrevScene")]
     JumpToPrevDivision,
 
     // Bookmarks

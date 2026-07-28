@@ -793,6 +793,29 @@ mod tests {
     /// (`ShowEchoes`/`ReopenEchoes`/`ShowEchoTurns`) sat dead in the file
     /// until the 2026-07-26 stale-name sweep. Skips silently when the stowed
     /// file is absent (fresh checkout / CI).
+    /// The stowed keymap.json lives in ANOTHER repo (tty-dotfiles) and is
+    /// symlinked into ~/.config, so it cannot be renamed atomically with this
+    /// crate. An unknown action name there is skipped with only a warning —
+    /// the bind silently disappears. The serde aliases on
+    /// JumpToNext/PrevDivision keep the pre-rename spelling parsing; this
+    /// pins that so a later cleanup cannot drop them without a red test.
+    #[test]
+    fn pre_rename_scene_action_names_still_parse() {
+        assert_eq!(
+            parse_action("JumpToNextScene"),
+            Some(crate::input::actions::Action::JumpToNextDivision),
+        );
+        assert_eq!(
+            parse_action("JumpToPrevScene"),
+            Some(crate::input::actions::Action::JumpToPrevDivision),
+        );
+        // The new spelling obviously works too.
+        assert_eq!(
+            parse_action("JumpToNextDivision"),
+            Some(crate::input::actions::Action::JumpToNextDivision),
+        );
+    }
+
     #[test]
     fn stowed_keymap_json_action_names_all_parse() {
         let path = config_path();
