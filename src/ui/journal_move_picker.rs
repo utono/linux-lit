@@ -24,7 +24,7 @@ pub struct JournalMovePicker {
 impl JournalMovePicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
-        let picker_box = crate::ui::picker_nav::build_picker_card();
+        let picker_box = crate::ui::picker_nav::build_picker_card_wide(crate::ui::picker_nav::JOURNAL_PICKER_WIDTH);
 
         let search_entry = Entry::builder()
             .placeholder_text("Move Q&A to...")

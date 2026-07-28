@@ -1096,6 +1096,58 @@ pub(crate) fn delete_bookmark(
     }
 }
 
+/// The author column's display form: the LAST WORD of the stored author name.
+///
+/// `"Charles Dickens"` → `"Dickens"`; a mononym like `"Shakespeare"` is its
+/// own surname. Deliberately simple — correct for every author in lit.db, and
+/// the picker needs the horizontal space for the entry's identifying line. It
+/// would mis-split a particle surname ("van Gogh"), which does not occur.
+pub(crate) fn author_surname(author: &str) -> &str {
+    author.split_whitespace().last().unwrap_or("")
+}
+
+/// The picker's division column, in the DIVISION NOUN THE WORK ITSELF USES.
+///
+/// A prose work's chapters live in `div1` alone — `div2` is always 0 in lit.db
+/// and carries no meaning — so showing "2.0" was noise; it reads "Ch. 2".
+/// Plays keep `act.scene` numerals, where both numbers are meaningful.
+///
+/// `div1 <= 0` on a prose work is the FRONT MATTER, not a chapter zero: it
+/// renders "Preface", the same convention `scene_synopsis::chapter_label`
+/// already uses for the synopsis overlay. Six live entries have `div1 = 0`
+/// and would otherwise read "Ch. 0".
+///
+/// Takes the ROW'S OWN `work_type`, not the loaded work's: author scope is
+/// cross-work, so a play row and a novel row appear in the same list and must
+/// be labelled by their own kind. That is why this is a pure string predicate
+/// rather than `scene_synopsis::is_chapter_work`, which reads `AppState`.
+///
+/// KNOWN GAP (latent, 2026-07-28): `is_prose_work` covers only
+/// novel/essay_collection/prose_book/prose. Measured against lit.db,
+/// `epic` (11 works), `epic_translation` (2), `narrative_poem` (4), `poem` (4),
+/// `sonnet_sequence` (2) and `verse_essay` (1) ALSO have `div2` identically 0
+/// on every line, so the first journal entry on one of them will read "3.0" —
+/// the same noise this function exists to remove. Not live: today only `play`
+/// and `prose` works have entries. `bible_book` (1754 non-zero div2 lines) and
+/// `anthology` genuinely use both numbers and must stay numeric.
+pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
+    // Sentinel divisions have no numeric address to show: (-1,-1) is a
+    // whole-work entry, (-2,-2) a corpus note. Printing "-2.-2" is noise —
+    // their TYPE column already says `work` / `author`.
+    if div1 < 0 {
+        return String::new();
+    }
+    if crate::db::line_types::is_prose_work(work_type) {
+        if div1 == 0 {
+            "Preface".to_string()
+        } else {
+            format!("Ch. {div1}")
+        }
+    } else {
+        format!("{div1}.{div2}")
+    }
+}
+
 /// Alt+t inside the Q&A picker: advance the scope, rebuild the list, retitle
 /// the header. Selection resets to the first row and the filter is cleared —
 /// the row sets differ between scopes, so preserving either is meaningless,
@@ -1126,6 +1178,41 @@ mod tests {
         assert!(seen.contains(&"teacher-generic"));
         assert!(seen.contains(&"inner-monologue"));
         assert_eq!(seen.len(), 4, "one entry per type, no duplicates: {seen:?}");
+    }
+
+    #[test]
+    fn author_surname_takes_the_last_word() {
+        use super::author_surname;
+        assert_eq!(author_surname("Charles Dickens"), "Dickens");
+        assert_eq!(author_surname("Diarmaid MacCulloch"), "MacCulloch");
+        // A mononym is its own surname — Shakespeare is the dominant corpus.
+        assert_eq!(author_surname("Shakespeare"), "Shakespeare");
+        assert_eq!(author_surname(""), "");
+        assert_eq!(author_surname("  Jonathan  Swift  "), "Swift");
+    }
+
+    /// The division column uses the work's OWN division noun.
+    #[test]
+    fn division_label_uses_the_works_own_noun() {
+        use super::division_label;
+        // Plays: act.scene, both numbers meaningful.
+        assert_eq!(division_label("play", 1, 4), "1.4");
+        assert_eq!(division_label("play", 4, 10), "4.10");
+        // Prose: div2 is always 0 in lit.db, so it is noise — chapters only.
+        assert_eq!(division_label("prose", 2, 0), "Ch. 2");
+        assert_eq!(division_label("novel", 10, 0), "Ch. 10");
+        // div1 <= 0 on prose is FRONT MATTER, never "Ch. 0". Six live entries
+        // hit this; it matches scene_synopsis::chapter_label's convention.
+        assert_eq!(division_label("prose", 0, 0), "Preface");
+        // Sentinel divisions carry no numeric address: a whole-work entry
+        // (-1,-1) and a corpus note (-2,-2) show nothing rather than "-2.-2".
+        // Their TYPE column already reads `work` / `author`.
+        assert_eq!(division_label("prose", -1, -1), "");
+        assert_eq!(division_label("", -2, -2), "");
+        assert_eq!(division_label("play", -1, -1), "");
+        // An unknown/blank work_type falls through to the numeric form rather
+        // than silently claiming a chapter.
+        assert_eq!(division_label("", 3, 1), "3.1");
     }
 
     /// Tightest -> widest, wrapping. Mirrors GlossPickerFilter's cycle test.

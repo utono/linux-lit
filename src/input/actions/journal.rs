@@ -3051,45 +3051,52 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
     let work_abbrev = current_work_abbrev(s);
     let conn = crate::db::queries::open_db().ok();
 
-    // (JournalPage, work_abbrev, work_title) triples, uniform across scopes so
-    // the row-mapping closure below doesn't need to branch on scope again.
-    let pages: Vec<(crate::db::journal::JournalPage, String, Option<String>)> = match s
-        .journal_picker_scope
-    {
-        crate::input::actions::pickers::JournalPickerScope::Scene => {
-            let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(s);
-            conn.as_ref()
-                .and_then(|c| crate::db::journal::find_scene_band_pages(c, &work_abbrev, d1, d2).ok())
+    // (JournalPage, work_abbrev, work_title, author) quads, uniform across
+    // scopes so the row-mapping closure below doesn't need to branch on scope
+    // again. `work_title`/`author` are `Some` in AUTHOR scope only — the one
+    // cross-work list where they aren't constant noise.
+    // (page, work_abbrev, work_title, author, work_type). The last three are
+    // Some/non-empty only in AUTHOR scope, the one cross-work list — scene and
+    // work scope rows all belong to the loaded work, so those columns would be
+    // constant noise and their two-column rendering is kept.
+    let pages: Vec<(
+        crate::db::journal::JournalPage,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> =
+        match s.journal_picker_scope {
+            crate::input::actions::pickers::JournalPickerScope::Scene => {
+                let (d1, d2) = crate::app::scene_synopsis::current_scene_divs(s);
+                conn.as_ref()
+                    .and_then(|c| {
+                        crate::db::journal::find_scene_band_pages(c, &work_abbrev, d1, d2).ok()
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| (p, work_abbrev.clone(), None, None, String::new()))
+                    .collect()
+            }
+            crate::input::actions::pickers::JournalPickerScope::Work => conn
+                .as_ref()
+                .and_then(|c| crate::db::journal::find_all_pages_ordered(c, &work_abbrev).ok())
                 .unwrap_or_default()
                 .into_iter()
-                .map(|p| (p, work_abbrev.clone(), None))
-                .collect()
-        }
-        crate::input::actions::pickers::JournalPickerScope::Work => conn
-            .as_ref()
-            .and_then(|c| crate::db::journal::find_all_pages_ordered(c, &work_abbrev).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| (p, work_abbrev.clone(), None))
-            .collect(),
-        crate::input::actions::pickers::JournalPickerScope::Author => {
-            let author = s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default();
-            let titles = crate::db::queries::load_work_titles_or_default();
-            conn.as_ref()
-                .and_then(|c| crate::db::journal::find_author_all_pages(c, &author).ok())
+                .map(|p| (p, work_abbrev.clone(), None, None, String::new()))
+                .collect(),
+            crate::input::actions::pickers::JournalPickerScope::Author => conn
+                .as_ref()
+                .and_then(|c| crate::db::journal::find_all_journal_pages(c).ok())
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(p, work)| {
-                    let title = titles.get(&work).cloned();
-                    (p, work, title)
-                })
-                .collect()
-        }
-    };
+                .map(|(p, work, title, author, wtype)| (p, work, Some(title), Some(author), wtype))
+                .collect(),
+        };
 
     let rows: Vec<crate::ui::journal_picker::JournalRow> = pages
         .iter()
-        .map(|(p, row_work, work_title)| {
+        .map(|(p, row_work, work_title, author, row_work_type)| {
             let band = match band_for_page(p) {
                 JournalBand::Author(_) => JournalBand::Author(
                     s.current_work.as_ref().map(|w| w.author.clone()).unwrap_or_default(),
@@ -3136,6 +3143,15 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
                 scene_label,
                 work_label: work_title.clone(),
                 work_abbrev: row_work_abbrev,
+                author_label: author
+                    .as_deref()
+                    .map(|a| crate::input::actions::pickers::author_surname(a).to_string()),
+                type_label: p.scope.clone(),
+                div_label: crate::input::actions::pickers::division_label(
+                    &row_work_type,
+                    p.div1,
+                    p.div2,
+                ),
             }
         })
         .collect();
@@ -4034,6 +4050,7 @@ mod tests {
             end_citation: end.map(|s| s.to_string()),
             source_text: None,
             kind: "qa".into(),
+            scope: "scene".into(),
         }
     }
 

@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Label, ListBox, Orientation, ScrolledWindow};
+use gtk4::{Align, Box as GtkBox, Label, ListBox, Orientation, ScrolledWindow, SizeGroup, SizeGroupMode};
 
 /// Top margin of a top-anchored (`valign: Start`) picker card.
 pub(crate) const PICKER_TOP_MARGIN: i32 = 40;
@@ -9,7 +9,10 @@ pub(crate) const PICKER_WIDE_W: i32 = 900;
 pub(crate) const PICKER_NARROW_W: i32 = 675;
 /// Scroll cap for a top-anchored picker's list.
 pub(crate) const PICKER_LIST_MAX_H: i32 = 750;
-
+/// Fixed width for the JOURNAL pickers, which carry five columns. One
+/// constant so the Q&A picker and the journal-move picker cannot drift apart.
+/// Other pickers keep `build_picker_card`'s 900.
+pub(crate) const JOURNAL_PICKER_WIDTH: i32 = 1180;
 /// Build the hidden full-bleed scrim box (`library-picker-scrim`) that sits
 /// behind the scrim-style pickers/overlays. Byte-identical (modulo source
 /// formatting) at every scrim site.
@@ -166,6 +169,15 @@ pub(crate) fn build_picker_card() -> GtkBox {
     picker_box
 }
 
+/// `build_picker_card` at an explicit width. Used by the journal pickers
+/// to apply `JOURNAL_PICKER_WIDTH` without affecting the other eight callers
+/// that rely on the 900px default.
+pub(crate) fn build_picker_card_wide(width: i32) -> GtkBox {
+    let picker_box = build_picker_card();
+    picker_box.set_width_request(width);
+    picker_box
+}
+
 /// Build the two-label picker row: a start-aligned, hexpanding, end-ellipsizing
 /// `primary` label + an end-aligned `detail` label with the `picker-item-detail`
 /// css class, packed into a Horizontal spacing-8 `GtkBox`. The byte-identical row
@@ -193,6 +205,102 @@ pub(crate) fn two_label_row(primary: &str, detail: &str) -> GtkBox {
         .build();
     hbox.append(&text_label);
     hbox.append(&detail_label);
+    hbox
+}
+
+/// Column width groups for the five-column picker rows. One set per picker
+/// instance, shared across all its rows — that is what makes the columns line
+/// up: every label in a group takes the width of the widest member.
+pub(crate) struct PickerColumnGroups {
+    author: SizeGroup,
+    work: SizeGroup,
+    div: SizeGroup,
+    kind: SizeGroup,
+}
+
+impl PickerColumnGroups {
+    pub(crate) fn new() -> Self {
+        let mk = || SizeGroup::new(SizeGroupMode::Horizontal);
+        Self { author: mk(), work: mk(), div: mk(), kind: mk() }
+    }
+}
+
+/// `author · work · tag … div kind` with the four fixed columns width-matched
+/// across every row via `groups`. The TAG column is the only elastic one: it
+/// hexpands and ellipsizes, so a long identifying line shortens rather than
+/// pushing the division and type off the right edge.
+pub(crate) fn five_column_row(
+    groups: &PickerColumnGroups,
+    author: &str,
+    work: &str,
+    tag: &str,
+    div: &str,
+    kind: &str,
+) -> GtkBox {
+    // NO `ellipsize` on the fixed columns. A SizeGroup sizes itself from its
+    // members' NATURAL width, but an ellipsizing label reports a MINIMUM width
+    // of about one character — so the group's negotiated width is unstable and
+    // the columns visibly jitter row to row, which in turn shoves the elastic
+    // tag column around. These columns hold short strings (a surname, a work
+    // title, "1.4", "passage") and never need to ellipsize.
+    let fixed = |text: &str, group: &SizeGroup, css: &str| {
+        let l = Label::builder()
+            .label(text)
+            .halign(Align::Start)
+            .xalign(0.0)
+            .build();
+        l.add_css_class(css);
+        group.add_widget(&l);
+        l
+    };
+
+    let author_l = fixed(author, &groups.author, "picker-item-detail");
+    let work_l = fixed(work, &groups.work, "picker-item-detail");
+
+    // NO `ellipsize` HERE — truncation happens in Rust, above. That is the
+    // whole point, and reverting to an ellipsizing label reintroduces a
+    // measurable misalignment.
+    //
+    // A GtkLabel whose text is short enough that `ellipsize` never fires is
+    // measured and allocated through a DIFFERENT Pango code path than one that
+    // actually truncates, and that path does not honor `xalign(0.0)` inside a
+    // `SizeGroup` + `hexpand` row. The two paths disagree by a constant offset,
+    // so the list splits into two ragged left edges along the truncation
+    // boundary. Pixel-measured on screen at production geometry: with
+    // `ellipsize` + `max_width_chars(20)` the split was ~100px; widening to 44
+    // only shrank it to ~40px (truncating rows at x≈870, short rows at x≈909)
+    // — mitigation, not a fix.
+    //
+    // Pre-truncating to `TAG_MAX_CHARS` means EVERY label is short enough to
+    // never ellipsize, so every row takes the same path and `xalign(0.0)`
+    // holds. `hexpand` still lets the widget fill the row.
+    // Deliberately the SAME shape as `two_label_row`'s primary label, which
+    // renders correctly left-aligned in the eight other pickers:
+    // `halign(Start)` + `hexpand(true)` + `ellipsize(End)`. Earlier attempts
+    // here (Align::Fill, max_width_chars, pre-truncation) all chased the
+    // symptom in this label; the actual cause was the FIXED columns
+    // ellipsizing, which destabilised their SizeGroups. Fix that and this
+    // label needs nothing special.
+    let tag_l = Label::builder()
+        .label(tag)
+        .halign(Align::Start)
+        .xalign(0.0)
+        .hexpand(true)
+        .ellipsize(gtk4::pango::EllipsizeMode::End)
+        .build();
+
+    let div_l = fixed(div, &groups.div, "picker-item-detail");
+    let kind_l = fixed(kind, &groups.kind, "picker-item-detail");
+
+    let hbox = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(12)
+        .build();
+    hbox.append(&author_l);
+    hbox.append(&work_l);
+    hbox.append(&tag_l);
+    hbox.append(&div_l);
+    hbox.append(&kind_l);
     hbox
 }
 
@@ -286,4 +394,6 @@ mod tests {
         assert_eq!(wrap_index(0, 0), 0);
         assert_eq!(wrap_index(-1, 0), 0);
     }
+
+
 }

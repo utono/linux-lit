@@ -13,6 +13,11 @@ pub struct JournalPage {
     pub end_citation: Option<String>,
     pub source_text: Option<String>,
     pub kind: String,
+    /// The entry's own scope (`passage`/`scene`/`work`/`author`) — appended
+    /// as the LAST column/field (never inserted mid-list) so the ten
+    /// existing `map_journal_page_row` callers keep reading indices 0-10
+    /// untouched; only readers past the shared list need a +1.
+    pub scope: String,
 }
 
 /// A journal page plus the work it belongs to — used by cross-work term browse
@@ -28,7 +33,7 @@ pub struct TermMatch {
 /// row mapper cannot drift apart.
 const JOURNAL_PAGE_COLUMNS: &str =
     "id, div1, div2, question, answer, COALESCE(claude_model, ''), timestamp, \
-     start_citation, end_citation, source_text, COALESCE(kind, 'qa')";
+     start_citation, end_citation, source_text, COALESCE(kind, 'qa'), scope";
 
 /// Build a `JournalPage` from a row selected with `JOURNAL_PAGE_COLUMNS`.
 fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite::Error> {
@@ -44,6 +49,7 @@ fn map_journal_page_row(row: &rusqlite::Row<'_>) -> Result<JournalPage, rusqlite
         end_citation: row.get(8)?,
         source_text: row.get(9)?,
         kind: row.get(10)?,
+        scope: row.get(11)?,
     })
 }
 
@@ -337,31 +343,57 @@ pub fn find_author_pages(
 /// Do not replace this with `JOURNAL_PAGE_COLUMNS` again.
 const JOURNAL_PAGE_COLUMNS_J: &str =
     "j.id, j.div1, j.div2, j.question, j.answer, COALESCE(j.claude_model, ''), j.timestamp, \
-     j.start_citation, j.end_citation, j.source_text, COALESCE(j.kind, 'qa')";
+     j.start_citation, j.end_citation, j.source_text, COALESCE(j.kind, 'qa'), j.scope";
 
-pub fn find_author_all_pages(
+/// EVERY journal entry, each paired with `(work_abbrev, work_title, author)`.
+///
+/// The picker's AUTHOR scope is a global everything-view (2026-07-28), so this
+/// takes no author parameter. Two keying schemes are unioned: ordinary entries
+/// store a WORK ABBREV in `work_abbrev` and join to `works`; corpus notes
+/// (`scope='author'`, see `save_author_page`) store the AUTHOR NAME there and
+/// have no work row, so they are selected separately and carry their author as
+/// both title and author.
+///
+/// Columns are `j.`-qualified: the first half JOINs `works`, and a bare `id`
+/// is ambiguous across the two tables — SQLite refuses to prepare such a
+/// statement, and the caller's error handling would surface it as an EMPTY
+/// LIST rather than an error.
+pub fn find_all_journal_pages(
     conn: &Connection,
-    author: &str,
-) -> Result<Vec<(JournalPage, String)>, rusqlite::Error> {
+) -> Result<Vec<(JournalPage, String, String, String, String)>, rusqlite::Error> {
+    // Parenthesised ordinal refs (`ORDER BY (14)`) are rejected by SQLite on a
+    // compound SELECT ("1st ORDER BY term does not match any column in the
+    // result set") — and so is ANY non-bare-column first ORDER BY term (even
+    // `row_author = 'Shakespeare'` with an `AS row_author` alias in both
+    // halves). Wrapping the UNION ALL in a subquery lifts that restriction:
+    // ORDER BY on the OUTER select can use arbitrary expressions over the
+    // inner query's column names.
     let sql = format!(
-        "SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev \
-           FROM journal_entries j \
-           JOIN works w ON w.abbrev = j.work_abbrev \
-          WHERE w.author = ?1 AND j.scope != 'author' \
-         UNION ALL \
-         SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev \
-           FROM journal_entries j \
-          WHERE j.work_abbrev = ?1 AND j.scope = 'author' \
-         -- ORDER BY on a compound SELECT can itself be ambiguous when column
-         -- names collide across the union; ordinal refs sidestep that.
-         -- timestamp is the 7th selected column, id is the 1st.
-         ORDER BY 7 ASC, 1 ASC"
+        "SELECT * FROM ( \
+           SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev AS row_work_abbrev, \
+                  COALESCE(w.title, j.work_abbrev) AS row_work_title, \
+                  COALESCE(w.author, j.work_abbrev) AS row_author, \
+                  COALESCE(w.work_type, '') AS row_work_type \
+             FROM journal_entries j \
+             JOIN works w ON w.abbrev = j.work_abbrev \
+            WHERE j.scope != 'author' \
+           UNION ALL \
+           SELECT {JOURNAL_PAGE_COLUMNS_J}, j.work_abbrev AS row_work_abbrev, \
+                  j.work_abbrev AS row_work_title, j.work_abbrev AS row_author, \
+                  '' AS row_work_type \
+             FROM journal_entries j \
+            WHERE j.scope = 'author' \
+         ) \
+         ORDER BY row_author = 'Shakespeare' DESC, row_author ASC, row_work_title ASC, \
+                  timestamp ASC, id ASC"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([author], |row| {
+    let rows = stmt.query_map([], |row| {
         let page = map_journal_page_row(row)?;
-        let work: String = row.get(11)?;
-        Ok((page, work))
+        // row_work_abbrev/row_work_title/row_author/row_work_type sit right
+        // after the (now 12-column) JOURNAL_PAGE_COLUMNS_J list — indices
+        // 12/13/14/15.
+        Ok((page, row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?))
     })?;
     rows.collect()
 }
@@ -484,8 +516,9 @@ pub fn find_recent_pages(
 
 fn map_term_match_row(row: &rusqlite::Row<'_>) -> Result<TermMatch, rusqlite::Error> {
     let page = map_journal_page_row(row)?;
-    // work_abbrev is the column AFTER the JOURNAL_PAGE_COLUMNS list (index 11).
-    let work_abbrev: String = row.get(11)?;
+    // work_abbrev is the column AFTER the (12-column) JOURNAL_PAGE_COLUMNS
+    // list, i.e. index 12.
+    let work_abbrev: String = row.get(12)?;
     Ok(TermMatch { page, work_abbrev })
 }
 
@@ -841,6 +874,28 @@ mod tests {
         // find_journal_scenes lists only scene-scoped rows.
         let scenes = find_journal_scenes(&conn, "Ham").unwrap();
         assert_eq!(scenes, vec![(1, 2)]);
+    }
+
+    /// Proves the APPENDED `scope` column (Task 3) did not shift any
+    /// existing field: every other column must still read back correctly
+    /// through the shared `map_journal_page_row`, and the newly-appended
+    /// `scope` must round-trip alongside the pre-existing `kind`.
+    #[test]
+    fn appended_scope_column_does_not_shift_existing_fields() {
+        let conn = mem();
+        save_journal_page(&conn, "Ham", 1, 2, "Q1?", "A1.", "claude-opus-4-8", "scene", "note")
+            .unwrap();
+
+        let pages = find_journal_pages(&conn, "Ham", 1, 2).unwrap();
+        assert_eq!(pages.len(), 1);
+        let p = &pages[0];
+        assert_eq!(p.div1, 1);
+        assert_eq!(p.div2, 2);
+        assert_eq!(p.question, "Q1?");
+        assert_eq!(p.answer, "A1.");
+        assert_eq!(p.claude_model, "claude-opus-4-8");
+        assert_eq!(p.kind, "note", "kind must still read from its own index, not scope's");
+        assert_eq!(p.scope, "scene", "appended scope column must round-trip");
     }
 
     #[test]
@@ -1616,56 +1671,67 @@ mod tests {
         }
     }
 
-    /// Author scope spans every work by the author AND that author's
-    /// corpus notes. Corpus notes store the AUTHOR NAME in work_abbrev
-    /// (see save_author_page / AUTHOR_DIV), so the query is a union of two
-    /// different keying schemes — the thing most likely to be got wrong.
+    /// Author scope is now a GLOBAL list: every entry, every author, plus
+    /// corpus notes (which key by AUTHOR NAME in work_abbrev, not an abbrev).
     #[test]
-    fn author_scope_spans_works_and_corpus_notes() {
+    fn all_journal_pages_spans_every_author_and_corpus_notes() {
         let conn = mem();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS works (
-                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT, work_type TEXT
              );
-             INSERT INTO works (abbrev, title, author) VALUES
-                 ('Ham', 'Hamlet', 'Shakespeare'),
-                 ('Rom', 'Romeo and Juliet', 'Shakespeare'),
-                 ('BH',  'Bleak House', 'Charles Dickens');",
+             INSERT INTO works (abbrev, title, author, work_type) VALUES
+                 ('Ham', 'Hamlet', 'Shakespeare', 'play'),
+                 ('BH',  'Bleak House', 'Charles Dickens', 'prose');",
         )
         .unwrap();
 
         save_journal_page(&conn, "Ham", 1, 2, "HamQ?", "A.", "m", "scene", "qa").unwrap();
-        save_journal_page(&conn, "Rom", 2, 2, "RomQ?", "A.", "m", "scene", "qa").unwrap();
-        save_author_page(&conn, "Shakespeare", "CorpusQ?", "A.", "m", "note").unwrap();
-        // Another author's entry must NOT appear.
         save_journal_page(&conn, "BH", 1, 0, "DickensQ?", "A.", "m", "scene", "qa").unwrap();
+        save_author_page(&conn, "Shakespeare", "CorpusQ?", "A.", "m", "note").unwrap();
 
-        let rows = find_author_all_pages(&conn, "Shakespeare").unwrap();
+        let rows = find_all_journal_pages(&conn).unwrap();
+        let qs: Vec<&str> = rows.iter().map(|(p, _, _, _, _)| p.question.as_str()).collect();
 
-        let questions: Vec<&str> = rows.iter().map(|(p, _)| p.question.as_str()).collect();
-        assert_eq!(rows.len(), 3, "two work entries + one corpus note");
-        assert!(questions.contains(&"HamQ?"));
-        assert!(questions.contains(&"RomQ?"));
-        assert!(questions.contains(&"CorpusQ?"));
-        assert!(!questions.contains(&"DickensQ?"), "another author must be excluded");
+        assert_eq!(rows.len(), 3, "every author's entries plus the corpus note");
+        assert!(qs.contains(&"HamQ?"));
+        assert!(qs.contains(&"DickensQ?"), "another author must NOT be excluded now");
+        assert!(qs.contains(&"CorpusQ?"));
 
-        // Each row knows which work it came from — author rows are the only
-        // cross-work list, so the picker labels them.
-        let ham = rows.iter().find(|(p, _)| p.question == "HamQ?").unwrap();
-        assert_eq!(ham.1, "Ham");
+        let ham = rows.iter().find(|(p, _, _, _, _)| p.question == "HamQ?").unwrap();
+        assert_eq!(ham.1, "Ham", "work abbrev");
+        assert_eq!(ham.2, "Hamlet", "work title");
+        assert_eq!(ham.3, "Shakespeare", "author");
     }
 
-    /// An author with no entries at all yields an empty vec, never an error.
+    /// Shakespeare pins to the top; other authors follow alphabetically.
     #[test]
-    fn author_scope_empty_is_not_an_error() {
+    fn all_journal_pages_sorts_shakespeare_first() {
         let conn = mem();
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS works (
-                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT
-             );",
+                 id INTEGER PRIMARY KEY, abbrev TEXT, title TEXT, author TEXT, work_type TEXT
+             );
+             INSERT INTO works (abbrev, title, author, work_type) VALUES
+                 ('BH',  'Bleak House', 'Charles Dickens', 'prose'),
+                 ('GT',  'Gullivers Travels', 'Jonathan Swift', 'prose'),
+                 ('Ham', 'Hamlet', 'Shakespeare', 'play');",
         )
         .unwrap();
+        save_journal_page(&conn, "GT", 1, 0, "SwiftQ?", "A.", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "BH", 1, 0, "DickensQ?", "A.", "m", "scene", "qa").unwrap();
+        save_journal_page(&conn, "Ham", 1, 2, "ShakeQ?", "A.", "m", "scene", "qa").unwrap();
 
-        assert!(find_author_all_pages(&conn, "Nobody").unwrap().is_empty());
+        let authors: Vec<String> = find_all_journal_pages(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, _, a, _)| a)
+            .collect();
+
+        assert_eq!(
+            authors,
+            vec!["Shakespeare", "Charles Dickens", "Jonathan Swift"],
+            "Shakespeare first, then alphabetical by author"
+        );
     }
 }

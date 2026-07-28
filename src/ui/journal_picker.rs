@@ -23,6 +23,19 @@ pub struct JournalRow {
     /// scene/work-scope rows and same-work rows in author scope, which
     /// `confirm_picker` keeps on today's exact `land_on_page` path.
     pub work_abbrev: Option<String>,
+    /// `Some(surname)` in AUTHOR scope only — the five-column form. `None`
+    /// in scene/work scope, which keep the two-column rendering because
+    /// author and work are constant there and would be noise.
+    pub author_label: Option<String>,
+    /// The entry's OWN scope (`passage`/`scene`/`work`/`author`). Shown as
+    /// the type column so the header's BROWSING scope is never mistaken for
+    /// each row's own scope — the confusion that prompted this change.
+    pub type_label: String,
+    /// The division column in the WORK'S OWN noun — "Ch. 2" for prose,
+    /// "1.4" for a play, "Preface" for prose front matter. Distinct from
+    /// `scene_label`, which already embeds the TYPE ("1.4 passage") and would
+    /// print it twice beside `type_label`. AUTHOR scope only.
+    pub div_label: String,
 }
 
 pub struct JournalQaPicker {
@@ -33,16 +46,17 @@ pub struct JournalQaPicker {
     search_entry: Entry,
     list_box: ListBox,
     pub items: Vec<JournalRow>,
+    column_groups: crate::ui::picker_nav::PickerColumnGroups,
 }
 
 impl JournalQaPicker {
     pub fn new() -> Self {
         let overlay = Overlay::new();
 
-        let picker_box = crate::ui::picker_nav::build_picker_card();
+        let picker_box = crate::ui::picker_nav::build_picker_card_wide(crate::ui::picker_nav::JOURNAL_PICKER_WIDTH);
 
         let search_entry = Entry::builder()
-            .placeholder_text("Filter Q&A pages...")
+            .placeholder_text("Filter Q&A pages…   (Alt+t cycles scope: scene · work · author)")
             .build();
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
@@ -61,6 +75,7 @@ impl JournalQaPicker {
             search_entry,
             list_box,
             items: Vec::new(),
+            column_groups: crate::ui::picker_nav::PickerColumnGroups::new(),
         }
     }
 
@@ -127,13 +142,39 @@ impl JournalQaPicker {
                 None => item.question_prefix.clone(),
             };
             if !filter.is_empty() {
-                let target = format!("{} {}", item.scene_label, primary).to_lowercase();
+                // Filter against what the row DISPLAYS. In author scope that
+                // is the five columns — so typing a surname ("dickens") or a
+                // division ("ch. 2") narrows, which is the natural gesture on
+                // a global cross-work list. `scene_label` stays in the target
+                // for the two-column scopes, where it IS the visible detail.
+                let target = format!(
+                    "{} {} {} {}",
+                    item.author_label.as_deref().unwrap_or(""),
+                    item.scene_label,
+                    item.div_label,
+                    primary,
+                )
+                .to_lowercase();
                 if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
                     continue;
                 }
             }
 
-            let hbox = crate::ui::picker_nav::two_label_row(&primary, &item.scene_label);
+            let hbox = match (&item.author_label, &item.work_label) {
+                (Some(author), Some(work)) => crate::ui::picker_nav::five_column_row(
+                    &self.column_groups,
+                    author,
+                    work,
+                    &item.question_prefix,
+                    // `div_label`, NOT `scene_label` — the latter already
+                    // embeds the type ("1.4 passage") and would print it
+                    // twice beside the type column.
+                    &item.div_label,
+                    &item.type_label,
+                ),
+                // Scene/work scope: byte-identical to before this change.
+                _ => crate::ui::picker_nav::two_label_row(&primary, &item.scene_label),
+            };
 
             let row = ListBoxRow::builder().child(&hbox).build();
             row.set_widget_name(&idx.to_string());
