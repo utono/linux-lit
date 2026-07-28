@@ -1247,17 +1247,19 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// fewer row per page — the pinned play_pages/prose_pages tables must be
 /// regenerated at the new geometry to match (LIT_GEN_PAGE_TABLE / re-import).
 ///
-/// 74 -> 64 -> 59 -> 54 (2026-07-28, in three passes): the gap under the
+/// 74 -> 64 -> 59 -> 54 -> 49 (2026-07-28, in four passes): the gap under the
 /// running head read as too airy on both the one- and two-column layouts. The
-/// 20px is not reclaimed as extra text — it moves to the foot, where the two
-/// bottom reserves each rise by the same 20 (`SINGLE_COLUMN_BOTTOM_MARGIN`,
-/// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 42), so the usable height is unchanged and
+/// 25px is not reclaimed as extra text — it moves to the foot, where the two
+/// bottom reserves each rise by the same 25 (`SINGLE_COLUMN_BOTTOM_MARGIN`,
+/// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 47), so the usable height is unchanged and
 /// the row grid is preserved. Keep the three in step.
 ///
-/// FLOOR: the strip holds the 14px running-head labels AND the `card_focus_rule`
-/// at margin-top 36 (+2px tall = 38). Below ~40 the rule would collide with the
-/// first text line, so further reductions need that margin moved too.
-pub const TOP_SPACER_HEIGHT: i32 = 54;
+/// FLOOR — 49 is CLOSE to it. The strip holds the 14px running-head labels AND
+/// the `card_focus_rule` at margin-top 36 (+2px tall = 38), leaving 11px of
+/// clearance here. Below ~40 the rule collides with the first text line, so one
+/// more 5px pass is the last that fits: after that, drop the rule's margin (it
+/// only shows in the chat layout) before shrinking the strip again.
+pub const TOP_SPACER_HEIGHT: i32 = 49;
 
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
