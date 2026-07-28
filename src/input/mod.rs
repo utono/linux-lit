@@ -8,6 +8,7 @@ pub mod nav_test;
 pub mod navigation;
 pub mod overlay_search;
 pub mod page_table;
+pub mod page_top;
 pub mod phrase_highlight;
 pub mod picker_dispatch;
 pub mod picker_keys;
