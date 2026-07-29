@@ -266,6 +266,21 @@ pub(crate) fn improve_question(
 /// instead of the question. Returns the inner text of the first `<segment>` or
 /// `<stage>` element (speaker labels are chrome, skipped), or `None` if the
 /// markup has no such line. Pure — unit-tested.
+/// Build a `JournalRow::search_haystack`: the entry's full question + answer,
+/// lowercased once so the per-keystroke filter does no allocation.
+///
+/// The picker's visible label is only an 80-char prefix — and for a
+/// `scope='passage'` entry it is the source passage's first line, not the
+/// question at all — so without this a term that lives in the question tail or
+/// the answer body is unfindable. Pure; unit-tested.
+fn filter_haystack(question: &str, answer: &str) -> String {
+    let mut h = String::with_capacity(question.len() + answer.len() + 1);
+    h.push_str(question);
+    h.push(' ');
+    h.push_str(answer);
+    h.to_lowercase()
+}
+
 fn first_passage_line(source_markup: &str) -> Option<String> {
     for line in source_markup.lines() {
         let line = line.trim();
@@ -3152,6 +3167,7 @@ pub(crate) fn repopulate_picker_for_scope(s: &mut AppState) {
                     p.div1,
                     p.div2,
                 ),
+                search_haystack: filter_haystack(&p.question, &p.answer),
             }
         })
         .collect();
@@ -3934,6 +3950,27 @@ mod tests {
             division_text, passage, question,
         );
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn filter_haystack_covers_question_and_answer_lowercased() {
+        let h = super::filter_haystack("Why does Esther REMONSTRATE?", "Because Dickens…");
+        assert!(h.contains("remonstrate"), "question term must be searchable");
+        assert!(h.contains("because dickens"), "answer must be searchable");
+        // Lowercased once at build time so the per-keystroke filter allocates
+        // nothing; a mixed-case filter is lowercased on the other side.
+        assert_eq!(h, h.to_lowercase());
+    }
+
+    #[test]
+    fn filter_haystack_finds_terms_past_the_80_char_label() {
+        // The picker's visible label is only the first 80 chars, and for a
+        // passage entry it is the SOURCE line rather than the question — the
+        // two ways a term went unfindable before the haystack existed.
+        let question = format!("{} remonstrate", "x".repeat(200));
+        let h = super::filter_haystack(&question, "");
+        assert!(h.contains("remonstrate"));
+        assert!(!question.chars().take(80).collect::<String>().contains("remonstrate"));
     }
 
     #[test]
