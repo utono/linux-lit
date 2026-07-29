@@ -38,15 +38,39 @@ const FOOTER_MARGIN_TOP: i32 = 12;
 /// viewport automatically and the row grid stays consistent.
 const FOOTER_MARGIN_BOTTOM: i32 = 24;
 
+/// Right inset for the footer row — the gap between the page counter's last
+/// glyph and the card's right edge.
+///
+/// 40 (`text_margins`, matching the left label and the running head) read too
+/// tight on the counter: measured 41px with `1 / 5` in the journal Q&A card,
+/// nothing clipped, but the token crowds the corner. 56 gives it the same
+/// visual weight of surrounding space the 24px bottom margin gives it
+/// vertically, since a short right-aligned token has no neighbouring text to
+/// its right to establish the margin the way a line of prose does on the left.
+///
+/// Deliberately NOT `text_margins`: the left and right ends of this row hold
+/// different kinds of content (a prose-aligned label vs a lone counter) and
+/// want different insets. Keep the LEFT at `text_margins` so the footer label
+/// stays flush with the body text above it.
+const FOOTER_END_INSET: i32 = 56;
+
 /// Build the gloss/journal footer row: a horizontal box (text_margins sides,
 /// [`FOOTER_MARGIN_TOP`]/[`FOOTER_MARGIN_BOTTOM`] top/bottom, `gloss-hint`
 /// class) with a left-anchored hexpand label and a right-anchored hint label
-/// (`halign End`, `margin_end 12`). Left then hint are appended into the box.
-/// Left-label visibility and any extra widgets are the caller's responsibility.
+/// (`halign End`). Left then hint are appended into the box. Left-label
+/// visibility and any extra widgets (e.g. the page counter, appended AFTER
+/// `hint`) are the caller's responsibility.
 pub(crate) fn build_footer_row(text_margins: i32, hint_text: &str) -> FooterRow {
     let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     container.set_margin_start(text_margins);
-    container.set_margin_end(text_margins);
+    // The counter both callers append after `hint` is the RIGHTMOST thing in the
+    // row, so this end margin is all that holds it off the card edge. It gets
+    // FOOTER_END_INSET rather than the symmetric `text_margins`: the left label
+    // starts a line of prose (40px reads correct against the body's left edge),
+    // while the counter is a lone 2-4 glyph token that crowds the corner at the
+    // same value. Reported 2026-07-29 with `1 / 5` at a measured 41px inset —
+    // not clipped (glyphs whole at 6x), just tight.
+    container.set_margin_end(FOOTER_END_INSET);
     container.set_margin_top(FOOTER_MARGIN_TOP);
     container.set_margin_bottom(FOOTER_MARGIN_BOTTOM);
     container.add_css_class("gloss-hint");
@@ -56,9 +80,13 @@ pub(crate) fn build_footer_row(text_margins: i32, hint_text: &str) -> FooterRow 
     left.set_hexpand(true);
     container.append(&left);
 
+    // Visual-mode hint ("⇧V/Esc exit · j/k extend · …"). EMPTY in every normal
+    // state — `set_journal_hint`/`set_gloss_hint` set it to "" — so it is a
+    // zero-width spacer for all but visual mode. It carried a `margin_end(12)`
+    // that applied unconditionally; dropped, because the row's own end margin
+    // now owns the counter's inset and the stray 12 only muddied the arithmetic.
     let hint = Label::new(Some(hint_text));
     hint.set_halign(Align::End);
-    hint.set_margin_end(12);
     container.append(&hint);
 
     FooterRow { container, left, hint }
