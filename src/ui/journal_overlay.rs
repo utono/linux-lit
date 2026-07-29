@@ -113,6 +113,13 @@ pub struct JournalOverlay {
     /// Char ranges of `<hi>` highlights in the CURRENT page body, re-applied on
     /// the `journal-hi` tag after each `set_text`. Empty when none.
     hi_ranges: RefCell<Vec<(usize, usize)>>,
+    /// Markdown emphasis spans (`*italic*` / `**bold**`) in the CURRENT Q&A page
+    /// body, re-applied on the `md_tags` italic/bold tags after each `set_text`
+    /// — exactly how `hi_ranges` works, and for the same reason: the Q&A path
+    /// must keep its single flat `set_text` so `<hi>`, the rewrite diff, overlay
+    /// search and the page char-spans all stay offset-aligned. Always empty for
+    /// note pages, which go through the block Markdown renderer instead.
+    emphasis_ranges: RefCell<Vec<crate::ui::gloss_block::EmphasisSpan>>,
     /// Pre-registered Markdown TextTags for the journal buffer. Built once in
     /// `new` so tag-table lookup is O(1) on every `render_page` call.
     md_tags: crate::ui::markdown::MarkdownTags,
@@ -807,6 +814,7 @@ impl JournalOverlay {
             vim_cursor_colors: RefCell::new((String::new(), String::new())),
             highlight_bg: RefCell::new(crate::ui::DEFAULT_HIGHLIGHT_BG.to_string()),
             hi_ranges: RefCell::new(Vec::new()),
+            emphasis_ranges: RefCell::new(Vec::new()),
             md_tags,
             page_is_note: Cell::new(false),
             marker_glyph,
@@ -1208,8 +1216,10 @@ impl JournalOverlay {
         // Stale <hi> char ranges from the last Q&A page must not survive into a
         // block-less buffer (loading / message / pending-passage): a later theme
         // change calls apply_hi_color, which would paint the OLD page's ranges
-        // over arbitrary spans of the new text.
+        // over arbitrary spans of the new text. Emphasis ranges are cleared for
+        // the same reason.
         self.hi_ranges.borrow_mut().clear();
+        self.emphasis_ranges.borrow_mut().clear();
     }
 
     pub fn hide(&self) {
@@ -1519,8 +1529,15 @@ impl JournalOverlay {
         let Some(page) = pages.get(page_idx) else {
             return (0, 0);
         };
+        // Must mirror `render_page`'s cleaning EXACTLY (both strips, in the same
+        // order): a search/diff offset computed on a longer basis than the
+        // rendered body lands short of its match.
         let clean_chars = |raw: &str| -> usize {
-            crate::ui::gloss_block::strip_hi_spans(raw).0.chars().count()
+            let hi_clean = crate::ui::gloss_block::strip_hi_spans(raw).0;
+            crate::ui::gloss_block::strip_emphasis_spans(&hi_clean)
+                .0
+                .chars()
+                .count()
         };
         // Chars before this page: every earlier paragraph's cleaned length plus
         // the 2-char "\n\n" join that follows each of them.
@@ -1555,7 +1572,12 @@ impl JournalOverlay {
         let paras = self.all_paragraphs.borrow();
         paras
             .iter()
-            .map(|p| crate::ui::gloss_block::strip_hi_spans(p).0)
+            .map(|p| {
+                // Both strips, in `render_page`'s order — search matches on this
+                // basis, and a `/` hit must land where the text actually is.
+                let hi_clean = crate::ui::gloss_block::strip_hi_spans(p).0;
+                crate::ui::gloss_block::strip_emphasis_spans(&hi_clean).0
+            })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
@@ -1727,6 +1749,44 @@ impl JournalOverlay {
                 let ei = buffer.iter_at_offset(e as i32);
                 buffer.apply_tag(&tag, &si, &ei);
             }
+        }
+    }
+
+    /// Paint `*italic*` / `**bold**` spans stripped by `strip_emphasis_spans`,
+    /// reusing the buffer's already-registered Markdown tags. Runs after
+    /// `set_text` (like `apply_hi_color`), and is a no-op for note pages and for
+    /// bodies with no emphasis.
+    fn apply_emphasis(&self) {
+        let spans = self.emphasis_ranges.borrow();
+        if spans.is_empty() {
+            return;
+        }
+        let buffer = self.view.buffer();
+        // `apply_font` re-adds the buffer-wide `journal-font` tag at TOP
+        // priority over the whole body, which flattens any style a lower tag
+        // asks for — that is why merely applying md-italic here rendered
+        // upright text with the markers correctly stripped. Re-raise the two
+        // emphasis tags above it, the same trick `reassert_italic_tags` does
+        // for the gloss stage/bracket italics. Must run AFTER apply_font, which
+        // it does: render_page calls apply_font, then apply_hi_color, then this.
+        // Distinct priorities: GTK keeps tag priorities unique and setting one
+        // shuffles the rest, so raise bold to the top and italic just under it
+        // (they never need to out-rank each other — a run is one or the other).
+        let table = buffer.tag_table();
+        let top = table.size();
+        if top > 1 {
+            self.md_tags.bold.set_priority(top - 1);
+            self.md_tags.italic.set_priority(top - 2);
+        }
+        for span in spans.iter() {
+            let tag = if span.bold {
+                &self.md_tags.bold
+            } else {
+                &self.md_tags.italic
+            };
+            let si = buffer.iter_at_offset(span.start as i32);
+            let ei = buffer.iter_at_offset(span.end as i32);
+            buffer.apply_tag(tag, &si, &ei);
         }
     }
 
@@ -1961,9 +2021,12 @@ impl JournalOverlay {
     /// suspended), place the cursor, and show the mode indicator in the footer.
     pub fn enter_edit_buffer(&self, question: &str, answer: &str, block_fill: &str, block_fg: &str, kind: &str) {
         self.begin_edit_font();
-        // The editor shows RAW text (with `<hi>` literals); the read-mode hi
-        // ranges are stale here and must not be re-applied to the raw buffer.
+        // The editor shows RAW text (with `<hi>` and `*` literals); the
+        // read-mode hi/emphasis ranges are stale here and must not be
+        // re-applied to the raw buffer — their offsets are for the STRIPPED
+        // body, so on raw text they would land mid-word.
         self.hi_ranges.borrow_mut().clear();
+        self.emphasis_ranges.borrow_mut().clear();
         *self.vim_cursor_colors.borrow_mut() = (block_fill.to_string(), block_fg.to_string());
         *self.edit_kind.borrow_mut() = kind.to_string();
         let buf = if kind == "note" {
@@ -2227,6 +2290,12 @@ impl JournalOverlay {
             paras
                 .iter()
                 .map(|p| {
+                    // Measured on the RAW paragraph, so `<hi>` tags and `*`
+                    // emphasis markers are counted though the render strips
+                    // them. That is deliberate: the estimate errs LONG, which
+                    // packs a page slightly loose rather than clipping its last
+                    // line — the safe direction. (Same pre-existing behavior
+                    // `<hi>` has always had.)
                     // Leaded: the view renders with pixels_inside_wrap.
                     let text_h = crate::ui::pagination::measure_text_height_leaded(
                         &pctx, p, size, &family, wrap_w,
@@ -2296,6 +2365,17 @@ impl JournalOverlay {
             *self.hi_ranges.borrow_mut() = hi_ranges;
             body
         };
+        // Emphasis is stripped from the ALREADY `<hi>`-cleaned body, so both
+        // range sets index the same final string — the one handed to set_text.
+        // Notes skip this: their markers are consumed by the block renderer.
+        let body = if is_note {
+            self.emphasis_ranges.borrow_mut().clear();
+            body
+        } else {
+            let (clean, spans) = crate::ui::gloss_block::strip_emphasis_spans(&body);
+            *self.emphasis_ranges.borrow_mut() = spans;
+            clean
+        };
         drop(paras);
         drop(pages);
 
@@ -2329,6 +2409,8 @@ impl JournalOverlay {
         // editor sets raw text and must not re-apply these read-mode ranges).
         // Notes have no <hi> spans so apply_hi_color is a no-op for them.
         self.apply_hi_color();
+        // Same contract as apply_hi_color: char ranges into the just-set body.
+        self.apply_emphasis();
         // Style the prepended passage source (page 0 only): small-caps speaker,
         // hang-indented verse, dim right-aligned citation.
         self.apply_source_style();
