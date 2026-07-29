@@ -54,19 +54,29 @@ flags.
 
 ### Scope of "overlay mode"
 
-Only the surfaces the request names: `GlossOverlay`, `JournalOverlay`, and
-their visual/edit satellites (`GlossVisual`, `GlossEdit`, `JournalVisual`,
-`JournalEdit`), plus `SynopsisOverlay`/`SynopsisVisual` (it renders through
-the gloss overlay widget and reads as the same surface to the user).
+**Amended 2026-07-29 (follow-up request): pickers are included.** Initially
+this was a whitelist of the surfaces the request named — the gloss/journal
+overlays, their visual/edit satellites, and the synopsis. That proved to be
+the wrong shape twice over: it missed Reader → `JournalPicker` →
+`JournalOverlay` (Ctrl+j), and it left every picker painting under the popup.
+
+The predicate is now defined by INVERSION: `is_suspending_overlay` is
+`!is_reader_mode`, where the reader set is `Reader | Visual | VocabLoop`.
+Anything else covers the reader card and therefore suspends. A new
+`InputMode` suspends by default — the safe direction, since a wrong suspend
+costs one keystroke of hidden popup while a wrong omission paints a card over
+content.
+
+`VocabLoop` stays in the reader set: the vocab drill is fully modal but draws
+no overlay of its own, so suspending would hide the word being drilled.
 
 Explicitly NOT suspended:
 
 - Overlay-scoped popups (`VocabAnchor::Corner` / `ChatPanel`). Those are
-  opened BY an overlay and are the point of the interaction. Suspend applies
-  only to a popup that was anchored in the reader — track this by only
-  arming the flag on a Reader→overlay transition, which by construction can
-  only catch a reader-anchored popup.
-- Pickers and the chat layout — out of scope for this request.
+  opened BY an overlay/the chat layout and are the point of the interaction.
+  They are safe by construction: they are opened from WITHIN their own
+  surface, so no mode transition arms the suspend, and `restore_after_overlay`
+  only ever repaints what `suspend_for_overlay` itself hid.
 
 ### Interaction with existing permanent closes
 
