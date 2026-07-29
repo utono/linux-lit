@@ -504,6 +504,121 @@ fn try_extract<'a>(s: &'a str, tag: &str) -> Option<(&'a str, &'a str)> {
     }
 }
 
+/// A `**bold**` or `*italic*` span found by `strip_emphasis_spans`, as a
+/// half-open CHAR range into the CLEAN text.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct EmphasisSpan {
+    pub start: usize,
+    pub end: usize,
+    pub bold: bool,
+}
+
+/// Strip Markdown emphasis markers (`**bold**`, `*italic*`) from `text` for
+/// DISPLAY, returning the clean text plus the spans they covered — the same
+/// contract as `strip_hi_spans`, so a caller can `set_text` the clean body and
+/// then apply a `TextTag` per range.
+///
+/// **Why not `crate::ui::markdown`?** That module already parses CommonMark and
+/// already has bold/italic tags registered on the journal's own buffer — but it
+/// renders BLOCKS, inserting into the buffer itself. The journal's Q&A path
+/// deliberately does one flat `set_text` so that `<hi>` ranges, the rewrite
+/// diff, overlay search, and the page char-spans all stay byte-aligned with the
+/// buffer (see the comment above `note_md_blocks` in `journal_overlay.rs`).
+/// Routing Q&A through the block renderer would desync every one of those. This
+/// strips markers in place instead, leaving that invariant untouched.
+///
+/// Deliberately conservative — it renders emphasis, it is not a Markdown
+/// implementation:
+///
+/// - A marker must OPEN tight against a non-space and CLOSE tight against a
+///   non-space, so arithmetic (`2 * 3`), a bare asterisk, and unmatched or
+///   spaced-out markers are all left as literal text.
+/// - A span may not straddle a blank line, so a stray `*` cannot italicize the
+///   remainder of a long answer.
+/// - `**` is tried before `*`, so `**bold**` never reads as two empty italics.
+/// - Underscore forms (`_italic_`) are NOT handled: they collide with prose
+///   like `snake_case` and with underscores inside quoted source text.
+pub(crate) fn strip_emphasis_spans(text: &str) -> (String, Vec<EmphasisSpan>) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut clean = String::new();
+    let mut spans = Vec::new();
+    let mut i = 0usize;
+    let mut out_chars = 0usize;
+
+    while i < chars.len() {
+        if chars[i] != '*' {
+            clean.push(chars[i]);
+            out_chars += 1;
+            i += 1;
+            continue;
+        }
+        // Longest marker first: `**` before `*`.
+        let width = if i + 1 < chars.len() && chars[i + 1] == '*' { 2 } else { 1 };
+        match find_emphasis_close(&chars, i, width) {
+            Some(close) => {
+                let start = out_chars;
+                for &c in &chars[i + width..close] {
+                    clean.push(c);
+                    out_chars += 1;
+                }
+                spans.push(EmphasisSpan { start, end: out_chars, bold: width == 2 });
+                i = close + width;
+            }
+            None => {
+                // No valid partner — emit the marker literally.
+                for _ in 0..width {
+                    clean.push('*');
+                    out_chars += 1;
+                }
+                i += width;
+            }
+        }
+    }
+    (clean, spans)
+}
+
+/// Index of the closing marker for an emphasis run opening at `open` with
+/// `width` asterisks, or `None` when the run is not a well-formed span.
+///
+/// Enforces the tight-delimiter and no-blank-line rules documented on
+/// `strip_emphasis_spans`.
+fn find_emphasis_close(chars: &[char], open: usize, width: usize) -> Option<usize> {
+    let first = *chars.get(open + width)?;
+    if first.is_whitespace() {
+        return None; // "* not a marker"
+    }
+    let mut j = open + width;
+    let mut blank_run = 0usize;
+    while j < chars.len() {
+        if chars[j] == '\n' {
+            blank_run += 1;
+            // Two newlines = a paragraph break; emphasis never straddles one.
+            if blank_run >= 2 {
+                return None;
+            }
+        } else if !chars[j].is_whitespace() {
+            blank_run = 0;
+        }
+        if chars[j] == '*' {
+            // A `*` closer must not be the first char of a `**` closer when we
+            // opened with one asterisk, else `*a**b*` mis-pairs.
+            let run = chars[j..].iter().take_while(|&&c| c == '*').count();
+            if run >= width {
+                // Tight: the char before the closer must be non-space, and the
+                // span must be non-empty.
+                let prev = chars[j - 1];
+                if j > open + width && !prev.is_whitespace() {
+                    return Some(j);
+                }
+            }
+            j += run.max(1);
+            continue;
+        }
+        j += 1;
+    }
+    None
+}
+
 /// Strip inline `<hi>…</hi>` highlight tags from `text` for DISPLAY, returning
 /// the clean text plus the half-open CHAR ranges (in the CLEAN text's offsets) of
 /// each highlighted span. Callers insert the clean text into a `TextBuffer` and
@@ -655,6 +770,87 @@ pub(crate) fn replace_word_ipa_in_source_block(
         Some(out)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod emphasis_tests {
+    use super::*;
+
+    fn spans(text: &str) -> (String, Vec<(usize, usize, bool)>) {
+        let (clean, s) = strip_emphasis_spans(text);
+        (clean, s.into_iter().map(|e| (e.start, e.end, e.bold)).collect())
+    }
+
+    #[test]
+    fn strips_italic_and_records_range() {
+        let (clean, s) = spans("the Dutch *Remonstrantie*, five articles");
+        assert_eq!(clean, "the Dutch Remonstrantie, five articles");
+        // "Remonstrantie" is 13 chars: [10, 23).
+        assert_eq!(s, vec![(10, 23, false)]);
+    }
+
+    #[test]
+    fn strips_bold_and_marks_it_bold() {
+        let (clean, s) = spans("**1610** — the Dutch");
+        assert_eq!(clean, "1610 — the Dutch");
+        assert_eq!(s, vec![(0, 4, true)]);
+    }
+
+    #[test]
+    fn bold_wins_over_two_empty_italics() {
+        // `**x**` must be ONE bold span, never a pair of empty italics.
+        let (clean, s) = spans("**x**");
+        assert_eq!(clean, "x");
+        assert_eq!(s, vec![(0, 1, true)]);
+    }
+
+    #[test]
+    fn multiple_spans_on_one_line() {
+        let (clean, s) = spans("*Remonstrant* and *Counter-Remonstrant*");
+        assert_eq!(clean, "Remonstrant and Counter-Remonstrant");
+        assert_eq!(s, vec![(0, 11, false), (16, 35, false)]);
+    }
+
+    #[test]
+    fn arithmetic_and_lone_asterisks_stay_literal() {
+        // Spaced markers are not emphasis — `2 * 3` must survive verbatim.
+        let (clean, s) = spans("2 * 3 and a lone * here");
+        assert_eq!(clean, "2 * 3 and a lone * here");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn unmatched_marker_stays_literal() {
+        let (clean, s) = spans("an *unclosed run");
+        assert_eq!(clean, "an *unclosed run");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn emphasis_does_not_straddle_a_paragraph_break() {
+        // A stray `*` must not italicize the rest of a long answer.
+        let (clean, s) = spans("stray * here\n\nnext paragraph * end");
+        assert_eq!(clean, "stray * here\n\nnext paragraph * end");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn span_may_cross_a_single_newline() {
+        // Wrapped prose inside one paragraph still emphasizes.
+        let (clean, s) = spans("*two\nlines*");
+        assert_eq!(clean, "two\nlines");
+        assert_eq!(s, vec![(0, 9, false)]);
+    }
+
+    #[test]
+    fn offsets_are_char_based_not_byte_based() {
+        // The em dash and accented chars are multi-byte; ranges must be CHAR
+        // offsets or the applied tag lands in the wrong place.
+        let (clean, s) = spans("café — *remonstrāre* here");
+        assert_eq!(clean, "café — remonstrāre here");
+        let (start, end, _) = s[0];
+        assert_eq!(clean.chars().skip(start).take(end - start).collect::<String>(), "remonstrāre");
     }
 }
 

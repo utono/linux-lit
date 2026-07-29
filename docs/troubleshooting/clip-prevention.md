@@ -511,6 +511,19 @@ line rather than between stanzas.
 `apply_block_typography`. A TextTag overrides the view default, so verse sets
 tight while the surrounding prose keeps its configured leading.
 
+- **A buffer-wide font tag OUTRANKS every style tag under it (2026-07-29).**
+  *Tell:* a style tag is applied over a correct range and the text renders
+  unstyled — no error, no missing tag, the markers/offsets all correct. In the
+  journal overlay, `*italic*` spans stripped and tagged with `md-italic`
+  rendered fully upright. *Root cause:* `apply_font_to_views`
+  (`src/ui/mod.rs`) REMOVES and re-adds a `journal-font` tag across the whole
+  buffer on every render, so it lands at the top of the tag table and its
+  upright font wins over any lower tag's `Style::Italic`. This is why
+  `reassert_italic_tags` exists — but it only re-raises `gloss-stage` and
+  `gloss-bracket`, so any newly-added style tag hits the same wall. *Fix:*
+  re-raise the tag with `set_priority(table.size() - 1)` AFTER `apply_font`
+  runs. Give competing tags DISTINCT priorities (`- 1`, `- 2`): GTK keeps
+  priorities unique and setting one shuffles the others.
 - **Tag-table insertion order IS priority.** GTK resolves competing values by
   tag priority, which defaults to insertion order (later-added wins) — the same
   rule behind the vocab-tag ordering bug. `verse-tight` is created BEFORE
