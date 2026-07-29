@@ -85,7 +85,34 @@ pub(crate) fn build_footer_row(text_margins: i32) -> FooterRow {
     let left = Label::new(None);
     left.set_halign(Align::Start);
     left.set_hexpand(true);
+    left.add_css_class(FOOTER_LABEL_CLASS);
     container.append(&left);
 
     FooterRow { container, left }
 }
+
+/// CSS class for the footer's own labels (`.gloss-position`: 14px + the theme's
+/// dim colour). Callers MUST add it to any label they append to the row —
+/// notably the page counter — so the whole row shares one size and colour.
+///
+/// Both callers `remove_css_class("gloss-hint")` to drop its border-top rule,
+/// and that was the ONLY rule styling the row, so every footer label was
+/// rendering at GTK's default size in the body-text colour. Two visible
+/// consequences, both reported 2026-07-29:
+///
+/// 1. The counter was near-black (measured ink `87,82,121`, same as body prose)
+///    where the header chrome beside it is dim — the footer did not read as
+///    chrome.
+/// 2. At the inherited default size the digit `5`'s flat top bar landed on a
+///    pixel boundary and rasterised at ~13% coverage (`217` against a `250`
+///    card) while its stem stayed solid (`109`) — so the bar washed out and the
+///    glyph read as missing its top. `3` and `/` were unaffected: their strokes
+///    fall differently on the grid. The same `5` in the running head, at a
+///    defined size, rasterises its bar solid (`133`). A hinting artifact of the
+///    unstyled size, NOT a clip and NOT occlusion — the band above the glyph is
+///    pure card colour.
+///
+/// `.gloss-position` already existed in `theme.rs` for exactly this and was
+/// applied to NOTHING (dead CSS since the footer was extracted). Wiring it up
+/// fixes both.
+pub(crate) const FOOTER_LABEL_CLASS: &str = "gloss-position";

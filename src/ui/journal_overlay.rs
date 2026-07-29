@@ -642,6 +642,9 @@ impl JournalOverlay {
         let position_label = Label::new(None);
         position_label.set_halign(gtk4::Align::End);
         position_label.set_visible(false);
+        // Same size/dim colour as the footer's own left label — see
+        // FOOTER_LABEL_CLASS for why an unstyled counter washed out the `5`.
+        position_label.add_css_class(crate::ui::footer::FOOTER_LABEL_CLASS);
         footer.container.append(&position_label);
         let footer_container = footer.container.clone();
         container.append(&footer.container);
