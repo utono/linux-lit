@@ -1041,6 +1041,30 @@ When a half line clips at the bottom edge of a scrolled surface:
       mirrored the head side (a literal 24) but had no corresponding foot
       constant to move, so the asymmetry was invisible to a diff of the reading
       card's three constants.
+    - **The HORIZONTAL half of the same report (`FOOTER_END_INSET`).** After the
+      bottom margin was fixed, the counter still read as "clipped in the lower
+      right" — and it was NOT clipped: magnifying the corner 6x showed `1 / 5`
+      whole, at a 41px right inset that matched the running head's exactly. The
+      complaint was crowding, not severance. Two process notes worth more than
+      the constant:
+      - **"It matches the header" is not a correctness test** when the header is
+        itself too tight. Symmetry with a wrong reference reads as proof and
+        isn't. Anchor to how the element should look, not to another element.
+      - **When measurement says clean and the user says clipped, MAGNIFY before
+        re-asserting.** A 6x `Image.crop(...).resize(..., NEAREST)` of the corner
+        settled in one look what three rounds of ink-span arithmetic could not,
+        and reframed the bug from "clipping" to "inset." Pixel-measuring is the
+        house rule for edges, but an ink-extent number cannot distinguish
+        "severed" from "merely tight" — crop and look.
+      - Fix: the row's `margin_end` is `FOOTER_END_INSET` (56), no longer
+        `text_margins` (40); the LEFT stays 40 so the footer label remains flush
+        with the body text. Verified 41 -> **57px** headless (gloss overlay,
+        1920x1236) with the left inset and 24px bottom gap unchanged. The
+        `hint` label's unconditional `margin_end(12)` was dropped in the same
+        change — it is empty in every state but visual mode
+        (`set_journal_hint`/`set_gloss_hint` set `""`), so it only muddied the
+        inset arithmetic. **Do not delete the `hint` label itself**: it still
+        carries the visual-mode legend ("⇧V/Esc exit · j/k extend · …").
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
 
 15. **A hand-drawn Cairo surface lays annotations out against the FIRST
