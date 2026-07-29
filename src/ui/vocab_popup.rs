@@ -45,6 +45,12 @@ pub struct VocabWordData {
     pub definition: Option<String>,
     pub etymology_markup: Option<String>,
     pub gloss: Option<String>,
+    /// `gloss` pre-rendered to Pango markup (`### headers`, `> quotes`, `---`
+    /// rules and inline emphasis). Precomputed at load time — like
+    /// `etymology_markup` — because the block chrome is themed and the widget
+    /// has no theme access. `None` when the gloss needs no markup at all, in
+    /// which case the label falls back to plain `gloss` text.
+    pub gloss_markup: Option<String>,
 }
 
 /// Which view is currently shown in the popup.
@@ -335,14 +341,14 @@ impl VocabPopup {
                         .build();
                     constrain_wrap(&gloss_label);
                     gloss_label.add_css_class("definition-text");
-                    // Vocab-word glosses use a `**headword**` convention (62
-                    // rows in the corpus) that rendered as literal asterisks.
-                    // This is a Label, not a TextView, so it takes Pango markup
-                    // — the same path the chat transcript uses. No vocab
-                    // highlight here, hence the empty word set.
-                    let no_words = std::collections::HashSet::new();
-                    match crate::ui::chat_panel::row_markup(gloss, &no_words, None) {
-                        Some(markup) => gloss_label.set_markup(&markup),
+                    // Vocab-word glosses carry both a `**headword**` convention
+                    // and block Markdown (`### Etymology`, `>` verse quotes,
+                    // `---` rules), all of which rendered literally. This is a
+                    // Label, not a TextView, so it takes Pango markup;
+                    // `gloss_markup` is precomputed at load time because the
+                    // block chrome is themed.
+                    match data.gloss_markup.as_deref() {
+                        Some(markup) => gloss_label.set_markup(markup),
                         None => gloss_label.set_text(gloss),
                     }
                     self.content_box.append(&gloss_label);

@@ -511,6 +511,16 @@ line rather than between stanzas.
 `apply_block_typography`. A TextTag overrides the view default, so verse sets
 tight while the surrounding prose keeps its configured leading.
 
+- **Where Markdown appears is a CORPUS question, not a code question
+  (2026-07-29).** Before building a renderer, count what the data actually
+  contains. Every LLM answer prompt in `api_prompts` mandates "Flowing prose
+  only — no markdown, no bullet or numbered lists, no headers", and journal Q&A
+  matches that exactly: 0 of 56 entries carry `##` or bullets, so block
+  rendering there would have been risk for content that does not exist.
+  Vocab-word GLOSSES are the exception — 25 use `### Etymology`, 61 use `>`
+  quote lines, 25 use `---` rules, and 62 use `**headword**` — because they are
+  hand-authored rather than prompt-governed. Same feature request, opposite
+  answer per surface; a `sqlite3 … LIKE '%### %'` count settles it in seconds.
 - **Not every surface is a TextBuffer — check before reaching for TextTags
   (2026-07-29).** The reader renders prose through THREE different mechanisms,
   and a styling fix has to match the one in play: the journal overlay does a

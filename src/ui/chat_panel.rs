@@ -673,6 +673,92 @@ impl ChatPanel {
 ///
 /// Returns `None` when the row needs no markup at all, so the caller keeps the
 /// cheaper plain-text path.
+/// Pango markup for a whole multi-paragraph body that uses BLOCK Markdown as
+/// well as inline emphasis: `### headers`, `> quote` lines, and `---` rules.
+///
+/// For `gtk4::Label` surfaces only (the vocab popup's gloss view). A Label has
+/// no paragraph model, so blocks are expressed with the markup Pango does
+/// support:
+///
+/// - `### Header` → bold, one size step up, on its own line.
+/// - `> quoted` → the marker replaced by a figure-space indent, rendered
+///   italic in the accent color so a verse quote reads as set-off. Pango cannot
+///   indent a block, so the indent is literal leading spaces — which is why
+///   this is a Label-only helper and not a general renderer.
+/// - `---` → a horizontal run of box-drawing dashes, dimmed.
+///
+/// Every other line keeps its inline emphasis via the same span walk
+/// `row_markup` uses. Returns `None` when the body has no block syntax AND no
+/// inline emphasis, so the caller keeps the cheaper plain-text path.
+///
+/// `accent` colors the quote/rule chrome; pass the surface's own accent so this
+/// stays theme-correct.
+pub(crate) fn block_markup(text: &str, accent: &str) -> Option<String> {
+    let no_words = std::collections::HashSet::new();
+    let mut out = String::new();
+    let mut any_block = false;
+    let mut any_inline = false;
+
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let trimmed = line.trim_end();
+        // `---` rule: a dimmed dash run. Matched on the whole line so an em-dash
+        // inside prose is untouched.
+        if trimmed.len() >= 3 && trimmed.chars().all(|c| c == '-') {
+            any_block = true;
+            out.push_str(&format!(
+                "<span foreground=\"{accent}\" alpha=\"55%\">────────</span>"
+            ));
+            continue;
+        }
+        // `### Header` (any depth) → bold, a size step up.
+        if let Some(rest) = trimmed
+            .strip_prefix("###### ")
+            .or_else(|| trimmed.strip_prefix("##### "))
+            .or_else(|| trimmed.strip_prefix("#### "))
+            .or_else(|| trimmed.strip_prefix("### "))
+            .or_else(|| trimmed.strip_prefix("## "))
+            .or_else(|| trimmed.strip_prefix("# "))
+        {
+            any_block = true;
+            let inner = row_markup(rest, &no_words, None)
+                .unwrap_or_else(|| glib::markup_escape_text(rest).to_string());
+            out.push_str(&format!("<big><b>{inner}</b></big>"));
+            continue;
+        }
+        // `> quoted` → figure-space indent + accent italic. The marker itself is
+        // dropped; a bare ">" (blank quote line) keeps the indent.
+        if let Some(rest) = trimmed.strip_prefix("> ").or_else(|| {
+            if trimmed == ">" { Some("") } else { None }
+        }) {
+            any_block = true;
+            let inner = row_markup(rest, &no_words, None)
+                .unwrap_or_else(|| glib::markup_escape_text(rest).to_string());
+            // U+2007 FIGURE SPACE: a fixed-width indent that survives Pango's
+            // whitespace collapsing, unlike a run of ordinary spaces.
+            out.push_str(&format!(
+                "\u{2007}\u{2007}<span foreground=\"{accent}\"><i>{inner}</i></span>"
+            ));
+            continue;
+        }
+        match row_markup(trimmed, &no_words, None) {
+            Some(m) => {
+                any_inline = true;
+                out.push_str(&m);
+            }
+            None => out.push_str(&glib::markup_escape_text(trimmed)),
+        }
+    }
+
+    if any_block || any_inline {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn row_markup(
     text: &str,
     words: &std::collections::HashSet<String>,
@@ -912,6 +998,36 @@ fn gloss_answer_specs(
 
 #[cfg(test)]
 mod vocab_markup_tests {
+
+    #[test]
+    fn block_markup_renders_header_quote_and_rule() {
+        let body = "prose here\n\n---\n\n### Etymology\n\n*Procure* derives from\n\
+                    \n*DUKE*\n> For since the mortal jars\n> ’Twixt thy countrymen";
+        let m = super::block_markup(body, "#c08").unwrap();
+        // Header: bold, one size step up, marker gone.
+        assert!(m.contains("<big><b>Etymology</b></big>"), "{m}");
+        assert!(!m.contains("### "), "header marker must be consumed: {m}");
+        // Rule: dimmed accent dashes, the literal --- gone.
+        assert!(m.contains("alpha=\"55%\""), "{m}");
+        assert!(!m.contains("\n---\n"), "rule marker must be consumed: {m}");
+        // Quote: indent + accent italic, marker gone.
+        assert!(m.contains("\u{2007}\u{2007}<span foreground=\"#c08\"><i>For since"), "{m}");
+        assert!(!m.contains("> For"), "quote marker must be consumed: {m}");
+        // Inline emphasis still runs on ordinary and block lines.
+        assert!(m.contains("<i>Procure</i> derives"), "{m}");
+        assert!(m.contains("<i>DUKE</i>"), "{m}");
+    }
+
+    #[test]
+    fn block_markup_escapes_and_skips_plain_bodies() {
+        // Markup metacharacters inside a quote must escape.
+        let m = super::block_markup("> a <tag> & co", "#c08").unwrap();
+        assert!(m.contains("&lt;tag&gt; &amp; co"), "{m}");
+        // No block syntax and no emphasis → None, so the caller keeps plain text.
+        assert!(super::block_markup("just prose\n\nmore prose", "#c08").is_none());
+        // An em-dash line in prose is NOT a rule (only 3+ hyphens).
+        assert!(super::block_markup("a — b", "#c08").is_none());
+    }
 
     #[test]
     fn row_markup_renders_emphasis_and_strips_markers() {
