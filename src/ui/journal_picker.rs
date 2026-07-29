@@ -36,6 +36,20 @@ pub struct JournalRow {
     /// `synopsis_division_label`, which already embeds the TYPE ("1.4 passage") and would
     /// print it twice beside `type_label`. AUTHOR scope only.
     pub div_label: String,
+    /// The entry's FULL question + answer, lowercased, for the filter to search
+    /// beyond what the row displays. Never rendered.
+    ///
+    /// Without this the filter could only match `question_prefix` — the
+    /// 80-char row label — which misses an entry two ways: a term past char 80
+    /// of the question, and (for `scope='passage'` rows) any term at all,
+    /// because those rows label themselves with the first line of the SOURCE
+    /// PASSAGE rather than the question. Searching "remonstrate" on a passage
+    /// entry whose question and answer are both about the word returned zero
+    /// rows for exactly that reason.
+    ///
+    /// Lowercased once at build time: `populate_list` runs on every keystroke
+    /// and would otherwise re-lowercase the whole corpus per row per keypress.
+    pub search_haystack: String,
 }
 
 pub struct JournalQaPicker {
@@ -146,12 +160,24 @@ impl JournalQaPicker {
                 None => item.question_prefix.clone(),
             };
             if !filter.is_empty() {
-                // Filter against what the row DISPLAYS. In author scope that
-                // is the five columns — so typing a surname ("dickens") or a
-                // division ("ch. 2") narrows, which is the natural gesture on
-                // a global cross-work list. `synopsis_division_label` stays in the target
-                // for the two-column scopes, where it IS the visible detail.
-                let target = format!(
+                // Two targets, matched SEPARATELY (never concatenated).
+                //
+                // 1. What the row DISPLAYS. In author scope that is the five
+                //    columns — so typing a surname ("dickens") or a division
+                //    ("ch. 2") narrows, which is the natural gesture on a
+                //    global cross-work list. `synopsis_division_label` stays in
+                //    the target for the two-column scopes, where it IS the
+                //    visible detail. Fuzzy (subsequence) matching, as before.
+                // 2. The entry's full question + answer, as a CONTIGUOUS
+                //    substring only.
+                //
+                // The body must not go through `subsequence_match`: over a
+                // multi-thousand-character answer, a scattered subsequence
+                // matches almost any short filter, so every row would survive
+                // and the filter would stop filtering. Requiring a literal
+                // substring there keeps body hits meaningful while leaving the
+                // display target's fuzzy behavior untouched.
+                let display_target = format!(
                     "{} {} {} {}",
                     item.author_label.as_deref().unwrap_or(""),
                     item.synopsis_division_label,
@@ -159,7 +185,11 @@ impl JournalQaPicker {
                     primary,
                 )
                 .to_lowercase();
-                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
+                let hit = crate::ui::picker_filter::subsequence_match(
+                    &filter_lower,
+                    &display_target,
+                ) || item.search_haystack.contains(&filter_lower);
+                if !hit {
                     continue;
                 }
             }
