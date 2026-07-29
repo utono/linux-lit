@@ -113,7 +113,13 @@ pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, anchor: 
                 }
                 _ => None,
             };
-            VocabWordData { word: w, definition, etymology_markup, gloss }
+            let gloss_markup = gloss.as_deref().and_then(|g| {
+                crate::ui::chat_panel::block_markup(
+                    g,
+                    &crate::theme::vocab_popup_accent(&state.theme),
+                )
+            });
+            VocabWordData { word: w, definition, etymology_markup, gloss, gloss_markup }
         })
         .collect();
 
@@ -340,7 +346,13 @@ pub fn refresh_vocab_popup(state: &mut AppState) {
                 }
                 _ => None,
             };
-            VocabWordData { word: w, definition, etymology_markup, gloss }
+            let gloss_markup = gloss.as_deref().and_then(|g| {
+                crate::ui::chat_panel::block_markup(
+                    g,
+                    &crate::theme::vocab_popup_accent(&state.theme),
+                )
+            });
+            VocabWordData { word: w, definition, etymology_markup, gloss, gloss_markup }
         })
         .collect();
 
