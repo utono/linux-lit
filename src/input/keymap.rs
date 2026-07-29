@@ -55,24 +55,20 @@ impl KeyState {
 }
 
 /// Handle a key press. Returns true if consumed.
-/// Key entry point. Wraps the real handler with the vocab-popup overlay
-/// suspend: a reader-anchored popup hides while a gloss/journal/synopsis
-/// overlay is up and repaints on the way back.
+/// Key entry point. Wraps the real handler with the vocab-popup suspend: a
+/// reader-anchored popup hides whenever the reader card is covered — by an
+/// overlay OR a picker — and repaints on the way back.
 ///
-/// The reconciliation lives HERE rather than at the overlay open sites because
-/// there is no shared "enter overlay" helper — ~50 sites assign
-/// `input_mode = InputMode::{Gloss,Journal,Synopsis}Overlay` directly, and
-/// patching each would rot as new open paths land. This function is the single
-/// funnel for all key input (`crate::app::mod`'s key controller is its only
-/// caller), so comparing the mode before and after dispatch catches every
-/// keyboard-driven transition in one place.
+/// The reconciliation lives HERE rather than at the open sites because there
+/// is no shared "enter overlay" helper — ~50 sites assign an overlay
+/// `InputMode` directly, and the pickers add more — so patching each would rot
+/// as new surfaces land. This function is the single funnel for all key input
+/// (`crate::app::mod`'s key controller is its only caller), so comparing the
+/// mode before and after dispatch catches every keyboard-driven transition in
+/// one place.
 ///
-/// Suspend arms on entering an overlay from ANY non-overlay surface, not just
-/// from `Reader`: a journal entry is routinely reached through the Ctrl+j
-/// picker (Reader → JournalPicker → JournalOverlay), and a Reader-only check
-/// misses that hop entirely — the popup then bleeds through the overlay scrim,
-/// which is the reported bug. `suspend_for_overlay` no-ops when no popup is
-/// visible, so arming broadly costs nothing.
+/// `suspend_for_overlay` no-ops when no popup is visible, so arming on every
+/// leave-the-reader transition costs nothing.
 pub fn handle_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
@@ -90,7 +86,9 @@ pub fn handle_key(
     let after = state.borrow().input_mode;
     if before != after {
         let mut s = state.borrow_mut();
-        if !is_suspending_overlay(before) && is_suspending_overlay(after) {
+        // The two predicates are complements, so this is simply "left the
+        // reader" / "came back to it".
+        if is_reader_mode(before) && is_suspending_overlay(after) {
             crate::app::vocab_popup::suspend_for_overlay(&mut s);
         } else if is_suspending_overlay(before) && is_reader_mode(after) {
             crate::app::vocab_popup::restore_after_overlay(&mut s);
@@ -99,37 +97,40 @@ pub fn handle_key(
     consumed
 }
 
-/// The reader surface the popup is restored onto. `Visual` is included: a
-/// visual selection is still the main card, so returning into it is a return
-/// to the reader.
+/// The surfaces that ARE the reader card, and so leave a reader-anchored vocab
+/// popup up. Everything else covers the card (see `is_suspending_overlay`,
+/// which is this predicate's complement).
+///
+/// - `Visual`: a visual selection is still the main card, so returning into it
+///   is a return to the reader.
+/// - `VocabLoop`: the vocab-sentence drill is fully modal but draws NO overlay
+///   of its own — it repeats a sentence via MPV ab-loop on the reader card.
+///   Suspending there would hide the definition of the very word being drilled.
 fn is_reader_mode(mode: crate::app::InputMode) -> bool {
-    matches!(
-        mode,
-        crate::app::InputMode::Reader | crate::app::InputMode::Visual
-    )
+    use crate::app::InputMode::*;
+    matches!(mode, Reader | Visual | VocabLoop)
 }
 
-/// The overlay surfaces that suspend a reader-anchored vocab popup: the gloss
-/// and journal overlays plus their visual/edit satellites, and the synopsis
-/// (which renders through the gloss overlay widget and reads as the same
-/// surface to the user).
+/// Every surface that suspends a reader-anchored vocab popup — i.e. anything
+/// that is not the reader card itself. Gloss/journal/synopsis overlays, their
+/// visual/edit satellites, and ALL pickers (library, gloss, journal, recent-Q&A,
+/// concordance, echo, voice, …) draw over the reader card, so a popup anchored
+/// to that card sits on top of them.
 ///
-/// Deliberately NOT every non-reader mode: pickers, the chat layout and the
-/// keybinds overlays are out of scope, and the overlay-anchored popup
-/// (`VocabAnchor::Corner`/`ChatPanel`) is opened BY an overlay and must stay up.
+/// Defined by INVERSION (`!is_reader_mode`) rather than as a whitelist of
+/// overlay variants: `InputMode` has ~50 variants and grows, and a whitelist
+/// silently omits each new surface — exactly how the Ctrl+j picker was missed
+/// the first time. Inverting means a new mode suspends by default, which is
+/// the safe direction: the cost of a wrong suspend is a popup that hides for
+/// one keystroke, the cost of a wrong omission is a card painted over content.
+///
+/// This does NOT touch popups anchored to a non-reader surface
+/// (`VocabAnchor::Corner` on an overlay, `VocabAnchor::ChatPanel` on the chat
+/// layout). Those are opened FROM within their own surface, so no mode
+/// transition arms the suspend, and `restore_after_overlay` only ever repaints
+/// what `suspend_for_overlay` itself hid.
 fn is_suspending_overlay(mode: crate::app::InputMode) -> bool {
-    use crate::app::InputMode::*;
-    matches!(
-        mode,
-        GlossOverlay
-            | GlossVisual
-            | GlossEdit
-            | JournalOverlay
-            | JournalVisual
-            | JournalEdit
-            | SynopsisOverlay
-            | SynopsisVisual
-    )
+    !is_reader_mode(mode)
 }
 
 #[allow(clippy::too_many_arguments)]

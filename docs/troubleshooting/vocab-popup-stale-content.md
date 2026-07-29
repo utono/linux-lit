@@ -3,10 +3,10 @@
 Frequency-ordered ledger for vocab-popup surface bugs. Read the matching
 section before attempting a fix.
 
-## Popup bleeds through a gloss/journal overlay (2026-07-29)
+## Popup bleeds through an overlay or picker (2026-07-29)
 
-**Tell.** A gloss or journal overlay is open over the scrim and the reader's
-vocab definition card is still painted at the right edge, on top of it.
+**Tell.** A gloss/journal overlay or any picker is open over the reader and
+the vocab definition card is still painted at the right edge, on top of it.
 
 **Root cause.** There was no suspend/restore concept at all: the popup's
 visibility was tied only to explicit open/close calls, and nothing observed
@@ -32,18 +32,31 @@ thin wrapper around `handle_key_inner`, which holds the original body.
    empty card. Conversely `close_vocab_popup` now clears `suspended`, so a
    popup deliberately closed while an overlay is up (the vocab-Q&A path does
    exactly this) is not resurrected on return.
-2. **Arming only on `Reader` → overlay is NOT enough.** A journal entry is
-   routinely reached as Reader → `JournalPicker` → `JournalOverlay` (Ctrl+j).
-   A Reader-only check misses that hop entirely and the popup still bleeds
-   through — this was verified failing on screen mid-fix. Suspend now arms on
-   entering an overlay from ANY non-overlay mode; the visibility guard inside
-   `suspend_for_overlay` makes the broad arming free.
+2. **A whitelist of overlay variants is the wrong shape.** The first attempt
+   armed only on `Reader` → {Gloss,Journal,Synopsis}Overlay. That misses
+   Reader → `JournalPicker` → `JournalOverlay` (Ctrl+j) entirely — verified
+   still bleeding on screen mid-fix — and it misses every picker, which also
+   covers the reader card. `InputMode` has ~50 variants and grows, so a
+   whitelist silently omits each new surface.
+
+**The predicate is INVERTED, not enumerated.** `is_suspending_overlay` is
+defined as `!is_reader_mode`, and `is_reader_mode` is the short list of modes
+that ARE the reader card: `Reader | Visual | VocabLoop`. A new `InputMode`
+therefore suspends by default — the safe direction, since a wrong suspend
+costs a popup hidden for one keystroke while a wrong omission paints a card
+over content.
+
+`VocabLoop` is in the reader set deliberately: the vocab-sentence drill is
+fully modal but draws NO overlay of its own (it ab-loops on the reader card),
+so suspending there would hide the definition of the very word being drilled.
 
 **Verification.** Headless (`scripts/land-on.sh BH-Barrett 4.0`), `rr` to open
-the popup, then both paths: Ctrl+g (direct) and Ctrl+j → Return (via picker).
-Log breadcrumbs are `VOCAB POPUP: suspended for overlay` /
-`VOCAB POPUP: restored after overlay`. Screenshot-compare the right edge —
-the restore should be pixel-identical to the pre-overlay capture.
+the popup, then exercise a direct overlay (Ctrl+g), a picker (Ctrl+j, `z`),
+and the picker→overlay chain (Ctrl+j → Return). Log breadcrumbs are
+`VOCAB POPUP: suspended for overlay` / `VOCAB POPUP: restored after overlay`;
+the chain should suspend ONCE and restore ONCE, not per hop. Screenshot-compare
+the right edge — the restore should be byte-identical to the pre-overlay
+capture.
 
 ## Symptom
 
