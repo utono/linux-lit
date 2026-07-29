@@ -2368,7 +2368,6 @@ fn handle_journal_key(
             if entered {
                 let mut s = state.borrow_mut();
                 s.input_mode = crate::app::InputMode::JournalVisual;
-                s.journal_overlay.set_journal_visual_hint();
             }
             true
         }
@@ -3009,7 +3008,6 @@ fn handle_gloss_key(
             if entered {
                 let mut s = state.borrow_mut();
                 s.input_mode = crate::app::InputMode::GlossVisual;
-                s.gloss_overlay.set_gloss_visual_hint();
             }
             true
         }
@@ -3364,7 +3362,6 @@ fn handle_synopsis_overlay_key(
             if entered {
                 let mut s = state.borrow_mut();
                 s.input_mode = crate::app::InputMode::SynopsisVisual;
-                s.gloss_overlay.set_synopsis_visual_hint();
             }
             true
         }
@@ -3515,8 +3512,6 @@ struct BlockVisualCfg {
     escape_exit: fn(&crate::ui::gloss_overlay::GlossOverlay),
     /// InputMode to return to on exit.
     return_mode: crate::app::InputMode,
-    /// Hint setter for the returned-to overlay.
-    set_hint: fn(&crate::ui::gloss_overlay::GlossOverlay),
 }
 
 const SYNOPSIS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
@@ -3525,7 +3520,6 @@ const SYNOPSIS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
     yank_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual,
     escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_anchor,
     return_mode: crate::app::InputMode::SynopsisOverlay,
-    set_hint: crate::ui::gloss_overlay::GlossOverlay::set_synopsis_hint,
 };
 
 const GLOSS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
@@ -3534,14 +3528,13 @@ const GLOSS_VISUAL_CFG: BlockVisualCfg = BlockVisualCfg {
     yank_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_start,
     escape_exit: crate::ui::gloss_overlay::GlossOverlay::exit_visual_to_anchor,
     return_mode: crate::app::InputMode::GlossOverlay,
-    set_hint: crate::ui::gloss_overlay::GlossOverlay::set_gloss_hint,
 };
 
 /// Visual block selection in the synopsis/gloss overlays (entered with Shift+V).
 /// gg/G jump the cursor end, j/k extend the selection, y yanks the selected
 /// blocks and exits, Esc/V exits without copying. All other keys are consumed.
 /// `cfg` carries the per-mode variance (yank text source, log tag, exit fn,
-/// return mode, hint fn) — see `SYNOPSIS_VISUAL_CFG` / `GLOSS_VISUAL_CFG`. Escape
+/// return mode) — see `SYNOPSIS_VISUAL_CFG` / `GLOSS_VISUAL_CFG`. Escape
 /// returns the cursor to the anchor block (`exit_visual_to_anchor`, both modes),
 /// while the gloss yank collapses to the selection start (`exit_visual_to_start`);
 /// the two separate `*_exit` slots carry that difference.
@@ -3592,7 +3585,6 @@ fn handle_block_visual_key(
                 let mut s = state.borrow_mut();
                 (cfg.yank_exit)(&s.gloss_overlay);
                 s.input_mode = cfg.return_mode;
-                (cfg.set_hint)(&s.gloss_overlay);
                 crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_COPIED, 2);
             }
             true
@@ -3601,7 +3593,6 @@ fn handle_block_visual_key(
             let mut s = state.borrow_mut();
             (cfg.escape_exit)(&s.gloss_overlay);
             s.input_mode = cfg.return_mode;
-            (cfg.set_hint)(&s.gloss_overlay);
             true
         }
         // `s` is unbound here. It opened the full-screen syntax diagram for the
@@ -3663,7 +3654,6 @@ fn handle_journal_visual_key(
                 let mut s = state.borrow_mut();
                 s.journal_overlay.exit_visual();
                 s.input_mode = crate::app::InputMode::JournalOverlay;
-                s.journal_overlay.set_journal_hint();
                 crate::input::navigation::show_chapter_toast_secs(&s, crate::input::navigation::TOAST_COPIED, 2);
             }
             true
@@ -3672,7 +3662,6 @@ fn handle_journal_visual_key(
             let mut s = state.borrow_mut();
             s.journal_overlay.exit_visual_to_anchor();
             s.input_mode = crate::app::InputMode::JournalOverlay;
-            s.journal_overlay.set_journal_hint();
             true
         }
         // `s` is unbound here — see the note on the gloss/synopsis visual

@@ -23,7 +23,6 @@ pub struct JournalOverlay {
     footer_container: gtk4::Box,
     footer_left: Label,
     position_label: Label,
-    hint: Label,
     bar_drawing: gtk4::DrawingArea,
     /// Whether the doc card's accent bar is drawn (see the `bar_drawing` draw
     /// func). Toggled by `set_doc_accent_active` — hidden while the ask card is
@@ -633,13 +632,9 @@ impl JournalOverlay {
         // "Q&A n of m" on the left, the bare page counter on the right. Drop the
         // `gloss-hint` class so there is NO border-top divider (the act/scene
         // pill already separates the footer visually), matching the gloss footer.
-        let footer = crate::ui::footer::build_footer_row(
-            text_margins as i32,
-            "",
-        );
+        let footer = crate::ui::footer::build_footer_row(text_margins as i32);
         footer.container.remove_css_class("gloss-hint");
         let footer_left = footer.left;
-        let hint = footer.hint;
         // Right-aligned bare "X / Y" render-page counter, mirroring the gloss
         // overlay's position_label (gloss_overlay.rs). The journal footer's left
         // label keeps "band · Q&A N of M"; the page count moves here so the two
@@ -774,7 +769,6 @@ impl JournalOverlay {
             footer_container,
             footer_left,
             position_label,
-            hint,
             bar_drawing,
             bar_active,
             panel_drawing,
@@ -2920,18 +2914,6 @@ impl JournalOverlay {
     }
 
 
-    /// Normal-navigation footer hint (advertises Shift+V). Re-set on visual exit.
-    pub fn set_journal_hint(&self) {
-        self.hint.set_text(
-            "",
-        );
-    }
-
-    /// Footer hint shown while journal visual mode is active.
-    pub fn set_journal_visual_hint(&self) {
-        self.hint
-            .set_text("\u{21e7}V/Esc exit \u{00b7} j/k extend \u{00b7} gg/G ends \u{00b7} y yank");
-    }
 }
 
 #[cfg(test)]
