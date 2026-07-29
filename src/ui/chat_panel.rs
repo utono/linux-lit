@@ -576,17 +576,18 @@ impl ChatPanel {
         if let Some(extra) = &w.extra_class {
             label.add_css_class(extra);
         }
-        // Vocab highlight: when enabled and this label's text contains a vocab
-        // word, replace the plain text with Pango markup wrapping each match in
-        // a colored span. Specs are plain text (GlossAnswer markup is already
-        // exploded into text rows by chat_gloss_rows before reaching here), so
-        // escaping in vocab_markup is safe on every row.
-        if let Some(color) = self.vocab_color.borrow().as_deref() {
+        // Markup pass: `**bold**`/`*italic*` as <b>/<i>, plus the vocab
+        // highlight's colored spans, emitted together (see `row_markup` — they
+        // rewrite the same string, so they cannot be layered independently).
+        // Specs are plain text (GlossAnswer markup is already exploded into
+        // text rows by chat_gloss_rows before reaching here), so escaping
+        // inside `row_markup` is safe on every row. `None` means the row needs
+        // no markup and keeps its plain-text label.
+        {
+            let color = self.vocab_color.borrow();
             let words = self.vocab_words.borrow();
-            if !words.is_empty() {
-                if let Some(markup) = vocab_markup(&w.text, &words, color) {
-                    label.set_markup(&markup);
-                }
+            if let Some(markup) = row_markup(&w.text, &words, color.as_deref()) {
+                label.set_markup(&markup);
             }
         }
         self.transcript_box.append(&label);
@@ -659,32 +660,79 @@ impl ChatPanel {
 /// Pango markup for a chat label: vocab matches wrapped in a colored span,
 /// everything escaped. None when the text has no match (caller keeps plain
 /// set_text — cheaper and avoids markup parsing for the common case).
-pub(crate) fn vocab_markup(
+/// Pango markup for one transcript row: `**bold**`/`*italic*` rendered as
+/// `<b>`/`<i>`, with the vocab-highlight spans (if any) composed in.
+///
+/// The chat transcript is one `gtk4::Label` per row, NOT a TextView, so the
+/// TextTag mechanism the journal and gloss overlays use does not transfer —
+/// Labels take Pango markup. Emphasis and vocab both rewrite the same string,
+/// so they are emitted in ONE pass here rather than layered: the text is
+/// emphasis-stripped first, the vocab scan runs over that clean text (so a word
+/// inside `*emphasis*` still matches), and the two range sets are merged as
+/// they are written out.
+///
+/// Returns `None` when the row needs no markup at all, so the caller keeps the
+/// cheaper plain-text path.
+pub(crate) fn row_markup(
     text: &str,
     words: &std::collections::HashSet<String>,
-    color: &str,
+    color: Option<&str>,
 ) -> Option<String> {
-    let mut spans = Vec::new();
-    crate::vocab_scan::scan_line(text, 0, words, &mut spans);
-    if spans.is_empty() {
+    let (clean, emph) = crate::ui::gloss_block::strip_emphasis_spans(text);
+    let mut vocab = Vec::new();
+    if let Some(c) = color {
+        if !words.is_empty() && !c.is_empty() {
+            crate::vocab_scan::scan_line(&clean, 0, words, &mut vocab);
+        }
+    }
+    if emph.is_empty() && vocab.is_empty() {
         return None;
     }
-    let chars: Vec<char> = text.chars().collect();
+    let chars: Vec<char> = clean.chars().collect();
     let mut out = String::new();
-    let mut pos = 0usize;
-    for s in &spans {
-        let before: String = chars[pos..s.char_start].iter().collect();
-        let hit: String = chars[s.char_start..s.char_end].iter().collect();
-        out.push_str(&glib::markup_escape_text(&before));
-        out.push_str(&format!(
-            "<span foreground=\"{}\">{}</span>",
-            color,
-            glib::markup_escape_text(&hit)
-        ));
-        pos = s.char_end;
+    // Walk the row once, opening/closing tags at char boundaries. Emphasis is
+    // the OUTER span: a vocab hit inside an emphasized run nests cleanly, while
+    // the reverse could interleave and produce invalid markup.
+    let mut vi = 0usize;
+    let mut ei = 0usize;
+    let mut open_emph: Option<bool> = None;
+    let mut open_vocab = false;
+    for (i, ch) in chars.iter().enumerate() {
+        if let Some(bold) = open_emph {
+            if emph[ei].end == i {
+                if open_vocab {
+                    out.push_str("</span>");
+                    open_vocab = false;
+                }
+                out.push_str(if bold { "</b>" } else { "</i>" });
+                open_emph = None;
+                ei += 1;
+            }
+        }
+        if open_vocab && vocab[vi].char_end == i {
+            out.push_str("</span>");
+            open_vocab = false;
+            vi += 1;
+        }
+        if ei < emph.len() && emph[ei].start == i {
+            out.push_str(if emph[ei].bold { "<b>" } else { "<i>" });
+            open_emph = Some(emph[ei].bold);
+        }
+        if vi < vocab.len() && vocab[vi].char_start == i {
+            if let Some(c) = color {
+                out.push_str(&format!("<span foreground=\"{c}\">"));
+                open_vocab = true;
+            }
+        }
+        out.push_str(&glib::markup_escape_text(&ch.to_string()));
     }
-    let rest: String = chars[pos..].iter().collect();
-    out.push_str(&glib::markup_escape_text(&rest));
+    // Close anything still open at end of row.
+    if open_vocab {
+        out.push_str("</span>");
+    }
+    if let Some(bold) = open_emph {
+        out.push_str(if bold { "</b>" } else { "</i>" });
+    }
     Some(out)
 }
 
@@ -864,16 +912,57 @@ fn gloss_answer_specs(
 
 #[cfg(test)]
 mod vocab_markup_tests {
-    use super::vocab_markup;
 
     #[test]
-    fn vocab_markup_escapes_and_wraps_matches() {
+    fn row_markup_renders_emphasis_and_strips_markers() {
+        let words: std::collections::HashSet<String> = Default::default();
+        let m = super::row_markup("the Dutch *Remonstrantie* here", &words, None).unwrap();
+        assert_eq!(m, "the Dutch <i>Remonstrantie</i> here");
+        let b = super::row_markup("**1610** — the Dutch", &words, None).unwrap();
+        assert_eq!(b, "<b>1610</b> — the Dutch");
+    }
+
+    #[test]
+    fn row_markup_nests_a_vocab_hit_inside_emphasis() {
         let words: std::collections::HashSet<String> =
             ["censure".to_string()].into_iter().collect();
-        let m = vocab_markup("Should censure <thus> on gentlemen.", &words, "#ffcc66").unwrap();
+        let m = super::row_markup("a *grave censure* follows", &words, Some("#ffcc66")).unwrap();
+        // Emphasis is the OUTER span; the vocab span nests inside it and both
+        // close in the right order (invalid nesting makes Pango drop the row).
+        assert_eq!(
+            m,
+            "a <i>grave <span foreground=\"#ffcc66\">censure</span></i> follows"
+        );
+    }
+
+    #[test]
+    fn row_markup_escapes_and_returns_none_when_plain() {
+        let words: std::collections::HashSet<String> = Default::default();
+        // Angle brackets must escape even on the emphasis path.
+        let m = super::row_markup("*<thus>* said", &words, None).unwrap();
+        assert_eq!(m, "<i>&lt;thus&gt;</i> said");
+        // Nothing to mark up → None, so the caller keeps the plain label.
+        assert!(super::row_markup("plain prose here", &words, None).is_none());
+        // A bare asterisk is not emphasis and needs no markup.
+        assert!(super::row_markup("2 * 3 = 6", &words, None).is_none());
+    }
+
+    #[test]
+    /// Ported from the retired `vocab_markup` (subsumed by `row_markup`): the
+    /// vocab-only path must still escape and wrap correctly with no emphasis
+    /// anywhere in the row.
+    fn vocab_only_path_escapes_and_wraps_matches() {
+        let words: std::collections::HashSet<String> =
+            ["censure".to_string()].into_iter().collect();
+        let m = super::row_markup(
+            "Should censure <thus> on gentlemen.",
+            &words,
+            Some("#ffcc66"),
+        )
+        .unwrap();
         assert!(m.contains("&lt;thus&gt;"), "text must be escaped: {m}");
         assert!(m.contains("<span foreground=\"#ffcc66\">censure</span>"), "{m}");
-        assert!(vocab_markup("no matches here", &words, "#ffcc66").is_none());
+        assert!(super::row_markup("no matches here", &words, Some("#ffcc66")).is_none());
     }
 }
 

@@ -360,6 +360,10 @@ impl GlossOverlay {
         gloss_scrolled.set_propagate_natural_height(false);
 
         let gloss_view = gtk4::TextView::new();
+        // Register `md-bold`/`md-italic` on the gloss buffer so
+        // `gloss_render::apply_emphasis_ranges` can look them up by name. The
+        // synopsis shares this view, so it gets emphasis rendering too.
+        crate::ui::markdown::MarkdownTags::register(&gloss_view.buffer());
         crate::ui::set_view_readonly(&gloss_view);
         gloss_view.set_wrap_mode(gtk4::WrapMode::Word);
         let right_margin = column_width as i32 / 8;
@@ -814,6 +818,21 @@ impl GlossOverlay {
         // Re-assert the `<hi>` highlight background color (the tag was created at
         // population time with a default; this paints it the theme color).
         self.apply_hi_color();
+        // Same reason as the synopsis-label bold above: the buffer-wide font tag
+        // carries the regular upright face and outranks the emphasis tags, so
+        // re-raise them. Priorities must be DISTINCT (GTK keeps them unique and
+        // setting one shuffles the rest). This only re-orders tags — the spans
+        // themselves were applied at population time and survive.
+        let table = self.gloss_view.buffer().tag_table();
+        let top = table.size();
+        if top > 1 {
+            if let Some(t) = table.lookup("md-bold") {
+                t.set_priority(top - 1);
+            }
+            if let Some(t) = table.lookup("md-italic") {
+                t.set_priority(top - 2);
+            }
+        }
     }
 
     /// Set the `<hi>` highlight background (theme `cursor_line_bg`) and re-assert
@@ -2768,6 +2787,7 @@ impl GlossOverlay {
             let mut body = String::new();
             let mut label_ranges: Vec<(usize, usize)> = Vec::new();
             let mut hi_ranges: Vec<(usize, usize)> = Vec::new();
+            let mut emph_spans: Vec<crate::ui::gloss_block::EmphasisSpan> = Vec::new();
             let mut char_off = 0usize; // char offset into `body`
             for b in &slice {
                 for a in &b.attached {
@@ -2788,12 +2808,23 @@ impl GlossOverlay {
                     body.push_str("\n\n");
                     char_off += 2;
                 }
-                // `b.display` is IPA-stripped but may still carry `<hi>` tags;
-                // strip them and shift the highlight ranges into `body`.
-                let (clean, hi) = crate::ui::gloss_block::strip_hi_spans(&b.display);
+                // `b.display` is IPA-stripped but may still carry `<hi>` tags
+                // and Markdown emphasis; strip both and shift each range set
+                // into `body`. (No synopsis in the corpus uses emphasis today —
+                // this keeps the surface consistent with the gloss body rather
+                // than leaving a second convention to discover later.)
+                let (clean, hi, emph) =
+                    crate::ui::gloss_block::strip_hi_and_emphasis(&b.display);
                 let len = clean.chars().count();
                 for (s, e) in hi {
                     hi_ranges.push((char_off + s, char_off + e));
+                }
+                for sp in emph {
+                    emph_spans.push(crate::ui::gloss_block::EmphasisSpan {
+                        start: char_off + sp.start,
+                        end: char_off + sp.end,
+                        bold: sp.bold,
+                    });
                 }
                 body.push_str(&clean);
                 char_off += len;
@@ -2803,6 +2834,7 @@ impl GlossOverlay {
             *self.hi_ranges.borrow_mut() = hi_ranges;
             self.apply_synopsis_label_bold();
             self.apply_hi_color();
+            crate::ui::gloss_render::apply_emphasis_ranges(&buffer, 0, &emph_spans);
             self.rebuild_block_ranges_from(slice);
         }
 

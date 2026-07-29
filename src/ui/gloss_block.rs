@@ -31,6 +31,13 @@ fn is_label_paragraph(p: &str) -> bool {
 /// `<gloss>` per paragraph). `<p>` paragraphs are joined with a blank line so the
 /// text view shows visible paragraph breaks; plain text with no `<p>` tags is
 /// returned trimmed, so legacy single-paragraph synopses keep working.
+/// NOTE on emphasis: this single-page synopsis path deliberately does NOT strip
+/// Markdown emphasis, unlike the paginated path in `render_synopsis_page`. No
+/// synopsis in the corpus uses `*`/`**` (the synopsis prompts, like every other
+/// answer prompt, mandate flowing prose), so widening this signature to carry a
+/// third range set would be churn for content that does not exist. If a
+/// hand-pasted synopsis ever needs it, switch the two `strip_hi_spans` calls
+/// below to `strip_hi_and_emphasis` and thread the spans out alongside `hi`.
 pub fn render_synopsis_with_labels(
     synopsis: &str,
 ) -> (String, Vec<(usize, usize)>, Vec<(usize, usize)>) {
@@ -619,6 +626,42 @@ fn find_emphasis_close(chars: &[char], open: usize, width: usize) -> Option<usiz
     None
 }
 
+/// Strip BOTH `<hi>…</hi>` and Markdown emphasis, returning the final display
+/// text plus each range set expressed in THAT text's char offsets.
+///
+/// Applying the two strippers in sequence is not enough: whichever runs second
+/// shortens the string the first one measured, so the earlier ranges all shift
+/// left by the markers removed before them. This runs `<hi>` first and then
+/// remaps its ranges through the emphasis pass, so both sets index the one
+/// string that actually reaches the buffer.
+pub(crate) fn strip_hi_and_emphasis(
+    text: &str,
+) -> (String, Vec<(usize, usize)>, Vec<EmphasisSpan>) {
+    // Sentinel-free approach: strip `<hi>` first, then re-run the emphasis pass
+    // over the SAME text with the hi-range boundaries carried along as marker
+    // positions, so both come back in the final basis.
+    //
+    // Done by construction rather than by arithmetic: emphasis-strip the
+    // hi-clean text, then recompute each hi range by measuring how much of the
+    // hi-clean prefix survives the emphasis strip. `strip_emphasis_spans` only
+    // ever DELETES marker chars, so the surviving length of a prefix is exactly
+    // that prefix's mapped offset — no shift bookkeeping to get wrong.
+    let (hi_clean, hi_ranges) = strip_hi_spans(text);
+    let (clean, emph) = strip_emphasis_spans(&hi_clean);
+    let map_offset = |off: usize| -> usize {
+        let prefix: String = hi_clean.chars().take(off).collect();
+        strip_emphasis_spans(&prefix).0.chars().count()
+    };
+    let hi_ranges = hi_ranges
+        .into_iter()
+        .map(|(s, e)| {
+            let ss = map_offset(s);
+            (ss, map_offset(e).max(ss))
+        })
+        .collect();
+    (clean, hi_ranges, emph)
+}
+
 /// Strip inline `<hi>…</hi>` highlight tags from `text` for DISPLAY, returning
 /// the clean text plus the half-open CHAR ranges (in the CLEAN text's offsets) of
 /// each highlighted span. Callers insert the clean text into a `TextBuffer` and
@@ -841,6 +884,45 @@ mod emphasis_tests {
         let (clean, s) = spans("*two\nlines*");
         assert_eq!(clean, "two\nlines");
         assert_eq!(s, vec![(0, 9, false)]);
+    }
+
+    #[test]
+    fn combined_strip_keeps_both_range_sets_in_the_final_basis() {
+        // `<hi>` sits AFTER an emphasis span, so a naive sequential strip would
+        // leave the hi range pointing two chars too far right.
+        let (clean, hi, emph) =
+            strip_hi_and_emphasis("**Seditious** lands on <hi>the crux</hi> here");
+        assert_eq!(clean, "Seditious lands on the crux here");
+        // Both sets must index `clean`.
+        assert_eq!(emph.len(), 1);
+        let e = &emph[0];
+        assert_eq!(
+            clean.chars().skip(e.start).take(e.end - e.start).collect::<String>(),
+            "Seditious",
+        );
+        assert!(e.bold);
+        assert_eq!(hi.len(), 1);
+        let (s, en) = hi[0];
+        assert_eq!(
+            clean.chars().skip(s).take(en - s).collect::<String>(),
+            "the crux",
+        );
+    }
+
+    #[test]
+    fn combined_strip_handles_emphasis_inside_a_highlight() {
+        let (clean, hi, emph) = strip_hi_and_emphasis("say <hi>the *real* crux</hi> now");
+        assert_eq!(clean, "say the real crux now");
+        let (s, en) = hi[0];
+        assert_eq!(
+            clean.chars().skip(s).take(en - s).collect::<String>(),
+            "the real crux",
+        );
+        let e = &emph[0];
+        assert_eq!(
+            clean.chars().skip(e.start).take(e.end - e.start).collect::<String>(),
+            "real",
+        );
     }
 
     #[test]

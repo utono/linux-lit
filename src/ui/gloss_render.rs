@@ -317,6 +317,34 @@ pub(crate) fn apply_hi_ranges(
     }
 }
 
+/// Apply `md-bold` / `md-italic` over each emphasis span (relative to
+/// `base_offset`) of a just-inserted body piece — the emphasis twin of
+/// `apply_hi_ranges`, and used the same way: strip on the text that is about to
+/// be inserted, then apply over the returned ranges.
+///
+/// Tags are looked up by name so this stays a free function like
+/// `apply_hi_ranges` (the gloss buffer registers them once in
+/// `GlossOverlay::new`). A missing tag is a silent no-op rather than a panic:
+/// the buffer simply renders the already-stripped text unstyled.
+pub(crate) fn apply_emphasis_ranges(
+    buffer: &gtk4::TextBuffer,
+    base_offset: i32,
+    spans: &[crate::ui::gloss_block::EmphasisSpan],
+) {
+    if spans.is_empty() {
+        return;
+    }
+    let table = buffer.tag_table();
+    let (bold, italic) = (table.lookup("md-bold"), table.lookup("md-italic"));
+    for span in spans {
+        let tag = if span.bold { bold.as_ref() } else { italic.as_ref() };
+        let Some(tag) = tag else { continue };
+        let start = buffer.iter_at_offset(base_offset + span.start as i32);
+        let end = buffer.iter_at_offset(base_offset + span.end as i32);
+        buffer.apply_tag(tag, &start, &end);
+    }
+}
+
 /// Populate `view`'s buffer with a rendered gloss/passage doc (no echo
 /// highlight). Delegates to `populate_verse_buffer` with `selected_echo: None`.
 pub(crate) fn populate_gloss_buffer(
@@ -622,13 +650,15 @@ pub(crate) fn populate_verse_buffer(
             }
             GlossElement::Segment(text) => {
                 only_speakers_so_far = false;
-                let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text));
+                let (shown, hi, emph) =
+                    crate::ui::gloss_block::strip_hi_and_emphasis(&strip_ipa(text));
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, &shown);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&verse_tag, &start, &buffer.end_iter());
                 apply_bracket_styling(&buffer, offset, &bracket_tag);
                 apply_hi_ranges(&buffer, offset, &hi, &hi_tag);
+                apply_emphasis_ranges(&buffer, offset, &emph);
 
                 // line-number gutter: match on bracket+IPA-stripped, trimmed text
                 let stripped = strip_brackets(&shown);
@@ -696,12 +726,17 @@ pub(crate) fn populate_verse_buffer(
                         });
                     }
                 } else {
-                    let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(&strip_ipa(text));
+                    // The gloss body is where the `**headword**` convention
+                    // lives (62 rows in the corpus), so this is the arm the
+                    // emphasis work is really for.
+                    let (shown, hi, emph) =
+                        crate::ui::gloss_block::strip_hi_and_emphasis(&strip_ipa(text));
                     let mut end = buffer.end_iter();
                     buffer.insert(&mut end, &shown);
                     let start = buffer.iter_at_offset(offset);
                     buffer.apply_tag(&para_tag, &start, &buffer.end_iter());
                     apply_hi_ranges(&buffer, offset, &hi, &hi_tag);
+                    apply_emphasis_ranges(&buffer, offset, &emph);
                 }
             }
             GlossElement::Pron(_) => {
@@ -713,12 +748,13 @@ pub(crate) fn populate_verse_buffer(
             }
             GlossElement::Stage(text) => {
                 only_speakers_so_far = false;
-                let (shown, hi) = crate::ui::gloss_block::strip_hi_spans(text);
+                let (shown, hi, emph) = crate::ui::gloss_block::strip_hi_and_emphasis(text);
                 let mut end = buffer.end_iter();
                 buffer.insert(&mut end, &shown);
                 let start = buffer.iter_at_offset(offset);
                 buffer.apply_tag(&stage_tag, &start, &buffer.end_iter());
                 apply_hi_ranges(&buffer, offset, &hi, &hi_tag);
+                apply_emphasis_ranges(&buffer, offset, &emph);
                 // No line-number gutter entry: stage directions are not numbered
                 // verse lines.
             }

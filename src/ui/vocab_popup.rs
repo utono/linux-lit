@@ -335,7 +335,16 @@ impl VocabPopup {
                         .build();
                     constrain_wrap(&gloss_label);
                     gloss_label.add_css_class("definition-text");
-                    gloss_label.set_text(gloss);
+                    // Vocab-word glosses use a `**headword**` convention (62
+                    // rows in the corpus) that rendered as literal asterisks.
+                    // This is a Label, not a TextView, so it takes Pango markup
+                    // — the same path the chat transcript uses. No vocab
+                    // highlight here, hence the empty word set.
+                    let no_words = std::collections::HashSet::new();
+                    match crate::ui::chat_panel::row_markup(gloss, &no_words, None) {
+                        Some(markup) => gloss_label.set_markup(&markup),
+                        None => gloss_label.set_text(gloss),
+                    }
                     self.content_box.append(&gloss_label);
                 } else {
                     let no_gloss = Label::builder()

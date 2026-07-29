@@ -511,6 +511,17 @@ line rather than between stanzas.
 `apply_block_typography`. A TextTag overrides the view default, so verse sets
 tight while the surrounding prose keeps its configured leading.
 
+- **Not every surface is a TextBuffer — check before reaching for TextTags
+  (2026-07-29).** The reader renders prose through THREE different mechanisms,
+  and a styling fix has to match the one in play: the journal overlay does a
+  flat `set_text` (tags over char ranges); the gloss overlay/synopsis insert
+  piecewise through `populate_verse_buffer` (tags per element, each with its own
+  local offset base); the chat transcript and the **vocab popup** are
+  `gtk4::Label`s, which take **Pango markup** (`<b>`/`<i>`) and cannot use tags
+  at all. The 62 `**headword**` gloss rows surface in the vocab POPUP, not the
+  gloss overlay — wiring only the overlay would have looked correct in code and
+  changed nothing on screen. Confirm which widget actually renders the content
+  before choosing the mechanism.
 - **A buffer-wide font tag OUTRANKS every style tag under it (2026-07-29).**
   *Tell:* a style tag is applied over a correct range and the text renders
   unstyled — no error, no missing tag, the markers/offsets all correct. In the
