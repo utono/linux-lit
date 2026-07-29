@@ -2329,7 +2329,18 @@ impl JournalOverlay {
                 self.page_height(),
             )
         } else {
-            crate::ui::pagination::paginate(&heights, self.page_height())
+            // Q&A: a HARD break after the quoted source passage, so the question
+            // always starts a page instead of trailing the passage partway down
+            // one. The source is the first `source_para_count` paragraphs
+            // (0 when the entry quotes nothing, which makes this a plain
+            // `paginate`). A multi-page source still ends its last page early —
+            // that is the point: the question stays at the top of the next one.
+            let src = self.source_para_count.get();
+            crate::ui::pagination::paginate_with_breaks(
+                &heights,
+                &[src],
+                self.page_height(),
+            )
         };
     }
 
