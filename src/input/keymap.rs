@@ -55,7 +55,85 @@ impl KeyState {
 }
 
 /// Handle a key press. Returns true if consumed.
+/// Key entry point. Wraps the real handler with the vocab-popup overlay
+/// suspend: a reader-anchored popup hides while a gloss/journal/synopsis
+/// overlay is up and repaints on the way back.
+///
+/// The reconciliation lives HERE rather than at the overlay open sites because
+/// there is no shared "enter overlay" helper — ~50 sites assign
+/// `input_mode = InputMode::{Gloss,Journal,Synopsis}Overlay` directly, and
+/// patching each would rot as new open paths land. This function is the single
+/// funnel for all key input (`crate::app::mod`'s key controller is its only
+/// caller), so comparing the mode before and after dispatch catches every
+/// keyboard-driven transition in one place.
+///
+/// Suspend arms on entering an overlay from ANY non-overlay surface, not just
+/// from `Reader`: a journal entry is routinely reached through the Ctrl+j
+/// picker (Reader → JournalPicker → JournalOverlay), and a Reader-only check
+/// misses that hop entirely — the popup then bleeds through the overlay scrim,
+/// which is the reported bug. `suspend_for_overlay` no-ops when no popup is
+/// visible, so arming broadly costs nothing.
 pub fn handle_key(
+    state: &Rc<RefCell<AppState>>,
+    key_state: &Rc<RefCell<KeyState>>,
+    key_name: &str,
+    key_char: Option<char>,
+    is_ctrl: bool,
+    is_shift: bool,
+    is_alt: bool,
+    tokio_handle: &tokio::runtime::Handle,
+) -> bool {
+    let before = state.borrow().input_mode;
+    let consumed = handle_key_inner(
+        state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle,
+    );
+    let after = state.borrow().input_mode;
+    if before != after {
+        let mut s = state.borrow_mut();
+        if !is_suspending_overlay(before) && is_suspending_overlay(after) {
+            crate::app::vocab_popup::suspend_for_overlay(&mut s);
+        } else if is_suspending_overlay(before) && is_reader_mode(after) {
+            crate::app::vocab_popup::restore_after_overlay(&mut s);
+        }
+    }
+    consumed
+}
+
+/// The reader surface the popup is restored onto. `Visual` is included: a
+/// visual selection is still the main card, so returning into it is a return
+/// to the reader.
+fn is_reader_mode(mode: crate::app::InputMode) -> bool {
+    matches!(
+        mode,
+        crate::app::InputMode::Reader | crate::app::InputMode::Visual
+    )
+}
+
+/// The overlay surfaces that suspend a reader-anchored vocab popup: the gloss
+/// and journal overlays plus their visual/edit satellites, and the synopsis
+/// (which renders through the gloss overlay widget and reads as the same
+/// surface to the user).
+///
+/// Deliberately NOT every non-reader mode: pickers, the chat layout and the
+/// keybinds overlays are out of scope, and the overlay-anchored popup
+/// (`VocabAnchor::Corner`/`ChatPanel`) is opened BY an overlay and must stay up.
+fn is_suspending_overlay(mode: crate::app::InputMode) -> bool {
+    use crate::app::InputMode::*;
+    matches!(
+        mode,
+        GlossOverlay
+            | GlossVisual
+            | GlossEdit
+            | JournalOverlay
+            | JournalVisual
+            | JournalEdit
+            | SynopsisOverlay
+            | SynopsisVisual
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_key_inner(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
     key_name: &str,

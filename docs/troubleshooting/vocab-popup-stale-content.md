@@ -1,4 +1,49 @@
-# Vocab Popup Shows Stale Content After Page Turns
+# Vocab Popup: Stale, Bleeding, or Blocking Content
+
+Frequency-ordered ledger for vocab-popup surface bugs. Read the matching
+section before attempting a fix.
+
+## Popup bleeds through a gloss/journal overlay (2026-07-29)
+
+**Tell.** A gloss or journal overlay is open over the scrim and the reader's
+vocab definition card is still painted at the right edge, on top of it.
+
+**Root cause.** There was no suspend/restore concept at all: the popup's
+visibility was tied only to explicit open/close calls, and nothing observed
+the reader→overlay transition. There is also **no shared "enter overlay"
+helper** — roughly 50 sites assign
+`input_mode = InputMode::{Gloss,Journal,Synopsis}Overlay` directly — so there
+was no single place a close could have been added, and adding one per site
+would rot as new open paths land.
+
+**Fix.** `crate::input::keymap::handle_key` is the sole funnel for key input,
+so the reconciliation lives there: sample `input_mode` before dispatch,
+compare after, and on a transition into an overlay call
+`vocab_popup::suspend_for_overlay` (hides the widget, sets `suspended`,
+preserves `data`/`index`/`view`); on the way back to the reader call
+`restore_after_overlay` (re-places, then re-shows). `handle_key` is now a
+thin wrapper around `handle_key_inner`, which holds the original body.
+
+**Two traps this hit, in order:**
+
+1. **Suspend must NOT be a `close_vocab_popup`.** A close is permanent and
+   also hands a chat-anchored popup's carved slot back to the panel. The
+   suspend has to leave the popup's data intact or the restore repaints an
+   empty card. Conversely `close_vocab_popup` now clears `suspended`, so a
+   popup deliberately closed while an overlay is up (the vocab-Q&A path does
+   exactly this) is not resurrected on return.
+2. **Arming only on `Reader` → overlay is NOT enough.** A journal entry is
+   routinely reached as Reader → `JournalPicker` → `JournalOverlay` (Ctrl+j).
+   A Reader-only check misses that hop entirely and the popup still bleeds
+   through — this was verified failing on screen mid-fix. Suspend now arms on
+   entering an overlay from ANY non-overlay mode; the visibility guard inside
+   `suspend_for_overlay` makes the broad arming free.
+
+**Verification.** Headless (`scripts/land-on.sh BH-Barrett 4.0`), `rr` to open
+the popup, then both paths: Ctrl+g (direct) and Ctrl+j → Return (via picker).
+Log breadcrumbs are `VOCAB POPUP: suspended for overlay` /
+`VOCAB POPUP: restored after overlay`. Screenshot-compare the right edge —
+the restore should be pixel-identical to the pre-overlay capture.
 
 ## Symptom
 
