@@ -189,14 +189,34 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
         }
     }
 
-    // Fresh ask. The popup STAYS OPEN on the word's definition for the whole
-    // wait (the reader keeps the word in view); progress shows on a held
-    // bottom-strip toast (the "Glossing…" pattern) covering BOTH round-trips:
-    // the improve-question call, then the answer. The reply opens the journal
-    // overlay on the saved entry.
+    // Fresh ask. Open the journal overlay on a LOADING card showing the
+    // question, so the ~25s round trip is not a blank surface (the wait covers
+    // two Claude calls: improve-question, then the answer). Mirrors the
+    // passage-ask flow's `begin_passage_ask` → `submit_passage_question`
+    // ordering, which is the reason that path never shows an empty card:
+    // `render_current` FIRST (it is what primes `last_card_size`, which
+    // `show_loading` needs to size the card — it silently skips sizing while
+    // that width is 0), then `set_running_head`, then `show_loading`.
+    // The held bottom-strip toast stays: it is the cross-surface progress
+    // signal, and still covers the case where the user leaves the overlay
+    // before the answer lands.
     let hold_gen = {
         let mut s = state_rc.borrow_mut();
         s.vocab_qa_inflight = Some(word.clone());
+        // The definition card would otherwise sit over the overlay scrim.
+        crate::app::vocab_popup::close_vocab_popup(&mut s);
+        s.journal.return_pos =
+            Some((s.current_line, s.page_top.line(), s.page_top.offset()));
+        s.journal.filter = None;
+        s.journal.entry_page_id = None;
+        s.journal_band = crate::app::JournalBand::Division(div1, div2);
+        s.journal.page_index = 0;
+        s.input_mode = crate::app::InputMode::JournalOverlay;
+        crate::input::actions::journal::render_current(&mut s);
+        let head = crate::app::division_synopsis::cursor_head(&s);
+        s.journal_overlay.set_running_head(&head.0, &head.1);
+        s.journal_overlay
+            .show_loading(&question, "Refining question\u{2026}");
         crate::input::navigation::show_chapter_toast_hold(
             &s,
             &format!("Journal Q&A - {word}"),
@@ -247,6 +267,15 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
             let word_ok = word.clone();
             let word_err = word.clone();
             let question_ok = improved;
+            // Second stage of the loading card: swap the seed question for the
+            // sharpened phrasing that is actually being answered, and relabel
+            // the indicator. Skipped if the user already left the overlay —
+            // repainting it would drag them back to a surface they closed.
+            if st.borrow().input_mode == crate::app::InputMode::JournalOverlay {
+                let s = st.borrow();
+                s.journal_overlay
+                    .show_loading(&question_ok, "Answering\u{2026}");
+            }
             crate::input::actions::claude_bridge::run_claude_request(
                 st,
                 crate::gloss::vocab_journal_prompt(&work_type),
@@ -276,11 +305,22 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                     }
                     crate::input::navigation::release_chapter_toast_hold(&s, hold_gen);
                     match saved_id {
-                        // Reveal the saved entry — but only from plain reading.
-                        // If the reply lands while an overlay/editor is up,
-                        // don't hijack it; the entry is stored, so a later
-                        // Ctrl+r opens it instantly.
-                        Some(id) if s.input_mode == crate::app::InputMode::Reader => {
+                        // Reveal the saved entry — from plain reading, or from
+                        // the loading card this ask itself put up (the submit
+                        // path claims JournalOverlay so the wait has a surface
+                        // to paint on, so THAT mode is now also a reveal case;
+                        // it replaces the spinner with the answer).
+                        //
+                        // Any OTHER mode means the user navigated away
+                        // mid-wait — don't hijack it; the entry is stored, so a
+                        // later Ctrl+r opens it instantly.
+                        Some(id)
+                            if matches!(
+                                s.input_mode,
+                                crate::app::InputMode::Reader
+                                    | crate::app::InputMode::JournalOverlay
+                            ) =>
+                        {
                             crate::app::vocab_popup::close_vocab_popup(&mut s);
                             crate::input::actions::journal::open_overlay_at_entry(
                                 &mut s, div1, div2, id,
@@ -294,11 +334,15 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                             );
                         }
                         None => {
-                            crate::input::navigation::show_chapter_toast_secs(
-                                &s,
-                                &format!("Journal Q&A save failed - {word_ok}"),
-                                4,
-                            );
+                            // The answer arrived but could not be stored. If the
+                            // loading card is still up it must not keep spinning
+                            // for an entry that will never render — `show_message`
+                            // stops the animator and puts the failure on the card.
+                            let msg = format!("Journal Q&A save failed - {word_ok}");
+                            if s.input_mode == crate::app::InputMode::JournalOverlay {
+                                s.journal_overlay.show_message(&msg);
+                            }
+                            crate::input::navigation::show_chapter_toast_secs(&s, &msg, 4);
                         }
                     }
                 },
@@ -309,11 +353,13 @@ pub(crate) fn vocab_journal_ask(state_rc: &Rc<RefCell<AppState>>) {
                         s.vocab_qa_inflight = None;
                     }
                     crate::input::navigation::release_chapter_toast_hold(&s, hold_gen);
-                    crate::input::navigation::show_chapter_toast_secs(
-                        &s,
-                        &format!("Journal Q&A failed - {word_err}"),
-                        4,
-                    );
+                    // Same as the save-failure arm: never leave the loading card
+                    // spinning on a request that will never complete.
+                    let failed = format!("Journal Q&A failed - {word_err}");
+                    if s.input_mode == crate::app::InputMode::JournalOverlay {
+                        s.journal_overlay.show_message(&failed);
+                    }
+                    crate::input::navigation::show_chapter_toast_secs(&s, &failed, 4);
                 },
             );
         },

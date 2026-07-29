@@ -2398,6 +2398,7 @@ pub fn build_window(
             line: None,
             fade_gen: Rc::new(Cell::new(0)),
             chat_inline: false,
+            suspended: false,
         },
         vocab_qa_inflight: None,
         sidebar_mode: SidebarMode::Vocab,

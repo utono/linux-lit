@@ -21,6 +21,14 @@ pub struct VocabPopupState {
     /// raised panel bottom, borders on the transcript text margins) instead of
     /// the corner float. Cleared on close.
     pub chat_inline: bool,
+    /// True while a reader-anchored popup is hidden for the duration of a
+    /// gloss/journal/synopsis overlay. Set by `suspend_for_overlay` on the
+    /// Reader→overlay transition and cleared by `restore_after_overlay` on the
+    /// way back (see `crate::input::keymap`'s transition check, the only
+    /// writer). Distinct from a close: `data`/`index`/`view` are preserved so
+    /// the restore repaints the exact same word, and the chat-carve teardown
+    /// never runs.
+    pub suspended: bool,
 }
 
 /// Which words the popup loads on open.
@@ -183,6 +191,11 @@ fn position_overlay_vocab_popup(state: &AppState) {
 /// regrown height.
 pub fn close_vocab_popup(state: &mut AppState) {
     state.vocab_popup.popup.hide();
+    // An explicit close outranks a pending overlay suspend: without this, a
+    // popup closed *while* an overlay is up (e.g. the vocab-Q&A path's close
+    // before it opens the journal entry) would be resurrected by
+    // `restore_after_overlay` on the way back to the reader.
+    state.vocab_popup.suspended = false;
     if state.vocab_popup.chat_inline {
         state.vocab_popup.chat_inline = false;
         if state.chat_layout_open {
@@ -190,6 +203,48 @@ pub fn close_vocab_popup(state: &mut AppState) {
             crate::input::actions::chat::rerender_current_view(state);
         }
     }
+}
+
+/// Hide a reader-anchored popup for the duration of a gloss/journal/synopsis
+/// overlay, remembering that it was up so `restore_after_overlay` can repaint
+/// the exact same word on the way back.
+///
+/// Deliberately NOT `close_vocab_popup`: a close is permanent (it also hands a
+/// chat-anchored popup's carved slot back to the panel), whereas a suspend must
+/// leave `data`/`index`/`view` intact. Only the widget is hidden.
+///
+/// No-op unless the popup is actually visible, so an overlay opened with no
+/// popup up cannot arm a spurious restore. Called only from the Reader→overlay
+/// transition check in `crate::input::keymap`.
+pub fn suspend_for_overlay(state: &mut AppState) {
+    if !state.vocab_popup.popup.is_visible() {
+        return;
+    }
+    state.vocab_popup.suspended = true;
+    state.vocab_popup.popup.hide();
+    crate::logging::log("VOCAB POPUP: suspended for overlay");
+}
+
+/// Repaint a popup suspended by `suspend_for_overlay`, on the way back to the
+/// reader. Re-places before showing: the cursor may have crossed the column
+/// split while the overlay was up, so the float side must be recomputed rather
+/// than reusing the pre-overlay geometry.
+///
+/// No-op when nothing was suspended, or when the popup's word list was dropped
+/// while the overlay was up (an empty `data` would otherwise show an empty
+/// card — `show_vocab_popup` guards this too, but clearing the flag here keeps
+/// the state honest).
+pub fn restore_after_overlay(state: &mut AppState) {
+    if !state.vocab_popup.suspended {
+        return;
+    }
+    state.vocab_popup.suspended = false;
+    if state.vocab_popup.data.is_empty() {
+        return;
+    }
+    position_vocab_popup(state);
+    show_vocab_popup(state);
+    crate::logging::log("VOCAB POPUP: restored after overlay");
 }
 
 /// Render the current vocab popup entry.
