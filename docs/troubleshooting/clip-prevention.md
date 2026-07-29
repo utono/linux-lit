@@ -1083,6 +1083,48 @@ When a half line clips at the bottom edge of a scrolled surface:
           Check the per-surface legend before deleting any on-screen help text;
           if a bind lives ONLY in the text being removed, move it to the legend
           in the same change.
+      - **THE ACTUAL ROOT CAUSE (found third, after two wrong fixes): the footer
+        labels had NO CSS class, so one glyph washed out.** The padding and inset
+        fixes above are real improvements, but neither was what the user was
+        pointing at. The report was "the top of the numeral 5 is obscured" — and
+        it was, by a rasterisation artifact:
+        - Both callers `remove_css_class("gloss-hint")` to drop its border-top,
+          and that was the ONLY rule styling the row, so every footer label
+          rendered at GTK's DEFAULT size in the body-text colour.
+        - At that inherited size the digit `5`'s flat top bar landed on a pixel
+          boundary and rasterised at ~13% coverage — raw R **217** against a 250
+          card — while its own stem stayed solid at **109**. `3` and `/` were
+          unaffected (different stroke geometry), and the SAME `5` in the running
+          head, at a defined size, rasterised its bar solid at **133**. One glyph
+          in one position looked broken; everything around it was fine.
+        - `.gloss-position` (`font-size: 14px; color: {dim}`) already existed in
+          `theme.rs` for exactly this row and was applied to NOTHING — dead CSS
+          since the footer was extracted into `footer.rs`. Wiring it up
+          (`FOOTER_LABEL_CLASS`, on the row's `left` label AND both callers'
+          `position_label`) fixes the artifact and makes the footer read as dim
+          chrome like the header (ink `87,82,121` → `184,179,190`).
+        - Proof it is the SIZE, not the colour: rendering `5` straight through
+          Pango in Charis at 12/13/14/15/16px in the dim colour gives a top-bar
+          min of **184** (full ink at that colour) at EVERY size. Only the
+          unstyled default washed out.
+      - **Process lesson — three wrong fixes before the right one.** "Clipping in
+        the lower right" was read as (1) bottom padding, then (2) right inset,
+        then (3) clipped glyph tops, before the cause turned out to be unstyled
+        labels. What finally cracked it:
+        - **The user's later phrasing WAS the diagnosis.** "Obscured, not
+          clipped" plus "`3 / ` is fine but the `5` isn't" narrowed it to a
+          single glyph — unguessable from "clipping," and it ruled out geometry
+          outright, since both digits share the same box and inset.
+        - **Read RAW pixel values, not a thresholded ink mask.** Every earlier
+          check applied `isbg()` with a tolerance, which classified the 217 bar
+          as "no ink here" — the mask HID the defect and produced three
+          confident "measures clean" verdicts. Printing actual values exposed it
+          at once. When a user insists something is wrong and the mask says
+          clean, print the numbers.
+        - **A flat-topped glyph is not evidence of a clip.** The `5`/`1` flat
+          tops were briefly called truncation; the header's `5` has the same
+          shape, so that is the serif face, not a cut. Compare the same glyph
+          elsewhere before concluding.
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
 
 15. **A hand-drawn Cairo surface lays annotations out against the FIRST
