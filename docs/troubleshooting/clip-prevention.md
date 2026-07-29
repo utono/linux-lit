@@ -1002,6 +1002,45 @@ When a half line clips at the bottom edge of a scrolled surface:
       (`size_scroll(card_height, title_pref_h())` / journal `size_card`'s
       `head_h + UNACCOUNTED_CHROME_MARGINS`), keeping
       title + margins + scroll + footer == card_height.
+
+19. **OVERLAY FOOTER — the "X / Y" / "Q&A n of m" counters read as clipped
+    against the card's bottom rule, but nothing is actually cut.** NOT a clip
+    path (a/b/c) and NOT occlusion: the glyphs are fully rendered, just crowded.
+    The tell that separates it from a real clip is **arithmetic on the two ends
+    of the same card** — measure the gap above the header ink and below the
+    footer ink. A genuine clip severs glyphs; this one leaves them whole but
+    lopsided. Measured on the 2026-07-29 report (journal Q&A, BH-Barrett ch. 5):
+    header 29px above vs footer **14px** below, on a 1172px card — and the
+    horizontal inset was already symmetric (`5 / 5` ended 40px inside the card
+    edge, exactly matching `Chapter 5`), which is what ruled out a width/clip
+    problem in one measurement.
+    - **Cause:** the shared `build_footer_row` (`src/ui/footer.rs`) used a
+      symmetric `margin_top(12)`/`margin_bottom(12)`, while BOTH callers'
+      running heads use `margin_top(24)`/`margin_bottom(12)`
+      (`journal_overlay.rs` `head_row`, `gloss_overlay.rs` `title`). So the head
+      strip was 24px deep and the foot strip only 12 — the card was lopsided by
+      design, and it became noticeable only after the MAIN reading card moved
+      30px of padding from its running head to its foot over 2026-07-28
+      (`TOP_SPACER_HEIGHT` 74 -> 44 against `SINGLE_COLUMN_BOTTOM_MARGIN` /
+      `TWO_COLUMN_BOTTOM_MARGIN` 22 -> 52, five 5px passes). That series touched
+      only `app/mod.rs` + `scroll.rs`; the overlays derive their budget from
+      `main_card_rect` and their own chrome, so they never saw the shift and kept
+      the pre-shift proportions next to a newly deep-footed reading card.
+    - **Fix:** `FOOTER_MARGIN_BOTTOM = 24` in `footer.rs`, mirroring the head's
+      `margin_top(24)`. Verified headless on the gloss overlay (the other caller
+      of the same builder): footer gap 14 -> **24px** against a 29px header.
+    - **Why it costs no text and needs no constant bumped:** both callers pin
+      their scroll height from the footer's LIVE `preferred_size()`
+      (`journal_overlay::size_card`, `gloss_overlay::size_scroll`), so the extra
+      12px comes out of the scroll viewport automatically and the row grid stays
+      consistent. A footer whose height were hardcoded anywhere would have
+      needed a matching bump — check for that before changing this margin again.
+    - **Lesson:** when a padding change is described as "move N px from the head
+      to the foot," the head/foot pair on EVERY surface that mirrors that strip
+      is in scope, not just the one whose constants you edited. The overlays
+      mirrored the head side (a literal 24) but had no corresponding foot
+      constant to move, so the asymmetry was invisible to a diff of the reading
+      card's three constants.
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
 
 15. **A hand-drawn Cairo surface lays annotations out against the FIRST
