@@ -48,9 +48,8 @@ pub struct GlossOverlay {
     original_label: Label,
     corr_header: Label,
     corrected_label: Label,
-    hint: Label,
-    /// The footer/hint row container (holds `hint` + `citation_label` +
-    /// `position_label`). Stored so the show paths can measure its height for the
+    /// The footer row container (holds `citation_label` + `position_label`).
+    /// Stored so the show paths can measure its height for the
     /// fixed-scroll-height accounting (it stays visible while the ask card is open
     /// — gloss has no toggled footer — so it counts as fixed chrome below the
     /// scroll).
@@ -563,7 +562,7 @@ impl GlossOverlay {
         container.append(&echo_rule);
 
         // Breathing room between the scrolling text viewport and the footer
-        // hint bar. Without it the viewport's bottom edge sits flush against the
+        // row. Without it the viewport's bottom edge sits flush against the
         // footer's top border, so the last visible text line is bisected by the
         // rule and reads as clipped (the symptom this margin fixes). The 80px
         // bottom margin inside `gloss_view` only helps once scrolled fully to
@@ -580,15 +579,14 @@ impl GlossOverlay {
         // The gloss footer is reduced to JUST the right-aligned page counter:
         // no divider line, no keybind hint, no work citation (the act/scene pill
         // identifies the work/scene). Build the row WITHOUT the `gloss-hint`
-        // class (which draws the border-top divider + padding), and leave the
-        // hint blank. The empty `citation_label` stays as the hexpand spacer that
-        // pushes the page counter to the right.
-        let footer = crate::ui::footer::build_footer_row(text_margins as i32, "");
+        // class (which draws the border-top divider + padding). The empty
+        // `citation_label` stays as the hexpand spacer that pushes the page
+        // counter to the right.
+        let footer = crate::ui::footer::build_footer_row(text_margins as i32);
         let footer_box = footer.container;
         footer_box.remove_css_class("gloss-hint");
         let citation_label = footer.left;
         citation_label.set_visible(false);
-        let hint = footer.hint;
 
         let position_label = Label::new(None);
         position_label.set_halign(Align::End);
@@ -733,7 +731,6 @@ impl GlossOverlay {
             original_label,
             corr_header,
             corrected_label,
-            hint,
             footer_box,
             citation_label,
             position_label,
@@ -1745,7 +1742,6 @@ impl GlossOverlay {
         self.gloss_scroll_overlay.set_visible(false);
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
-        self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
@@ -1796,7 +1792,6 @@ impl GlossOverlay {
         // sets the title's start margin for the gloss-title look — the head
         // uses the card strip's 40px padding instead.
         self.show_running_head(head.0, head.1);
-        self.set_gloss_hint();
         self.hide_diff_labels();
         self.echo_header_view.set_visible(false);
         self.echo_rule.set_visible(false);
@@ -1826,7 +1821,6 @@ impl GlossOverlay {
         *self.echo_lines.borrow_mut() = Vec::new();
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         // Fixed-scroll-height: the gloss result hides the title; only the footer
@@ -1962,8 +1956,6 @@ impl GlossOverlay {
         // `size_scroll` sizes the tinted panel to the result's footprint. The
         // labels carry no text on the loading card, so the band shows only the
         // rule — matching dimensions without adding loading-card chrome.
-        self.set_gloss_hint();
-        self.hint.set_visible(true);
         self.position_label.set_visible(false);
 
         self.set_bar_color_from_root(root_color);
@@ -1990,7 +1982,7 @@ impl GlossOverlay {
         self.container.set_visible(true);
         self.apply_font();
         // Fixed-scroll-height: the "Glossing…" loading card shows the title but
-        // hides the hint footer, and has no ask card. With vexpand off the scroll
+        // hides the footer, and has no ask card. With vexpand off the scroll
         // still needs an explicit height — title only above it.
         self.size_scroll(card_height, self.title_pref_h());
         self.reset_scroll_top();
@@ -2035,7 +2027,6 @@ impl GlossOverlay {
         self.gloss_view.set_top_margin(24);
         self.gloss_view.set_pixels_below_lines(0);
         self.echo_header_view.set_left_margin(left);
-        self.hint.set_text("Esc close · a play · A add · s curate · d/D delete · R refresh");
         self.hide_diff_labels();
 
         self.set_bar_color_from_root(root_color);
@@ -2064,7 +2055,6 @@ impl GlossOverlay {
         glib::idle_add_local_once(move || bar.queue_draw());
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         self.apply_font();
@@ -2198,8 +2188,6 @@ impl GlossOverlay {
         self.paginated_mode.set(PaginatedMode::Synopsis);
 
         self.gloss_scroll_overlay.set_visible(true);
-        self.set_synopsis_hint();
-        self.hint.set_visible(true);
         self.scrim.set_visible(true);
         self.container.set_visible(true);
         // Fixed-scroll-height: record the closed scroll height (the footer is
@@ -2315,8 +2303,8 @@ impl GlossOverlay {
         }
     }
 
-    /// Preferred height of the footer/hint row (hr + keybind hints). It is the
-    /// host's TOGGLED footer — hidden while the ask card is open.
+    /// Preferred height of the footer row (citation label + page counter). It is
+    /// the host's TOGGLED footer — hidden while the ask card is open.
     fn footer_pref_h(&self) -> i32 {
         self.footer_box.preferred_size().1.height()
     }
@@ -3063,28 +3051,6 @@ impl GlossOverlay {
         visual_selection_count(self.synopsis_visual_anchor.get(), self.cursor_block.get())
     }
 
-    /// Set the synopsis-overlay footer hint (normal navigation).
-    pub fn set_synopsis_hint(&self) {
-        self.hint.set_text("");
-    }
-
-    /// Set the footer hint shown while synopsis visual mode is active.
-    pub fn set_synopsis_visual_hint(&self) {
-        self.hint.set_text("\u{21e7}V/Esc exit · j/k extend · gg/G ends · y yank");
-    }
-
-    /// Set the gloss-overlay footer hint (normal navigation). Called by the
-    /// gloss render path and when exiting gloss visual mode, so both share one
-    /// string. `\u{21e7}V select` advertises gloss visual mode.
-    pub fn set_gloss_hint(&self) {
-        self.hint.set_text("");
-    }
-
-    /// Set the footer hint shown while gloss visual mode is active.
-    pub fn set_gloss_visual_hint(&self) {
-        self.hint.set_text("\u{21e7}V/Esc exit · j/k extend · gg/G ends · y yank");
-    }
-
     /// The currently-selected blocks' text read straight from the gloss buffer
     /// (first selected block's start line through the last block's end line),
     /// for yank in gloss visual mode. Unlike `visual_selection_text` (synopsis),
@@ -3421,7 +3387,6 @@ impl GlossOverlay {
         self.echo_rule.set_visible(false);
         self.position_label.set_visible(false);
         self.ask_host.card().close();
-        self.hint.set_visible(false);
         // Show the dim scrim so the loading state reads as a modal card over the
         // page, consistent with the synopsis/gloss cards (was hidden, which made
         // the message float as bare text with no backdrop).
@@ -3608,10 +3573,10 @@ impl GlossOverlay {
     ///
     /// Blank the text but keep the label *visible* so its `hexpand` still holds
     /// the footer row's stretch. If it were `set_visible(false)`, the only
-    /// hexpand child would vanish and the right-aligned `hint` would collapse to
-    /// the left edge — the synopsis footer would then sit bottom-left instead of
-    /// far-right like the gloss/journal overlays. (Journal keeps its empty
-    /// `footer_left` visible for the same reason.)
+    /// hexpand child would vanish and the right-aligned page counter would
+    /// collapse to the left edge — the synopsis footer would then sit
+    /// bottom-left instead of far-right like the gloss/journal overlays.
+    /// (Journal keeps its empty `footer_left` visible for the same reason.)
     pub fn hide_citation(&self) {
         self.citation_label.set_text("");
         self.citation_label.set_visible(true);

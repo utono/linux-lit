@@ -1061,10 +1061,28 @@ When a half line clips at the bottom edge of a scrolled surface:
         with the body text. Verified 41 -> **57px** headless (gloss overlay,
         1920x1236) with the left inset and 24px bottom gap unchanged. The
         `hint` label's unconditional `margin_end(12)` was dropped in the same
-        change — it is empty in every state but visual mode
-        (`set_journal_hint`/`set_gloss_hint` set `""`), so it only muddied the
-        inset arithmetic. **Do not delete the `hint` label itself**: it still
-        carries the visual-mode legend ("⇧V/Esc exit · j/k extend · …").
+        change — it was empty in every state but visual mode, so it only muddied
+        the inset arithmetic.
+      - **The `hint` label was then removed outright** (2026-07-29, follow-up),
+        along with `set_journal_hint`/`set_journal_visual_hint`/
+        `set_gloss_hint`/`set_gloss_visual_hint`/`set_synopsis_hint`/
+        `set_synopsis_visual_hint`, the `BlockVisualCfg::set_hint` fn-pointer
+        field, and the echoes view's inline keybind line. The footer row now
+        holds ONE child (the caller's left label) plus whatever counter the
+        caller appends. Two things to know before touching it again:
+        - **`left` must stay VISIBLE even when blank.** It is the row's only
+          `hexpand` child, so hiding it collapses the right-aligned counter to
+          the left edge (`gloss_overlay::hide_citation` documents this; it was
+          written when `hint` was the right-aligned victim, and the hazard is
+          unchanged now that the counter plays that role). Verified after
+          removal: counter still at a 57px right inset, not collapsed.
+        - **Nothing became undocumented.** The visual-mode legend's binds are in
+          the gloss/journal legends (`Shift+V`), and every echoes bind the
+          inline line advertised (`A`/`s`/`d`/`D`/`R`/`a`/`Esc`) is already in
+          `echo_keybinds_overlay.rs` — more completely than the hint had them.
+          Check the per-surface legend before deleting any on-screen help text;
+          if a bind lives ONLY in the text being removed, move it to the legend
+          in the same change.
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
 
 15. **A hand-drawn Cairo surface lays annotations out against the FIRST

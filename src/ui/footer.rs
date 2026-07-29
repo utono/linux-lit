@@ -9,9 +9,11 @@ pub(crate) struct FooterRow {
     pub container: gtk4::Box,
     /// Left-anchored, hexpand label (citation / work-scene). Caller sets text
     /// and visibility, and typically stores it in its own struct for updates.
+    ///
+    /// Keep this VISIBLE even when blank — it is the row's only hexpand child,
+    /// so hiding it collapses the right-aligned counter to the left edge. See
+    /// `gloss_overlay::hide_citation`.
     pub left: Label,
-    /// Right-anchored fixed keybind hint (text set from `hint_text`).
-    pub hint: Label,
 }
 
 /// Gap ABOVE the footer text — the breathing room between the body's last line
@@ -54,16 +56,21 @@ const FOOTER_MARGIN_BOTTOM: i32 = 24;
 /// stays flush with the body text above it.
 const FOOTER_END_INSET: i32 = 56;
 
-/// Build the gloss/journal footer row: a horizontal box (text_margins sides,
-/// [`FOOTER_MARGIN_TOP`]/[`FOOTER_MARGIN_BOTTOM`] top/bottom, `gloss-hint`
-/// class) with a left-anchored hexpand label and a right-anchored hint label
-/// (`halign End`). Left then hint are appended into the box. Left-label
-/// visibility and any extra widgets (e.g. the page counter, appended AFTER
-/// `hint`) are the caller's responsibility.
-pub(crate) fn build_footer_row(text_margins: i32, hint_text: &str) -> FooterRow {
+/// Build the gloss/journal footer row: a horizontal box (`text_margins` start /
+/// [`FOOTER_END_INSET`] end, [`FOOTER_MARGIN_TOP`]/[`FOOTER_MARGIN_BOTTOM`]
+/// top/bottom, `gloss-hint` class) holding one left-anchored hexpand label.
+/// Left-label visibility and any extra widgets (e.g. the page counter, appended
+/// after `left`) are the caller's responsibility.
+///
+/// There is NO hint label. The row used to carry a right-anchored one for the
+/// visual-mode legend ("⇧V/Esc exit · j/k extend · …") and the echoes view's
+/// keybind list; both were removed 2026-07-29 along with their setters, so the
+/// footer now shows only the caller's left label and counter. Ctrl+/ documents
+/// the binds those legends advertised.
+pub(crate) fn build_footer_row(text_margins: i32) -> FooterRow {
     let container = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     container.set_margin_start(text_margins);
-    // The counter both callers append after `hint` is the RIGHTMOST thing in the
+    // The counter both callers append after `left` is the RIGHTMOST thing in the
     // row, so this end margin is all that holds it off the card edge. It gets
     // FOOTER_END_INSET rather than the symmetric `text_margins`: the left label
     // starts a line of prose (40px reads correct against the body's left edge),
@@ -80,14 +87,5 @@ pub(crate) fn build_footer_row(text_margins: i32, hint_text: &str) -> FooterRow 
     left.set_hexpand(true);
     container.append(&left);
 
-    // Visual-mode hint ("⇧V/Esc exit · j/k extend · …"). EMPTY in every normal
-    // state — `set_journal_hint`/`set_gloss_hint` set it to "" — so it is a
-    // zero-width spacer for all but visual mode. It carried a `margin_end(12)`
-    // that applied unconditionally; dropped, because the row's own end margin
-    // now owns the counter's inset and the stray 12 only muddied the arithmetic.
-    let hint = Label::new(Some(hint_text));
-    hint.set_halign(Align::End);
-    container.append(&hint);
-
-    FooterRow { container, left, hint }
+    FooterRow { container, left }
 }
