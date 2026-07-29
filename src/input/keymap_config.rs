@@ -404,15 +404,16 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::alt("d"), Action::ToggleDim),
         (KeyCombo::ctrl("t"), Action::ThemeNext),
         (KeyCombo::ctrl_shift("T"), Action::ThemePrev),
-        // Root-variant cycling lives on the RPD <TLDE> cap (QWERTY `/~ key),
-        // which emits `dollar` unshifted and `asciitilde` shifted. Because $
-        // is level-1 (no shift needed), Ctrl+$ and Ctrl+Shift+$ are distinct
-        // chords — same forward/back split the t cap had.
+        // Root-variant cycling lives on the RPD <TLDE> cap (QWERTY `/~ key):
+        //   key <TLDE> { [ dollar, asciitilde, dead_grave, dead_tilde ] };
+        // Level 2 is a DIFFERENT KEYSYM, not a shifted `dollar`. Holding Shift
+        // on this cap emits `asciitilde` with shift=false — so a
+        // ctrl_shift("dollar") combo can never match and is dead weight (it
+        // shipped that way until 2026-07-28, with Ctrl+Alt+$ silently doing
+        // the real work). Forward/back is therefore Ctrl+$ / Ctrl+~ — the same
+        // physical cap with and without Shift, one keysym each.
         (KeyCombo::ctrl("dollar"), Action::RootVariantNext),
-        (KeyCombo::ctrl_shift("dollar"), Action::RootVariantPrev),
-        // Ctrl+Alt+$ mirrors Ctrl+Shift+$ (previous root variant) — a
-        // shift-free reverse chord on the same cap.
-        (KeyCombo::ctrl_alt("dollar"), Action::RootVariantPrev),
+        (KeyCombo::ctrl("asciitilde"), Action::RootVariantPrev),
         // `b` sets the start time (plain `u`/`i` no longer do — `i` opens the
         // translation overlay). The old modifier families stay put
         // (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
@@ -940,8 +941,14 @@ mod tests {
     fn ctrl_dollar_cycles_root_variant() {
         let km = Keymap::default();
         assert_eq!(km.lookup("dollar", true, false, false), Some(Action::RootVariantNext));
-        assert_eq!(km.lookup("dollar", true, true, false), Some(Action::RootVariantPrev));
-        assert_eq!(km.lookup("dollar", true, false, true), Some(Action::RootVariantPrev));
+        // Shift on the RPD <TLDE> cap emits `asciitilde` (level 2), NOT
+        // `dollar` with shift=true — the reverse chord binds the keysym the
+        // keyboard actually delivers. A ctrl_shift("dollar") entry would pass
+        // a lookup() probe but be unreachable in practice, which is exactly
+        // how the dead bind survived here before 2026-07-28.
+        assert_eq!(km.lookup("asciitilde", true, false, false), Some(Action::RootVariantPrev));
+        assert_eq!(km.lookup("dollar", true, true, false), None);
+        assert_eq!(km.lookup("dollar", true, false, true), None);
         assert_eq!(km.lookup("n", true, false, true), Some(Action::ToggleNavTest));
     }
 

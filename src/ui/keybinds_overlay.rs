@@ -32,7 +32,7 @@ const fn bare(unshifted: &'static str, shifted: &'static str, action: &'static s
 // ── Row definitions ──────────────────────────────────────────────────
 
 const NUMBER_ROW: &[KeyDef] = &[
-    key("$", "~", "", "", &[("C-$", "root variant"), ("S-C-$", "root variant prev"), ("C-A-$", "root variant prev")]),
+    key("$", "~", "", "", &[("C-$", "root variant"), ("C-~", "root variant prev")]),
     key("+", "1", "copy work+div", "1: copy work info", &[]),
     key("[", "2", "prev scene", "", &[("C-[", "set track mark"), ("M-[", "col layout")]),
     key("{", "3", "next scene", "", &[]),
@@ -185,6 +185,10 @@ fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
         "bar" => "|",
         "at" => "@",
         "dollar" => "$",
+        // `asciitilde` is level 2 of the SAME physical <TLDE> cap as `dollar`
+        // (RPD emits a distinct keysym rather than dollar+shift), so a Ctrl+~
+        // press jumps to the `$` cap, whose shifted glyph is `~`.
+        "asciitilde" => "$",
         "equal" => "=",
         // The spacebar reports the keyval name "space"; its cap glyph is "Space"
         // (SPACE_KEY in the bottom row). Maps so pressing Space jumps to it.

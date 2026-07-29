@@ -259,17 +259,22 @@ pub fn handle_key(
 
     // Mode dispatch — delegate to per-mode handler functions
     let mode = state.borrow().input_mode;
-    // Global: Ctrl+$ cycles the root/wallpaper variant in EVERY overlay and
-    // picker, mirroring the reader bind (keymap_config.rs: RootVariantNext on
-    // Ctrl+$, RootVariantPrev on Ctrl+Shift+$ / Ctrl+Alt+$, on the RPD <TLDE>
-    // `$` cap). `$` is level-1 on RPD, so all three chords deliver key_name
-    // "dollar" with the ctrl flag; shift/alt selects the direction. The modal
-    // vim editors (JournalEdit/GlossEdit/SegmentVim/AddVocab) never reach here —
-    // they return at the top of handle_key — so this cannot fire while typing in
-    // a vim editor. Reader already handles Ctrl+$ via the compiled table above,
-    // so the `!= Reader` clause only lets this fire for overlays/pickers.
-    if mode != crate::app::InputMode::Reader && is_ctrl && key_name == "dollar" {
-        let forward = !(is_shift || is_alt);
+    // Global: Ctrl+$ / Ctrl+~ cycle the root/wallpaper variant in EVERY overlay
+    // and picker, mirroring the reader bind (keymap_config.rs: RootVariantNext
+    // on Ctrl+$, RootVariantPrev on Ctrl+~). Both live on the RPD <TLDE> cap,
+    // whose two levels are DIFFERENT KEYSYMS — `dollar` unshifted, `asciitilde`
+    // shifted — so the direction is chosen by the key NAME, never by a shift
+    // flag (Shift on this cap arrives as asciitilde with shift=false). The
+    // modal vim editors (JournalEdit/GlossEdit/SegmentVim/AddVocab) never reach
+    // here — they return at the top of handle_key — so this cannot fire while
+    // typing in a vim editor. Reader already handles both via the compiled
+    // table above, so the `!= Reader` clause only lets this fire for
+    // overlays/pickers.
+    if mode != crate::app::InputMode::Reader
+        && is_ctrl
+        && (key_name == "dollar" || key_name == "asciitilde")
+    {
+        let forward = key_name == "dollar";
         crate::input::actions::settings::cycle_root_variant(state, forward);
         return true;
     }

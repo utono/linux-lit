@@ -99,14 +99,16 @@ impl VocabPopup {
             .build();
         footer_label.add_css_class("definition-hint");
 
-        // Anchored lower-right: the popup hugs the window bottom beside the
+        // Anchored upper-right: the popup hugs the window top beside the
         // card (margin_start is set live to clear the card's right edge).
+        // These are only the initial values — every `place_*` call overwrites
+        // the alignment and all four margins.
         let container = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(0)
-            .valign(gtk4::Align::End)
+            .valign(gtk4::Align::Start)
             .margin_end(5)
-            .margin_bottom(24)
+            .margin_top(24)
             .build();
         container.add_css_class("vocab-popup");
         container.append(&header_row);
@@ -129,18 +131,19 @@ impl VocabPopup {
         self.container.set_visible(false);
     }
 
-    /// Single-column placement: the strip right of the text card. Restores
+    /// Single-column placement: the strip right of the text card, anchored to
+    /// the TOP of that strip (2026-07-29 — was bottom-anchored). Restores
     /// every container property `place_float` changes, so the two calls can
     /// alternate as the work's layout changes.
     pub fn place_strip(&self, margin_start: i32) {
         self.container.remove_css_class("vocab-popup-float");
         self.container.remove_css_class("vocab-popup-overlay");
         self.container.set_halign(gtk4::Align::Fill);
-        self.container.set_valign(gtk4::Align::End);
+        self.container.set_valign(gtk4::Align::Start);
         self.container.set_margin_start(margin_start);
         self.container.set_margin_end(5);
-        self.container.set_margin_top(0);
-        self.container.set_margin_bottom(24);
+        self.container.set_margin_top(24);
+        self.container.set_margin_bottom(0);
         self.container.set_width_request(-1);
         self.container.set_height_request(-1);
     }
