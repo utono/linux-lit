@@ -40,6 +40,52 @@ pub fn paginate(block_heights: &[i32], page_height: i32) -> Vec<Page> {
     pages
 }
 
+/// Like `paginate`, but with HARD page breaks before the blocks named in
+/// `break_before`: each such index always starts a page, whether or not the
+/// running page had room left.
+///
+/// Used by the journal Q&A render to put the quoted source passage on its own
+/// page(s) and the question at the top of the next one, so a reader never has to
+/// hunt for where the passage ends and the question begins.
+///
+/// Each segment between forced breaks is paginated independently by `paginate`,
+/// so a segment taller than one page still flows onto as many pages as it needs
+/// (the source passage is routinely several pages) and an over-tall single block
+/// still gets its own page. A break at 0, an out-of-range index, or a duplicate
+/// is harmless. Pure — unit-tested.
+pub fn paginate_with_breaks(
+    block_heights: &[i32],
+    break_before: &[usize],
+    page_height: i32,
+) -> Vec<Page> {
+    let n = block_heights.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    // Segment boundaries: 0, every in-range forced break, and the end.
+    let mut bounds: Vec<usize> = vec![0];
+    let mut sorted: Vec<usize> = break_before
+        .iter()
+        .copied()
+        .filter(|&i| i > 0 && i < n)
+        .collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    bounds.extend(sorted);
+    bounds.push(n);
+
+    let mut pages: Vec<Page> = Vec::new();
+    for w in bounds.windows(2) {
+        let (s, e) = (w[0], w[1]);
+        // Paginate the segment on its own, then shift its page indices back into
+        // whole-body coordinates.
+        for p in paginate(&block_heights[s..e], page_height) {
+            pages.push(Page { start: s + p.start, end: s + p.end });
+        }
+    }
+    pages
+}
+
 /// Like `paginate`, but blocks are grouped into indivisible UNITS that must not
 /// be split across a page. `group_start[i] == true` marks block i as the first
 /// block of a new unit (the rest attach to the preceding unit). A page break can
@@ -269,6 +315,64 @@ pub fn measure_text_height_leaded(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn breaks_force_a_new_page_even_with_room_left() {
+        // Two 30-tall blocks then a break: page 1 keeps room for more but the
+        // break closes it anyway, so index 2 starts page 2.
+        let h = vec![30, 30, 30, 30];
+        let pages = paginate_with_breaks(&h, &[2], 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 2 },
+            Page { start: 2, end: 4 },
+        ]);
+    }
+
+    #[test]
+    fn a_multi_page_source_still_ends_before_the_break() {
+        // THE journal case: the quoted source (blocks 0..7, 30 tall each, page
+        // 100) needs three pages; the question (block 7) must still start a
+        // fresh page rather than tucking into the source's last partial page.
+        let h = vec![30, 30, 30, 30, 30, 30, 30, 30];
+        let pages = paginate_with_breaks(&h, &[7], 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 3 },
+            Page { start: 3, end: 6 },
+            Page { start: 6, end: 7 }, // source tail — room to spare, closed anyway
+            Page { start: 7, end: 8 }, // question, top of its own page
+        ]);
+        // The question is the FIRST block of the page it lands on.
+        let q_page = pages.iter().find(|p| p.start == 7).unwrap();
+        assert_eq!(q_page.start, 7);
+    }
+
+    #[test]
+    fn segments_past_a_break_still_flow_over_pages() {
+        // The answer after the break is long: it must paginate normally, not be
+        // crammed onto one page.
+        let h = vec![30, 30, 30, 30, 30, 30];
+        let pages = paginate_with_breaks(&h, &[1], 100);
+        assert_eq!(pages, vec![
+            Page { start: 0, end: 1 },
+            Page { start: 1, end: 4 },
+            Page { start: 4, end: 6 },
+        ]);
+    }
+
+    #[test]
+    fn degenerate_breaks_are_harmless() {
+        let h = vec![30, 30, 30];
+        // No breaks == plain paginate.
+        assert_eq!(paginate_with_breaks(&h, &[], 100), paginate(&h, 100));
+        // A break at 0, past the end, or duplicated changes nothing/never panics.
+        assert_eq!(paginate_with_breaks(&h, &[0], 100), paginate(&h, 100));
+        assert_eq!(paginate_with_breaks(&h, &[9], 100), paginate(&h, 100));
+        assert_eq!(
+            paginate_with_breaks(&h, &[1, 1], 100),
+            paginate_with_breaks(&h, &[1], 100)
+        );
+        assert!(paginate_with_breaks(&[], &[1], 100).is_empty());
+    }
 
     #[test]
     fn paginate_packs_until_full() {
