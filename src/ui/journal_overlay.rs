@@ -1045,7 +1045,23 @@ impl JournalOverlay {
                 *self.all_paragraphs.borrow_mut() =
                     planned.iter().map(|b| b.plain_text()).collect();
                 *self.note_blocks.borrow_mut() = planned;
-                self.source_para_count.set(src.paras.len());
+                // `source_para_count` indexes PLANNED BLOCKS (what
+                // `apply_source_style` styles and the cursor lands past), and the
+                // planner does NOT emit one block per source paragraph — a verse
+                // quote's `\n`-joined lines can split, a speaker line merges. So
+                // count the blocks the source text actually plans into rather
+                // than assuming `src.paras.len()`; getting this wrong shrinks the
+                // question and enlarges the answer (the styling window slides).
+                let src_blocks = if src.paras.is_empty() {
+                    0
+                } else {
+                    crate::ui::markdown::plan_markdown_blocks(&compose_qa_text(
+                        &src.paras, "", "",
+                    ))
+                    .len()
+                    .saturating_sub(1) // drop the trailing empty "Q: " block
+                };
+                self.source_para_count.set(src_blocks);
                 self.source_has_citation.set(src.has_citation);
                 self.source_has_speaker.set(src.has_speaker);
                 // Start on the QUESTION, not the quoted source: the source
@@ -3270,3 +3286,44 @@ mod qa_block_render_tests {
         assert!(!composed.contains("Q: Q:"));
     }
 }
+
+#[cfg(test)]
+mod source_block_count_tests {
+    use super::compose_qa_text;
+    use crate::ui::markdown::plan_markdown_blocks;
+
+    /// `source_para_count` must equal the number of PLANNED BLOCKS the source
+    /// quote occupies, since that is the window `apply_source_style` styles and
+    /// the index the cursor lands on. Probe the real planner rather than
+    /// assuming one block per source paragraph.
+    #[test]
+    fn source_block_count_matches_planned_prefix() {
+        let cases: Vec<Vec<String>> = vec![
+            vec![],
+            vec!["JULIET".into()],
+            vec!["JULIET".into(), "Ay me.".into()],
+            vec!["MERCUTIO".into(), "Line one.\nLine two.\nLine three.".into()],
+            vec!["— Romeo and Juliet, 2.2.27".into()],
+        ];
+        for paras in cases {
+            let full = plan_markdown_blocks(&compose_qa_text(&paras, "Why?", "Because."));
+            let probe = if paras.is_empty() {
+                0
+            } else {
+                plan_markdown_blocks(&compose_qa_text(&paras, "", ""))
+                    .len()
+                    .saturating_sub(1)
+            };
+            // The probe must land exactly on the "Q: " block in the full plan.
+            let q_at = full
+                .iter()
+                .position(|b| b.plain_text().starts_with("Q: "))
+                .unwrap_or_else(|| panic!("no Q: block for {paras:?}"));
+            assert_eq!(
+                probe, q_at,
+                "source block count {probe} must equal the Q: block index {q_at} for {paras:?}"
+            );
+        }
+    }
+}
+
