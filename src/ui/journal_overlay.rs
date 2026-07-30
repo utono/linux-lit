@@ -188,15 +188,6 @@ pub struct JournalOverlay {
     search_full_current: Cell<usize>,
 }
 
-/// Split the full Q&A text into paragraph blocks (the pagination unit): maximal
-/// runs of non-blank lines, blank-line separated. Returns each paragraph's text.
-/// Reuses `journal_blocks` so the split matches what `render_page` re-derives for
-/// the accent bar.
-fn paragraph_texts(full: &str) -> Vec<String> {
-    let lines: Vec<&str> = full.split('\n').collect();
-    journal_blocks(&lines).into_iter().map(|b| b.text).collect()
-}
-
 /// The prepended quoted-source block for a passage Q&A: its display paragraphs
 /// plus the role flags `apply_source_style` needs. Built by
 /// `source_paragraphs` (input/actions/journal.rs), which knows exactly whether
@@ -299,6 +290,26 @@ pub(crate) fn prefix_question(question: &str) -> String {
     } else {
         format!("Q: {}", question)
     }
+}
+
+/// Compose a Q&A entry's full display text for Markdown block planning:
+/// quoted source paragraphs (if any), then the `Q: …` line, then the answer,
+/// blank-line separated so each becomes its own block.
+///
+/// Pure so the block-planning contract is unit-testable: the source quote must
+/// stay ahead of the question (the cursor lands past it via
+/// `source_para_count`), and a Markdown answer must plan into styled blocks
+/// rather than literal `###`/`-` text.
+pub(crate) fn compose_qa_text(source_paras: &[String], question: &str, answer: &str) -> String {
+    let mut composed = String::new();
+    for p in source_paras {
+        composed.push_str(p);
+        composed.push_str("\n\n");
+    }
+    composed.push_str(&prefix_question(question));
+    composed.push_str("\n\n");
+    composed.push_str(answer);
+    composed
 }
 
 /// Next cursor index from `cur` stepping by `delta` (±1), skipping indices
@@ -997,9 +1008,16 @@ impl JournalOverlay {
             // page. j/k step the cursor across the FULL list, turning the page
             // at boundaries — so no partial block is ever rendered at either
             // edge.
-            let is_note = kind == "note";
-            self.page_is_note.set(is_note);
-            if is_note {
+            // EVERY entry renders as planned Markdown blocks (2026-07-29). Notes
+            // and Q&A answers differ only in what text is planned: a note is its
+            // bare body, a Q&A is the `Q: …` prefix plus any quoted source
+            // paragraphs ahead of the answer. Before this, Q&A took a flat
+            // `set_text` path
+            // so `<hi>` highlights and the rewrite diff could address the buffer
+            // by char offset; both features were dropped, and with them the
+            // reason answers could not use headings, lists or blockquotes.
+            self.page_is_note.set(true);
+            if kind == "note" {
                 // Notes: plan the Markdown ONCE. The planned blocks are the
                 // unit everywhere; all_paragraphs mirrors their plain text
                 // (TTS / has_nav_blocks). Cursor starts on the first
@@ -1017,24 +1035,19 @@ impl JournalOverlay {
                 self.source_has_speaker.set(false);
                 self.source_has_citation.set(false);
             } else {
-                self.note_blocks.borrow_mut().clear();
-                let full = format!("{}\n\n{}", prefix_question(question), answer);
-                let mut paras = paragraph_texts(&full);
-                // Role flags come straight from the builder (`source_paragraphs`),
-                // which knows whether it pushed a speaker/citation paragraph. The
-                // old "first paragraph isn't an em-dash line" sniff mistook a
-                // speakerless PROSE quote for a speaker line, and the whole quote
-                // rendered at the speaker tag's reduced scale.
+                // Q&A: plan the SAME composed text the flat path used to set —
+                // quoted source paragraphs, then the question prefix, then the
+                // answer — so the `Q:` line and the quote survive as blocks and
+                // the source/cursor bookkeeping below is unchanged.
                 let src = source_para.unwrap_or_default();
+                let composed = compose_qa_text(&src.paras, question, answer);
+                let planned = crate::ui::markdown::plan_markdown_blocks(&composed);
+                *self.all_paragraphs.borrow_mut() =
+                    planned.iter().map(|b| b.plain_text()).collect();
+                *self.note_blocks.borrow_mut() = planned;
                 self.source_para_count.set(src.paras.len());
                 self.source_has_citation.set(src.has_citation);
                 self.source_has_speaker.set(src.has_speaker);
-                if !src.paras.is_empty() {
-                    let mut combined = src.paras;
-                    combined.extend(paras);
-                    paras = combined;
-                }
-                *self.all_paragraphs.borrow_mut() = paras;
                 // Start on the QUESTION, not the quoted source: the source
                 // paragraphs are non-stoppable (see `is_stoppable`), so landing
                 // the cursor at 0 would paint the accent bar on the quote and
@@ -3176,5 +3189,84 @@ mod scroll_structure_tests {
              adjustments), not a {:?}",
             child.type_(),
         );
+    }
+}
+
+#[cfg(test)]
+mod qa_block_render_tests {
+    use super::compose_qa_text;
+    use crate::ui::markdown::{plan_markdown_blocks, Style};
+
+    /// A Q&A answer's Markdown must plan into STYLED blocks. Before the
+    /// 2026-07-29 render unification, Q&A took a flat `set_text` path and these
+    /// markers reached the screen as literal `###`/`-`/`>` characters.
+    #[test]
+    fn qa_answer_markdown_plans_into_styled_blocks() {
+        let answer = "The opening hook.\n\n\
+                      ### The turn\n\n\
+                      Body of the turn.\n\n\
+                      - first item\n- second item\n\n\
+                      > a set-off quotation\n\n\
+                      ---\n\n\
+                      The close.";
+        let composed = compose_qa_text(&[], "How does it work?", answer);
+        let blocks = plan_markdown_blocks(&composed);
+        let kinds: Vec<&Style> = blocks.iter().map(|b| &b.kind).collect();
+
+        assert!(
+            kinds.contains(&&Style::H3),
+            "### must plan as a heading, got {:?}",
+            kinds
+        );
+        assert!(
+            kinds.contains(&&Style::ListItem),
+            "- must plan as list items, got {:?}",
+            kinds
+        );
+        assert!(
+            kinds.contains(&&Style::BlockQuote),
+            "> must plan as a blockquote, got {:?}",
+            kinds
+        );
+        assert!(
+            kinds.contains(&&Style::Rule),
+            "--- must plan as a rule, got {:?}",
+            kinds
+        );
+        // No block's plain text may still carry its own marker.
+        for b in &blocks {
+            let t = b.plain_text();
+            assert!(!t.starts_with("###"), "heading marker survived: {:?}", t);
+            assert!(!t.starts_with("- "), "list marker survived: {:?}", t);
+            assert!(!t.starts_with("> "), "quote marker survived: {:?}", t);
+        }
+    }
+
+    /// The `Q:` line is prepended, and quoted source paragraphs stay AHEAD of
+    /// it — `source_para_count` is the cursor's landing index, so the order is
+    /// load-bearing, not cosmetic.
+    #[test]
+    fn source_quote_precedes_question_which_precedes_answer() {
+        let src = vec!["MERCUTIO".to_string(), "A quoted line of verse.".to_string()];
+        let composed = compose_qa_text(&src, "Why this?", "Because that.");
+        let blocks = plan_markdown_blocks(&composed);
+        let texts: Vec<String> = blocks.iter().map(|b| b.plain_text()).collect();
+
+        let q_at = texts
+            .iter()
+            .position(|t| t.starts_with("Q: "))
+            .expect("the Q: line must be its own block");
+        assert_eq!(q_at, src.len(), "question must sit right after the quote");
+        assert!(texts[0].contains("MERCUTIO"));
+        assert!(texts[q_at + 1].contains("Because that"));
+    }
+
+    /// An already-prefixed question is not double-prefixed (idempotent, the
+    /// property `answer_prefix_chars` relies on for its offset base).
+    #[test]
+    fn question_prefix_is_idempotent() {
+        let composed = compose_qa_text(&[], "Q: Already asked?", "An answer.");
+        assert!(composed.starts_with("Q: Already asked?"));
+        assert!(!composed.contains("Q: Q:"));
     }
 }
