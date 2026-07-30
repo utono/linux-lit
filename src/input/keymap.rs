@@ -2253,25 +2253,6 @@ fn handle_journal_key(
                 crate::input::actions::journal::open_rewrite_target(state);
                 return true;
             }
-            // Ctrl+y: copy an EDIT blob for the displayed Q&A (entry_id, its
-            // current question/answer, and the grounding the Ctrl+w rewrite
-            // above would send) for the litdb `journal-qa-edit` skill. Same key
-            // cap as the reader's add-blob, so Ctrl+y means "copy journal Q&A
-            // context" everywhere; which blob you get follows from where you
-            // press it. Plain `y` is page-back below, so the chord is free.
-            "y" => {
-                crate::input::actions::journal::copy_edit_blob(state);
-                let s = state.borrow();
-                s.speed_toast.set_halign(gtk4::Align::Center);
-                s.speed_toast.set_margin_start(0);
-                s.speed_toast.set_margin_end(0);
-                crate::ui::toast::show_transient(
-                    &s.speed_toast,
-                    "Copied Q&A edit context",
-                    3,
-                );
-                return true;
-            }
             // Ctrl+j: Escape-only close policy — consumed no-op (was: close
             // the journal). Consumed so Ctrl+j can't fall through to the
             // plain j block-nav arm.

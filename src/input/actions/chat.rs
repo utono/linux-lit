@@ -1219,20 +1219,39 @@ pub(crate) fn push_gloss_exchange(
 /// shown Q&A reads as "switch to the gloss, then cycle it", which is more
 /// useful than a toast telling the reader to press `t` first for a bind that
 /// is about to take them there anyway.
-/// `c` in the chat panel's Journal view: copy the SELECTED saved entry's
-/// database row id to the Wayland clipboard (`wl-copy`) + a transient toast —
-/// the panel mirror of the journal overlay's `copy_current_id`. The selected
-/// entry is `journal_list[journal_cursor]` (the entry the accent bar sits on,
-/// what `R`/save also act on). No-op when the list is empty.
+/// `c` in the chat panel's Journal view: copy the SELECTED saved entry's EDIT
+/// BLOB to the Wayland clipboard + a transient toast — the panel mirror of the
+/// journal overlay's `copy_current_id`, and it stays a mirror by producing the
+/// same v1 `journal-edit` contract the litdb `journal-qa-edit-answer` /
+/// `journal-qa-edit-question` skills parse (it was a bare "Journal Q&A ID: n",
+/// which those skills cannot use — see `copy_current_id`). The selected entry
+/// is `journal_list[journal_cursor]` (the entry the accent bar sits on, what
+/// `R`/save also act on). No-op when the list is empty.
 pub(crate) fn copy_journal_id(state: &Rc<RefCell<AppState>>) {
     let s = state.borrow();
-    let Some(id) = s.chat.journal_list.get(s.chat.journal_cursor).map(|p| p.id) else {
+    let Some(p) = s.chat.journal_list.get(s.chat.journal_cursor).cloned() else {
         return;
     };
-    let copied = format!("Journal Q&A ID: {}", id);
-    crate::ui::copy_to_clipboard(&copied);
-    crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
-    crate::logging::log(&format!("CHAT: copied \"{}\"", copied));
+    let (work_abbrev, work_type) = match s.current_work.as_ref() {
+        Some(w) => (w.canonical_abbrev.clone(), w.work_type.clone()),
+        None => (String::new(), String::new()),
+    };
+    // Ground on the entry's OWN stored passage source. The panel has no band
+    // state to build a windowed scene context from, and the entry's question
+    // names its own subject — the same reasoning (and the same builder) the
+    // overlay uses for a cross-work filter entry.
+    let context = crate::input::actions::journal::cross_work_rewrite_context(
+        &p.source_text.clone().unwrap_or_default(),
+    );
+    let json = crate::input::actions::journal::edit_blob_json(
+        &p, &work_abbrev, &work_type, &context,
+    );
+    crate::input::visual::write_clipboard_blob(&json, "journal-edit");
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &format!("Copied Q&A {} edit context", p.id),
+        2,
+    );
 }
 
 /// `y`-confirmed chat-panel delete (the panel's `D`, via the overlays' shared

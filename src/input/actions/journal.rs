@@ -1962,7 +1962,7 @@ pub(crate) fn rewrite_user_message(context: &str, question: &str, answer: &str, 
 /// header and scene text. The entry's own stored passage source (if any) is the
 /// only grounding; the question itself names its subject. Keeps the rewrite
 /// anchored to what the Q&A is actually about, not what happens to be on screen.
-fn cross_work_rewrite_context(passage_source: &str) -> String {
+pub(crate) fn cross_work_rewrite_context(passage_source: &str) -> String {
     let ps = passage_source.trim();
     if ps.is_empty() {
         "This Q&A stands on its own — answer the question as it is asked, about \
@@ -2859,62 +2859,11 @@ pub(crate) fn copy_division_blob(state_rc: &Rc<RefCell<AppState>>) {
     crate::input::visual::write_clipboard_blob(&json, "division");
 }
 
-/// Journal-overlay `Ctrl+y`: copy an EDIT blob for the displayed Q&A.
-///
-/// The counterpart of the reader's add-blob (`visual::copy_passage_blob` /
-/// `copy_division_blob`): where those describe a passage to ask ABOUT, this
-/// identifies an entry to REVISE — its `entry_id`, its current question and
-/// answer, and the grounding context the reader's own Ctrl+Shift+r rewrite
-/// would send. The litdb `journal-qa-edit` skill consumes it.
-///
-/// The grounding is computed HERE, by the same two builders the reader's
-/// rewrite uses, because it depends on live reader state the skill cannot see:
-/// a cross-work filter entry is grounded on its OWN stored passage source
-/// (never the on-screen work's scene text, which would drag the revision onto
-/// the wrong work), while a band page gets the full band-aware context.
-pub(crate) fn copy_edit_blob(state_rc: &Rc<RefCell<AppState>>) {
-    let json = {
-        let s = state_rc.borrow();
-        let Some(p) = displayed_journal_page(&s) else {
-            return;
-        };
-        let work_type = s
-            .current_work
-            .as_ref()
-            .map(|w| w.work_type.clone())
-            .unwrap_or_default();
-        // A filter match carries its OWN work_abbrev (it may be another work's
-        // entry); a band page always belongs to the work on screen.
-        let work_abbrev = s
-            .journal
-            .filter
-            .as_ref()
-            .and_then(|f| f.matches.get(f.pos))
-            .map(|m| m.work_abbrev.clone())
-            .or_else(|| s.current_work.as_ref().map(|w| w.canonical_abbrev.clone()))
-            .unwrap_or_default();
-        let passage_source = p.source_text.clone().unwrap_or_default();
-        let context = if displayed_entry_is_cross_work(&s) {
-            cross_work_rewrite_context(&passage_source)
-        } else {
-            let band = band_for_rewrite(&p);
-            let anchor_work_line = s
-                .journal
-                .return_pos
-                .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
-                .unwrap_or(0);
-            rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source)
-        };
-        edit_blob_json(&p, &work_abbrev, &work_type, &context)
-    };
-    crate::input::visual::write_clipboard_blob(&json, "journal-edit");
-}
-
 /// Serialize the journal-edit clipboard blob (contract v1).
 ///
 /// Pure, so the contract the litdb `journal-qa-edit` skill parses is
 /// unit-testable. Bump `v` on any field change and teach the script the new
-/// version. `context` is the pre-computed grounding (see `copy_edit_blob`);
+/// version. `context` is the pre-computed grounding (see `copy_current_id`);
 /// the skill must NOT re-derive it, since it depends on live reader state.
 pub(crate) fn edit_blob_json(
     p: &crate::db::journal::JournalPage,
@@ -3694,18 +3643,66 @@ pub(crate) fn delete_current(state: &Rc<RefCell<AppState>>) {
 
 /// `c` in the journal overlay: copy the current Q&A entry's database row id to
 /// the Wayland clipboard (via `wl-copy`) and confirm with a transient toast.
+/// Journal overlay `c`: copy the displayed Q&A's EDIT BLOB to the clipboard.
+///
+/// Was "Journal Q&A ID: <n>" — a bare label + id. That identified the row but
+/// carried nothing the litdb `journal-qa-edit-answer` /
+/// `journal-qa-edit-question` skills need: no `work_type` (so they could not
+/// substitute the `{genre}`/`{unit}` vocabulary), no grounding `context` (which
+/// only the reader can compute — a cross-work filter entry must be grounded on
+/// its OWN passage source, not the on-screen work's scene text), and no current
+/// question/answer (so a row that had moved on since the copy could not be
+/// detected). The blob carries all of it, and the id is still the first thing
+/// in it, so a paste still self-identifies.
 pub(crate) fn copy_current_id(state: &Rc<RefCell<AppState>>) {
-    let s = state.borrow();
-    // Displayed entry (filter match under `f`, else band page) — copy the id of
-    // what's on screen, not the stale origin band.
-    let Some(id) = displayed_journal_page(&s).map(|p| p.id) else {
-        return;
+    let (json, id) = {
+        let s = state.borrow();
+        // Displayed entry (filter match under `f`, else band page) — describe
+        // what's on screen, not the stale origin band.
+        let Some(p) = displayed_journal_page(&s) else {
+            return;
+        };
+        let work_type = s
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
+        // A filter match carries its OWN work_abbrev (it may be another work's
+        // entry); a band page always belongs to the work on screen.
+        let work_abbrev = s
+            .journal
+            .filter
+            .as_ref()
+            .and_then(|f| f.matches.get(f.pos))
+            .map(|m| m.work_abbrev.clone())
+            .or_else(|| s.current_work.as_ref().map(|w| w.canonical_abbrev.clone()))
+            .unwrap_or_default();
+        let passage_source = p.source_text.clone().unwrap_or_default();
+        // The SAME two builders the reader's own Ctrl+w rewrite uses, so a
+        // skill-made edit is grounded exactly as a reader-made one.
+        let context = if displayed_entry_is_cross_work(&s) {
+            cross_work_rewrite_context(&passage_source)
+        } else {
+            let band = band_for_rewrite(&p);
+            let anchor_work_line = s
+                .journal
+                .return_pos
+                .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
+                .unwrap_or(0);
+            rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source)
+        };
+        (
+            edit_blob_json(&p, &work_abbrev, &work_type, &context),
+            p.id,
+        )
     };
-    // Copy the id prefaced with a label so a paste self-identifies.
-    let copied = format!("Journal Q&A ID: {}", id);
-    crate::ui::copy_to_clipboard(&copied);
-    crate::input::navigation::show_chapter_toast_secs(&s, &format!("Copied {}", copied), 2);
-    crate::logging::log(&format!("JOURNAL: copied \"{}\"", copied));
+    crate::input::visual::write_clipboard_blob(&json, "journal-edit");
+    let s = state.borrow();
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &format!("Copied Q&A {} edit context", id),
+        2,
+    );
 }
 
 #[cfg(test)]
