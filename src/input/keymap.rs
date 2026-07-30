@@ -4353,6 +4353,13 @@ fn handle_visual_key(
             crate::input::visual::action_journal_qa(state);
             true
         }
+        // Ctrl+y — copy this selection's journal-qa blob (work, division,
+        // citations, <speaker>/<segment> excerpt) to the clipboard for the
+        // litdb /journal-qa skill. The SAME passage Ctrl+a would ask about.
+        "y" if is_ctrl => {
+            crate::input::visual::copy_passage_blob(state);
+            true
+        }
         // Tab — open the chat panel PINNED to this selection: the highlighted
         // passage becomes the chat's source text for every question in the
         // session (no neighbor segments, cursor-independent). Mirrors the

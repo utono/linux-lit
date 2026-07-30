@@ -524,6 +524,20 @@ forces generation at current geometry. Audit with `validate-play-pages`.
   value always beats a compiled default — to change a dev setting, edit
   `config-dev.json` while NO dev instance runs. When a session uses an
   unexpected value, check `config-dev.json` first.
+- **ALWAYS keep `config.json` in sync with `config-dev.json`.** Any change to
+  a shared setting in one file gets mirrored into the other IN THE SAME
+  CHANGE — a dev-only tweak that never reaches release is drift, not a
+  setting. This covers every key EXCEPT the per-session ones below, which are
+  meant to differ per instance and must be left alone:
+  - `theme` (active theme — the LIST `theme_cycle` still syncs)
+  - `last_work`, `previous_work`, `recent_works`, `last_gloss`
+  - `work_positions`, `work_position_ids`, `last_column_count`
+  - `chapter_toast_shown`
+  Procedure: no instance of the TARGET build may be running (it rewrites its
+  config on exit — release binary for `config.json`, `cargo run`/
+  `target/debug` for `config-dev.json`); back the file up; edit with `jq`;
+  re-read to confirm. A key present in only one file is drift — add it to the
+  other rather than assuming it is build-specific.
 - **Reader theme is INDEPENDENT of the system-wide theme system**: stored in
   the app's own config (`theme` + `theme_cycle`; current defaults in
   `src/config.rs`). SIGUSR1 re-reads the app's own config. linux-lit never

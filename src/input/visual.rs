@@ -514,42 +514,269 @@ fn action_external_command(state: &mut AppState, command: &str) {
 }
 
 
+/// Resolve the current visual selection to a journal passage: its division,
+/// citations, `<speaker>`/`<segment>` markup and speaker.
+///
+/// Shared by `action_journal_qa` (Ctrl+a, opens the ask card) and
+/// `copy_passage_blob` (Ctrl+y, copies the clipboard blob for the litdb
+/// `journal-qa` skill) so both describe the SAME passage — what the skill saves
+/// is byte-identical to what the reader would have sent.
+pub(crate) fn selection_passage_args(
+    state: &AppState,
+) -> Option<(i64, i64, String, String, String, String)> {
+    let (start_buf, end_buf) = state.visual_selection.as_ref()?.range();
+    let work = state.current_work.as_ref()?;
+
+    let selected_lines: Vec<crate::db::models::Line> = (start_buf..=end_buf)
+        .filter_map(|buf_line| {
+            state
+                .work_line_for_buffer(buf_line)
+                .and_then(|wi| work.lines.get(wi).cloned())
+        })
+        .collect();
+
+    // Reuse build_context_for_type just to get citations, div1/div2, speaker.
+    let ctx = crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss")?;
+
+    // <speaker>/<segment> markup for the passage.
+    let passage_doc =
+        crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
+
+    Some((
+        ctx.act,
+        ctx.scene,
+        ctx.start_citation,
+        ctx.end_citation,
+        passage_doc,
+        ctx.speaker,
+    ))
+}
+
 pub(crate) fn action_journal_qa(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
     // Phase 1 — build context while holding borrow.
-    let (div1, div2, start, end, source_text) = {
+    let (div1, div2, start, end, source_text, _speaker) = {
         let state = state_rc.borrow();
-        let (start_buf, end_buf) = match &state.visual_selection {
-            Some(s) => s.range(),
+        match selection_passage_args(&state) {
+            Some(args) => args,
             None => return,
-        };
-        let work = match &state.current_work {
-            Some(w) => w,
-            None => return,
-        };
-
-        let selected_lines: Vec<crate::db::models::Line> = (start_buf..=end_buf)
-            .filter_map(|buf_line| {
-                state.work_line_for_buffer(buf_line)
-                    .and_then(|wi| work.lines.get(wi).cloned())
-            })
-            .collect();
-
-        // Reuse build_context_for_type just to get citations, div1/div2, speaker.
-        let ctx = match crate::gloss::build_context_for_type(work, &selected_lines, "reader-gloss") {
-            Some(c) => c,
-            None => return,
-        };
-
-        // <speaker>/<segment> markup for the passage.
-        let passage_doc = crate::input::actions::echoes::build_source_header(&selected_lines, &ctx.speaker);
-
-        (ctx.act, ctx.scene, ctx.start_citation, ctx.end_citation, passage_doc)
+        }
     };
 
     // Phase 2 — exit visual mode, then open the passage ask via the shared fn.
     exit_visual_mode(&mut state_rc.borrow_mut());
     crate::input::actions::journal::begin_passage_ask(state_rc, div1, div2, start, end, source_text);
     crate::logging::log("JOURNAL-QA: opened ask card for visual passage");
+}
+
+/// Serialize the journal-qa clipboard blob (contract v1).
+///
+/// The litdb skill (`.claude/skills/journal-qa/`) consumes this verbatim; bump
+/// `v` on any field change and teach the script the new version. Built with
+/// serde_json so quotes/newlines in titles and `<segment>` text escape
+/// correctly.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn journal_blob_json(
+    scope: &str,
+    work_abbrev: &str,
+    work_title: &str,
+    author: &str,
+    work_type: &str,
+    div1: i64,
+    div2: i64,
+    division_label: &str,
+    speaker: Option<&str>,
+    start_citation: Option<&str>,
+    end_citation: Option<&str>,
+    source_text: Option<&str>,
+    division_text: &str,
+) -> String {
+    serde_json::json!({
+        "v": 1,
+        "scope": scope,
+        "work_abbrev": work_abbrev,
+        "work_title": work_title,
+        "author": author,
+        "work_type": work_type,
+        "div1": div1,
+        "div2": div2,
+        "division_label": division_label,
+        "speaker": speaker,
+        "start_citation": start_citation,
+        "end_citation": end_citation,
+        "source_text": source_text,
+        "division_text": division_text,
+    })
+    .to_string()
+}
+
+/// Pipe `json` to wl-copy's stdin and log the outcome.
+///
+/// The stdin form, not `ui::copy_to_clipboard` (whose arg form is a different
+/// contract per its doc comment): a blob is large and holds quotes/newlines.
+pub(crate) fn write_clipboard_blob(json: &str, kind: &str) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    match Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+        Ok(mut child) => {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(json.as_bytes());
+            }
+            let _ = child.wait();
+            crate::logging::log(&format!(
+                "JOURNAL-QA: copied {} blob ({} bytes)",
+                kind,
+                json.len()
+            ));
+        }
+        Err(e) => crate::logging::log(&format!("JOURNAL-QA: wl-copy failed: {}", e)),
+    }
+}
+
+/// Visual-mode `Ctrl+y`: copy the selection's journal-qa blob to the clipboard.
+pub(crate) fn copy_passage_blob(state_rc: &std::rc::Rc<std::cell::RefCell<AppState>>) {
+    let json = {
+        let state = state_rc.borrow();
+        let Some((div1, div2, start, end, source_text, speaker)) =
+            selection_passage_args(&state)
+        else {
+            return;
+        };
+        let Some(work) = state.current_work.as_ref() else {
+            return;
+        };
+        let label = crate::app::division_synopsis::synopsis_division_label(div1, div2);
+        let division_text = crate::input::actions::journal::current_division_text(&state);
+        journal_blob_json(
+            "passage",
+            &work.canonical_abbrev,
+            &work.title,
+            &work.author,
+            &work.work_type,
+            div1,
+            div2,
+            &label,
+            Some(&speaker),
+            Some(&start),
+            Some(&end),
+            Some(&source_text),
+            &division_text,
+        )
+    };
+
+    write_clipboard_blob(&json, "passage");
+    exit_visual_mode(&mut state_rc.borrow_mut());
+}
+
+#[cfg(test)]
+mod journal_blob_tests {
+    use super::journal_blob_json;
+
+    #[test]
+    fn passage_blob_has_v1_and_passage_scope() {
+        let json = journal_blob_json(
+            "passage",
+            "Rom",
+            "Romeo and Juliet",
+            "William Shakespeare",
+            "play",
+            3,
+            1,
+            "3.1",
+            Some("MERCUTIO"),
+            Some("Rom.3.1.84"),
+            Some("Rom.3.1.97"),
+            Some("<speaker>MERCUTIO</speaker>\n<segment>Thou art like one</segment>"),
+            "scene context text",
+        );
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["v"], 1);
+        assert_eq!(v["scope"], "passage");
+        assert_eq!(v["work_abbrev"], "Rom");
+        assert_eq!(v["work_type"], "play");
+        assert_eq!(v["div1"], 3);
+        assert_eq!(v["div2"], 1);
+        assert_eq!(v["division_label"], "3.1");
+        assert_eq!(v["speaker"], "MERCUTIO");
+        assert_eq!(v["start_citation"], "Rom.3.1.84");
+        assert_eq!(v["end_citation"], "Rom.3.1.97");
+        assert!(v["source_text"].as_str().unwrap().contains("<segment>"));
+        assert_eq!(v["division_text"], "scene context text");
+    }
+
+    #[test]
+    fn division_blob_nulls_citations_and_source() {
+        let json = journal_blob_json(
+            "division",
+            "BH",
+            "Bleak House",
+            "Charles Dickens",
+            "prose",
+            4,
+            0,
+            "4",
+            None,
+            None,
+            None,
+            None,
+            "chapter context text",
+        );
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["v"], 1);
+        assert_eq!(v["scope"], "division");
+        assert!(v["start_citation"].is_null());
+        assert!(v["end_citation"].is_null());
+        assert!(v["source_text"].is_null());
+        assert!(v["speaker"].is_null());
+        assert_eq!(v["division_text"], "chapter context text");
+    }
+
+    #[test]
+    fn blob_escapes_quotes_and_newlines() {
+        let json = journal_blob_json(
+            "passage",
+            "Tst",
+            "A \"Quoted\" Title",
+            "A. Author",
+            "play",
+            1,
+            1,
+            "1.1",
+            Some("FIRST"),
+            Some("Tst.1.1.1"),
+            Some("Tst.1.1.2"),
+            Some("<segment>He said \"stop\"</segment>\n<segment>line two</segment>"),
+            "ctx",
+        );
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["work_title"], "A \"Quoted\" Title");
+        assert!(v["source_text"].as_str().unwrap().contains("\"stop\""));
+        assert!(v["source_text"].as_str().unwrap().contains('\n'));
+    }
+
+    #[test]
+    fn division_blob_label_matches_scope() {
+        let json = journal_blob_json(
+            "division",
+            "Rom",
+            "Romeo and Juliet",
+            "William Shakespeare",
+            "play",
+            3,
+            1,
+            "3.1",
+            None,
+            None,
+            None,
+            None,
+            "whole scene text",
+        );
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["scope"], "division");
+        assert_eq!(v["division_label"], "3.1");
+        assert_eq!(v["div1"], 3);
+        assert_eq!(v["div2"], 1);
+        assert!(v["start_citation"].is_null());
+    }
 }
 
 /// Visual-mode "Syntax": build (or reuse) a `syntax-gloss` for the selection.
