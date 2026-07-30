@@ -420,6 +420,22 @@ impl Harness {
         fs::read_to_string(&self.log_path).unwrap_or_default()
     }
 
+    /// Read this cage session's clipboard via `wl-paste`, for binds whose whole
+    /// output IS the clipboard (the journal-qa blobs, CopyLineMappingId).
+    /// `-n` suppresses the trailing newline wl-paste otherwise adds.
+    /// `#[allow(dead_code)]`: shared harness, not every test binary calls it.
+    #[allow(dead_code)]
+    pub fn clipboard_text(&self) -> io::Result<String> {
+        let out = self.client_cmd("wl-paste").arg("-n").output()?;
+        if !out.status.success() {
+            return Err(io::Error::other(format!(
+                "wl-paste failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    }
+
     /// The horizontal band all journal-overlay text ink must stay inside
     /// (`TEST_JOURNAL_CONTENT_BAND x0 x1`, emitted with the journal viewport
     /// rect). `#[allow(dead_code)]`: shared harness, not every test binary
