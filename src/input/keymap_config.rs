@@ -600,7 +600,14 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::shift("question"), Action::OpenSearchBackward),
         (KeyCombo::shift("slash"), Action::OpenSearchBackward),
         (KeyCombo::ctrl_shift("L"), Action::SaveAndQuit),
-        (KeyCombo::ctrl("y"), Action::CopyLineMappingId),
+        // Ctrl+y — copy the current DIVISION's journal-qa blob for the litdb
+        // `journal-qa` skill. With a visual selection active, visual-mode
+        // Ctrl+y copies a PASSAGE blob instead (handle_visual_key): one key
+        // cap, scope chosen by whether a selection exists. The old
+        // CopyLineMappingId debug bind moved to Ctrl+Shift+y below.
+        (KeyCombo::ctrl("y"), Action::CopyJournalDivisionBlob),
+        (KeyCombo::ctrl_shift("y"), Action::CopyLineMappingId),
+        (KeyCombo::ctrl_shift("Y"), Action::CopyLineMappingId),
         // Shift+'+' — copy work abbrev + active media path + large whisperX
         // JSON. The RPD number-row plus key (<AE01>) delivers `1` at the
         // shift level; bind both delivery forms (cf. `question` above).
@@ -923,6 +930,18 @@ mod tests {
         // stays on `C`).
         assert_eq!(km.lookup("colon", false, true, false), Some(Action::TogglePlaybackSpeed));
         assert_eq!(km.lookup("plus", false, false, false), Some(Action::CopyWorkDivision));
+        // Ctrl+y copies the journal-qa DIVISION blob; the CopyLineMappingId
+        // debug bind moved to Ctrl+Shift+y (2026-07-29) to free the cap. The
+        // PASSAGE blob rides the same cap in visual mode (handle_visual_key),
+        // which is not a keymap-table entry.
+        assert_eq!(
+            km.lookup("y", true, false, false),
+            Some(Action::CopyJournalDivisionBlob)
+        );
+        assert_eq!(
+            km.lookup("y", true, true, false),
+            Some(Action::CopyLineMappingId)
+        );
         // Shift+'+' (the shifted `1` glyph on RPD <AE01>) copies the work
         // abbrev + media path + large whisperX JSON; both delivery forms.
         assert_eq!(km.lookup("1", false, true, false), Some(Action::CopyWorkInfo));

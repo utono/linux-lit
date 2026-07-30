@@ -4937,6 +4937,27 @@ fn dispatch_action(
             s.speed_toast.set_margin_end(0);
             crate::ui::toast::show_transient(&s.speed_toast, &format!("Copied {}", clip), 3);
         }
+        CopyJournalDivisionBlob => {
+            crate::input::actions::journal::copy_division_blob(state);
+            let s = state.borrow();
+            let label = s
+                .current_work
+                .as_ref()
+                .and_then(|w| {
+                    s.work_line_for_buffer(s.current_line)
+                        .and_then(|i| w.lines.get(i))
+                })
+                .map(|l| crate::app::division_synopsis::synopsis_division_label(l.div1, l.div2))
+                .unwrap_or_default();
+            s.speed_toast.set_halign(gtk4::Align::Center);
+            s.speed_toast.set_margin_start(0);
+            s.speed_toast.set_margin_end(0);
+            crate::ui::toast::show_transient(
+                &s.speed_toast,
+                &format!("Copied Q&A context — {}", label),
+                3,
+            );
+        }
         CopyWorkInfo => {
             let s = state.borrow();
             let Some(work) = s.current_work.as_ref() else { return };

@@ -301,6 +301,10 @@ pub enum Action {
     ToggleDebugLogging,
     ToggleNavTest,
     CopyLineMappingId,
+    /// Reader Ctrl+y with no selection: copy the current division's journal-qa
+    /// blob for the litdb `journal-qa` skill. (With a selection active,
+    /// visual-mode Ctrl+y copies a passage blob instead.)
+    CopyJournalDivisionBlob,
     CopyWorkInfo,
     CopyWorkDivision,
     EscapeReaderMode,
@@ -450,6 +454,7 @@ impl Action {
             | Action::ToggleDebugLogging
             | Action::ToggleNavTest
             | Action::CopyLineMappingId
+            | Action::CopyJournalDivisionBlob
             | Action::CopyWorkInfo
             | Action::CopyWorkDivision
             | Action::EscapeReaderMode
@@ -596,6 +601,7 @@ impl Action {
             Action::ToggleDebugLogging => "ToggleDebugLogging",
             Action::ToggleNavTest => "ToggleNavTest",
             Action::CopyLineMappingId => "CopyLineMappingId",
+            Action::CopyJournalDivisionBlob => "CopyJournalDivisionBlob",
             Action::CopyWorkInfo => "CopyWorkInfo",
             Action::CopyWorkDivision => "CopyWorkDivision",
             Action::EscapeReaderMode => "EscapeReaderMode",

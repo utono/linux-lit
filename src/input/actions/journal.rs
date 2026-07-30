@@ -2807,6 +2807,58 @@ pub(crate) fn current_division_text(s: &AppState) -> String {
     }
 }
 
+/// Reader `Ctrl+y` (no selection): copy the CURRENT DIVISION's journal-qa blob.
+///
+/// The division counterpart of `visual::copy_passage_blob` — same v1 contract,
+/// `scope: "division"`, with no citations and no `source_text` since there is no
+/// selection to cite. The litdb `journal-qa` skill saves these as
+/// `scope='division'`.
+///
+/// Division comes off the CURSOR's own line, not `journal_band`: this fires in
+/// the reader, where the band is whatever the journal overlay was last left on
+/// (often `Work`), so `current_division_text` would return the wrong text or
+/// none at all.
+pub(crate) fn copy_division_blob(state_rc: &Rc<RefCell<AppState>>) {
+    let json = {
+        let s = state_rc.borrow();
+        let Some(work) = s.current_work.as_ref() else {
+            return;
+        };
+        let anchor_work_line = s.work_line_for_buffer(s.current_line).unwrap_or(0);
+        let Some((div1, div2)) = work
+            .lines
+            .get(anchor_work_line)
+            .map(|l| (l.div1, l.div2))
+        else {
+            return;
+        };
+        let label = crate::app::division_synopsis::synopsis_division_label(div1, div2);
+        let division_text = crate::app::division_synopsis::division_text_windowed(
+            &s,
+            div1,
+            div2,
+            anchor_work_line,
+            PROSE_CONTEXT_RADIUS,
+        );
+        crate::input::visual::journal_blob_json(
+            "division",
+            &work.canonical_abbrev,
+            &work.title,
+            &work.author,
+            &work.work_type,
+            div1,
+            div2,
+            &label,
+            None,
+            None,
+            None,
+            None,
+            &division_text,
+        )
+    };
+    crate::input::visual::write_clipboard_blob(&json, "division");
+}
+
 /// Build the passage-context ANSWER-request user message for a journal band.
 ///
 /// This is the ONE builder shared by BOTH surfaces that ask Claude a

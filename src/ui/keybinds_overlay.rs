@@ -54,7 +54,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key(",", "<", "prev speaker", "", &[("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "karaoke")]),
-    key("y", "Y", "pg back", "", &[("C-y", "copy id")]),
+    key("y", "Y", "pg back", "", &[("C-y", "copy Q&A ctx"), ("C-S-y", "copy id")]),
     key("f", "F", "term filter", "cycle font", &[("C-S-F", "cycle font back"), ("M-f", "font info"), ("C-f", "corpus search")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("C-M-g", "annot tint")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "prev work")]),
@@ -358,7 +358,12 @@ after the last, and leaves it underlined for Return) \
         "copy prev word" => "Action::WordCyclePrevCopy (`_`, Shift+-; the mirror \
 of `-` — steps BACKWARD through the line, wrapping to the LAST word when on \
 the first) — src/input/actions/word_copy.rs",
-        "copy id" => "Action::CopyLineMappingId — src/input/keymap.rs",
+        "copy id" => "Action::CopyLineMappingId (Ctrl+Shift+y since 2026-07-29, \
+moved off Ctrl+y to make room for the journal-qa blob) — src/input/keymap.rs",
+        "copy Q&A ctx" => "Action::CopyJournalDivisionBlob (Ctrl+y with no \
+selection; copies the current DIVISION's journal-qa JSON blob for the litdb \
+/journal-qa skill. With a visual selection active, Ctrl+y copies a PASSAGE \
+blob instead) — src/input/actions/journal.rs",
         "collect words" => "Action::WordCollectCopy (Alt+-, moved off Shift+- \
 2026-07-26; collects the whole LINE — deliberately not sentence-scoped — and \
 leaves the words underlined for Return) — src/input/actions/word_copy.rs",
@@ -552,6 +557,7 @@ fn expand_action(label: &str) -> String {
         "play from ts" => "play from timestamp",
         "ts tap" => "timestamp (2x deletes)",
         "copy id" => "copy line id",
+        "copy Q&A ctx" => "copy journal Q&A context",
         "save+quit" => "save and quit",
         "clear AB" => "clear A-B / exit mode",
         "font info" => "show font info",
