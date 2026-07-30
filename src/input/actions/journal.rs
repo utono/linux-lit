@@ -2859,6 +2859,89 @@ pub(crate) fn copy_division_blob(state_rc: &Rc<RefCell<AppState>>) {
     crate::input::visual::write_clipboard_blob(&json, "division");
 }
 
+/// Journal-overlay `Ctrl+y`: copy an EDIT blob for the displayed Q&A.
+///
+/// The counterpart of the reader's add-blob (`visual::copy_passage_blob` /
+/// `copy_division_blob`): where those describe a passage to ask ABOUT, this
+/// identifies an entry to REVISE — its `entry_id`, its current question and
+/// answer, and the grounding context the reader's own Ctrl+Shift+r rewrite
+/// would send. The litdb `journal-qa-edit` skill consumes it.
+///
+/// The grounding is computed HERE, by the same two builders the reader's
+/// rewrite uses, because it depends on live reader state the skill cannot see:
+/// a cross-work filter entry is grounded on its OWN stored passage source
+/// (never the on-screen work's scene text, which would drag the revision onto
+/// the wrong work), while a band page gets the full band-aware context.
+pub(crate) fn copy_edit_blob(state_rc: &Rc<RefCell<AppState>>) {
+    let json = {
+        let s = state_rc.borrow();
+        let Some(p) = displayed_journal_page(&s) else {
+            return;
+        };
+        let work_type = s
+            .current_work
+            .as_ref()
+            .map(|w| w.work_type.clone())
+            .unwrap_or_default();
+        // A filter match carries its OWN work_abbrev (it may be another work's
+        // entry); a band page always belongs to the work on screen.
+        let work_abbrev = s
+            .journal
+            .filter
+            .as_ref()
+            .and_then(|f| f.matches.get(f.pos))
+            .map(|m| m.work_abbrev.clone())
+            .or_else(|| s.current_work.as_ref().map(|w| w.canonical_abbrev.clone()))
+            .unwrap_or_default();
+        let passage_source = p.source_text.clone().unwrap_or_default();
+        let context = if displayed_entry_is_cross_work(&s) {
+            cross_work_rewrite_context(&passage_source)
+        } else {
+            let band = band_for_rewrite(&p);
+            let anchor_work_line = s
+                .journal
+                .return_pos
+                .and_then(|(buf, _top, _off)| s.work_line_for_buffer(buf))
+                .unwrap_or(0);
+            rewrite_context(&s, &band, &work_type, anchor_work_line, &passage_source)
+        };
+        edit_blob_json(&p, &work_abbrev, &work_type, &context)
+    };
+    crate::input::visual::write_clipboard_blob(&json, "journal-edit");
+}
+
+/// Serialize the journal-edit clipboard blob (contract v1).
+///
+/// Pure, so the contract the litdb `journal-qa-edit` skill parses is
+/// unit-testable. Bump `v` on any field change and teach the script the new
+/// version. `context` is the pre-computed grounding (see `copy_edit_blob`);
+/// the skill must NOT re-derive it, since it depends on live reader state.
+pub(crate) fn edit_blob_json(
+    p: &crate::db::journal::JournalPage,
+    work_abbrev: &str,
+    work_type: &str,
+    context: &str,
+) -> String {
+    serde_json::json!({
+        "v": 1,
+        "kind": "journal-edit",
+        "entry_id": p.id,
+        "work_abbrev": work_abbrev,
+        "work_type": work_type,
+        "scope": p.scope,
+        "entry_kind": p.kind,
+        "div1": p.div1,
+        "div2": p.div2,
+        "start_citation": p.start_citation,
+        "end_citation": p.end_citation,
+        "question": p.question,
+        "answer": p.answer,
+        "claude_model": p.claude_model,
+        "context": context,
+    })
+    .to_string()
+}
+
 /// Build the passage-context ANSWER-request user message for a journal band.
 ///
 /// This is the ONE builder shared by BOTH surfaces that ask Claude a
@@ -4358,5 +4441,75 @@ mod tests {
         assert_eq!(take_synopsis_origin(&mut marker), Some((10, 0)));
         assert_eq!(marker, None, "the marker must be consumed");
         assert_eq!(take_synopsis_origin(&mut marker), None);
+    }
+}
+
+#[cfg(test)]
+mod edit_blob_tests {
+    use super::edit_blob_json;
+    use crate::db::journal::JournalPage;
+
+    fn page() -> JournalPage {
+        JournalPage {
+            id: 63,
+            div1: 3,
+            div2: 1,
+            question: "How does Tybalt's assent work?".into(),
+            answer: "Four syllables.\n\n> I am for you.\n\nThe brevity is the aggression.".into(),
+            claude_model: "claude-opus-5".into(),
+            timestamp: "2026-07-30 04:04:34".into(),
+            start_citation: Some("Rom.3.1.84".into()),
+            end_citation: Some("Rom.3.1.87".into()),
+            source_text: Some("<speaker>TYBALT</speaker>\n<segment>I am for you.</segment>".into()),
+            kind: "qa".into(),
+            scope: "passage".into(),
+        }
+    }
+
+    #[test]
+    fn edit_blob_identifies_the_entry_and_carries_its_text() {
+        let json = edit_blob_json(&page(), "Rom", "play", "Work: \"Romeo and Juliet\" by Shakespeare");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["v"], 1);
+        assert_eq!(v["kind"], "journal-edit", "distinguishes it from an add blob");
+        assert_eq!(v["entry_id"], 63, "the row to UPDATE");
+        assert_eq!(v["work_abbrev"], "Rom");
+        assert_eq!(v["work_type"], "play");
+        assert_eq!(v["scope"], "passage");
+        assert_eq!(v["entry_kind"], "qa");
+        assert_eq!(v["start_citation"], "Rom.3.1.84");
+        // The current text must travel: the rewrite user message quotes both.
+        assert!(v["question"].as_str().unwrap().contains("Tybalt"));
+        assert!(v["answer"].as_str().unwrap().contains("Four syllables"));
+        assert_eq!(v["claude_model"], "claude-opus-5");
+        assert!(v["context"].as_str().unwrap().starts_with("Work: "));
+    }
+
+    /// An add blob has `scope` but no `kind`/`entry_id`; an edit blob is keyed
+    /// by `kind: "journal-edit"`. The two must never be confusable, or the
+    /// wrong skill would act on the wrong contract.
+    #[test]
+    fn edit_blob_is_distinguishable_from_an_add_blob() {
+        let json = edit_blob_json(&page(), "Rom", "play", "ctx");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["kind"], "journal-edit");
+        assert!(v["entry_id"].is_i64(), "an add blob has no entry_id");
+        assert!(v["division_text"].is_null(), "edit blobs carry `context`, not division_text");
+    }
+
+    /// A null citation (a division-scope entry) must serialize as JSON null,
+    /// not the string "null" — the script tests `is None`.
+    #[test]
+    fn division_scope_entry_nulls_citations() {
+        let mut p = page();
+        p.scope = "division".into();
+        p.start_citation = None;
+        p.end_citation = None;
+        p.source_text = None;
+        let json = edit_blob_json(&p, "BH", "prose", "ctx");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["scope"], "division");
+        assert!(v["start_citation"].is_null());
+        assert!(v["end_citation"].is_null());
     }
 }
