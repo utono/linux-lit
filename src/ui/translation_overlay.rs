@@ -396,6 +396,29 @@ impl TranslationOverlay {
     }
 }
 
+/// Minimum card width for the TWO-column translation overlay.
+///
+/// Every other overlay is one column and takes the shared `overlay_card_size`
+/// width unchanged. This one splits its card in half, so that width gave each
+/// column ~469px: enough for the ~63-char verse the LEFT column is measured
+/// around, but the modernized English on the right runs longer and was cut
+/// mid-word. (Measured on screen: clipped lines all ended at a hard x≈1440
+/// boundary rather than at natural line ends, matching `col_width` exactly.)
+///
+/// Sized from the data, not by eye: 99% of `line_translations` are <= 64 chars
+/// (p99.9 = 128; the longest single row is 436, which no sane card fits).
+///
+/// The px/char figure must be MEASURED FROM THE TRANSLATION COLUMN, not derived
+/// from the verse column. A first pass used the left column's ~7.4px/char —
+/// inferred from the ~63-char verse the reader is sized around — and picked
+/// 1164, which still clipped 56-58 char translations. Sampling rendered
+/// translation lines gives **~9.6px/char**: modernized prose is wider per
+/// character than Shakespeare's verse (more lowercase, fewer elisions). At that
+/// rate p99 wants ~614px per column, which this width supplies. The caller
+/// clamps to the window, so a narrow window degrades gracefully instead of
+/// overflowing.
+pub(crate) const TRANSLATION_CARD_MIN_W: i32 = 1366;
+
 /// Extra top gap above a stage-direction (interlude) block, matching the main
 /// card's `stage-direction-gap` tag (`pixels_above_lines(8)`).
 const STAGE_GAP_TOP: i32 = 8;

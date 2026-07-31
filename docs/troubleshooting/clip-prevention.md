@@ -843,6 +843,32 @@ When a half line clips at the bottom edge of a scrolled surface:
     moving a fingerprint field, so add that input rather than regenerating by
     hand.
 
+12b. **TRANSLATION OVERLAY — the RIGHT column's lines are cut mid-word at the
+    card's right edge ("comfo…", "Bol…", "your positio…").** A real horizontal
+    clip, and the only overlay that can have one: the translation overlay is the
+    sole TWO-column overlay, but it took the shared `overlay_card_size` width,
+    which is measured for ONE text column. Halving it gave each column ~469px —
+    enough for the ~63-char verse the LEFT column is sized around, but the
+    modernized English on the right runs longer.
+    - Tell: the cut lines all end at the SAME x, and it is not a natural line
+      end. Measure the rightmost ink per row — a hard shared boundary means a
+      width clip, not a font/rasterisation artifact (contrast #19/#19b, where
+      the glyphs are whole and merely thin).
+    - Fix: `TRANSLATION_CARD_MIN_W` (`translation_overlay.rs`), applied in
+      `translations.rs` as `overlay_card_size().max(MIN_W).min(window_width)`.
+      NOT a change to `overlay_card_size` itself — nine other call sites share
+      it, and overlays are deliberately 1-col width.
+    - **Measure px/char in the COLUMN THAT CLIPS.** A first pass derived
+      ~7.4px/char from the verse column and picked 1164, which STILL cut 56-58
+      char translations. Sampling rendered translation lines gives ~9.6px/char:
+      modernized prose is wider per character than Shakespeare's verse. p99 of
+      `line_translations` is 64 chars (p99.9 = 128; the longest single row is
+      436, not worth sizing for), so 64 x 9.6 ~= 614px/column -> a 1366px card.
+      Verified: longest line now clears the card edge by 116px.
+    - Related history: the side margins were already tightened from `/12` to
+      `/24` for this same clipping, which bought room but did not fix it — the
+      card itself was too narrow. (2026-07-31.)
+
 13. **A PAGINATED overlay (translation overlay) squeezes a whole page into a thin
     band at the top on a page turn — the first line half-cut, the rest of the card
     blank, and INTERMITTENT ("sometimes clips, sometimes not").** NOT a viewport
