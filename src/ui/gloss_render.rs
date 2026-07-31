@@ -345,6 +345,53 @@ pub(crate) fn apply_emphasis_ranges(
     }
 }
 
+/// Where the explication paragraphs (`gloss-para`) sit relative to the bar.
+///
+/// The gloss overlay aligns them with the quoted source's own left edge so an
+/// entry reads as one column (`SourceEdge`); the journal overlay keeps its
+/// answer body flush at `QUOTE_BODY_INDENT` (`BodyIndent`). Both surfaces share
+/// this renderer, so the choice is per-caller rather than a shared constant.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParaIndent {
+    /// Flush at `QUOTE_BODY_INDENT` — the journal answer body.
+    BodyIndent,
+    /// Matches the source: `QUOTE_VERSE_INDENT` with a speaker,
+    /// `QUOTE_SPEAKER_INDENT` without (tracking the same `has_speaker` branch
+    /// the verse itself uses, so the two edges agree on BOTH layouts).
+    ///
+    /// The bool is the DOC-level "has a displayed speaker", not this render's.
+    /// A paginated page holding only explication blocks parses no `<speaker>`
+    /// of its own, so a per-render flag would drop that page's body to the
+    /// shallow indent while its source sits deep on another page — the edges
+    /// would disagree across a page break. Callers pass the same doc-level
+    /// value `repaginate` measures with (`markup_has_displayed_speaker` over
+    /// ALL block markups).
+    SourceEdge { doc_has_speaker: bool },
+}
+
+/// The source header's indent past the bar: deep verse hang when a speaker
+/// label renders, the speaker level otherwise (no label to hang past).
+pub(crate) fn source_indent_for(has_speaker: bool) -> i32 {
+    if has_speaker {
+        QUOTE_VERSE_INDENT
+    } else {
+        QUOTE_SPEAKER_INDENT
+    }
+}
+
+/// The explication body's indent past the bar.
+///
+/// Under `SourceEdge` this MUST equal `source_indent_for(doc_has_speaker)` —
+/// that shared value is the whole point of the gloss's one-column layout, and
+/// it is keyed on the DOC-level speaker flag so the edges still agree when
+/// pagination splits source and explication onto different pages.
+pub(crate) fn body_indent_for(para_indent: ParaIndent) -> i32 {
+    match para_indent {
+        ParaIndent::BodyIndent => QUOTE_BODY_INDENT,
+        ParaIndent::SourceEdge { doc_has_speaker } => source_indent_for(doc_has_speaker),
+    }
+}
+
 /// Populate `view`'s buffer with a rendered gloss/passage doc (no echo
 /// highlight). Delegates to `populate_verse_buffer` with `selected_echo: None`.
 pub(crate) fn populate_gloss_buffer(
@@ -354,6 +401,7 @@ pub(crate) fn populate_gloss_buffer(
     bar_left: i32,
     source_line_numbers: &[(String, i64)],
     gloss_dim: Option<&str>,
+    para_indent: ParaIndent,
 ) -> (Vec<BarRange>, Vec<LineNumber>) {
     let (ranges, nums, _) = populate_verse_buffer(
         view,
@@ -363,6 +411,7 @@ pub(crate) fn populate_gloss_buffer(
         source_line_numbers,
         None,
         gloss_dim,
+        para_indent,
     );
     (ranges, nums)
 }
@@ -385,6 +434,7 @@ pub(crate) fn populate_verse_buffer(
     source_line_numbers: &[(String, i64)],
     selected_echo: Option<usize>,
     dim_color: Option<&str>,
+    para_indent: ParaIndent,
 ) -> (Vec<BarRange>, Vec<LineNumber>, Vec<i32>) {
     let buffer = view.buffer();
     buffer.set_text("");
@@ -436,22 +486,26 @@ pub(crate) fn populate_verse_buffer(
         .iter()
         .any(|el| matches!(el, GlossElement::Speaker(_)));
 
-    // The explication (FOCUS body) sits flush ~12px right of the accent bar, like
-    // the journal answer. The speaker label + verse (the dim source header) are
-    // INDENTED further right so the source reads as a set-off block quote above
-    // the flush explication; when the turn has a speaker label the verse hangs
-    // one main-card dialogue step PAST it, keeping the reading card's
+    // The speaker label + verse (the source header) are INDENTED right of the
+    // accent bar; when the turn has a speaker label the verse hangs one
+    // main-card dialogue step PAST it, keeping the reading card's
     // speaker→dialogue rhythm. A speakerless source (prose) sits at the speaker
     // level — there is no label to hang past, and the deep indent read as
     // arbitrary over-indentation.
-    let quote_body = bar_left + QUOTE_BODY_INDENT; // explication (gloss-para) — flush, the focus
     let quote_speaker = bar_left + QUOTE_SPEAKER_INDENT;
-    let quote_verse = bar_left
-        + if has_speaker {
-            QUOTE_VERSE_INDENT
-        } else {
-            QUOTE_SPEAKER_INDENT
-        };
+    let quote_verse = bar_left + source_indent_for(has_speaker);
+
+    // The explication (FOCUS body). On the JOURNAL it sits flush at the body
+    // indent — the answer is the page's own voice, set apart from the quote.
+    // On the GLOSS it tracks the source's own left edge instead, so an entry
+    // reads as one column rather than a quote with a differently-aligned
+    // paragraph under it; the narrower measure (the source indent is up to
+    // 88px deeper) is accepted, which is the same trade the chat panel already
+    // makes for prose source (`.chat-a-verse-flush`, theme.rs). Tracking
+    // `source_indent` — not a fixed constant — keeps the two edges aligned on
+    // the speakerless layout too.
+    // Doc-level, NOT this render's `has_speaker`: see `ParaIndent::SourceEdge`.
+    let quote_body = bar_left + body_indent_for(para_indent);
 
     // Speaker + verse "header" styling: bold 700 at full body size, space
     // below, the speaker in small-caps (it's a name label). The header renders in the
@@ -1060,5 +1114,73 @@ mod chat_gloss_rows_tests {
     fn plain_prose_yields_no_rows() {
         let rows = chat_gloss_rows("Just a plain prose answer, no tags here.");
         assert!(rows.is_empty());
+    }
+
+    // ---- explication indent (gloss one-column layout) ----
+
+    use super::{body_indent_for, markup_has_displayed_speaker, source_indent_for, ParaIndent};
+
+    /// The gloss overlay's whole point: explication and source share one left
+    /// edge, on BOTH the speaker and speakerless layouts.
+    #[test]
+    fn source_edge_body_matches_the_source_indent() {
+        for has_speaker in [true, false] {
+            assert_eq!(
+                body_indent_for(ParaIndent::SourceEdge {
+                    doc_has_speaker: has_speaker
+                }),
+                source_indent_for(has_speaker),
+                "explication must align with the source (has_speaker={has_speaker})"
+            );
+        }
+    }
+
+    /// The journal keeps its answer body flush, independent of any speaker.
+    #[test]
+    fn body_indent_stays_flush() {
+        assert_eq!(body_indent_for(ParaIndent::BodyIndent), super::QUOTE_BODY_INDENT);
+    }
+
+    /// A speaker label makes the source hang one dialogue step deeper; without
+    /// one there is no label to hang past.
+    #[test]
+    fn source_indent_hangs_past_the_speaker_label() {
+        assert_eq!(source_indent_for(true), super::QUOTE_VERSE_INDENT);
+        assert_eq!(source_indent_for(false), super::QUOTE_SPEAKER_INDENT);
+        assert!(source_indent_for(true) > source_indent_for(false));
+    }
+
+    /// Regression: the flag is DOC-level, so a paginated page holding only
+    /// explication still aligns with source that lives on another page. Were
+    /// it computed per-render, such a page would parse no `<speaker>` and
+    /// collapse to the shallow indent — a 60px cross-page misalignment.
+    #[test]
+    fn explication_only_page_keeps_the_doc_level_edge() {
+        let doc = "<speaker>NARRATOR</speaker>\n<segment>A line.</segment>\n<gloss>G.</gloss>";
+        let explication_only_page = "<gloss>G.</gloss>";
+
+        assert!(markup_has_displayed_speaker(doc));
+        assert!(!markup_has_displayed_speaker(explication_only_page));
+
+        // Rendering that page must use the DOC's flag, not its own.
+        assert_eq!(
+            body_indent_for(ParaIndent::SourceEdge {
+                doc_has_speaker: markup_has_displayed_speaker(doc)
+            }),
+            source_indent_for(true)
+        );
+    }
+
+    /// `UNKNOWN`/empty speakers don't render, so they must not deepen the edge.
+    #[test]
+    fn undisplayed_speaker_uses_the_shallow_edge() {
+        let doc = "<speaker>UNKNOWN</speaker>\n<segment>A line.</segment>\n<gloss>G.</gloss>";
+        assert!(!markup_has_displayed_speaker(doc));
+        assert_eq!(
+            body_indent_for(ParaIndent::SourceEdge {
+                doc_has_speaker: markup_has_displayed_speaker(doc)
+            }),
+            source_indent_for(false)
+        );
     }
 }

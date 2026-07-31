@@ -1194,8 +1194,17 @@ impl JournalOverlay {
         // indent) — the same anchor the gloss passes as `bar_left`, so the
         // speaker/verse indents land exactly where the gloss card puts them.
         let bar_left = self.view.left_margin() - JOURNAL_BODY_INDENT;
+        // BodyIndent: the journal answer stays flush at JOURNAL_BODY_INDENT.
+        // (The gloss overlay aligns its explication with the source edge
+        // instead; the two surfaces deliberately differ here.)
         let _ = crate::ui::gloss_render::populate_gloss_buffer(
-            &self.view, source_doc, self.text_margins, bar_left, &[], None,
+            &self.view,
+            source_doc,
+            self.text_margins,
+            bar_left,
+            &[],
+            None,
+            crate::ui::gloss_render::ParaIndent::BodyIndent,
         );
         self.apply_font();
         self.clear_blocks();
