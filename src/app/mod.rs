@@ -1261,6 +1261,34 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// stops reading as a head band at all.
 pub const TOP_SPACER_HEIGHT: i32 = 44;
 
+/// Top margin for the header-band toasts (`chapter_toast`, `speed_toast`;
+/// `search_toast` adds +2 for its smaller face and thinner pill padding).
+///
+/// Chosen so a toast's BASELINE sits on the running-head labels' baseline, so
+/// the abbrev / toast / division read as ONE typographic row rather than three
+/// items at ragged heights. A toast floating above the heads is what made the
+/// band look unsettled (and, at 13px, made the toast read as clipped when it
+/// never was).
+///
+/// Since 2026-07-31 `.chapter-toast` is a PILL, which changed what this value
+/// is FOR. Aligning the toast's baseline with the running heads' is no longer
+/// the goal: the pill's own background separates it from the labels, so it does
+/// not need to sit in their typographic row — and at baseline parity (28) the
+/// pill's shadow started only 7px under the card's top edge, crowding the
+/// corner and making the whole header band read as tight. This value now buys
+/// BREATHING ROOM above the pill instead of alignment: 28 + 15 = 43.
+///
+/// Superseded history, kept because it explains the fragility: with the bare
+/// label, `valign: Start` anchors the BOX, so the baseline moved on every
+/// font-size change and the margin had to be re-measured on screen each time.
+/// Measured at 14px — 24 put the baseline 8px ABOVE the heads', 32 put it 9px
+/// BELOW, so 28 was the alignment value. Before the 13px -> 14px bump, 40 sat
+/// 16px below and 24 was correct.
+///
+/// `.center-toast` / `.search-toast` share this margin and are still bare-ish,
+/// so re-check them on screen if their font-size or padding changes.
+pub const HEADER_TOAST_MARGIN_TOP: i32 = 43;
+
 /// Pure default-column rule: works default to two columns, except a
 /// `sonnet_sequence` and every prose work type, which default to one. A sonnet
 /// sequence has each sonnet as its own `(div1, div2)` section, so the
@@ -1984,12 +2012,13 @@ pub fn build_window(
     // spinners) float at the TOP CENTER, inside the header band (the 64px
     // `top_spacer`, which sits `content_hbox` margin_top=24 below the window
     // top). They overlay the running-head strip's center gap — the work abbrev
-    // (left) and act/scene (right) labels stay visible on the sides. margin_top
-    // ≈ card_top(24) + ~header-center so the toast lines up with those labels.
+    // (left) and act/scene (right) labels stay visible on the sides.
+    // `HEADER_TOAST_MARGIN_TOP` puts the toast's BASELINE on the running heads'
+    // baseline (see the const).
     let chapter_toast = gtk4::Label::new(None);
     chapter_toast.set_valign(gtk4::Align::Start);
     chapter_toast.set_halign(gtk4::Align::Center);
-    chapter_toast.set_margin_top(40);
+    chapter_toast.set_margin_top(HEADER_TOAST_MARGIN_TOP);
     chapter_toast.add_css_class("chapter-toast");
     chapter_toast.set_visible(false);
 
@@ -2003,18 +2032,18 @@ pub fn build_window(
     let speed_toast = gtk4::Label::new(None);
     speed_toast.set_valign(gtk4::Align::Start);
     speed_toast.set_halign(gtk4::Align::Center);
-    speed_toast.set_margin_top(40);
+    speed_toast.set_margin_top(HEADER_TOAST_MARGIN_TOP);
     speed_toast.add_css_class("center-toast");
     speed_toast.set_visible(false);
 
     // Search boundary toast ("No later/earlier occurrence"): top center, in the
     // header band alongside the status toast (chapter_toast). Small font
-    // (.search-toast). Sits at the same margin_top so the two never appear at
-    // different heights.
+    // (.search-toast), so it takes the shared margin +2 to keep its baseline
+    // with the others' despite the smaller face and thinner pill padding.
     let search_toast = gtk4::Label::new(None);
     search_toast.set_valign(gtk4::Align::Start);
     search_toast.set_halign(gtk4::Align::Center);
-    search_toast.set_margin_top(42);
+    search_toast.set_margin_top(HEADER_TOAST_MARGIN_TOP + 2);
     search_toast.add_css_class("search-toast");
     search_toast.set_visible(false);
 
