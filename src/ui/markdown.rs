@@ -751,6 +751,28 @@ mod tests {
         assert!(spans.iter().any(|s| s.text == "it" && matches!(s.style, Style::Bold)));
     }
 
+    /// Regression: journal overlay TTS (`a` / Space) reads the cursor block's
+    /// text out of `all_paragraphs`, which is built from `plain_text()`. When
+    /// every entry moved onto the Markdown planner (2026-07-29) the blocks the
+    /// overlay kept carried an EMPTY text field, so `play_journal_block`'s
+    /// non-empty guard bailed and both keys silently did nothing. Lock the
+    /// property the TTS path depends on: a planned block's `plain_text()` is
+    /// non-empty for ordinary Q&A prose.
+    #[test]
+    fn planned_blocks_have_non_empty_plain_text() {
+        let composed = "Q: Does the fair come out of Bunyan?\n\n\
+                        Thackeray's fair comes out of a book.\n\n\
+                        The showman's frame supplies the machinery.";
+        let blocks = plan_markdown_blocks(composed);
+        assert!(!blocks.is_empty(), "expected planned blocks");
+        for (i, b) in blocks.iter().enumerate() {
+            assert!(
+                !b.plain_text().trim().is_empty(),
+                "block {i} planned with empty plain_text — journal TTS would bail"
+            );
+        }
+    }
+
     #[test]
     fn bullet_list_items_are_listitem() {
         let spans = plan_markdown("- one\n- two");

@@ -28,7 +28,7 @@ pub const OP_MODEL_ID: &str = "eleven_v3";
 /// Shift+Space). Replaces the per-character `voice_catalog` resolution and the
 /// Eleanor prose default in those overlays; a per-gloss associated voice still
 /// wins. Renders on `eleven_v3` so verse source blocks keep their OP /IPA/.
-/// Journal TTS is unaffected.
+/// The journal Q&A overlay reads in this voice too (2026-07-30).
 pub const OVERLAY_NARRATOR_VOICE_ID: &str = "jv41DhCf464zw0TI7I1w";
 
 /// The user's four custom Voice-Design narration voices — the only voices the
