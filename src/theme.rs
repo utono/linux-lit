@@ -1049,14 +1049,16 @@ fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
                border-bottom: 1px solid {header_border}; }} \
              .library-picker-title {{ font-size: 14px; font-weight: 700; \
                letter-spacing: 2px; color: {on_root}; opacity: 0.85; }} \
-             /* 14px to match the title. At 13px the count rendered ~9px tall \
-                and hinting ate the tops of the thin serif strokes, so the \
-                leading digit read as CLIPPED when nothing crops it (there is \
-                ~140px of clear header to its right). Bigger glyphs, not more \
-                contrast: raising the opacity alone was measured and did NOT \
-                fix it. (2026-07-31) */ \
-             .library-picker-crumb {{ font-size: 14px; color: {on_root}; \
-               opacity: 0.75; }} \
+             /* Same face as the title — size, weight, letter-spacing, and \
+                opacity — so the two header labels are one typographic pair. \
+                The size also fixes a legibility bug: at 13px the count \
+                rendered ~9px tall and hinting ate the tops of the thin serif \
+                strokes, so the leading digit read as CLIPPED when nothing \
+                crops it (there is ~140px of clear header to its right). \
+                Bigger, heavier glyphs — not more contrast: raising the opacity \
+                alone was measured and did NOT fix it. (2026-07-31) */ \
+             .library-picker-crumb {{ font-size: 14px; font-weight: 700; \
+               letter-spacing: 2px; color: {on_root}; opacity: 0.85; }} \
              .library-picker entry {{ margin: 12px 18px 8px; \
                padding: 8px 12px; border: 1px solid {dim}; \
                border-radius: 8px; background-color: {bg}; color: {fg}; \
@@ -1097,11 +1099,12 @@ fn picker_css(theme: &Theme, font_family: &str, font_size: u32) -> String {
                border-radius: 11px 11px 0 0; }} \
              .library-picker-title {{ font-size: 12px; font-weight: 700; \
                letter-spacing: 2px; color: {on_root}; opacity: 0.95; }} \
-             /* 14px for the same stroke-erosion reason as the other skin (see \
-                there). Its title is 12px, so the count reads a touch larger — \
-                fine for a numeral, and legibility is the point. */ \
-             .library-picker-crumb {{ font-size: 14px; color: {on_root}; \
-               opacity: 0.8; }} \
+             /* Matches THIS skin's title (12px/0.95, not the other skin's 14px) \
+                so the pair stays consistent within the header. Bold + tracking \
+                for the same stroke-erosion reason as the other skin (see \
+                there) — the weight is what keeps the digits solid at 12px. */ \
+             .library-picker-crumb {{ font-size: 12px; font-weight: 700; \
+               letter-spacing: 2px; color: {on_root}; opacity: 0.95; }} \
              .library-picker entry {{ margin: 12px 18px 8px; \
                padding: 8px 12px; border: 1px solid {dim}; \
                border-radius: 8px; background-color: {bg}; color: {fg}; \
