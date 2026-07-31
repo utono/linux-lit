@@ -1032,8 +1032,58 @@ When a half line clips at the bottom edge of a scrolled surface:
       list (new row count, new natural height) and is the state the user hit.
       Drive it as: open picker → Enter (Works level) → type a filter char →
       arrow to the bottom, and check BOTH edges.
-    - Fixed in `picker_nav.rs::{scroll_row_into_view, snap_list_viewport}`,
-      which every card picker shares via `new_picker_list`. (2026-07-31.)
+    - **STILL OPEN as of 2026-07-31.** The scroll-landing half is fixed; the
+      viewport-height half is NOT. Four approaches have been tried and reverted.
+      Read this before attempting a fifth.
+    - **The two measurements every attempt got wrong:**
+      - **Row PITCH is 45px; `row.height()` returns 29px.** `height()` is the
+        row's inner allocation, not the row-to-row step (which includes CSS
+        `padding: 8px 14px` and inter-row spacing). Snapping to 29 yields a ~2px
+        correction where the true remainder is ~32-40px — nearly a whole row,
+        i.e. exactly the sliver on screen. Derive pitch from two ADJACENT rows'
+        `compute_bounds().y()`; it assumes nothing about padding.
+      - **`.library-picker scrolledwindow` has 14px vertical CSS padding**
+        (`4px 8px 10px`) — inside the widget allocation, outside the viewport.
+        Any target allocation is `pitch * n + 14`.
+    - **What GTK actually does (read from source, not docs):**
+      - `max_content_height` appears ONLY in `measure()`, never in
+        `size_allocate`. It constrains the natural size REQUEST; a `vexpand`
+        child is stretched past it. The cap is inert. (Attempt 1.)
+      - `gtk_viewport_size_allocate` clamps `upper` to
+        `MAX(allocated_height, measured_height)`, and `page_size == viewport
+        height` exactly. So padding the LIST's `margin_bottom` cannot move where
+        the scroll range ends — also inert, and a total no-op when the list is
+        shorter than the viewport. (Attempt 2.)
+      - GTK4 has NO scroll snapping for `ListBox`/`ListView`. `step_increment`
+        is `viewport_size * 0.1` (GtkViewport) or `page_size * 0.1`
+        (GtkListBase) — never a row height. Do not go looking for a built-in.
+      - Under the AUTOMATIC scrollbar policy, `gtk_scrolled_window_size_allocate`
+        re-runs allocation until scrollbar-visibility flags stabilise and can
+        force both scrollbars visible on a late pass, changing the viewport
+        height under any snap. `hscrollbar_policy(Never)` is a prerequisite.
+      - **A `ScrolledWindow`'s MINIMUM height is ~0.** So `height_request` is a
+        request, not a floor: put it in a box beside ANY `vexpand` sibling and
+        GTK satisfies the scrolled window's minimum and gives the surplus to the
+        greedy sibling. Measured: request 720, actual allocation **58**, with a
+        `vexpand` spacer taking the rest. (Attempt 4 — the spacer that was added
+        precisely to stop the card collapsing is what starved the list.)
+      - Reading `avail` from `scrolled.height()` is a feedback loop: once a
+        request is set the widget reports THAT height, so each pass snaps its
+        own output; and on first map, pre-layout, it is a few px tall, so the
+        list locks to ONE row. Derive `avail` from the card minus siblings.
+        (Attempt 3. The arithmetic then came out right — `pitch=45 card_h=888
+        siblings=147 avail=741 → request 720` = 16 rows — and it STILL failed,
+        on the minimum-height issue above.)
+    - **Where to start a fifth attempt:** the arithmetic is solved; the problem
+      is purely making GTK honour it. Either give the scrolled window a
+      `height_request` with NO expanding sibling anywhere in the card (so its
+      request is the only claim on the space), or drop the snap entirely and
+      make the CARD height a function of the row pitch, since
+      `library_picker::responsive_size` already sets it deterministically —
+      pick `card_h` so that `card_h - chrome` is an exact multiple of 45.
+    - Partially fixed in `picker_nav.rs::scroll_row_into_view` (landing snaps to
+      whole rows); `snap_list_viewport` as committed is the inert attempt-2
+      margin version and does nothing. (2026-07-31.)
 
 17. **A clip E2E (`overlay_clipping` / `line_clipping`) FAILS with the viewport
     rect never appearing (`TEST_OVERLAY_VIEWPORT_RECT never appeared …`) OR a
@@ -1209,6 +1259,45 @@ When a half line clips at the bottom edge of a scrolled surface:
           shape, so that is the serif face, not a cut. Compare the same glyph
           elsewhere before concluding.
     (`gloss_overlay.rs`, `journal_overlay.rs`, 2026-07-21.)
+
+19b. **CARD PICKER header — the count ("27 AUTHORS") reads as though its
+    leading digit is sliced off, but nothing crops it.** The same
+    washed-out-glyph family as #19, on a different surface, and it repeated
+    #19's mistake of chasing the wrong cause first. Diagnosis, in the order
+    that actually worked:
+    - **Pixel-dump the glyph before theorising.** A column profile showed the
+      `2` fully formed with clean header background 3px to its left, and ~140px
+      of clear header to the right of the whole string — no container edge
+      anywhere near it. That killed "clipped" outright.
+    - **Magnify (#19's own lesson).** A 6x NEAREST crop showed ALL TEN glyphs
+      eroded along their tops, not one letter cut at an edge. A single sliced
+      glyph means geometry; a whole string thinning at the same height means
+      rasterisation.
+    - **Cause:** 13px at weight 400 rendered the string only ~9px tall, and
+      hinting ate the tops of the thin serif strokes. The `2` broke into a
+      `#..##` fragment and the rest showed mid-stroke gaps.
+    - **Fix:** give the crumb the header title's full face — size, `font-weight:
+      700`, `letter-spacing: 2px`, and opacity — so the two header labels are
+      one typographic pair. Glyph height 9 -> 10px and the letterforms come out
+      solid. Note the ACTIVE skin is `HeaderBand` (12px title); `RootFill` is
+      dead code with a 14px title, so match each skin's OWN title rather than
+      copying a number between them.
+    - **A contrast fix was tried first and DID NOT WORK — do not retry it.**
+      The crumb measured 3.92:1 against the teal header (under the 4.5:1 AA
+      floor) while the title passed at 4.71:1, which looked like a compelling
+      cause. Raising opacity 0.75 -> 0.85 took the measured contrast to 6.66:1
+      and changed the rendered glyphs NOT AT ALL. That negative result is what
+      proved the defect was stroke rendering, not contrast; the change was
+      reverted rather than shipped. **Sub-threshold contrast and eroded strokes
+      look alike in a screenshot — the discriminator is whether raising contrast
+      changes anything, so measure the glyphs before AND after, not just the
+      ratio.**
+    - **Generalised lesson (shared with #19):** for small chrome text reported
+      as clipped, suspect the FACE (size/weight/undefined style) before
+      geometry. Both #19 and this one were a numeral rendering thin at a size
+      nobody had pinned, and both cost multiple wrong fixes by treating the
+      report's word "clipped" as a description of the mechanism rather than of
+      the appearance. (`theme.rs` `.library-picker-crumb`, 2026-07-31.)
 
 15. **A hand-drawn Cairo surface lays annotations out against the FIRST
     wrapped line instead of the whole wrapped block (OVERSTRIKE, not
