@@ -952,6 +952,48 @@ When a half line clips at the bottom edge of a scrolled surface:
       per-source `line_h`s. (`gloss_overlay.rs::block_height_overhead`,
       2026-07-17.)
 
+16b. **GLOSS OVERLAY, speaker gloss — a 2-block gloss splits across two
+    half-empty pages (each ~46% full).** Same family as #16 but a DIFFERENT
+    term, and it bites the SPEAKER path that #16 explicitly left alone. Two
+    independent over-charges stacked, both in `repaginate`:
+    - **The wrap width was computed from the wrong left edge.**
+      `set_prose_margins` sets `left_margin = column_edge + QUOTE_BODY_INDENT`
+      (the body indent is folded INTO the view) and `right_margin =
+      column_edge`. `wrap_for` read `left_margin` back as if it WERE the column
+      edge and then subtracted a full source `indent` on top — double-charging
+      `QUOTE_BODY_INDENT` and assuming a symmetric `2 * left`. Every block was
+      measured ~26px narrower than it renders, so every block was charged extra
+      wrapped lines. (VF ch.1 at 1920x1236: charged wrap 640, true wrap 666.)
+    - **The speaker reserve was proportional, not flat.**
+      `block_height_overhead(is_source=true, has_speaker=true, …)` charged
+      `text_h * 1.15 + SPEAKER_BLOCK_OVERHEAD`. The 1.15 predates leaded
+      measurement: `text_h` now comes from `measure_text_height_leaded`, which
+      ALREADY charges `OVERLAY_LINE_LEADING` per wrapped line, so the
+      multiplier re-charged leading that was already counted — the identical
+      phantom-height mistake #16 fixed on the speakerless branch. Because it
+      SCALED with block size, a long source paid the most: VF ch.1's source was
+      charged 520px for 424px of rendered ink.
+    - Tell: a gloss with only two blocks (one Source + one Explication) reports
+      `GLOSS-PAGES: n=2` with each page's ink band under half the budget, and
+      the `⌄` marker floating mid-card. Distinguish from #16 by the block
+      count and by `has_speaker` — #16 needs an ALTERNATING speakerless prose
+      gloss; this fires on a single speaker-carrying source.
+    - Root cause: `card_w - 2 * left - indent` (wrong edge, wrong symmetry) and
+      the `* 1.15` slack. Combined: 555+419=974 vs a 906 budget → split.
+    - Fix: derive the wrap from the real geometry —
+      `card_w - column_edge - indent - right_margin`, where `column_edge =
+      left_margin - QUOTE_BODY_INDENT` and `right_margin` is read from the view
+      (synopsis reads `left_margin` directly; it applies no extra indent). And
+      charge the speaker reserve FLAT: `text_h + SPEAKER_BLOCK_OVERHEAD`.
+      Result: wrap 640→680, source 555→520→(flat) and the gloss fits ONE page
+      at 92% fill (was 46%), 191px clear of the footer.
+    - **Diagnose with numbers, never by eye**: temporarily log per-block
+      `wrap`/`h` from `repaginate` and pixel-measure the rendered ink band and
+      the card edges from a `grim` capture at PRODUCTION geometry (1920x1236 —
+      720p gives budget 409 and will not reproduce). The charged height minus
+      the measured ink band IS the over-count. (`gloss_overlay.rs::repaginate`
+      + `block_height_overhead`, 2026-07-31.)
+
 17. **A clip E2E (`overlay_clipping` / `line_clipping`) FAILS with the viewport
     rect never appearing (`TEST_OVERLAY_VIEWPORT_RECT never appeared …`) OR a
     "clip" on a work you didn't expect — a STALE TEST, not a production clip.**

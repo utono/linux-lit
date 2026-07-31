@@ -2662,7 +2662,16 @@ impl GlossOverlay {
         // shallower — which is safe and never clips. Synopsis prose sits at the
         // body margin.
         let card_w = self.last_card_size.get().0;
-        let left = self.gloss_view.left_margin();
+        // The COLUMN edge, not the view's left margin. `set_prose_margins` sets
+        // `left_margin = column_edge + QUOTE_BODY_INDENT` (the body indent is
+        // folded into the view) while `right_margin = column_edge`. Reading
+        // `left_margin` back as if it were the column edge, then subtracting a
+        // full source `indent` on top, double-charged QUOTE_BODY_INDENT and
+        // measured every block ~26px narrower than it renders — enough to push
+        // a 2-block gloss over budget and split it across 2 half-empty pages
+        // (VF ch.1: measured 974 vs budget 906; true wrap 666, charged 640).
+        let column_edge = self.gloss_view.left_margin() - crate::ui::gloss_render::QUOTE_BODY_INDENT;
+        let right_margin = self.gloss_view.right_margin();
         // Speakerless source (prose): the verse renders at the shallower
         // QUOTE_SPEAKER_INDENT (populate_verse_buffer), so measure at that
         // width — and without the speaker-label reserve (block_height_overhead):
@@ -2675,18 +2684,26 @@ impl GlossOverlay {
             .borrow()
             .iter()
             .any(|m| crate::ui::gloss_render::markup_has_displayed_speaker(m));
-        // bar_left == left in gloss mode; the right margin is `left`.
+        // Wrap = card − the block's own left inset (column edge + its indent) −
+        // the view's real right margin. In GLOSS mode both kinds share the
+        // source edge (`ParaIndent::SourceEdge`), so one width covers both.
+        // SYNOPSIS renders at the view's own margins with no extra indent.
         let wrap_for = |kind: BlockKind| -> i32 {
             let _ = kind;
-            let indent = match self.paginated_mode.get() {
-                // Source AND Explication share the source edge in gloss mode.
-                PaginatedMode::Gloss if doc_has_speaker => {
-                    crate::ui::gloss_render::QUOTE_VERSE_INDENT
+            match self.paginated_mode.get() {
+                PaginatedMode::Gloss => {
+                    let indent = if doc_has_speaker {
+                        crate::ui::gloss_render::QUOTE_VERSE_INDENT
+                    } else {
+                        crate::ui::gloss_render::QUOTE_SPEAKER_INDENT
+                    };
+                    card_w - column_edge - indent - right_margin
                 }
-                PaginatedMode::Gloss => crate::ui::gloss_render::QUOTE_SPEAKER_INDENT,
-                PaginatedMode::Synopsis => 0,
-            };
-            (card_w - 2 * left - indent).max(1)
+                PaginatedMode::Synopsis => {
+                    card_w - self.gloss_view.left_margin() - right_margin
+                }
+            }
+            .max(1)
         };
         let pctx = self.gloss_view.pango_context();
         // Real measured line-height at this font, used as the PER-BLOCK safety
@@ -3702,8 +3719,16 @@ const SPEAKERLESS_SOURCE_PAD: i32 = 8;
 
 fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32, line_h: i32) -> i32 {
     if is_source && has_speaker {
-        // verse lines carry per-line gaps too -> 1.15 slack on the text height.
-        (text_h as f32 * 1.15) as i32 + SPEAKER_BLOCK_OVERHEAD
+        // The speaker label + its gap, and nothing else. The former extra
+        // `text_h * 1.15` slack predates leaded measurement: `text_h` now comes
+        // from `measure_text_height_leaded`, which already charges
+        // OVERLAY_LINE_LEADING per wrapped line, so the multiplier re-charged
+        // leading that was already counted — the same phantom-height mistake
+        // the SPEAKERLESS path fixed (see below). It scaled with block size, so
+        // a long source paid the most: VF ch.1 was charged 520px for 424px of
+        // real ink, pushing a 2-block gloss 33px past budget and splitting it
+        // across two half-empty pages (2026-07-31).
+        text_h + SPEAKER_BLOCK_OVERHEAD
     } else if is_source {
         // Speakerless verse: no trailing paragraph gap — just a small safety pad.
         text_h + SPEAKERLESS_SOURCE_PAD
@@ -3837,5 +3862,28 @@ mod block_height_tests {
             100 + super::SPEAKERLESS_SOURCE_PAD
         );
         assert!(block_height_overhead(true, false, 100, line_h) < 100 + line_h);
+    }
+
+    /// The speaker reserve is a FIXED label allowance, never a multiple of the
+    /// text height. `text_h` comes from `measure_text_height_leaded`, which
+    /// already charges OVERLAY_LINE_LEADING per wrapped line; scaling it again
+    /// re-charged that leading and grew with block size, so a long source paid
+    /// the most (VF ch.1: 520 charged vs 424 rendered — a 2-block gloss split
+    /// across two half-empty pages).
+    #[test]
+    fn speaker_reserve_is_flat_not_proportional() {
+        let line_h = 20;
+        for text_h in [100, 400, 1200] {
+            assert_eq!(
+                block_height_overhead(true, true, text_h, line_h),
+                text_h + super::SPEAKER_BLOCK_OVERHEAD,
+                "speaker overhead must stay flat at text_h={text_h}"
+            );
+        }
+        // The overhead must not scale: doubling the text doubles the charge by
+        // exactly the text delta, nothing more.
+        let a = block_height_overhead(true, true, 400, line_h);
+        let b = block_height_overhead(true, true, 800, line_h);
+        assert_eq!(b - a, 400);
     }
 }
