@@ -62,7 +62,69 @@ pub(crate) fn new_picker_list() -> (ListBox, ScrolledWindow) {
         .vexpand(true)
         .build();
 
+    // Clip the viewport to a WHOLE number of rows. The card sizes the list to
+    // whatever space is left over after the header/entry/footer, which is not a
+    // multiple of the row height, so the bottom row was permanently sliced
+    // through the middle (and `scroll_row_into_view` could only ever move which
+    // row got cut, not stop the cutting). Rows are uniform — single-line labels
+    // with fixed CSS padding — so trimming the remainder off the viewport keeps
+    // every visible row whole.
+    //
+    // Driven from the LIST's size-allocate (not the scrolled window's) because
+    // the row height is only known once rows exist and CSS has been applied.
+    // `set_max_content_height` + `propagate_natural_height` is the non-fighting
+    // way to shrink a `vexpand` child: it caps the height without a
+    // `height_request` that would fight the card's own allocation.
+    {
+        let sw = scrolled.clone();
+        list_box.connect_map(move |lb| {
+            snap_list_viewport(lb, &sw);
+        });
+        // GTK4 has no `connect_size_allocate`; watch the viewport's own height
+        // instead, which is what the snap depends on. Deferred to an idle so
+        // the read happens after this allocation pass settles (reading row
+        // height mid-allocate yields the pre-layout value).
+        // Re-snap after each populate/filter too: `connect_map` only covers the
+        // first show, and the row count (hence the natural height) changes as
+        // the user filters. Cheap — it early-returns unless the cap changes.
+        let sw2 = scrolled.clone();
+        list_box.connect_selected_rows_changed(move |lb| {
+            let (lb, sw) = (lb.clone(), sw2.clone());
+            glib::idle_add_local_once(move || snap_list_viewport(&lb, &sw));
+        });
+    }
+
     (list_box, scrolled)
+}
+
+/// Cap `scrolled`'s content height to a whole multiple of `list_box`'s row
+/// height, so no row straddles the viewport's bottom edge. No-op until at least
+/// one row is allocated (row height unknown before that) or when the full list
+/// already fits. See the call site in `new_picker_list` for why this exists.
+fn snap_list_viewport(list_box: &ListBox, scrolled: &ScrolledWindow) {
+    let Some(first) = list_box.row_at_index(0) else {
+        return;
+    };
+    let row_h = first.height();
+    if row_h <= 0 {
+        return;
+    }
+    let avail = scrolled.height();
+    if avail <= 0 {
+        return;
+    }
+    let rows_total = list_box.observe_children().n_items() as i32;
+    let full_h = row_h * rows_total;
+    // Whole rows that fit; at least one, and never more than the list has.
+    let visible = (avail / row_h).max(1).min(rows_total.max(1));
+    let snapped = row_h * visible;
+    // Only ever SHRINK to the row grid. If everything already fits, leave the
+    // natural height alone so short lists don't grow a scrollbar.
+    let target = if full_h <= avail { full_h } else { snapped };
+    if scrolled.max_content_height() != target {
+        scrolled.set_max_content_height(target);
+        scrolled.set_propagate_natural_height(true);
+    }
 }
 
 /// The vertical outer box for a top-anchored picker card: centered, anchored to
@@ -115,6 +177,16 @@ pub(crate) fn select_row_at(list_box: &ListBox, index: i32) {
 /// implements `Scrollable`, so `adjustment()` is its vertical adjustment.
 /// Mirrors the library picker's inline scroll-into-view (the one card picker
 /// that had it); every other card picker reaches it through `select_row_at`.
+///
+/// The landing is SNAPPED to a whole-row multiple. Parking the selected row
+/// flush against a viewport edge (`value = y`, or `y + h - page_size`) leaves
+/// the NEXT row straddling that edge, so the picker permanently shows a
+/// half-sliced name at the top or bottom of the list — visible as e.g.
+/// "Anthony Trollope" cut through the middle under the filter entry. Rows are
+/// uniform height (single-line labels, fixed CSS padding), so rounding the
+/// landing to a row boundary keeps every visible row whole. The final
+/// `clamp` keeps the value inside the adjustment's real range, so the last
+/// page still scrolls fully to the end.
 fn scroll_row_into_view(list_box: &ListBox, row: &gtk4::ListBoxRow) {
     if let Some(adj) = list_box.adjustment() {
         if let Some(bounds) = row.compute_bounds(list_box) {
@@ -122,10 +194,35 @@ fn scroll_row_into_view(list_box: &ListBox, row: &gtk4::ListBoxRow) {
             let row_height = bounds.height() as f64;
             let page_size = adj.page_size();
             let current_val = adj.value();
-            if y < current_val {
-                adj.set_value(y);
+            // Snap a target offset DOWN (top edge) or UP (bottom edge) to the
+            // nearest whole row, so no row straddles the viewport boundary.
+            let snap_down = |v: f64| {
+                if row_height > 0.0 {
+                    (v / row_height).floor() * row_height
+                } else {
+                    v
+                }
+            };
+            let snap_up = |v: f64| {
+                if row_height > 0.0 {
+                    (v / row_height).ceil() * row_height
+                } else {
+                    v
+                }
+            };
+            let target = if y < current_val {
+                // Scrolling UP: land on this row's own top edge.
+                Some(snap_down(y))
             } else if y + row_height > current_val + page_size {
-                adj.set_value(y + row_height - page_size);
+                // Scrolling DOWN: show this row fully, then snap so the row at
+                // the TOP of the viewport is whole too.
+                Some(snap_up(y + row_height - page_size))
+            } else {
+                None
+            };
+            if let Some(t) = target {
+                let max = (adj.upper() - page_size).max(0.0);
+                adj.set_value(t.clamp(adj.lower(), max));
             }
         }
     }

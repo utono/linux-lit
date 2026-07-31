@@ -994,6 +994,34 @@ When a half line clips at the bottom edge of a scrolled surface:
       the measured ink band IS the over-count. (`gloss_overlay.rs::repaginate`
       + `block_height_overhead`, 2026-07-31.)
 
+16c. **CARD PICKER list — a row is sliced through the middle at the top or
+    bottom of the scroll viewport.** Not a text-clip at all: a `ScrolledWindow`
+    scrolls by PIXEL, so nothing makes its viewport end on a row boundary. Two
+    independent causes, and fixing only one leaves the slice visible:
+    - **`scroll_row_into_view` parked the selected row flush against an edge.**
+      `adj.set_value(y)` (top) / `y + h - page_size` (bottom) makes the SELECTED
+      row exactly flush — which guarantees the row just past it straddles that
+      edge. Symptom: the sliced row MOVES as you arrow through the list, always
+      one row beyond the selection. Fix: snap the landing to a whole-row
+      multiple (floor going up, ceil going down), then clamp into
+      `[lower, upper - page_size]` so the last page still reaches the end.
+    - **The viewport height was not a multiple of the row height.** The card
+      sizes the list to whatever is left after header/entry/footer, so the
+      BOTTOM row was permanently half-drawn even with no scrolling at all.
+      Fix: `snap_list_viewport` caps `max_content_height` to `row_h * floor(avail
+      / row_h)` (with `propagate_natural_height`), driven from the list's
+      `connect_map` + `connect_selected_rows_changed` (GTK4 has no
+      `connect_size_allocate`; the row height is only known once rows exist and
+      CSS is applied, so the read is idle-deferred). Only ever SHRINKS — a short
+      list that already fits keeps its natural height and grows no scrollbar.
+    - Tell: distinguish from a text clip by looking at WHAT is cut — here a
+      whole ROW (background, label, and count together) is bisected, not a
+      glyph's ascender/descender. If the cut row changes as you arrow, it is
+      the scroll-landing half; if it is always the bottom row, it is the
+      viewport-height half.
+    - Fixed in `picker_nav.rs::{scroll_row_into_view, snap_list_viewport}`,
+      which every card picker shares via `new_picker_list`. (2026-07-31.)
+
 17. **A clip E2E (`overlay_clipping` / `line_clipping`) FAILS with the viewport
     rect never appearing (`TEST_OVERLAY_VIEWPORT_RECT never appeared …`) OR a
     "clip" on a work you didn't expect — a STALE TEST, not a production clip.**
