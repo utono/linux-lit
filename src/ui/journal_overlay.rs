@@ -2551,14 +2551,17 @@ impl JournalOverlay {
     }
 
     /// The text of the cursor's current block (for TTS). None when no blocks.
+    ///
+    /// Read from `all_paragraphs`, NOT from `JournalBlock.text`: every entry
+    /// now renders through the Markdown planner (2026-07-29), and that branch
+    /// builds its `JournalBlock`s with an EMPTY `text` (the rendered spans live
+    /// in the buffer, not the block). Sourcing the text here from the same vec
+    /// `current_full_block_index` indexes keeps this in step with the TTS cache
+    /// key (`play_journal_block` stores by full paragraph index) and with
+    /// `synth_all_journal_blocks`, which already reads `all_paragraphs`.
     pub fn current_block_text(&self) -> Option<String> {
-        let blocks = self.blocks.borrow();
-        let len = blocks.len();
-        if len == 0 {
-            return None;
-        }
-        let i = self.cursor_block.get().min(len - 1);
-        blocks.get(i).map(|b| b.text.clone())
+        let full = self.current_full_block_index()?;
+        self.all_paragraphs.borrow().get(full).cloned()
     }
 
     /// The cursor block as a `-`-family target (buffer + underline tag + the

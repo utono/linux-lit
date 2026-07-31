@@ -1292,14 +1292,25 @@ pub fn generate_css(
          .kb-legend-unbound {{ background-color: #2a2a2a; border-color: #444444; }} \
          .debug-icon {{ font-size: 18px; color: {bg}; opacity: 0.85; }} \
          .word-status {{ font-size: 16px; color: {fg}; opacity: 0.85; }} \
-         /* act/scene chapter-toast: no background, sits on the card's own bg. \
-            To restore the pill look, swap the line below for: \
-            .chapter-toast {{ font-size: 13px; color: {toast_fg}; \
-              background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
-              box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} */ \
-         .chapter-toast {{ font-size: 13px; color: {fg}; \
-           padding: 6px 14px; opacity: 0.97; }} \
-         .center-toast {{ font-size: 13px; color: {fg}; \
+         /* act/scene chapter-toast: a PILL (restored 2026-07-31). Its own \
+            background separates it from the running-head labels either side, so \
+            the toast no longer has to share their baseline to look settled — \
+            which matters because `valign: Start` anchors the label BOX, not its \
+            baseline, so every font-size change silently shifts it and the margin \
+            has to be re-measured on screen. The shape carries the placement \
+            instead. `toast_bg` is the theme's cursor-line tint made opaque over \
+            the card; `toast_fg` is `contrast_on` that, so the pill stays legible \
+            on light and dark themes alike. 14px matches the running heads. \
+            (For the bare-text look: color {fg}, no background/radius/shadow.) \
+            NOT a clipping fix — the toast was never clipped; Charis's capital S \
+            just has a narrow ~4px top terminal at this size. */ \
+         .chapter-toast {{ font-size: 14px; color: {toast_fg}; \
+           background-color: {toast_bg}; padding: 6px 14px; border-radius: 10px; \
+           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); opacity: 0.97; }} \
+         /* 14px to match .chapter-toast: both are the same face + padding and \
+            share HEADER_TOAST_MARGIN_TOP, so a size split would land their \
+            baselines a pixel apart in the same band. */ \
+         .center-toast {{ font-size: 14px; color: {fg}; \
            background-color: {center_toast_bg}; padding: 6px 14px; border-radius: 10px; \
            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14); opacity: 0.97; }} \
          .search-toast {{ font-size: 10px; color: {fg}; \

@@ -2016,7 +2016,7 @@ pub(crate) fn recolor_cached_blocks_rc(state: &Rc<RefCell<AppState>>) {
 /// Color the journal Q&A overlay's current-page paragraphs whose TTS MP3 is
 /// cached, with the same accent the gloss/synopsis overlays use. Keyed by the
 /// page's `journal_entries.id` + the paragraph's FULL index + the fixed
-/// plain-prose voice (the journal always synthesizes in that voice). Called on
+/// overlay narrator (the journal always synthesizes in that voice). Called on
 /// every page render and after a synth completes. No-op when not in the journal
 /// overlay or no current page.
 pub(crate) fn recolor_journal_cached_blocks(s: &AppState) {
@@ -2033,8 +2033,9 @@ pub(crate) fn recolor_journal_cached_blocks(s: &AppState) {
         Some(p) => p.id,
         None => return,
     };
-    let (voice_id, _mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
-    let voice_id = voice_id.to_string();
+    // MUST match the voice the journal synth paths write under, or a cached
+    // paragraph reads back as uncached and loses its accent.
+    let voice_id = crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID.to_string();
     let accent = cached_block_accent(s).to_string();
     let conn = match crate::db::queries::open_db() {
         Ok(c) => c,
@@ -2586,8 +2587,9 @@ pub(crate) fn begin_current_synopsis_block(state_rc: &Rc<RefCell<AppState>>) {
 // ── Journal Q&A overlay TTS ────────────────────────────────────────────────
 //
 // The journal Q&A overlay (src/ui/journal_overlay.rs) is plain prose, exactly
-// like the synopsis overlay, so its TTS mirrors `play_synopsis_block`: the fixed
-// plain-prose voice, the Alice paywall fallback, and a per-paragraph MP3 cache.
+// like the synopsis overlay, so its TTS mirrors `play_synopsis_block`: the
+// shared `OVERLAY_NARRATOR_VOICE_ID`, the Alice paywall fallback, and a
+// per-paragraph MP3 cache.
 // The only differences are the cache key (the `journal_entries.id` + paragraph
 // index, not work/div) and the audio dir (`~/Music/journal/`). It lives in
 // gloss.rs alongside the synopsis path so both reuse the private `synth_via` and
@@ -2600,20 +2602,46 @@ pub(crate) fn begin_current_synopsis_block(state_rc: &Rc<RefCell<AppState>>) {
 fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
     let (entry_id, work_abbrev, text, voice_id, model_id, tokio_handle) = {
         let s = state_rc.borrow();
+        // Each bail below LOGS: a silent return here presents as "the key does
+        // nothing", which cost a full diagnosis session when the Markdown-block
+        // migration left every block's text empty and tripped the `text` guard.
         let entry_id = match s.journal.pages.get(s.journal.page_index) {
             Some(p) => p.id,
-            None => return,
+            None => {
+                crate::log_fmt!(
+                    "JOURNAL TTS: no entry at page_index={} (pages={})",
+                    s.journal.page_index,
+                    s.journal.pages.len()
+                );
+                return;
+            }
         };
         let text = match s.journal_overlay.current_block_text() {
             Some(t) if !t.trim().is_empty() => t,
-            _ => return,
+            other => {
+                crate::log_fmt!(
+                    "JOURNAL TTS: no block text at index={} (entry={}, {})",
+                    index,
+                    entry_id,
+                    if other.is_none() { "no blocks" } else { "empty" }
+                );
+                return;
+            }
         };
         let work_abbrev = match s.current_work.as_ref() {
             Some(w) => w.canonical_abbrev.clone(),
-            None => return,
+            None => {
+                crate::log_fmt!("JOURNAL TTS: no current_work (entry={})", entry_id);
+                return;
+            }
         };
-        // Journal Q&A is plain English prose -> the fixed plain-prose voice.
-        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        // Journal Q&A reads in the shared overlay narrator — the same single
+        // voice the gloss and synopsis overlays use (2026-07-30; was the
+        // plain-prose default, Benedick).
+        let (vid, mid) = (
+            crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID,
+            crate::elevenlabs::OP_MODEL_ID,
+        );
         (
             entry_id,
             work_abbrev,
@@ -2632,6 +2660,12 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
                 crate::db::queries::find_journal_audio(&conn, entry_id, index as i64, vid_try)
             {
                 if std::path::Path::new(&path).exists() {
+                    crate::log_fmt!(
+                        "JOURNAL TTS: cache hit entry {} para {} ({})",
+                        entry_id,
+                        index,
+                        path
+                    );
                     state_rc.borrow().tts.play_file(std::path::Path::new(&path));
                     return;
                 }
@@ -2742,7 +2776,10 @@ pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     stop_all_gloss_audio(state_rc);
     let index = match state_rc.borrow().journal_overlay.current_full_block_index() {
         Some(i) => i as i32,
-        None => return,
+        None => {
+            crate::log_fmt!("JOURNAL TTS: no full block index (no blocks)");
+            return;
+        }
     };
     play_journal_block(state_rc, index);
 }
@@ -2754,7 +2791,7 @@ pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
 /// explicitly). Mirrors `synth_all_synopsis_blocks`, keyed by `(entry_id, full
 /// paragraph index, voice)` — the SAME cache path/key as `play_journal_block`,
 /// so a Space-synth and a batch reuse the same MP3 files and DB rows. Journal
-/// Q&A is plain English prose, so the fixed plain-prose voice.
+/// Q&A reads in the shared overlay narrator.
 pub(crate) fn synth_all_journal_blocks(state_rc: &Rc<RefCell<AppState>>) {
     if state_rc.borrow().tts_batch_running.get() {
         return;
@@ -2781,7 +2818,12 @@ pub(crate) fn synth_all_journal_blocks(state_rc: &Rc<RefCell<AppState>>) {
         if blocks.is_empty() {
             return;
         }
-        let (vid, mid) = crate::elevenlabs::voice_for(crate::elevenlabs::Gender::Unknown, false);
+        // Same narrator as the cursor-Space path, so a batch and a single
+        // synth share one cache key.
+        let (vid, mid) = (
+            crate::elevenlabs::OVERLAY_NARRATOR_VOICE_ID,
+            crate::elevenlabs::OP_MODEL_ID,
+        );
         (entry_id, work_abbrev, blocks, vid.to_string(), mid.to_string(), s.tokio_handle.clone())
     };
 
