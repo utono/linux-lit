@@ -667,7 +667,23 @@ pub fn rebuild_translation_overlay(state: &std::rc::Rc<std::cell::RefCell<AppSta
         |id| s.translations.get(&id).cloned(),
     );
 
-    let (card_width, card_height) = overlay_card_size(&s);
+    // The translation overlay is the ONE two-column overlay, so it does not take
+    // the shared 1-column `overlay_card_size` width: that width is measured for
+    // a single text column, and halving it gave each column ~469px — enough for
+    // the ~63-char verse the LEFT column is sized around, but the modernized
+    // English on the right runs longer and was being cut mid-word ("comfo…",
+    // "Bol…"). Measured on screen: lines ended at a hard x≈1440 boundary, not at
+    // natural line ends, exactly matching the 469px `col_width`.
+    //
+    // 99% of `line_translations` are <= 64 chars (p99.9 is 128, and the single
+    // longest is 436 — not worth sizing for). At the MEASURED ~9.6px/char of the
+    // translation column that needs ~614px per column, which
+    // `TRANSLATION_CARD_MIN_W` supplies. Still clamped to the window, so a
+    // narrow window just gets the old behaviour.
+    let (shared_w, card_height) = overlay_card_size(&s);
+    let card_width = shared_w
+        .max(crate::ui::translation_overlay::TRANSLATION_CARD_MIN_W)
+        .min(s.window.width().max(1));
     let text_fg = s.theme.text_fg.clone();
     let dim_fg = s.theme.dim_fg.clone();
     let body_font_size = s.config.font_size as i32;
