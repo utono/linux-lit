@@ -1032,9 +1032,18 @@ When a half line clips at the bottom edge of a scrolled surface:
       list (new row count, new natural height) and is the state the user hit.
       Drive it as: open picker → Enter (Works level) → type a filter char →
       arrow to the bottom, and check BOTH edges.
-    - **STILL OPEN as of 2026-07-31.** The scroll-landing half is fixed; the
-      viewport-height half is NOT. Four approaches have been tried and reverted.
-      Read this before attempting a fifth.
+    - **FIXED 2026-07-31 by DELETING THE FOOTER, not by snapping anything.**
+      The footer below the list is what created the problem: with it, the card's
+      height minus the chrome was a non-multiple of the 45px row pitch, and that
+      remainder is the strip the partial row was drawn in. Remove it and the
+      `vexpand` list becomes the LAST child, running to the card's bottom edge —
+      there is no leftover strip, so no partial row can exist. **The diagnostic
+      that cracked it was the user pointing at a picker with NO bug**: the Q&A
+      picker (`journal_picker.rs`) uses the same `new_picker_list` and the same
+      45px pitch, and differs only in having no footer. Compare against a
+      working sibling BEFORE theorising about the broken one.
+      Four snapping attempts were tried first and all reverted; they are kept
+      below because each one is a real GTK fact worth not rediscovering.
     - **The two measurements every attempt got wrong:**
       - **Row PITCH is 45px; `row.height()` returns 29px.** `height()` is the
         row's inner allocation, not the row-to-row step (which includes CSS
@@ -1074,16 +1083,17 @@ When a half line clips at the bottom edge of a scrolled surface:
         (Attempt 3. The arithmetic then came out right — `pitch=45 card_h=888
         siblings=147 avail=741 → request 720` = 16 rows — and it STILL failed,
         on the minimum-height issue above.)
-    - **Where to start a fifth attempt:** the arithmetic is solved; the problem
-      is purely making GTK honour it. Either give the scrolled window a
-      `height_request` with NO expanding sibling anywhere in the card (so its
-      request is the only claim on the space), or drop the snap entirely and
-      make the CARD height a function of the row pitch, since
-      `library_picker::responsive_size` already sets it deterministically —
-      pick `card_h` so that `card_h - chrome` is an exact multiple of 45.
-    - Partially fixed in `picker_nav.rs::scroll_row_into_view` (landing snaps to
-      whole rows); `snap_list_viewport` as committed is the inert attempt-2
-      margin version and does nothing. (2026-07-31.)
+    - **Lesson: do not put a widget below a scrolling list in a fixed-height
+      card.** Whatever space the list cannot fill in whole rows becomes a strip
+      that renders a sliced row. Footers on card pickers were removed for this
+      reason (library, concordance-works, echo, echo-turns, settings); their
+      keybind hints live in the Ctrl+/ overlay, where the Q&A picker's already
+      did. If a footer is ever genuinely needed, the card height must be chosen
+      so `card_h - chrome` is an exact multiple of the row pitch.
+    - Fixed in `library_picker.rs` + `concordance_works_picker.rs` +
+      `echo_picker.rs` + `echo_turns_picker.rs` + `settings_overlay.rs` (footer
+      removed) and `picker_nav.rs::scroll_row_into_view` (landing snaps to whole
+      rows). (2026-07-31.)
 
 17. **A clip E2E (`overlay_clipping` / `line_clipping`) FAILS with the viewport
     rect never appearing (`TEST_OVERLAY_VIEWPORT_RECT never appeared …`) OR a

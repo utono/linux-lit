@@ -119,7 +119,6 @@ pub struct LibraryPicker {
     header_crumb: Label,
     search_entry: Entry,
     list_box: ListBox,
-    footer_label: Label,
     scrim: GtkBox,
     all_groups: Vec<AuthorGroup>,
     groups: Vec<AuthorGroup>,
@@ -176,18 +175,18 @@ impl LibraryPicker {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
-        // Footer: single label, hint text rebuilt on level change.
-        let footer_label = Label::builder()
-            .label("")
-            .halign(gtk4::Align::Start)
-            .hexpand(true)
-            .build();
-        footer_label.add_css_class("library-picker-footer");
-
+        // NO footer. The list is the LAST child, so the vexpanding scrolled
+        // window runs to the card's bottom edge and there is no leftover strip
+        // for a partial row to be drawn in. A footer below it left the card's
+        // height minus the chrome as a non-multiple of the 45px row pitch, and
+        // the remainder rendered as a permanently half-sliced bottom row — the
+        // bug four snapping attempts failed to fix (clip-prevention #16c). The
+        // Q&A picker never had a footer and never had the bug; this makes the
+        // two structurally identical. The binds the footer advertised are on
+        // the Ctrl+/ overlay.
         picker_box.append(&header_box);
         picker_box.append(&search_entry);
         picker_box.append(&scrolled);
-        picker_box.append(&footer_label);
 
         LibraryPicker {
             overlay,
@@ -196,7 +195,6 @@ impl LibraryPicker {
             header_crumb,
             search_entry,
             list_box,
-            footer_label,
             scrim,
             all_groups: Vec::new(),
             groups: Vec::new(),
@@ -216,7 +214,6 @@ impl LibraryPicker {
         self.mode = PickerMode::Library;
         self.level = PickerLevel::Authors;
         self.update_header();
-        self.update_footer();
         self.populate_list("");
     }
 
@@ -244,7 +241,6 @@ impl LibraryPicker {
         self.search_entry.set_text("");
         self.search_entry.grab_focus();
         self.update_header();
-        self.update_footer();
         self.populate_list("");
     }
 
@@ -322,7 +318,6 @@ impl LibraryPicker {
         self.search_entry.set_placeholder_text(Some(placeholder));
         self.search_entry.set_text("");
         self.update_header();
-        self.update_footer();
         self.populate_list("");
         self.search_entry.grab_focus();
     }
@@ -331,11 +326,6 @@ impl LibraryPicker {
         let (title, crumb) = header_text(&self.level, &self.groups, self.mode);
         self.header_title.set_text(&title);
         self.header_crumb.set_text(&crumb);
-    }
-
-    fn update_footer(&self) {
-        let text = footer_hints(&self.level).join(" · ");
-        self.footer_label.set_text(&text);
     }
 
     pub fn populate_list(&self, filter: &str) {
@@ -614,20 +604,6 @@ pub(crate) fn header_text(level: &PickerLevel, groups: &[AuthorGroup], mode: Pic
     }
 }
 
-/// Footer hint strings for the given picker level, in display order.
-/// Each entry is one segment; the renderer joins them with " · ".
-pub(crate) fn footer_hints(level: &PickerLevel) -> Vec<&'static str> {
-    match level {
-        PickerLevel::Authors => vec!["↑↓ MOVE", "↵ OPEN", "ESC CLOSE"],
-        PickerLevel::Works(_) => vec![
-            "↑↓ MOVE",
-            "↵ OPEN",
-            "BACKSPACE BACK",
-            "ESC CLOSE",
-        ],
-    }
-}
-
 /// Compute the picker box size request from the toplevel window's allocated
 /// dimensions. Width is 62% of the window clamped to [450, 1000]; height is
 /// 72% clamped to [440, 1075]. Returns (width, height) in pixels.
@@ -827,21 +803,6 @@ mod tests {
         let (title, crumb) = header_text(&level, &groups, PickerMode::Library);
         assert_eq!(title, "LIBRARY — NOBODY");
         assert_eq!(crumb, "0 WORKS");
-    }
-
-    // ── Task 4 tests ──────────────────────────────────────────────────────
-
-    #[test]
-    fn test_footer_hints_for_authors_level() {
-        let hints = footer_hints(&PickerLevel::Authors);
-        assert_eq!(hints, vec!["↑↓ MOVE", "↵ OPEN", "ESC CLOSE"]);
-    }
-
-    #[test]
-    fn test_footer_hints_for_works_level() {
-        let level = PickerLevel::Works("Shakespeare".into());
-        let hints = footer_hints(&level);
-        assert_eq!(hints, vec!["↑↓ MOVE", "↵ OPEN", "BACKSPACE BACK", "ESC CLOSE"]);
     }
 
     // ── Task 5 tests ──────────────────────────────────────────────────────
