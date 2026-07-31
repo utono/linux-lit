@@ -70,11 +70,10 @@ pub(crate) fn new_picker_list() -> (ListBox, ScrolledWindow) {
     // with fixed CSS padding — so trimming the remainder off the viewport keeps
     // every visible row whole.
     //
-    // Driven from the LIST's size-allocate (not the scrolled window's) because
-    // the row height is only known once rows exist and CSS has been applied.
-    // `set_max_content_height` + `propagate_natural_height` is the non-fighting
-    // way to shrink a `vexpand` child: it caps the height without a
-    // `height_request` that would fight the card's own allocation.
+    // The row height is only known once rows exist and CSS has been applied,
+    // so the snap runs on map and after each populate rather than at build
+    // time. See `snap_list_viewport` for why it pads the list instead of
+    // capping the scrolled window's height.
     {
         let sw = scrolled.clone();
         list_box.connect_map(move |lb| {
@@ -97,10 +96,22 @@ pub(crate) fn new_picker_list() -> (ListBox, ScrolledWindow) {
     (list_box, scrolled)
 }
 
-/// Cap `scrolled`'s content height to a whole multiple of `list_box`'s row
-/// height, so no row straddles the viewport's bottom edge. No-op until at least
-/// one row is allocated (row height unknown before that) or when the full list
-/// already fits. See the call site in `new_picker_list` for why this exists.
+/// Absorb the viewport's sub-row remainder into `list_box`'s bottom margin, so
+/// the scrollable content ends on a row boundary and no row is left straddling
+/// the viewport's bottom edge.
+///
+/// Why a MARGIN and not `set_max_content_height`: the scrolled window is
+/// `vexpand`, so the picker card stretches it to fill whatever is left after
+/// the header/entry/footer. `max_content_height` constrains only the NATURAL
+/// height REQUEST, not the final allocation, so the cap was silently
+/// overridden — the widget kept reporting its stretched height and the snap
+/// converged on reading back its own output (measured: row_h=29, avail=727,
+/// target=725, a permanent 2px overhang that sliced the bottom row).
+///
+/// Padding the list works WITH the allocation instead of against it: the
+/// viewport keeps its full height, but the scrollable content becomes
+/// `rows * row_h + remainder`, so the scroll range ends on a row boundary.
+/// No-op until a row exists (the row height is unknown before that).
 fn snap_list_viewport(list_box: &ListBox, scrolled: &ScrolledWindow) {
     let Some(first) = list_box.row_at_index(0) else {
         return;
@@ -113,17 +124,10 @@ fn snap_list_viewport(list_box: &ListBox, scrolled: &ScrolledWindow) {
     if avail <= 0 {
         return;
     }
-    let rows_total = list_box.observe_children().n_items() as i32;
-    let full_h = row_h * rows_total;
-    // Whole rows that fit; at least one, and never more than the list has.
-    let visible = (avail / row_h).max(1).min(rows_total.max(1));
-    let snapped = row_h * visible;
-    // Only ever SHRINK to the row grid. If everything already fits, leave the
-    // natural height alone so short lists don't grow a scrollbar.
-    let target = if full_h <= avail { full_h } else { snapped };
-    if scrolled.max_content_height() != target {
-        scrolled.set_max_content_height(target);
-        scrolled.set_propagate_natural_height(true);
+    // The slice of viewport that is not a whole row.
+    let remainder = avail % row_h;
+    if list_box.margin_bottom() != remainder {
+        list_box.set_margin_bottom(remainder);
     }
 }
 

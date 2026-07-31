@@ -1008,17 +1008,30 @@ When a half line clips at the bottom edge of a scrolled surface:
     - **The viewport height was not a multiple of the row height.** The card
       sizes the list to whatever is left after header/entry/footer, so the
       BOTTOM row was permanently half-drawn even with no scrolling at all.
-      Fix: `snap_list_viewport` caps `max_content_height` to `row_h * floor(avail
-      / row_h)` (with `propagate_natural_height`), driven from the list's
-      `connect_map` + `connect_selected_rows_changed` (GTK4 has no
-      `connect_size_allocate`; the row height is only known once rows exist and
-      CSS is applied, so the read is idle-deferred). Only ever SHRINKS — a short
-      list that already fits keeps its natural height and grows no scrollbar.
+      Fix: `snap_list_viewport` sets the LIST's `margin_bottom` to
+      `avail % row_h`, so the scrollable content ends on a row boundary. Driven
+      from the list's `connect_map` + `connect_selected_rows_changed` (GTK4 has
+      no `connect_size_allocate`; the row height is only known once rows exist
+      and CSS is applied, so the read is idle-deferred).
+      **`set_max_content_height` does NOT work here and was the first,
+      failed attempt** — the scrolled window is `vexpand`, so the card stretches
+      it and `max_content_height` constrains only the NATURAL height REQUEST,
+      not the final allocation. The cap was silently overridden, the widget kept
+      reporting its stretched height, and the snap converged on reading back its
+      own output: `row_h=29 avail=727 target=725`, a permanent 2px overhang that
+      still sliced the bottom row. Pad the content, don't try to shrink a
+      `vexpand` viewport.
     - Tell: distinguish from a text clip by looking at WHAT is cut — here a
       whole ROW (background, label, and count together) is bisected, not a
       glyph's ascender/descender. If the cut row changes as you arrow, it is
       the scroll-landing half; if it is always the bottom row, it is the
       viewport-height half.
+    - **Verify with the list FILTERED and scrolled, not just arrowed.** The
+      first fix attempt passed an arrow-through of the unfiltered Authors list
+      and still shipped the bug: typing in the filter entry repopulates the
+      list (new row count, new natural height) and is the state the user hit.
+      Drive it as: open picker → Enter (Works level) → type a filter char →
+      arrow to the bottom, and check BOTH edges.
     - Fixed in `picker_nav.rs::{scroll_row_into_view, snap_list_viewport}`,
       which every card picker shares via `new_picker_list`. (2026-07-31.)
 
