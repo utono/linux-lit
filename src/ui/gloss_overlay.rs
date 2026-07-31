@@ -1972,8 +1972,18 @@ impl GlossOverlay {
         // the user found the dimmed source too recessed) — the hang-indent alone
         // sets the source apart. Matches render_gloss_page.
         let (ranges, _nums) = populate_gloss_buffer(
-            &self.gloss_view, passage_doc, self.text_margins, bar_left, &[],
+            &self.gloss_view,
+            passage_doc,
+            self.text_margins,
+            bar_left,
+            &[],
             None,
+            // Whole passage in one render, so its own markup IS the doc.
+            crate::ui::gloss_render::ParaIndent::SourceEdge {
+                doc_has_speaker: crate::ui::gloss_render::markup_has_displayed_speaker(
+                    passage_doc,
+                ),
+            },
         );
         *self.bar_ranges.borrow_mut() = ranges;
         self.line_numbers.borrow_mut().clear();
@@ -2040,15 +2050,33 @@ impl GlossOverlay {
         // Fixed header: render the source turn into the non-scrolling view.
         // Reuse populate_verse_buffer (it builds the speaker/verse tags and
         // returns empty bar data for a source-only doc).
+        // The echoes view is a source turn + echo LIST, not a gloss
+        // explication, so it keeps the flush body indent.
         let _ = populate_verse_buffer(
-            &self.echo_header_view, source_doc, self.text_margins, bar_left, &[], None, dim_color);
+            &self.echo_header_view,
+            source_doc,
+            self.text_margins,
+            bar_left,
+            &[],
+            None,
+            dim_color,
+            crate::ui::gloss_render::ParaIndent::BodyIndent,
+        );
         self.echo_header_view.set_visible(true);
         self.echo_rule.set_visible(true);
 
         // Scrolling list: only the echoes. echo_lines/bar_ranges are now indexed
         // from the first echo (no source lines to offset past).
         let (ranges, nums, echo_lines) = populate_verse_buffer(
-            &self.gloss_view, echo_doc, self.text_margins, bar_left, &[], Some(selected), dim_color);
+            &self.gloss_view,
+            echo_doc,
+            self.text_margins,
+            bar_left,
+            &[],
+            Some(selected),
+            dim_color,
+            crate::ui::gloss_render::ParaIndent::BodyIndent,
+        );
         *self.bar_ranges.borrow_mut() = ranges;
         *self.line_numbers.borrow_mut() = nums;
         *self.echo_lines.borrow_mut() = echo_lines;
@@ -2622,15 +2650,16 @@ impl GlossOverlay {
         }
         let family = self.font_family.borrow().clone();
         let size = self.font_size.get();
-        // Measure each block at ITS OWN wrap width. A single mode-wide width is
-        // wrong in gloss mode because the two block kinds render at different
-        // indents: the quoted source verse hangs at `QUOTE_VERSE_INDENT` past
-        // the bar while the explication prose (the bulk of a gloss) sits at
-        // `QUOTE_BODY_INDENT`. Measuring explications at the verse's narrower
-        // width over-estimated their heights ~11% and pushed units that fit
-        // onto the next page (page underfill). Verse blocks keep the deep-indent
-        // width — their speaker/stage lines render shallower, so that direction
-        // still over-counts (safe; never clips). Synopsis prose sits at the
+        // Measure each block at ITS OWN wrap width. In GLOSS mode both kinds now
+        // share one indent: the explication tracks the source's left edge
+        // (`ParaIndent::SourceEdge`), so Source and Explication wrap at the same
+        // width — `QUOTE_VERSE_INDENT` when the doc has a speaker,
+        // `QUOTE_SPEAKER_INDENT` when it doesn't. (Before the shared edge the
+        // explication sat at `QUOTE_BODY_INDENT`, and measuring it at the
+        // verse's narrower width over-estimated heights ~11% and underfilled
+        // pages; that mismatch is gone now that the render agrees.) Verse blocks
+        // still over-count slightly — their speaker/stage lines render
+        // shallower — which is safe and never clips. Synopsis prose sits at the
         // body margin.
         let card_w = self.last_card_size.get().0;
         let left = self.gloss_view.left_margin();
@@ -2648,15 +2677,14 @@ impl GlossOverlay {
             .any(|m| crate::ui::gloss_render::markup_has_displayed_speaker(m));
         // bar_left == left in gloss mode; the right margin is `left`.
         let wrap_for = |kind: BlockKind| -> i32 {
-            let indent = match (self.paginated_mode.get(), kind) {
-                (PaginatedMode::Gloss, BlockKind::Source) if doc_has_speaker => {
+            let _ = kind;
+            let indent = match self.paginated_mode.get() {
+                // Source AND Explication share the source edge in gloss mode.
+                PaginatedMode::Gloss if doc_has_speaker => {
                     crate::ui::gloss_render::QUOTE_VERSE_INDENT
                 }
-                (PaginatedMode::Gloss, BlockKind::Source) => {
-                    crate::ui::gloss_render::QUOTE_SPEAKER_INDENT
-                }
-                (PaginatedMode::Gloss, _) => crate::ui::gloss_render::QUOTE_BODY_INDENT,
-                (PaginatedMode::Synopsis, _) => 0,
+                PaginatedMode::Gloss => crate::ui::gloss_render::QUOTE_SPEAKER_INDENT,
+                PaginatedMode::Synopsis => 0,
             };
             (card_w - 2 * left - indent).max(1)
         };
@@ -2907,6 +2935,17 @@ impl GlossOverlay {
             bar_left,
             &line_numbers,
             None,
+            // Doc-level (every block's markup), NOT this page's: a page holding
+            // only explication parses no <speaker> of its own and would drop to
+            // the shallow indent while its source sits deep on another page.
+            // Same value `repaginate` measures with.
+            crate::ui::gloss_render::ParaIndent::SourceEdge {
+                doc_has_speaker: self
+                    .gloss_block_markups
+                    .borrow()
+                    .iter()
+                    .any(|m| crate::ui::gloss_render::markup_has_displayed_speaker(m)),
+            },
         );
         *self.bar_ranges.borrow_mut() = ranges;
         // Glosses do not show verse line numbers (those belong only to the main
