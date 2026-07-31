@@ -33,16 +33,12 @@ impl EchoTurnsPicker {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
-        let footer_label = Label::builder()
-            .label("j/k navigate  ·  Enter select  ·  Esc cancel")
-            .halign(Align::Start)
-            .hexpand(true)
-            .build();
-        footer_label.add_css_class("library-picker-footer");
+        // NO footer: the list is the LAST child so it runs to the card's
+        // bottom edge, leaving no strip for a partial row (clip-prevention
+        // #16c). Binds live in the keybinds overlay.
 
         picker_box.append(&header_box);
         picker_box.append(&scrolled);
-        picker_box.append(&footer_label);
 
         picker_box.set_visible(false);
 

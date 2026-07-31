@@ -62,73 +62,7 @@ pub(crate) fn new_picker_list() -> (ListBox, ScrolledWindow) {
         .vexpand(true)
         .build();
 
-    // Clip the viewport to a WHOLE number of rows. The card sizes the list to
-    // whatever space is left over after the header/entry/footer, which is not a
-    // multiple of the row height, so the bottom row was permanently sliced
-    // through the middle (and `scroll_row_into_view` could only ever move which
-    // row got cut, not stop the cutting). Rows are uniform — single-line labels
-    // with fixed CSS padding — so trimming the remainder off the viewport keeps
-    // every visible row whole.
-    //
-    // The row height is only known once rows exist and CSS has been applied,
-    // so the snap runs on map and after each populate rather than at build
-    // time. See `snap_list_viewport` for why it pads the list instead of
-    // capping the scrolled window's height.
-    {
-        let sw = scrolled.clone();
-        list_box.connect_map(move |lb| {
-            snap_list_viewport(lb, &sw);
-        });
-        // GTK4 has no `connect_size_allocate`; watch the viewport's own height
-        // instead, which is what the snap depends on. Deferred to an idle so
-        // the read happens after this allocation pass settles (reading row
-        // height mid-allocate yields the pre-layout value).
-        // Re-snap after each populate/filter too: `connect_map` only covers the
-        // first show, and the row count (hence the natural height) changes as
-        // the user filters. Cheap — it early-returns unless the cap changes.
-        let sw2 = scrolled.clone();
-        list_box.connect_selected_rows_changed(move |lb| {
-            let (lb, sw) = (lb.clone(), sw2.clone());
-            glib::idle_add_local_once(move || snap_list_viewport(&lb, &sw));
-        });
-    }
-
     (list_box, scrolled)
-}
-
-/// Absorb the viewport's sub-row remainder into `list_box`'s bottom margin, so
-/// the scrollable content ends on a row boundary and no row is left straddling
-/// the viewport's bottom edge.
-///
-/// Why a MARGIN and not `set_max_content_height`: the scrolled window is
-/// `vexpand`, so the picker card stretches it to fill whatever is left after
-/// the header/entry/footer. `max_content_height` constrains only the NATURAL
-/// height REQUEST, not the final allocation, so the cap was silently
-/// overridden — the widget kept reporting its stretched height and the snap
-/// converged on reading back its own output (measured: row_h=29, avail=727,
-/// target=725, a permanent 2px overhang that sliced the bottom row).
-///
-/// Padding the list works WITH the allocation instead of against it: the
-/// viewport keeps its full height, but the scrollable content becomes
-/// `rows * row_h + remainder`, so the scroll range ends on a row boundary.
-/// No-op until a row exists (the row height is unknown before that).
-fn snap_list_viewport(list_box: &ListBox, scrolled: &ScrolledWindow) {
-    let Some(first) = list_box.row_at_index(0) else {
-        return;
-    };
-    let row_h = first.height();
-    if row_h <= 0 {
-        return;
-    }
-    let avail = scrolled.height();
-    if avail <= 0 {
-        return;
-    }
-    // The slice of viewport that is not a whole row.
-    let remainder = avail % row_h;
-    if list_box.margin_bottom() != remainder {
-        list_box.set_margin_bottom(remainder);
-    }
 }
 
 /// The vertical outer box for a top-anchored picker card: centered, anchored to

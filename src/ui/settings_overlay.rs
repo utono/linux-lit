@@ -47,11 +47,11 @@ impl SettingsOverlay {
             .halign(gtk4::Align::Center)
             .valign(gtk4::Align::Center)
             .width_request(750)
-            // Fixed height so the vexpand scroll fills the space between header
-            // and footer; without it the centered box collapses to the scroll's
-            // tiny min height and only a couple of rows show (footer overlaps).
-            // Sized to fit all NUM_SETTINGS rows + header + footer; grows with
-            // the row count (≈ +50px per added row).
+            // Fixed height so the vexpand scroll fills the space below the
+            // header; without it the centered box collapses to the scroll's
+            // tiny min height and only a couple of rows show. Sized to fit all
+            // NUM_SETTINGS rows + header; grows with the row count
+            // (≈ +50px per added row).
             .height_request(775)
             .build();
         picker_box.add_css_class("library-picker");
@@ -80,12 +80,9 @@ impl SettingsOverlay {
 
         let (list_box, scrolled) = crate::ui::picker_nav::new_picker_list();
 
-        let footer = Label::builder()
-            .label("↑↓ MOVE · ←→ ADJUST · r RESET · ↵ CONFIRM · ESC REVERT")
-            .halign(gtk4::Align::Start)
-            .hexpand(true)
-            .build();
-        footer.add_css_class("library-picker-footer");
+        // NO footer: the list is the LAST child so it runs to the card's
+        // bottom edge, leaving no strip for a partial row (clip-prevention
+        // #16c). Binds live in the keybinds overlay.
 
         let names = [
             "Theme",
@@ -131,7 +128,6 @@ impl SettingsOverlay {
 
         picker_box.append(&header_box);
         picker_box.append(&scrolled);
-        picker_box.append(&footer);
 
         let theme_index = themes
             .iter()
