@@ -77,7 +77,9 @@ pub fn open_vocab_popup_scoped(state: &mut AppState, scope: VocabScope, anchor: 
         VocabScope::CursorLine => {
             let current_line = state.current_line;
             crate::logging::log(&format!(
-                "VOCAB POPUP: current_line={}", current_line
+                "VOCAB POPUP: current_line={} vocab_matches={}",
+                current_line,
+                state.vocab_matches.len()
             ));
             let mut seen = std::collections::HashSet::new();
             state

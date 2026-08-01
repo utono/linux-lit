@@ -409,11 +409,14 @@ impl NiriHarness {
         fs::create_dir_all("target/ui")?;
         let png = PathBuf::from(format!("target/ui/{name}.png"));
         self.screenshot(&png)?;
+        // `--app` is REQUIRED by the script; see the cage harness's `capture`.
         let _ = self
             .client_cmd("python3")
             .arg("scripts/annotate_ui.py")
             .arg("--shot")
             .arg(&png)
+            .arg("--app")
+            .arg(super::ATSPI_APP_NAME)
             .status();
         Ok(png)
     }

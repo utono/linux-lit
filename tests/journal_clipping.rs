@@ -85,14 +85,19 @@ fn journal_overlay_ask_card_never_clips() {
     }
     h.settle(Duration::from_millis(500));
 
-    // Press Ctrl+r to open the ask card — the reported-bug path (the opener
-    // moved from `A` to `r`, then to Ctrl+r when plain `r` became the vocab
-    // popup tap; `A` is TTS now). Today the ask card overlaps the
-    // (unchanged-height) scroll viewport and occludes the lower rows; the
-    // structural fix must make the viewport shrink so no row sits behind the
-    // card. The overlay emits TEST_JOURNAL_ASK_VIEWPORT_RECT from
-    // open_ask_card so the harness reads the with-ask-card-open rect.
-    h.chord(&["ctrl"], "r").expect("Ctrl+r -> open ask card");
+    // Press Ctrl+a to open the ask card — the reported-bug path. The opener has
+    // moved repeatedly: `A` -> `r` -> Ctrl+r (when plain `r` became the vocab
+    // popup tap) -> Ctrl+a, which is where it sits now, so that every ask
+    // surface shares one key (reader visual mode, gloss overlay, and here).
+    // See the "a" arm in src/input/keymap.rs; Ctrl+r is AddVocabWord today, so
+    // the old binding silently did something else and the rect never appeared.
+    //
+    // Today the ask card overlaps the (unchanged-height) scroll viewport and
+    // occludes the lower rows; the structural fix must make the viewport shrink
+    // so no row sits behind the card. The overlay emits
+    // TEST_JOURNAL_ASK_VIEWPORT_RECT from open_ask_card so the harness reads
+    // the with-ask-card-open rect.
+    h.chord(&["ctrl"], "a").expect("Ctrl+a -> open ask card");
 
     let ask_region = h
         .wait_for_journal_ask_viewport_rect(Duration::from_secs(8))

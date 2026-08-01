@@ -90,6 +90,12 @@ fn vocab_popup_2col_geometry_and_escape() {
             ("LIT_DEV", "1"),
             ("LIT_HEADLESS_TEST", "1"),
             ("LIT_START_WORK", "Cym"),
+            // Pin the cursor too, not just the work. Without this the reader
+            // resumes its SAVED line (observed at 510), which is past the last
+            // vocab match in Cym -- the matches occupy lines 104..444 -- so the
+            // search stepped forward, away from every hit, and the test failed
+            // with "no line in the first 40". 104 is Cym's first vocab line.
+            ("LIT_START_POS", "104"),
         ],
     )
     .expect("launch linux-lit in cage");
@@ -104,10 +110,17 @@ fn vocab_popup_2col_geometry_and_escape() {
         .expect("app reported its reading-viewport rect (two-column card settled?)");
     h.settle(Duration::from_millis(400));
 
-    // Advance into Act 1 so we're past front matter and onto dialogue-dense
-    // lines with vocab words. `3` is next-chapter in the RPD keymap.
-    h.key("3", 250).expect("3 -> next chapter");
-    h.settle(Duration::from_millis(400));
+    // Walk FORWARD from the top rather than jumping a chapter.
+    //
+    // `3` (next-chapter) used to land on dialogue with vocab words; it now
+    // lands on line 510 of Cym, past the last vocab match in the work (the
+    // matches occupy lines 104..444, logged as `distinct_lines`). Every
+    // subsequent `j` steps further away, so the search could never hit and the
+    // test failed with "no line in the first 40". Starting at the top and
+    // stepping forward walks INTO the vocab-dense region instead of away
+    // from it, which does not depend on where a chapter boundary happens to
+    // fall.
+    h.settle(Duration::from_millis(200));
 
     // Find a line whose vocab words open the 2-col float. Reset the log before
     // each attempt so we read THIS attempt's outcome, then drive `rr`.

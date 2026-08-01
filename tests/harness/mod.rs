@@ -32,6 +32,15 @@ pub mod niri;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self};
+
+/// Accessible (AT-SPI) application name, for `scripts/annotate_ui.py --app`.
+///
+/// This is the name the app appears under on the a11y bus — GTK reports the
+/// prgname, i.e. the binary name, NOT the `application_id`
+/// (`com.utono.linux-lit`). Annotation is best-effort: if the name is wrong or
+/// the bus is unavailable the script skips with exit 0 and the raw PNG is still
+/// captured, so a mismatch here degrades quietly rather than failing a test.
+pub(crate) const ATSPI_APP_NAME: &str = "linux-lit";
 use std::os::unix::process::CommandExt; // process_group
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -186,11 +195,17 @@ impl Harness {
         fs::create_dir_all("target/ui")?;
         let png = PathBuf::from(format!("target/ui/{name}.png"));
         self.screenshot(&png)?;
+        // `--app` is REQUIRED by the script; omitting it made every call exit
+        // with a usage error, so the annotation silently never ran (the tests
+        // still passed, because this is best-effort). The value is the
+        // accessible name on the a11y bus, which for a GTK app is its prgname.
         let _ = self
             .client_cmd("python3")
             .arg("scripts/annotate_ui.py")
             .arg("--shot")
             .arg(&png)
+            .arg("--app")
+            .arg(ATSPI_APP_NAME)
             .status(); // best-effort; review hook still has the raw PNG
         Ok(png)
     }
