@@ -277,6 +277,37 @@ Use the bundled `run-fuzz.sh` — it builds, makes a private DB copy, launches a
 isolated cage with all the env overrides, kills its own cage by PID, and prints a
 failure summary. Always go through `e2e-env.sh`.
 
+**Height warning — `run-fuzz.sh` does NOT run at production geometry.** It has
+no resize, so it always runs at the 1280x720 default: `text_view.height = 648`
+against production's 1096-1098. Pagination keys on that height, so this is a
+DIFFERENT PAGE GRID, not a near-miss — `R2-Arkangel` paginates to 101 pages at
+648px vs 62 at ~1130px, leaving whole regions (including the end-of-work pages)
+unreachable. A green run here is not evidence about the geometry the user reads
+at. For anything height-sensitive use the niri runner below.
+
+**`run-fuzz-niri.sh` — same fuzz under the REAL window manager**, resized to
+1920x1236 and fullscreened, reporting the achieved `text_view.height` in its
+summary. niri is what the user runs; its usable height (~1132) is much closer to
+production than cage at the same output size (1164), because a tiling WM
+reserves what a kiosk compositor does not. Same flags, plus `--size WxH`.
+
+```bash
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-niri.sh \
+  --start-work R2-Arkangel --secs 330
+```
+
+niri has no headless backend (Smithay, not wlroots), so it runs nested:
+`cage → niri → linux-lit`. Gotchas the script already handles, listed so a
+hand-rolled variant doesn't rediscover them: the output size comes from the
+OUTER cage window (niri's own `mode` is inert); the niri IPC socket path must
+stay short for `SUN_LEN`; and `fullscreen-window` is a TOGGLE with no queryable
+state, so the script verifies fullscreen by the RESULTING text_view height
+rather than by asking. See `tests/harness/niri.rs` for the same notes in Rust.
+
+This runner found an open last-page `PageBackward` overlap (seed 72,
+`R2-Arkangel`, step 29) that cage structurally could not reach — see FAILURE
+MODE 0 in `docs/troubleshooting/page-turning-mechanics.md`.
+
 **Full sweep** (run this for a real check — the whole 1400-step coverage prelude
 + random body; needs ~10 min, so size the window so it isn't cut short):
 
