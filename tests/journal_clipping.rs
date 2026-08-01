@@ -57,6 +57,15 @@ fn journal_overlay_ask_card_never_clips() {
     .expect("launch linux-lit in cage");
 
     // Wait for the main card to be ready (viewport rect is emitted at reveal).
+    // The ask card opens as a fixed-width RIGHT-HAND panel beside the journal
+    // card (`enable_float`), so the two together need real width. At cage's
+    // 1280x720 default the 1050 card plus its 680 reservation cannot both fit,
+    // GTK keeps the card's width request and overflows it off-screen (measured
+    // container_w=1050 margin_end=680 at x=-225), and the reported viewport
+    // rect then straddles both panels. Every other overlay test that opens a
+    // float sizes the output first; this one did not.
+    let _ = h.set_output_size(1920, 1200);
+
     let _ = h
         .wait_for_viewport_rect(Duration::from_secs(8))
         .expect("app reported its reading-viewport rect");

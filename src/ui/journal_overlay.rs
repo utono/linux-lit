@@ -2013,14 +2013,48 @@ impl JournalOverlay {
         // TEST_JOURNAL_ASK_VIEWPORT_RECT for the ask-open assertion.
         if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
             let sc = self.scrolled.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) {
+            // Emit once the rect has SETTLED, not on the first idle.
+            //
+            // A single `idle_add_local_once` fired before the float
+            // reservation (`enable_float`'s `reserve`, which sets the
+            // container's margin_end and shifts the ask panel) had been
+            // allocated, so the rect was the card's PRE-ask position -- byte
+            // for byte the same as TEST_JOURNAL_VIEWPORT_RECT (measured:
+            // `435 93 1050 1018` for both, while the settled scroll was really
+            // at x=95). The clipping check then ran against a region straddling
+            // the journal card and the ask panel, found one full-height "row"
+            // of mixed ink, and reported a clip that was not there.
+            //
+            // Poll until two consecutive samples agree, then emit. Bounded so a
+            // never-settling layout still emits rather than hanging the test.
+            let mut last: Option<(i32, i32, i32, i32)> = None;
+            let mut ticks = 0;
+            glib::timeout_add_local(std::time::Duration::from_millis(60), move || {
+                let Some(r) = sc.root().and_then(|root| sc.compute_bounds(&root)) else {
+                    // Never resolved a root/bounds: say so rather than spinning
+                    // silently until the test's own wait times out.
+                    ticks += 1;
+                    if ticks >= 25 {
+                        crate::logging::log(
+                            "TEST_JOURNAL_ASK_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
+                        );
+                        return glib::ControlFlow::Break;
+                    }
+                    return glib::ControlFlow::Continue;
+                };
+                let cur = (
+                    r.x().round() as i32,
+                    r.y().round() as i32,
+                    r.width().round() as i32,
+                    r.height().round() as i32,
+                );
+                ticks += 1;
+                if last == Some(cur) || ticks >= 25 {
                     crate::logging::log_viewport_rect("TEST_JOURNAL_ASK_VIEWPORT_RECT", &r);
-                } else {
-                    crate::logging::log(
-                        "TEST_JOURNAL_ASK_VIEWPORT_RECT unavailable (root/compute_bounds returned None)",
-                    );
+                    return glib::ControlFlow::Break;
                 }
+                last = Some(cur);
+                glib::ControlFlow::Continue
             });
         }
     }
