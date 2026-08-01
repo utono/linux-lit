@@ -570,10 +570,25 @@ fn run_step(s: &mut AppState) {
     // earlier page tiles into it exactly, so a small seam (the pull distance) is
     // unavoidable and benign. (`y` still lands on a real page; the few lines are
     // the lead-in that the final spread continues.)
+    // AUTHORITATIVE FIRST: in table mode the final spread IS the table's last
+    // row, so ask the table rather than re-deriving the answer from live
+    // geometry. Re-inferring it was a real false positive (2026-08-01): on
+    // R2-Arkangel at 1132px the anchor `pre_top=3665` is table row 62/62, but
+    // `column_split(3665).next_page_top=3735` is < line_count with dialogue
+    // beyond it, so the live check said "not final", the exemption was skipped,
+    // and the deliberate forward-pull seam (page_table.rs: the anchor "is
+    // ALLOWED to overlap the chain's last natural page") was reported as an
+    // OVERLAP failure. The stored table shows exactly ONE overlapping pair —
+    // the 61→62 boundary — at both 1132px and production's 1096px, i.e. the
+    // documented seam and nothing else.
     let pre_is_final = {
-        let cs_pre = crate::input::viewport::column_split(s, pre_top);
-        cs_pre.next_page_top >= line_count
-            || !(cs_pre.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i, false, no_stage_lookup()))
+        if let Some(table) = crate::input::page_table::active_page_table(s) {
+            table.last().map(|sp| sp.left_start) == Some(pre_top)
+        } else {
+            let cs_pre = crate::input::viewport::column_split(s, pre_top);
+            cs_pre.next_page_top >= line_count
+                || !(cs_pre.next_page_top..line_count).any(|i| is_dialogue_line(&s.buffer, i, false, no_stage_lookup()))
+        }
     };
     // Two-column only; skip the no-op, the first-spread guard (pre_top==0), and
     // the forward-pulled final spread.
@@ -584,6 +599,14 @@ fn run_step(s: &mut AppState) {
         && !pre_is_final
         && line_count > 0
     {
+        // NOTE (2026-08-01): this still reads the LIVE engine while navigation
+        // may be in TABLE mode — the same mismatch that produced the
+        // `pre_is_final` false positive above. `effective_column_split` is the
+        // table-aware form and is the likely correct source here (and at the `x`
+        // OVERLAP check below). Left as-is deliberately: no seed currently
+        // trips it, and switching the boundary source changes what BOTH the
+        // overlap and gap arms compare, so it wants its own repro + sweep
+        // rather than a drive-by change inside this fix.
         let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;
         if fwd > pre_top {
             // Overlap is only a bug if the doubled lines contain DIALOGUE.
