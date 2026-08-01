@@ -254,6 +254,25 @@ reader inside a throwaway `cage` compositor and screenshotting with `grim`.
 acceptance criterion.** Fall back to asking the user only when a launch
 genuinely fails after a retry (`/tmp/cage.log` dead, or repeated empty PNGs).
 
+**Run cage-backed test binaries ONE AT A TIME, single-threaded, with a short
+pause between them.** They contend over the compositor stack, and the contention
+is not merely a parallelism problem: `--test-threads=1` is necessary but not
+sufficient, because separate `cargo test --test <name>` invocations run back to
+back still collide. Observed 2026-08-01: `smoke` failed with "screenshot 4322
+bytes — reader likely did not render (blank output)" immediately after another
+suite, then passed unchanged after `sleep 3`. Chasing that as a real failure
+wastes a debugging cycle, so:
+
+```bash
+for t in niri_smoke overlay_clipping journal_clipping; do
+  cargo test --test $t -- --ignored --test-threads=1; sleep 3
+done
+```
+
+Corollary: a cage failure seen in a batch run is not evidence until it
+reproduces in isolation. Re-run the single binary before believing it — and
+before believing it is YOURS, re-run it against a stash of your changes.
+
 ```bash
 cd ~/utono/linux-lit && cargo build
 LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
