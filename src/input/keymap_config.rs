@@ -509,7 +509,11 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("BackSpace"), Action::DeleteTimestampTap),
         (KeyCombo::plain("p"), Action::NudgeStartBackward),
         (KeyCombo::plain("P"), Action::NudgeStartForward),
-        (KeyCombo::plain("U"), Action::UndoTimestamp),
+        // Moved off plain `U` (2026-08-01) onto the `b` cap, which already
+        // owns the timestamp write family: plain `b` sets the start time and
+        // Alt+b the end time, so Ctrl+b undoes them. Shift+u and Ctrl+u are
+        // now unbound (Ctrl+u had duplicated Ctrl+\ = lib picker).
+        (KeyCombo::ctrl("b"), Action::UndoTimestamp),
     ]
 }
 
@@ -521,9 +525,9 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
-        // Ctrl+u DUPLICATES Ctrl+\ (2026-07-26), pairing with plain `u` = `\`
-        // above so the whole `\` cap has a home-row twin.
-        (KeyCombo::ctrl("u"), Action::OpenLibraryPicker),
+        // Ctrl+u was a duplicate of Ctrl+\ (2026-07-26); dropped 2026-08-01 so
+        // the chord could take UndoTimestamp (see timestamp_bindings). Plain
+        // `u` still mirrors plain `\` (CycleSegmentOverlays).
         // Both vocab-drill entries live on the `=` cap: Ctrl+= forward,
         // Ctrl+Shift+= backward (InputMode::VocabLoop); when the mode can't
         // start the reason is toasted — no jump fallback.
