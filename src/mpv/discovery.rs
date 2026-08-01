@@ -244,6 +244,10 @@ pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
 /// instead of assuming it has mapped yet (spawn returns long before the Wayland
 /// surface exists).
 ///
+/// Expelling is then followed by `maximize-column`, because the expel restores
+/// the column but not the height — see the comment at that call for the
+/// measurements and for why `set-window-height` cannot do it.
+///
 /// No-ops off niri: `NIRI_SOCKET` is set only inside a niri session, so under
 /// dwl-mlj this returns immediately and the tag-10 rule in config.h keeps
 /// handling placement as before.
@@ -282,6 +286,29 @@ fn niri_expel_mpv_to_own_column() {
             let expelled = std::process::Command::new("niri")
                 .args(["msg", "action", "expel-window-from-column"])
                 .status();
+            // Expelling restores the COLUMN but not the HEIGHT. When piri
+            // swallows MPV into the launching terminal's column (which it
+            // does, because `crll` runs the reader from kitty and MPV is a
+            // process-tree descendant), the window is sized to a share of that
+            // column and the `default-window-height { proportion 1.0; }` rule
+            // in config.kdl -- applied once at map time -- is already spent.
+            // Measured in a nested cage on a 1272x688 output: swallowed MPV
+            // maps at 636x362 and stays 636x362 after the expel, while an MPV
+            // that was never swallowed gets 1280x723.
+            //
+            // set-window-height cannot recover it: `100%`, `688`, `+100` are
+            // all ACCEPTED and all no-ops, because MPV requests a small
+            // surface and niri honors that request for a window alone in its
+            // column. maximize-column is the action that overrides it --
+            // verified to take the swallowed-then-expelled window from
+            // 636x362 to 1272x719, and to stick across focus changes.
+            //
+            // This is also what the user wants independently: MPV as a
+            // full-width column. It does not cover the reader, which is
+            // fullscreen on its own column.
+            let maximized = std::process::Command::new("niri")
+                .args(["msg", "action", "maximize-column"])
+                .status();
             if let Some(reader) = reader_id {
                 let _ = std::process::Command::new("niri")
                     .args([
@@ -294,8 +321,8 @@ fn niri_expel_mpv_to_own_column() {
                     .status();
             }
             crate::logging::log(&format!(
-                "MPV: niri expel id={} -> {:?}, focus restored to reader={:?}",
-                id, expelled, reader_id
+                "MPV: niri expel id={} -> {:?}, maximize -> {:?}, focus restored to reader={:?}",
+                id, expelled, maximized, reader_id
             ));
             return;
         }
