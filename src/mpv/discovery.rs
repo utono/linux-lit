@@ -306,6 +306,20 @@ fn niri_expel_mpv_to_own_column() {
             // This is also what the user wants independently: MPV as a
             // full-width column. It does not cover the reader, which is
             // fullscreen on its own column.
+            //
+            // CRITICAL: maximize-column takes NO --id (unlike focus-window and
+            // set-window-height), so it acts on whatever column is focused --
+            // and `expel-window-from-column` does NOT leave the expelled window
+            // focused. Measured: after expelling MPV, focus lands back on the
+            // parent kitty, so maximizing there hits the TERMINAL's column and
+            // exits 0 while MPV keeps its swallowed size. That is exactly the
+            // bug this looked fixed for and was not: the log said
+            // `maximize -> Ok(ExitStatus(0))` while MPV stayed 960x544.
+            // So re-focus MPV explicitly here rather than assuming the expel
+            // left it focused.
+            let _ = std::process::Command::new("niri")
+                .args(["msg", "action", "focus-window", "--id", &id.to_string()])
+                .status();
             let maximized = std::process::Command::new("niri")
                 .args(["msg", "action", "maximize-column"])
                 .status();
