@@ -1356,6 +1356,9 @@ pub fn build_window(
         .title("linux-lit")
         .default_width(1000)
         .default_height(800)
+        // No title bar: the reader draws its own header row (abbrev + act/scene)
+        // inside the card, so a compositor/GTK frame is pure lost vertical space.
+        .decorated(false)
         .build();
     window.connect_show(|_| crate::logging::log("STARTUP: window connect_show fired"));
     window.connect_map(|_| crate::logging::log("STARTUP: window connect_map fired"));
