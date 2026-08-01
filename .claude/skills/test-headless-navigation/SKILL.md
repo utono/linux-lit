@@ -304,9 +304,12 @@ stay short for `SUN_LEN`; and `fullscreen-window` is a TOGGLE with no queryable
 state, so the script verifies fullscreen by the RESULTING text_view height
 rather than by asking. See `tests/harness/niri.rs` for the same notes in Rust.
 
-This runner found an open last-page `PageBackward` overlap (seed 72,
-`R2-Arkangel`, step 29) that cage structurally could not reach — see FAILURE
-MODE 0 in `docs/troubleshooting/page-turning-mechanics.md`.
+This runner immediately found a last-page `PageBackward` "overlap" (seed 72,
+`R2-Arkangel`, step 29) that cage structurally could not reach. It turned out
+to be a FALSE POSITIVE in the assertion, not a pagination bug: the final-spread
+exemption re-derived "is this the final page" from live geometry while
+navigation was in table mode. Fixed 2026-08-01 — see FAILURE MODE 0 in
+`docs/troubleshooting/page-turning-mechanics.md`.
 
 **Full sweep** (run this for a real check — the whole 1400-step coverage prelude
 + random body; needs ~10 min, so size the window so it isn't cut short):

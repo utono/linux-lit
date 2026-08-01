@@ -221,8 +221,8 @@ usable height (~1132) lands far closer to production than cage at the same
 output size (1164) — the kiosk compositor does not reserve what a tiling WM
 does.
 
-**The bug this surfaced, still OPEN:** seed 72, `R2-Arkangel`, step 29 —
-a last-page `PageBackward` shows 70 lines twice.
+**What it surfaced, and the real defect (fixed 2026-08-01):** seed 72,
+`R2-Arkangel`, step 29 reported a last-page `PageBackward` overlap:
 
 ```
 PAGES: page 61/62 top=3661
@@ -231,20 +231,37 @@ NAV_TEST: FAIL step=29 PageBackward y OVERLAP: back-page top=3661 runs to
   next_page_top=3735 PAST old top=3665 (70 lines shown twice)
 ```
 
-It is **height-dependent, not compositor-dependent**: the identical seeded step
-passes under cage at 1164px (`top=3662->3649`, no overlap) and fails under niri
-at 1132px. Reproduce with:
+**This was a FALSE POSITIVE — the production overlap is deliberate.** The
+final spread is forward-PULLED by `last_page_top` so the work's short tail
+fills both columns, and `page_table.rs` says so explicitly: the anchor "is
+ALLOWED to overlap the chain's last natural page — paging backward (`y`) from
+the anchor legitimately does not tile with it." The stored table confirms
+exactly ONE overlapping pair, the 61→62 boundary, at BOTH 1132px and
+production's 1096px; every other page tiles cleanly. Nothing to fix in
+pagination.
+
+**Root cause — an authoritative-metadata violation in the ASSERTION.**
+`nav_test.rs`'s `pre_is_final` exemption re-derived "is this the final page"
+from the LIVE `column_split` engine while navigation was in TABLE mode. At
+1132px the anchor `pre_top=3665` is table row 62/62, but
+`column_split(3665).next_page_top=3735` is below `line_count` with dialogue
+past it, so the live check answered "not final", the exemption was skipped,
+and the documented seam was flagged. Fixed by reading the table's last row
+when a table is active (live walk retained as the fallback).
+
+This is the same trap the authoritative-boundary principle at the top of this
+file warns about, in TEST code: **a fuzz FAIL at a page/scene edge usually
+means the assertion re-inferred a fact the table already encodes.** Suspect
+the assertion before production.
+
+Verified both directions: seed 72 now runs 224 steps / 0 failures, and a
+negative control that disables the exemption reproduces the identical FAIL —
+so the detector still catches genuine overlaps.
 
 ```bash
 ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-niri.sh \
   --start-work R2-Arkangel --seed 72 --secs 90
 ```
-
-Root cause not yet investigated. The suspicion to start from is the last-page
-backward step: near the end of a work the backward target is computed from a
-full-page walk that the final, SHORT page cannot satisfy, so it lands above
-where it should and overlaps the page it came from. Confirm against
-`column_split(...).next_page_top` before changing anything.
 
 ### FAILURE MODE 1 — `q` dead on an overflowing prose page (fixed 2026-07-27)
 
