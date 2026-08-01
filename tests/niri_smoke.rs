@@ -149,6 +149,91 @@ fn app_requests_fullscreen_itself() {
     );
 }
 
+/// The window must be able to SHRINK to whatever width the compositor gives it.
+///
+/// Regression guard for the fullscreen-collapse bug found on 2026-08-01: the
+/// reader opened 1585x1200 on a 1920x1200 output, leaving a strip of wallpaper
+/// down the right-hand side. `app_requests_fullscreen_itself` above was green
+/// throughout — it only proves the *request* is made at startup (145ms in the
+/// log), never that the resulting surface actually ends up output-sized.
+///
+/// The cause was a hard GTK minimum: `content_hbox.set_width_request(
+/// config.column_width)` in `build_window` (src/app/mod.rs), plus
+/// `target_card_width`'s `.max(cw_cfg)` floor (src/app/layout.rs). A child's
+/// `width_request` propagates up as the WINDOW's minimum size, which GTK then
+/// advertises to the compositor. A window whose minimum exceeds the space it is
+/// given cannot honour fullscreen, and no amount of asking will fix it.
+///
+/// **Deliberately a GEOMETRY assertion, and note this contradicts the guidance
+/// on the two tests above** — for this bug specifically, geometry is the only
+/// oracle that works, because the failure IS a size:
+///   - A pixel check is useless: 1585 of 1920 columns still paints a perfectly
+///     normal-looking cream card, and `window_is_fullscreen` probes row 0 at the
+///     horizontal CENTRE, which is cream in both the healthy and the broken
+///     case. It reports `true` while a 335px strip of wallpaper sits off to the
+///     right.
+///   - A fullscreen-flag check is useless for the reason given above: niri 26.04
+///     reports no such flag.
+///
+/// The probe is to shrink the column far below the suspected floor and see
+/// whether the window follows. A healthy window tracks its tile; a
+/// minimum-pinned one refuses and sits at its floor. Verified by hand against
+/// the live session before writing this: `set-column-width 33%` on a 1920 output
+/// (asking for 640px) left the window at exactly 1585.
+#[test]
+#[ignore = "needs niri + cage; run with --ignored"]
+fn window_can_shrink_below_its_card_width() {
+    let h = start();
+    h.set_output_size(1920, 1236).expect("resize outer output");
+    let _ = h.wait_for_viewport_rect(Duration::from_secs(12));
+
+    // Fullscreen pins the window to the output, which would mask a minimum-size
+    // floor below the output width. Tiled, the column governs the width.
+    h.unfullscreen_window().expect("leave fullscreen");
+    h.settle(Duration::from_millis(800));
+
+    // 33% of 1920 = 640px, far below the ~1585 floor the bug produced and below
+    // the default 1050 `column_width`. Chosen to be unambiguous: no plausible
+    // rounding, gap, or chrome allowance explains a window this much too wide.
+    h.niri_msg(&["action", "set-column-width", "33%"])
+        .expect("set column width to 33%");
+    h.settle(Duration::from_millis(900));
+
+    let (_tile, win) = h
+        .focused_tile_and_window_size()
+        .expect("query tile/window size");
+    let (out_w, _out_h) = h.output_size().expect("query output size");
+
+    // Compare the window against the OUTPUT, never against its own tile.
+    //
+    // niri SHRINKS THE TILE TO FIT the window's advertised minimum: on the
+    // broken build the probe reads `tile=(1585,1204) win=(1585,1204)` on a 1912
+    // output, so `win <= tile` holds trivially and a tile-relative assertion is
+    // green on exactly the bug it is meant to catch (confirmed by running it
+    // that way first). The tile conforms to the window, not the reverse.
+    //
+    // The output does not conform to anything, which is what makes it a valid
+    // oracle. After asking for a 33% column the window should be ~1/3 of the
+    // output; anything near full width means it never shrank at all.
+    let ceiling = out_w / 2;
+    assert!(
+        win.0 <= ceiling,
+        "asked niri for a 33% column on a {out_w}px output (~{}px), but the \
+         window is {}x{} — it did not shrink past ~{}px. A child \
+         `width_request` (content_hbox in build_window, src/app/mod.rs:1765, \
+         and target_card_width's `.max(cw_cfg)` floor in src/app/layout.rs) is \
+         propagating up as the window's MINIMUM width, and niri shrinks the \
+         TILE to match it rather than the other way round. That same floor is \
+         why the reader opens ~1585 wide on a 1920 output instead of filling \
+         it: a window whose minimum exceeds the output cannot honour \
+         fullscreen, no matter that `window.fullscreen()` ran at startup.",
+        out_w / 3,
+        win.0,
+        win.1,
+        ceiling
+    );
+}
+
 /// The app builds its window with `.decorated(false)`, so no titlebar should be
 /// drawn. cage cannot test this at all — it force-fullscreens its single client,
 /// and a fullscreen window has no decorations by definition.

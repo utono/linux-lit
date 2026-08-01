@@ -277,19 +277,48 @@ Use the bundled `run-fuzz.sh` — it builds, makes a private DB copy, launches a
 isolated cage with all the env overrides, kills its own cage by PID, and prints a
 failure summary. Always go through `e2e-env.sh`.
 
-**Height warning — `run-fuzz.sh` does NOT run at production geometry.** It has
-no resize, so it always runs at the 1280x720 default: `text_view.height = 648`
-against production's 1096-1098. Pagination keys on that height, so this is a
-DIFFERENT PAGE GRID, not a near-miss — `R2-Arkangel` paginates to 101 pages at
-648px vs 62 at ~1130px, leaving whole regions (including the end-of-work pages)
-unreachable. A green run here is not evidence about the geometry the user reads
-at. For anything height-sensitive use the niri runner below.
+**`run-fuzz.sh` now runs at production geometry by default (1920x1200 →
+`text_view.height = 1128`).** It resizes cage's output via `wlr-randr` before
+the fuzz auto-starts, then VERIFIES the achieved height and reports which
+pagination engine the run actually exercised. Two lines in the summary matter:
+
+```
+[fuzz] geometry: 1920x1200 → text_view.height=1128 (production is 1128)
+[fuzz] pagination engine (post-resize):  1 PAGES: table hit
+```
+
+`table hit` means the run drove the STORED table the user reads against;
+`generated` means no stored table matched that fingerprint (absent or stale for
+this work — see `validate-play-pages`) and the fuzz built its own. Only three
+works currently carry a current-schema table at this height: `R2-Arkangel` (62
+pages), `MM-Arkangel` (66), `R3-Arkangel` (89).
+
+The engine line is read from the log AFTER the resize on purpose. The app loads
+a table at startup while still 720p and discards it on resize, so counting the
+whole log can report a reassuring `table hit` for a run that really used a
+generated table.
+
+**Do not trust `--geometry none` (720p) failures.** It exists for debugging the
+harness, not for finding bugs: at 648px an old `v4|…|1280x720` table still
+fingerprint-matches but its rows overflow the shorter viewport, so a 60s
+`R2-Arkangel` run reports ~260 LEFT/RIGHT COLUMN CLIPPED failures that are pure
+geometry artifacts — the same run at 1920x1200 is clean. This is also why the
+old default was misleading: `R2-Arkangel` paginates to 101 pages at 648px vs 62
+at 1128px, leaving whole regions (including the end-of-work pages) unreachable.
+
+**Geometry gotcha — 1200, not 1236.** CLAUDE.md's cage guidance (1920x1236 →
+1098) is correct for the CARGO harness, whose window is DECORATED; the titlebar
+eats ~66px. The reader builds its window `.decorated(false)`, so 1236 here
+yields 1164, which matches no stored fingerprint and silently falls back to a
+generated table. 1920x1200 → 1128 is confirmed both by the user's own logs and
+by every current `play_pages_meta.layout_fingerprint`.
 
 **`run-fuzz-niri.sh` — same fuzz under the REAL window manager**, resized to
 1920x1236 and fullscreened, reporting the achieved `text_view.height` in its
-summary. niri is what the user runs; its usable height (~1132) is much closer to
-production than cage at the same output size (1164), because a tiling WM
-reserves what a kiosk compositor does not. Same flags, plus `--size WxH`.
+summary. niri is what the user runs, so this remains the runner for anything
+where the WM's own behavior matters (decorations, tiling geometry). For plain
+height-sensitive pagination work `run-fuzz.sh` above now reaches the same
+~1128 text-view height directly under cage. Same flags, plus `--size WxH`.
 
 ```bash
 ./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-niri.sh \

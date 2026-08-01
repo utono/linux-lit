@@ -1762,7 +1762,19 @@ pub fn build_window(
     content_hbox.set_halign(gtk4::Align::Center);
     content_hbox.set_valign(gtk4::Align::Fill);
     content_hbox.set_vexpand(true);
-    content_hbox.set_width_request(config.column_width as i32);
+    // Deliberately NOT `config.column_width`: a child's `width_request`
+    // propagates up as the WINDOW's minimum size, which GTK advertises to the
+    // compositor, and `column_width` (1050) plus the card's outer margins pins
+    // the window at 1098px. A window whose minimum exceeds the output cannot
+    // honour fullscreen — the 2026-08-01 bug in its second layer, exposed once
+    // the two-column floor (1585px) was lifted by `two_columns_fit`.
+    //
+    // This value is only the pre-first-allocation seed: `apply_card_sizing`
+    // overwrites it on the first resize tick and every one after, always
+    // clamped to the window. So it must be small enough never to act as a
+    // floor. Guarded by `window_can_shrink_below_its_card_width`
+    // (tests/niri_smoke.rs).
+    content_hbox.set_width_request(crate::app::layout::CARD_SEED_WIDTH);
     // Vertical outer margins (window edge → card) are intentionally SMALLER than
     // the horizontal CARD_OUTER_MARGIN(24): a slightly taller card, whose gained
     // height funds more breathing room inside (header top-inset + bottom reserve)

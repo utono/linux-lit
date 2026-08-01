@@ -49,6 +49,17 @@ pub(crate) const CARD_OUTER_MARGIN: i32 = 24;
 /// start/end.
 pub(crate) const CARD_VERTICAL_OUTER_MARGIN: i32 = 14;
 
+/// Horizontal room the two-column reading block needs BESIDES the two columns
+/// themselves: the centre divider plus its seams. Used to clamp each column's
+/// width against the window in `apply_tiled_mode`.
+///
+/// Measured, not guessed: with two 760px columns `page_turn_overlay` reports a
+/// 1537px minimum, i.e. 17px of chrome over the 1520px of columns. Rounded up
+/// to 20 for headroom — it is only ever SUBTRACTED from the available budget,
+/// so erring high costs a couple of px of column width and never lets the pair
+/// overflow the window.
+pub(crate) const TWO_COLUMN_CHROME_ALLOWANCE: i32 = 20;
+
 /// Bottom margin on the shared ask/edit input card (`ui::ask_card`), lifting
 /// its bottom border above the act/scene toast pill with breathing room while
 /// leaving the reading text above the card in place. The pill (`chapter_toast`,
@@ -75,6 +86,51 @@ fn current_block_text_width(state: &AppState) -> i32 {
 
 /// True when the window is narrow enough that the text card nearly fills
 /// it — used to trigger tiled-mode visual adjustments.
+/// Pre-first-allocation seed for `content_hbox`'s `width_request` (mod.rs).
+///
+/// Deliberately TINY, and deliberately not `column_width`. A child's
+/// `width_request` propagates up as the WINDOW's minimum size, which GTK
+/// advertises to the compositor; anything the size of a real card becomes a
+/// floor the window can never shrink below, and a window whose minimum exceeds
+/// the output cannot go fullscreen. `apply_card_sizing` overwrites this on the
+/// first resize tick and every one after, always clamped to the window, so the
+/// value is visible for at most one frame and must never act as a floor.
+pub(crate) const CARD_SEED_WIDTH: i32 = 320;
+
+/// Narrowest window that can host the two-column reading block.
+///
+/// Two verse-safe columns (`2 * MIN_TWO_COLUMN_COLUMN_WIDTH`) plus the divider
+/// and seams between them plus the card's two outer margins. Measured against
+/// the live widget tree: two 760px columns make `page_turn_overlay` report a
+/// 1537px minimum (17px of chrome over the 1520px of columns), and 1585px once
+/// `CARD_OUTER_MARGIN` is added on both sides. Rounded to 20px of chrome for
+/// headroom.
+pub(crate) const MIN_TWO_COLUMN_WINDOW_WIDTH: i32 =
+    2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 20 + 2 * CARD_OUTER_MARGIN;
+
+/// Whether two columns actually FIT in `window_width`.
+///
+/// The two-column block sizes each column to `MIN_TWO_COLUMN_COLUMN_WIDTH` with
+/// a hard `width_request`, and a child's width_request propagates up as the
+/// WINDOW's minimum size, which GTK advertises to the compositor. A window whose
+/// minimum exceeds the output cannot honour fullscreen — the 2026-08-01 bug,
+/// where the reader opened 1585x1200 on a 1920x1200 output with a strip of
+/// wallpaper down the right-hand side, and niri shrank its own TILE to match the
+/// advertised minimum instead of the reverse. `window.fullscreen()` was called
+/// and granted at startup; the minimum simply outvoted it.
+///
+/// So the two-column layout is only claimed when there is genuinely room for it.
+/// Below that the reader falls back to single column — an already-supported mode
+/// — rather than narrowing the columns, which would let verse wrap and defeat
+/// the point of the verse-safe width. Guarded by
+/// `window_can_shrink_below_its_card_width` (tests/niri_smoke.rs).
+///
+/// `window_width <= 0` means "not allocated yet"; treat that as fitting so the
+/// pre-first-allocation pass still sets up the layout the work asked for.
+pub(crate) fn two_columns_fit(window_width: i32) -> bool {
+    window_width <= 0 || window_width >= MIN_TWO_COLUMN_WINDOW_WIDTH
+}
+
 pub fn is_tiled_layout(window_width: i32, column_width: u32) -> bool {
     let card_w = (column_width as i32).min(window_width.max(1));
     (window_width - card_w) < 2 * super::VERSE_LEFT_OFFSET
@@ -107,7 +163,12 @@ pub(crate) fn apply_tiled_mode(state: &mut AppState, root_box: &gtk4::Box, windo
     // aesthetic. In two-column mode each column is narrow, so we use a small
     // offset instead: enough to give the sign-column gutter padding to the left
     // of its glyphs, but not so much that verse lines wrap.
-    let two_col = state.column_count() == 2;
+    // Downgrade to one column when two will not fit: see `two_columns_fit`.
+    // Enforced here (not at the callers) for the same reason as in
+    // `apply_card_sizing` — this is where the 760px column `width_request`s that
+    // CREATE the window minimum are set, so the rule belongs where it cannot be
+    // bypassed.
+    let two_col = state.column_count() == 2 && two_columns_fit(window_width);
     // In two-column mode the left column's verse line numbers sit in its LEFT
     // gutter (book foliation), outside the sign column, so the left margin must
     // reserve room for them on top of the normal offset. Prose has no numbers.
@@ -303,11 +364,15 @@ pub(crate) fn apply_column_layout(state: &mut AppState) {
     // card's width_request, so this must run too or the card keeps its old
     // (wrong) width.
     let cw = effective_column_width(state);
-    let cc = state.column_count();
+    // Downgrade to one column when two will not fit (see `two_columns_fit`), and
+    // feed the DOWNGRADED count to card sizing too — `target_card_width` floors
+    // the card at `2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 8` whenever it is told
+    // "2 columns", which would re-impose the very minimum this avoids.
+    let two_col = state.column_count() == 2 && two_columns_fit(ww);
+    let cc = if two_col { 2 } else { 1 };
     let tr = state.translations_visible;
     apply_card_sizing(&state.content_hbox, ww, cw, cc, tr, state.chat_pinned());
     apply_tiled_mode(state, &vbox, ww);
-    let two_col = state.column_count() == 2;
     state.right_scrolled_overlay.set_visible(two_col);
     state.column_divider.set_visible(two_col);
     if !two_col {
@@ -390,6 +455,18 @@ pub(crate) fn target_card_width(
     }
 }
 
+/// Side margin for the card, given the window width and the card's drawn width.
+///
+/// Capped at `CARD_OUTER_MARGIN`. Margins count toward a widget's minimum size,
+/// so margins that absorb ALL the slack make the minimum equal the current width
+/// and pin the window exactly as an oversized `width_request` does -- measured at
+/// min=1937 on a 1912 output. The card is centred by `halign`, so the margins only
+/// need to be the small visual inset they were always meant to be.
+pub(crate) fn card_side_margin(window_width: i32, card_w: i32) -> i32 {
+    let slack = window_width - card_w;
+    (slack / 2).clamp(0, CARD_OUTER_MARGIN)
+}
+
 pub(crate) fn apply_card_sizing(
     content_hbox: &gtk4::Box,
     window_width: i32,
@@ -399,9 +476,16 @@ pub(crate) fn apply_card_sizing(
     chat_open: bool,
 ) {
     let ww = window_width.max(0);
+    // The two-column downgrade and the margin clamp both live in
+    // `computed_card_width`, which `main_card_rect` also calls -- the two must
+    // agree on the card's width, and sharing the function is what guarantees it.
+    // The downgrade in particular has to be enforced somewhere central:
+    // `apply_card_sizing` has eleven callers, each computing `column_count`
+    // independently, and gating them individually already missed one (the resize
+    // tick in mod.rs kept passing 2 and re-imposed the floor).
+    let card_w = computed_card_width(ww, column_width, column_count, translations);
+    let column_count = if two_columns_fit(ww) { column_count } else { 1 };
     let target = target_card_width(ww, column_width, column_count, translations);
-    // Reserve room for margins first; if that overflows, the card itself shrinks.
-    let card_w = target.min(ww.max(1));
     let slack = ww - card_w;
     if chat_open {
         // Chat layout: pin the card flush left. content_hbox is halign:Center,
@@ -413,7 +497,11 @@ pub(crate) fn apply_card_sizing(
         // nothing but the hairline shows between card and panel.
         let start = (slack / 2).clamp(0, CARD_OUTER_MARGIN).min(slack.max(0));
         let end = (slack - start).max(0);
-        content_hbox.set_width_request(card_w);
+        // `hexpand` + no `width_request`: the box fills the window and the
+        // margins place the card, so nothing here becomes the window's minimum
+        // size. See `card_width_request` and `main_card_rect`.
+        content_hbox.set_hexpand(true);
+        content_hbox.set_width_request(-1);
         content_hbox.set_margin_start(start);
         content_hbox.set_margin_end(end);
         crate::log_fmt!(
@@ -422,8 +510,18 @@ pub(crate) fn apply_card_sizing(
         );
         return;
     }
-    let margin = (slack / 2).clamp(0, CARD_OUTER_MARGIN);
-    content_hbox.set_width_request(card_w);
+    // `hexpand` + no `width_request`, and margins that absorb the slack so the
+    // card lands at `card_w`.
+    //
+    // Margins DO count toward the widget's minimum size, so absorbing the slack
+    // here would make the minimum equal the current width and pin the window --
+    // measured at min=1937 on a 1912 output. What makes it safe is that the box
+    // is `hexpand` with no width_request of its own: GTK gives an expanding box
+    // its parent's width regardless of margins, so the minimum it reports is the
+    // margins alone (369 measured at a 630px window), never margins plus a card.
+    let margin = card_side_margin(ww, card_w);
+    content_hbox.set_hexpand(true);
+    content_hbox.set_width_request(-1);
     content_hbox.set_margin_start(margin);
     content_hbox.set_margin_end(margin);
     crate::log_fmt!(
@@ -478,24 +576,52 @@ pub(crate) fn column_float_rect(state: &AppState, over_right: bool) -> (i32, i32
     (x, w)
 }
 
+/// The card's drawn width, computed rather than measured.
+///
+/// SINGLE SOURCE OF TRUTH, shared with `apply_card_sizing` so the two can never
+/// disagree. Reading `content_hbox`'s allocation instead is wrong: the box
+/// deliberately carries no `width_request` (one would propagate up as the
+/// WINDOW's minimum size and pin it below the output -- see
+/// `card_width_request`), so its allocation reflects its children's natural
+/// width, not the card's.
+pub(crate) fn computed_card_width(
+    window_width: i32,
+    column_width: u32,
+    column_count: u8,
+    translations: bool,
+) -> i32 {
+    let ww = window_width.max(0);
+    // Same two-column downgrade as `apply_card_sizing`, for the same reason:
+    // `target_card_width` floors the card at the 1528 two-column measure when
+    // told "2 columns", which would re-impose a width the window cannot host.
+    let column_count = if two_columns_fit(ww) { column_count } else { 1 };
+    let target = target_card_width(ww, column_width, column_count, translations);
+    target.min((ww - 2 * CARD_OUTER_MARGIN).max(1))
+}
+
 pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
-    let alloc_w = s.content_hbox.width();
-    let alloc_h = s.content_hbox.height();
-    if alloc_w > 0 && alloc_h > 0 {
-        // Settled: the card's real on-screen rectangle.
-        return (alloc_w, alloc_h);
-    }
-    // Pre-first-allocation fallback: compute width the same way apply_card_sizing
-    // does, and height from the window minus the card's top/bottom outer margins.
-    let ww = s.window.width().max(0);
-    let target = target_card_width(
-        ww,
+    // Width is COMPUTED, never read from `content_hbox`'s allocation.
+    //
+    // The box carries no `width_request` -- one would propagate up as the
+    // WINDOW's minimum size and pin it below the output, which is the
+    // 2026-08-01 fullscreen bug (see `card_width_request`). Without it the
+    // allocation is the children's natural width, not the card's, so measuring
+    // it would report the wrong rectangle: `overlay_clipping` failed with "text
+    // region has no area" for exactly that reason.
+    let card_w = computed_card_width(
+        s.window.width().max(0),
         effective_column_width(s),
         s.column_count(),
         s.translations_visible,
     );
-    let card_w = target.min(ww.max(1));
-    let card_h = (s.window.height() - 2 * CARD_VERTICAL_OUTER_MARGIN).max(0);
+    // Height still comes from the allocation when settled -- nothing constrains
+    // it the way width is constrained, so the measurement is trustworthy.
+    let alloc_h = s.content_hbox.height();
+    let card_h = if alloc_h > 0 {
+        alloc_h
+    } else {
+        (s.window.height() - 2 * CARD_VERTICAL_OUTER_MARGIN).max(0)
+    };
     (card_w, card_h)
 }
 
@@ -654,5 +780,97 @@ mod card_width_tests {
         assert_eq!(overlay_card_width(0, 1050), 1); // clamps to 1
         // Narrow window smaller than the configured measure clamps down.
         assert_eq!(overlay_card_width(800, 1050), 800);
+    }
+
+    #[test]
+    fn card_sizing_never_gives_content_hbox_a_width_request() {
+        // The 2026-08-01 fullscreen bug, stated as an invariant rather than a
+        // function: `content_hbox` must carry NO `width_request`.
+        //
+        // GTK propagates a child's `width_request` up as the WINDOW's minimum
+        // size and advertises it to the compositor. A 1050 card plus
+        // 2*CARD_OUTER_MARGIN pinned the minimum at 1098, and niri shrank its
+        // TILE to that minimum instead of granting fullscreen -- observed live
+        // as tile=1098x1200 on a 1920x1200 output, with every CARD_SIZING tick
+        // reporting ww=1098 forever after. Restoring the request while capping
+        // the margins re-broke it at min=1937 on a 1912 output.
+        //
+        // The card's width is instead COMPUTED (`computed_card_width`, shared
+        // with `main_card_rect`) and realised by `hexpand` plus margins.
+        //
+        // Enforced by grep because the property is "this call never happens",
+        // which no pure function can express. The real geometry oracle is
+        // `window_can_shrink_below_its_card_width` (tests/niri_smoke.rs), which
+        // needs niri + cage.
+        let src = include_str!("layout.rs");
+        for (i, line) in src.lines().enumerate() {
+            let t = line.trim();
+            // Statements only -- skip prose/doc mentions and this guard itself.
+            let is_call = t.starts_with("content_hbox.set_width_request(") && t.ends_with(");");
+            if is_call && !t.contains("(-1)") {
+                panic!(
+                    "layout.rs:{}: `{}` -- content_hbox must never carry a \
+                     width_request other than -1; it becomes the window's \
+                     minimum size and pins it below the output.",
+                    i + 1,
+                    line.trim()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn computed_card_width_matches_what_apply_card_sizing_draws() {
+        use super::{computed_card_width, CARD_OUTER_MARGIN};
+
+        // `main_card_rect` must not read `content_hbox`'s ALLOCATION: the box
+        // carries no `width_request` (that would propagate up as the window's
+        // minimum and pin it -- see `card_width_request`), so its allocation is
+        // its children's natural width, not the card's. The card's width is
+        // whatever `apply_card_sizing` computed, so compute it the same way.
+        //
+        // Identical clamp to `apply_card_sizing`: window MINUS both outer
+        // margins, because the margins sit outside the card.
+        assert_eq!(computed_card_width(1920, 1050, 1, false), 1050);
+        assert_eq!(computed_card_width(1920, 1050, 2, false), 1528);
+
+        // Narrow window: the card gives up width to keep its margins.
+        assert_eq!(computed_card_width(1000, 1050, 1, false), 1000 - 2 * CARD_OUTER_MARGIN);
+
+        // Two columns that do not fit are downgraded to one first, exactly as
+        // `apply_card_sizing` does -- otherwise the 1528 floor reappears here.
+        // At ww=1100 the downgrade yields the 1-col measure (1050), which is
+        // already under the 1052 margin clamp, so 1050 is the answer.
+        assert_eq!(computed_card_width(1100, 1050, 2, false), 1050);
+
+        // Degenerate pre-allocation window clamps to a sane positive width.
+        assert!(computed_card_width(0, 1050, 1, false) >= 1);
+    }
+
+    #[test]
+    fn card_margins_never_pad_the_window_minimum_up_to_its_own_width() {
+        use super::{card_side_margin, CARD_OUTER_MARGIN};
+
+        // Margins DO count toward a widget's minimum size (measured: with the
+        // card at 1528 and margins at 204 each, GTK reported the window's
+        // minimum as 1937 -- its own current width, on a 1912 output). So
+        // absorbing all the slack in margins just recreates the bug that
+        // absorbing it in `width_request` caused: the minimum tracks the current
+        // width and the window can never shrink.
+        //
+        // Cap them. Centering is `halign`'s job, not padding's.
+        let ww = 1937;
+        let card_w = 1528;
+        let m = card_side_margin(ww, card_w);
+        assert!(
+            card_w + 2 * m < ww,
+            "card {card_w} + 2*{m} margin must stay under the window {ww}, \
+             else the minimum equals the current width and pins it"
+        );
+        assert_eq!(m, CARD_OUTER_MARGIN);
+
+        // Narrow window: margins shrink with the slack rather than going negative.
+        assert_eq!(card_side_margin(1000, 990), 5);
+        assert_eq!(card_side_margin(1000, 1000), 0);
     }
 }

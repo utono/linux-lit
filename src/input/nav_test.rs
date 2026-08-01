@@ -599,15 +599,26 @@ fn run_step(s: &mut AppState) {
         && !pre_is_final
         && line_count > 0
     {
-        // NOTE (2026-08-01): this still reads the LIVE engine while navigation
-        // may be in TABLE mode — the same mismatch that produced the
-        // `pre_is_final` false positive above. `effective_column_split` is the
-        // table-aware form and is the likely correct source here (and at the `x`
-        // OVERLAP check below). Left as-is deliberately: no seed currently
-        // trips it, and switching the boundary source changes what BOTH the
-        // overlap and gap arms compare, so it wants its own repro + sweep
-        // rather than a drive-by change inside this fix.
-        let fwd = crate::input::viewport::column_split(s, post_top).next_page_top;
+        // AUTHORITATIVE: read the boundary from the source that RENDERED the
+        // back-page, exactly like `pre_is_final` above. In table mode
+        // `page_backward` lands on `table[cur-1].left_start` and the tiling
+        // invariant is TABLE ADJACENCY, so the forward boundary to compare
+        // against `pre_top` is the NEXT spread's `left_start` — which is what
+        // `effective_column_split` returns. A fresh `column_split` re-derives
+        // `end + 1` from live geometry, a boundary the renderer never used:
+        // stored spreads routinely trim non-dialogue lines (blanks, exit stage
+        // directions before a scene marker) between one spread's `end` and the
+        // next spread's top, so the two sources differ by that gap. Until now
+        // the mismatch was MASKED rather than absent — the trimmed lines are
+        // non-dialogue by construction, so the `any(is_dialogue_line)` guards on
+        // both arms below swallowed it. Masked is not correct: the guards exist
+        // to exempt benign scene-transition gaps, not to paper over a
+        // wrong-source boundary, and anything that made a trimmed line classify
+        // as dialogue would surface it as a bogus GAP/OVERLAP. Live mode (no
+        // table, or `post_top` off-table) is unchanged — `effective_column_split`
+        // falls through to the same `column_split` call this replaced.
+        let (cs_post, _) = effective_column_split(s, post_top);
+        let fwd = cs_post.next_page_top;
         if fwd > pre_top {
             // Overlap is only a bug if the doubled lines contain DIALOGUE.
             if (pre_top..fwd).any(|i| is_dialogue_line(&s.buffer, i, false, no_stage_lookup())) {
@@ -644,7 +655,24 @@ fn run_step(s: &mut AppState) {
         && post_top > pre_top
         && line_count > 0
     {
-        let expected = crate::input::viewport::column_split(s, pre_top).next_page_top;
+        // Same authoritative-source rule as the `y` arm above: in table mode
+        // `page_forward` lands on `table[cur+1].left_start`, so the expected
+        // landing IS the stored next-spread top, not a freshly re-derived
+        // `end + 1`. Note this arm has NO non-dialogue exemption to mask a
+        // wrong source — it compares tops directly — so reading the live engine
+        // here was the more exposed of the two: any table whose trimmed gap
+        // pushed `left_start` past `end + 1` would report a bogus overlap. It
+        // survived only because the comparison is one-sided (`post_top <
+        // expected`) and the trim moves the landing the other way. MEASURED,
+        // not assumed: an instrumented sweep logging both sources at every
+        // evaluation caught R2-Arkangel `pre_top=348` landing on the table's
+        // `387` while the live engine predicted `386` — passing under the old
+        // code only because 387 < 386 is false. One divergence in ~1,600 fuzz
+        // steps across 8 gapped works (Cym, R2-Arkangel, Ham, 2H6, Rom,
+        // MM-Arkangel, Cym-Arkangel, 2H6-Arkangel), which is why no seed ever
+        // tripped it.
+        let (cs_pre_fwd, _) = effective_column_split(s, pre_top);
+        let expected = cs_pre_fwd.next_page_top;
         // The forward path may redirect onto the final-spread anchor when the
         // natural next page would empty the right column — that's an intentional
         // non-adjacent landing, not an overlap. Only flag when the landing is
