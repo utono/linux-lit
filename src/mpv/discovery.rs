@@ -209,6 +209,29 @@ pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
         // app-id — dwl routes `mpv-lit` to its own tag (config.h), niri marks
         // it `open-focused false` (config.kdl).
         .arg("--wayland-app-id=mpv-lit")
+        // Let the compositor size this window freely, so it can fill its
+        // column. Both of these are MPV-side constraints that no compositor
+        // action can defeat -- maximize-column runs, exits 0, and the window
+        // stays small -- so they have to be turned off at spawn.
+        //
+        // keepaspect: MPV defaults to preserving the video's aspect ratio, so
+        // a 16:9 work can never fill a 16:10 column. Measured on a 1920x1200
+        // output: the window capped at 1920x1084 (ratio 1.771 vs 16:9's
+        // 1.778) with a ~116px dead strip below it. Setting keepaspect=no via
+        // MPV's IPC socket and re-maximizing took it straight to full height.
+        //
+        // window-scale: ~/.config/mpv/mpv.conf sets window-scale=0.5 in its
+        // [default] profile, which halves the window -- that is where the
+        // original 960-wide window came from, and it still capped width at
+        // 1280 after the aspect fix. Overridden here rather than in mpv.conf
+        // because that setting is right for every OTHER MPV invocation; only
+        // this one is meant to fill a tiled column.
+        //
+        // Verified by setting both live over MPV's IPC socket and
+        // re-maximizing: 1920x1084 -> 1280x1200 -> 1920x1200, matching the
+        // fullscreen reader exactly.
+        .arg("--no-keepaspect")
+        .arg("--window-scale=1.0")
         .arg(media_path)
         // Detach MPV's stdio from ours. Otherwise the spawned MPV inherits our
         // stdout/stderr; under a `… 2>&1 | tee` launcher (crll) it holds the
@@ -323,6 +346,50 @@ fn niri_expel_mpv_to_own_column() {
             let maximized = std::process::Command::new("niri")
                 .args(["msg", "action", "maximize-column"])
                 .status();
+
+            // Firing maximize-column once is not enough, and its exit status
+            // does not tell you whether it worked -- it exits 0 either way.
+            // Two things land AFTER this code first runs: MPV's surface is
+            // still settling its size when the window id first appears in IPC
+            // (the poll above exits on id, not on geometry), and piri's
+            // swallow is event-driven, so it can consume MPV into the
+            // terminal's column a moment later and undo the maximize.
+            //
+            // So verify against IPC and retry, rather than trusting the exit
+            // status. Success is the tile filling its column: re-read the
+            // geometry, and if MPV is still short, re-focus and maximize
+            // again. Bounded so a genuinely unmaximizable window cannot spin.
+            let mut verified = false;
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let Ok(out) = std::process::Command::new("niri")
+                    .args(["msg", "--json", "windows"])
+                    .output()
+                else {
+                    break;
+                };
+                let Ok(text) = String::from_utf8(out.stdout) else {
+                    break;
+                };
+                // Compare MPV's tile height against the tallest tile on the
+                // output: the reader is fullscreen, so it is the reference for
+                // what "full height" means here. Avoids hardcoding a
+                // resolution and works on any output.
+                let Some((mpv_h, max_h)) = mpv_and_max_tile_height(&text, id) else {
+                    break;
+                };
+                if mpv_h + 1.0 >= max_h {
+                    verified = true;
+                    break;
+                }
+                let _ = std::process::Command::new("niri")
+                    .args(["msg", "action", "focus-window", "--id", &id.to_string()])
+                    .status();
+                let _ = std::process::Command::new("niri")
+                    .args(["msg", "action", "maximize-column"])
+                    .status();
+            }
+
             if let Some(reader) = reader_id {
                 let _ = std::process::Command::new("niri")
                     .args([
@@ -335,8 +402,9 @@ fn niri_expel_mpv_to_own_column() {
                     .status();
             }
             crate::logging::log(&format!(
-                "MPV: niri expel id={} -> {:?}, maximize -> {:?}, focus restored to reader={:?}",
-                id, expelled, maximized, reader_id
+                "MPV: niri expel id={} -> {:?}, maximize -> {:?}, height verified={}, \
+                 focus restored to reader={:?}",
+                id, expelled, maximized, verified, reader_id
             ));
             return;
         }
@@ -358,6 +426,52 @@ fn find_mpv_lit_window_id(json: &str) -> Option<u64> {
 fn find_reader_window_id(json: &str) -> Option<u64> {
     find_window_id_by_app_id(json, "\"com.utono.linux-lit.dev\"")
         .or_else(|| find_window_id_by_app_id(json, "\"com.utono.linux-lit\""))
+}
+
+/// MPV's tile height paired with the tallest tile in the list, for verifying
+/// that `maximize-column` actually took effect.
+///
+/// The reader is fullscreen, so the tallest tile on the output is the
+/// reference for "full height" — comparing against it avoids hardcoding a
+/// resolution and works on any output.
+///
+/// Hand-scans like the id helpers below, but splits on `"id":` rather than on
+/// `{`: each window's `layout` is a NESTED object, so splitting on `{` would
+/// cut a window record in half and separate its id from its tile_size.
+fn mpv_and_max_tile_height(json: &str, mpv_id: u64) -> Option<(f64, f64)> {
+    let mut mpv_h: Option<f64> = None;
+    let mut max_h: f64 = 0.0;
+    for chunk in json.split("\"id\":").skip(1) {
+        let id: u64 = chunk
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        // tile_size is [width, height]; take the second number.
+        let Some(ts) = chunk.find("\"tile_size\":[") else {
+            continue;
+        };
+        let rest = &chunk[ts + 13..];
+        let Some(comma) = rest.find(',') else {
+            continue;
+        };
+        let h: f64 = rest[comma + 1..]
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        if h > max_h {
+            max_h = h;
+        }
+        if id == mpv_id {
+            mpv_h = Some(h);
+        }
+    }
+    mpv_h.map(|h| (h, max_h))
 }
 
 fn find_window_id_by_app_id(json: &str, quoted_app_id: &str) -> Option<u64> {
