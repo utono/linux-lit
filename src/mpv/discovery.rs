@@ -147,8 +147,11 @@ fn probe_socket(path: &Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
-/// Launch MPV for a media file. Sets wayland-app-id to "mpv-lit" so dwl
-/// places the window on tag 10 per the rule in dwl config.h.
+/// Launch MPV for a media file. Sets wayland-app-id to "mpv-lit" so the
+/// compositor can single out this MPV: dwl places it on tag 10 (dwl config.h),
+/// niri gives it `open-focused false` (window-rule in niri config.kdl) so it
+/// never steals focus from the reader. Both consume the same app-id, so it
+/// must stay stable across compositor changes.
 ///
 /// Under the headless UI test harness (`LIT_HEADLESS_TEST` set) MPV is NOT
 /// launched at all — the UI tests don't exercise audio sync, and a spawned MPV
@@ -202,8 +205,9 @@ pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
         .arg(format!("--volume={}", MPV_VOLUME.load(Ordering::Relaxed)))
         .args(&bg_args)
         // Keep MPV's window: some works are videos, and the audiobook window
-        // carries cover art. dwl routes `mpv-lit` to its own tag (config.h), so
-        // it doesn't cover the reader.
+        // carries cover art. The compositor keeps it clear of the reader by
+        // app-id — dwl routes `mpv-lit` to its own tag (config.h), niri marks
+        // it `open-focused false` (config.kdl).
         .arg("--wayland-app-id=mpv-lit")
         .arg(media_path)
         // Detach MPV's stdio from ours. Otherwise the spawned MPV inherits our

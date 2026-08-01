@@ -1,0 +1,77 @@
+// Minimal, deterministic niri config for the headless e2e harness.
+//
+// This is NOT the user's daily config (~/utono/niri-mlj/.config/niri/config.kdl).
+// Everything that would perturb a pixel measurement is turned OFF here: gaps,
+// borders, focus rings, and animations all shift or animate the window's
+// geometry, which breaks scripts/check_line_clipping.py and any screenshot
+// diff. Keep this file boring on purpose.
+//
+// niri has NO headless backend (it is Smithay, not wlroots — WLR_BACKENDS is
+// ignored and it falls back to the TTY backend and panics). The harness runs
+// it NESTED inside cage, where niri selects its winit backend. That means the
+// `output "winit"` size below is a REQUEST ONLY: the winit output actually
+// takes the size of the outer cage window, so the harness sizes the OUTER
+// cage output with wlr-randr and this block just names the output.
+
+input {
+    keyboard {
+        xkb {
+            // Tests drive keys by keysym via wtype, so the harness must use a
+            // plain us layout — NOT the user's Real Programmers Dvorak. Under
+            // RPD the keysym a physical key emits differs, and every `-k j`
+            // in the test suite would land on the wrong action.
+            layout "us"
+        }
+    }
+    // No physical devices exist on the headless backend; don't wait for them.
+    focus-follows-mouse
+}
+
+output "winit" {
+    mode "1920x1236"
+    scale 1
+    position x=0 y=0
+}
+
+layout {
+    // Zero gaps/borders: the reading card must be flush to the output edge so
+    // screenshot coordinates match the cage harness's, and so the clipping
+    // detector's --region maps 1:1 onto output pixels.
+    gaps 0
+    border {
+        off
+    }
+    focus-ring {
+        off
+    }
+    // One column, full width — the closest tiling equivalent of cage's kiosk
+    // fullscreen. The harness additionally issues a fullscreen-window action.
+    default-column-width {
+        proportion 1.0
+    }
+}
+
+// DELIBERATELY NOT SET: `prefer-no-csd`.
+//
+// It would tell every client to skip client-side decorations, which MASKS the
+// app's own `.decorated(false)` — verified during bring-up: with prefer-no-csd
+// on, the window rendered with no titlebar even when the app was temporarily
+// rebuilt with `.decorated(true)`, so the decoration test passed vacuously.
+// Without it, GTK honors the app's request, and a regression paints a ~37px
+// titlebar that `niri_smoke.rs` detects. Leave this off.
+
+// Never let the first-launch hotkey cheatsheet paint over the app.
+hotkey-overlay {
+    skip-at-startup
+}
+
+// Animations move windows over several frames. A screenshot taken mid-animation
+// catches the card in the wrong place, so disable them outright.
+animations {
+    off
+}
+
+// Don't let a screen-blank steal the framebuffer during a long test run.
+cursor {
+    hide-after-inactive-ms 100000
+}

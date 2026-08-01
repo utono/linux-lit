@@ -23,6 +23,12 @@
 //!
 //! Only deps are `tempfile` and `libc` (both in `[dev-dependencies]`).
 
+/// The **niri** harness — same cage/grim/wtype flow, but with the user's real
+/// window manager (`~/utono/niri-mlj`) nested inside cage as the WM under test.
+/// Use it when the compositor's own behavior matters (decorations, tiling
+/// geometry); cage remains the default for everything else. See `niri.rs`.
+pub mod niri;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self};

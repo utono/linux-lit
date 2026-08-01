@@ -344,6 +344,46 @@ focused, fullscreen surface; MPV is skipped under `LIT_HEADLESS_TEST=1`; the
 app logs `TEST_VIEWPORT_RECT` for the pixel detector's `--region` (no AT-SPI
 text interface). Scope is the main reading card only.
 
+### niri harness (the real WM)
+
+**niri is the current window manager** (`~/utono/niri-mlj`); dwl is the
+predecessor. `tests/harness/niri.rs` + `tests/niri_smoke.rs` +
+`tests/harness/niri-test.kdl` run the app under REAL niri, for anything
+where the WM's own behavior matters — decorations, tiling geometry —
+which cage's kiosk force-fullscreen hides. Cage stays the DEFAULT for the
+rest of the suite.
+
+```bash
+./scripts/e2e-env.sh cargo test --test niri_smoke -- --ignored --nocapture
+```
+
+**niri has NO headless backend** (it is Smithay, not wlroots): `WLR_BACKENDS`
+is ignored, and with no parent display it picks the TTY backend and panics.
+So the harness NESTS it: `cage (headless) → niri (winit) → linux-lit`.
+Load-bearing consequences, each verified by measurement, not assumption:
+
+- **Output size comes from the OUTER cage window.** A `mode` in the niri
+  config is inert; `set_output_size` resizes cage's output and niri follows.
+- **The niri IPC socket path is subject to `SUN_LEN`.** The runtime dir must
+  be short (`/tmp/lit-niri-*`), never a deep scratchpad path, or every
+  `niri msg` fails with "path must be shorter than SUN_LEN".
+- **niri 26.04 reports no fullscreen flag** in `niri msg --json windows`, and
+  with `gaps 0` a tiled window measures the SAME as a fullscreen one
+  (1272x688 in a 1272x688 output). Neither JSON nor geometry can tell the
+  states apart — only pixels can. `fullscreen-window` is a TOGGLE, so use
+  the idempotent `ensure_fullscreen` / `unfullscreen_window` wrappers.
+- **The test config deliberately omits `prefer-no-csd`.** Setting it
+  suppresses the titlebar regardless of what the app requests, which makes
+  any decoration test pass vacuously.
+
+**Decoration tests must run TILED, never fullscreen** — a fullscreen window
+is undecorated by definition. GTK's titlebar is CLIENT-side (painted inside
+the window's own surface), so it is invisible to niri's IPC and must be
+detected in pixels: a ~37px bright-neutral band at the top of the capture.
+When adding such a test, prove it fails by temporarily building with
+`.decorated(true)`; three successive versions of this check passed against a
+decorated build before the pixel-based one caught it.
+
 **When the change is pagination/spread/page-turn**, the workhorse is the
 nav-fuzz (drives every nav action; asserts on-page landing, balanced columns,
 G-idempotency). It lives in the `test-headless-navigation` skill and MUST run
