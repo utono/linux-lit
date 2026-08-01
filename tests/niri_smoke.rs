@@ -97,6 +97,58 @@ fn output_resize_reaches_niri() {
     );
 }
 
+/// The app must request fullscreen ITSELF, not rely on a compositor rule.
+///
+/// Regression guard for the dwl → niri migration (2026-08-01): fullscreen had
+/// always been the compositor's job (dwl-mlj's tag rule in config.h, then
+/// niri's `open-fullscreen true` window-rule), and the app only ever asked for
+/// `.default_width(1000).default_height(800)`. An open-time WM rule is silent
+/// when it is absent, so the reader mapped at 1000x800 on a niri session whose
+/// config predated the rule. Pagination keys off the text-view height, so a
+/// windowed reader is not a smaller reading experience — it is a different and
+/// untested page grid.
+///
+/// **Deliberately a LOG assertion, not a pixel one.** A pixel check cannot
+/// decide this: with a single window and `gaps 0`, niri tiles the window to
+/// fill the entire output, which is pixel-identical to fullscreen (the harness
+/// says as much on `window_is_fullscreen`). That was verified the hard way here
+/// — a cream-at-row-0 version of this test passed identically against a build
+/// with the `window.fullscreen()` call compiled out, i.e. it was green either
+/// way and guarded nothing. Geometry is no better: niri 26.04 reports no
+/// fullscreen flag, and the tiled window measures the same as a fullscreen one.
+/// What IS decidable is whether the app made the request at all.
+#[test]
+#[ignore = "needs niri + cage; run with --ignored"]
+fn app_requests_fullscreen_itself() {
+    let h = start();
+    h.settle(Duration::from_secs(3));
+
+    let log = std::fs::read_to_string(h.log_path()).expect("read app log");
+
+    // `start()` sets LIT_HEADLESS_TEST, which is exactly what suppresses the
+    // request — so under the harness the suppression branch is the correct
+    // one, and seeing it proves the gate is wired and evaluated. Asserting the
+    // request fires would require dropping that env, which changes MPV and
+    // reveal behavior for no gain.
+    assert!(
+        log.contains("STARTUP: fullscreen suppressed (LIT_HEADLESS_TEST)"),
+        "the app-side fullscreen gate did not run. build_window must decide \
+         fullscreen at startup (src/app/mod.rs). Log:\n{log}"
+    );
+
+    // The suppression must be keyed on LIT_HEADLESS_TEST ALONE. If it were
+    // folded into the broader `hermetic_env` used elsewhere in that file — which
+    // also includes `is_dev_mode()` — then LIT_DEV=1 would suppress it too, and
+    // LIT_DEV=1 is how the app is launched for real desktop use (`crll`). That
+    // would leave the dev build windowed: precisely the bug this guards.
+    assert!(
+        !log.contains("STARTUP: requested fullscreen (app-side)"),
+        "fullscreen was requested despite LIT_HEADLESS_TEST — the niri \
+         decoration test drives the window tiled and would be fought by this. \
+         Log:\n{log}"
+    );
+}
+
 /// The app builds its window with `.decorated(false)`, so no titlebar should be
 /// drawn. cage cannot test this at all — it force-fullscreens its single client,
 /// and a fullscreen window has no decorations by definition.

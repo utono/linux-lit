@@ -1360,6 +1360,40 @@ pub fn build_window(
         // inside the card, so a compositor/GTK frame is pure lost vertical space.
         .decorated(false)
         .build();
+
+    // Ask for fullscreen OURSELVES rather than relying on the compositor.
+    //
+    // The reader is a kiosk-style surface: pagination keys off the text-view
+    // height, so a partially-sized window is not a smaller reading experience,
+    // it is a different (and untested) page grid. Historically this was the
+    // compositor's job — dwl-mlj's config.h routed the app-id to its own tag,
+    // and niri has an `open-fullscreen true` window-rule. But an open-time WM
+    // rule is silent when it is missing: on a fresh niri config, another
+    // machine, or a bare sway the window simply mapped at the 1000x800 default
+    // above and nobody noticed until it was on screen. That is exactly how the
+    // dwl -> niri migration regressed (2026-08-01). Requesting it here makes
+    // the app self-sufficient on any compositor; the niri rule still earns its
+    // keep for the border/focus-ring suppression it uniquely handles.
+    //
+    // SUPPRESSED under LIT_HEADLESS_TEST, and ONLY that env. The niri harness
+    // deliberately drives fullscreen itself: `window_has_no_client_side_titlebar`
+    // calls `unfullscreen_window()` because a fullscreen window is undecorated
+    // by definition, so a titlebar assertion made while fullscreen passes
+    // vacuously (verified during bring-up with `.decorated(true)`). If the app
+    // re-asserted fullscreen at startup it would fight that un-fullscreen and
+    // silently restore the vacuous pass. Note this must NOT be gated on the
+    // broader `hermetic_env` used elsewhere in this file: that includes
+    // `is_dev_mode()`, and LIT_DEV=1 is how the app is launched for real
+    // desktop use (`crll`) — gating on it would leave the dev build windowed,
+    // i.e. the bug this fixes. cage force-fullscreens its client regardless, so
+    // the rest of the e2e suite is unaffected either way.
+    if std::env::var_os("LIT_HEADLESS_TEST").is_none() {
+        window.fullscreen();
+        crate::logging::log("STARTUP: requested fullscreen (app-side)");
+    } else {
+        crate::logging::log("STARTUP: fullscreen suppressed (LIT_HEADLESS_TEST)");
+    }
+
     window.connect_show(|_| crate::logging::log("STARTUP: window connect_show fired"));
     window.connect_map(|_| crate::logging::log("STARTUP: window connect_map fired"));
 
