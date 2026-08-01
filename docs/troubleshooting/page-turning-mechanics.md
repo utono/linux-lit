@@ -202,6 +202,50 @@ ultimately want"), which is why it lives in one guard rather than spread
 through each bind — relaxing or re-scoping it means editing
 `jump_stays_on_page`, not eleven call sites.
 
+### FAILURE MODE 0 — a bug the nav-fuzz structurally CANNOT reach (open, 2026-08-01)
+
+Before diagnosing any pagination bug from a green fuzz run, check WHAT HEIGHT
+the run used. **`run-fuzz.sh` (cage) has no resize and always runs at the
+1280x720 default — `text_view.height = 648`.** Production is **1096-1098**.
+That is not a near-miss: on `R2-Arkangel` it is a different page grid
+outright — **101 pages at 648px vs 62 at ~1130px**. Whole regions of the work,
+including the end-of-work pages, are unreachable at 648px, so a green fuzz run
+is evidence about a geometry the user never reads at.
+
+**Tell:** a fuzz run passes with hundreds of steps, but the max page index in
+the log is roughly double production's page count for that work.
+
+Use `run-fuzz-niri.sh`, which resizes to 1920x1236 and reports the achieved
+height in its summary line. It runs the WM the user actually runs, and its
+usable height (~1132) lands far closer to production than cage at the same
+output size (1164) — the kiosk compositor does not reserve what a tiling WM
+does.
+
+**The bug this surfaced, still OPEN:** seed 72, `R2-Arkangel`, step 29 —
+a last-page `PageBackward` shows 70 lines twice.
+
+```
+PAGES: page 61/62 top=3661
+NAV_TEST: step=29 PageBackward top=3665->3661 line=3738->3734
+NAV_TEST: FAIL step=29 PageBackward y OVERLAP: back-page top=3661 runs to
+  next_page_top=3735 PAST old top=3665 (70 lines shown twice)
+```
+
+It is **height-dependent, not compositor-dependent**: the identical seeded step
+passes under cage at 1164px (`top=3662->3649`, no overlap) and fails under niri
+at 1132px. Reproduce with:
+
+```bash
+./scripts/e2e-env.sh .claude/skills/test-headless-navigation/run-fuzz-niri.sh \
+  --start-work R2-Arkangel --seed 72 --secs 90
+```
+
+Root cause not yet investigated. The suspicion to start from is the last-page
+backward step: near the end of a work the backward target is computed from a
+full-page walk that the final, SHORT page cannot satisfy, so it lands above
+where it should and overlaps the page it came from. Confirm against
+`column_split(...).next_page_top` before changing anything.
+
 ### FAILURE MODE 1 — `q` dead on an overflowing prose page (fixed 2026-07-27)
 
 **Tell:** a dialogue/segment bind stops working on ONE page while the target
