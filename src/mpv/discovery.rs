@@ -243,9 +243,16 @@ pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
         .stderr(std::process::Stdio::null())
         .spawn()
     {
-        Ok(_) => {
-            crate::logging::log(&format!("MPV: launched for {} (app-id=mpv-lit)", media_path));
-            niri_expel_mpv_to_own_column();
+        Ok(child) => {
+            // Keep the pid: with two `crll` instances running, the app-id
+            // alone does not identify OUR MPV window. See
+            // niri_expel_mpv_to_own_column.
+            let mpv_pid = child.id();
+            crate::logging::log(&format!(
+                "MPV: launched for {} (app-id=mpv-lit, pid={})",
+                media_path, mpv_pid
+            ));
+            niri_expel_mpv_to_own_column(mpv_pid);
         }
         Err(e) => crate::logging::log(&format!("MPV: launch failed: {}", e)),
     }
@@ -274,13 +281,17 @@ pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
 /// No-ops off niri: `NIRI_SOCKET` is set only inside a niri session, so under
 /// dwl-mlj this returns immediately and the tag-10 rule in config.h keeps
 /// handling placement as before.
-fn niri_expel_mpv_to_own_column() {
+fn niri_expel_mpv_to_own_column(mpv_pid: u32) {
     if std::env::var_os("NIRI_SOCKET").is_none() {
         return;
     }
+    // Our own pid, to pick THIS reader's window out of IPC when handing focus
+    // back. Read here rather than in the thread purely for clarity; it is the
+    // same process either way.
+    let reader_pid = std::process::id();
     // Detached: MPV's surface takes a moment to map, and the caller is on a
     // spawn_blocking thread we should not stall further.
-    std::thread::spawn(|| {
+    std::thread::spawn(move || {
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(50));
             let Ok(out) = std::process::Command::new("niri")
@@ -293,16 +304,26 @@ fn niri_expel_mpv_to_own_column() {
                 return;
             };
             // Hand-scan rather than pull in a JSON dependency for one field:
-            // find the mpv-lit object and read the "id" that precedes its
-            // app_id within the same object.
-            let Some(id) = find_mpv_lit_window_id(&text) else {
+            // find the mpv-lit object and read the "id" from the same object.
+            //
+            // Matched on pid, NOT on app-id alone. `crll` supports several
+            // concurrent readers, each spawning its own MPV under the shared
+            // `mpv-lit` app-id, and `niri msg --json windows` is ordered
+            // neither by id nor by column. Taking the first app-id match let
+            // instance 2 act on instance 1's MPV -- already in its own column,
+            // so the expel was a no-op that exited 0 -- leaving instance 2's
+            // MPV stacked in the terminal's column with the reader. Measured
+            // with two instances live: kitty/reader/mpv all at column 3.
+            let Some(id) = find_mpv_lit_window_id_by_pid(&text, mpv_pid) else {
                 continue;
             };
             // `expel-window-from-column` takes NO --id: it acts on the focused
             // column only. So focus MPV, expel it, then hand focus straight
             // back to the reader — otherwise this would undo the whole point
             // of the `open-focused false` window rule.
-            let reader_id = find_reader_window_id(&text);
+            // Also pid-scoped: with two readers running, the first-match
+            // lookup could hand focus to the OTHER instance's window.
+            let reader_id = find_reader_window_id_by_pid(&text, reader_pid);
             let _ = std::process::Command::new("niri")
                 .args(["msg", "action", "focus-window", "--id", &id.to_string()])
                 .status();
@@ -412,22 +433,6 @@ fn niri_expel_mpv_to_own_column() {
     });
 }
 
-/// Extract the window id of the `mpv-lit` window from `niri msg --json windows`
-/// output. The array is a flat list of objects; each object carries both "id"
-/// and "app_id", so we split on object boundaries and take the id from the one
-/// whose app_id is mpv-lit.
-fn find_mpv_lit_window_id(json: &str) -> Option<u64> {
-    find_window_id_by_app_id(json, "\"mpv-lit\"")
-}
-
-/// Window id of this reader (release or dev app-id), so focus can be handed
-/// back after the expel. Returns None if the reader isn't in the list, in which
-/// case focus is simply left where the expel put it.
-fn find_reader_window_id(json: &str) -> Option<u64> {
-    find_window_id_by_app_id(json, "\"com.utono.linux-lit.dev\"")
-        .or_else(|| find_window_id_by_app_id(json, "\"com.utono.linux-lit\""))
-}
-
 /// MPV's tile height paired with the tallest tile in the list, for verifying
 /// that `maximize-column` actually took effect.
 ///
@@ -474,19 +479,73 @@ fn mpv_and_max_tile_height(json: &str, mpv_id: u64) -> Option<(f64, f64)> {
     mpv_h.map(|h| (h, max_h))
 }
 
-fn find_window_id_by_app_id(json: &str, quoted_app_id: &str) -> Option<u64> {
+/// Read a numeric field out of one window object.
+///
+/// `"id":` is a SUBSTRING of `"pid":`, so a plain `find("\"id\":")` on a chunk
+/// that lists pid first returns the pid. Both keys are therefore matched with
+/// their leading `"` and a preceding delimiter, which `"pid":` cannot satisfy.
+fn window_number_field(chunk: &str, key: &str) -> Option<u64> {
+    let needle = format!("\"{}\":", key);
+    let mut from = 0usize;
+    while let Some(rel) = chunk[from..].find(&needle) {
+        let at = from + rel;
+        // Reject a hit that is the tail of a longer key (`"pid":` for `id`):
+        // a real key is preceded by the object start or a comma.
+        let preceded_ok = chunk[..at]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|c| c == ',');
+        if preceded_ok {
+            let digits: String = chunk[at + needle.len()..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(v) = digits.parse::<u64>() {
+                return Some(v);
+            }
+        }
+        from = at + needle.len();
+    }
+    None
+}
+
+/// Window id of the `mpv-lit` window belonging to process `pid`.
+///
+/// Distinct from [`find_mpv_lit_window_id`], which returns the FIRST window
+/// with that app-id. That is wrong as soon as a second `crll` instance is
+/// running: `niri msg --json windows` is ordered neither by id nor by column
+/// (measured), so instance 2 could resolve instance 1's MPV, expel a window
+/// that is already in its own column -- a silent no-op, since expelling exits
+/// 0 regardless -- and leave its own MPV stacked in the terminal's column.
+///
+/// The pid is the correct discriminator and is already in IPC: each MPV is a
+/// direct child of the reader that spawned it, verified with `ps` against
+/// `niri msg -j windows` on two live instances.
+fn find_mpv_lit_window_id_by_pid(json: &str, pid: u32) -> Option<u64> {
+    find_window_id_by_app_id_and_pid(json, "\"mpv-lit\"", pid)
+}
+
+/// Window id of THIS reader, for handing focus back after the expel. Same
+/// per-instance reasoning as [`find_mpv_lit_window_id_by_pid`]: with two
+/// readers running, the first-match lookup can hand focus to the other one.
+fn find_reader_window_id_by_pid(json: &str, pid: u32) -> Option<u64> {
+    find_window_id_by_app_id_and_pid(json, "\"com.utono.linux-lit.dev\"", pid)
+        .or_else(|| find_window_id_by_app_id_and_pid(json, "\"com.utono.linux-lit\"", pid))
+}
+
+/// Both conditions must hold within the SAME window object, so this splits on
+/// `{` like the app-id-only scanner above and checks the pair per chunk.
+fn find_window_id_by_app_id_and_pid(json: &str, quoted_app_id: &str, pid: u32) -> Option<u64> {
     for chunk in json.split('{') {
         if !chunk.contains(quoted_app_id) {
             continue;
         }
-        let idx = chunk.find("\"id\":")?;
-        let rest = &chunk[idx + 5..];
-        let digits: String = rest
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        if let Ok(id) = digits.parse::<u64>() {
+        if window_number_field(chunk, "pid") != Some(u64::from(pid)) {
+            continue;
+        }
+        if let Some(id) = window_number_field(chunk, "id") {
             return Some(id);
         }
     }
@@ -598,45 +657,132 @@ mod tests {
 
 #[cfg(test)]
 mod niri_expel_tests {
-    use super::find_mpv_lit_window_id;
+    use super::{find_mpv_lit_window_id_by_pid, find_reader_window_id_by_pid};
 
     // Shape copied from real `niri msg --json windows` output on niri 26.04.
-    const SAMPLE: &str = r#"[{"app_id":"kitty","id":24,"title":"x"},{"app_id":"com.utono.linux-lit.dev","id":25,"title":"r"},{"app_id":"mpv-lit","id":26,"title":"m"}]"#;
+    const SAMPLE: &str = r#"[{"app_id":"kitty","id":24,"pid":100,"title":"x"},{"app_id":"com.utono.linux-lit.dev","id":25,"pid":101,"title":"r"},{"app_id":"mpv-lit","id":26,"pid":102,"title":"m"}]"#;
 
     #[test]
     fn finds_the_mpv_lit_window() {
-        assert_eq!(find_mpv_lit_window_id(SAMPLE), Some(26));
+        assert_eq!(find_mpv_lit_window_id_by_pid(SAMPLE, 102), Some(26));
     }
 
     #[test]
     fn none_when_mpv_absent() {
-        let s = r#"[{"app_id":"kitty","id":24},{"app_id":"com.utono.linux-lit","id":25}]"#;
-        assert_eq!(find_mpv_lit_window_id(s), None);
+        let s = r#"[{"app_id":"kitty","id":24,"pid":100},{"app_id":"com.utono.linux-lit","id":25,"pid":101}]"#;
+        assert_eq!(find_mpv_lit_window_id_by_pid(s, 102), None);
     }
 
     #[test]
     fn id_before_app_id_in_same_object() {
-        let s = r#"[{"id":26,"app_id":"mpv-lit"}]"#;
-        assert_eq!(find_mpv_lit_window_id(s), Some(26));
+        let s = r#"[{"id":26,"app_id":"mpv-lit","pid":102}]"#;
+        assert_eq!(find_mpv_lit_window_id_by_pid(s, 102), Some(26));
     }
 
     #[test]
     fn finds_the_reader_window() {
-        assert_eq!(super::find_reader_window_id(SAMPLE), Some(25));
+        assert_eq!(find_reader_window_id_by_pid(SAMPLE, 101), Some(25));
     }
 
     #[test]
     fn reader_lookup_matches_release_app_id_too() {
-        let s = r#"[{"app_id":"com.utono.linux-lit","id":9}]"#;
-        assert_eq!(super::find_reader_window_id(s), Some(9));
+        let s = r#"[{"app_id":"com.utono.linux-lit","id":9,"pid":101}]"#;
+        assert_eq!(find_reader_window_id_by_pid(s, 101), Some(9));
     }
 
     /// The dev app-id contains the release app-id as a prefix, so a substring
-    /// match on the release id would also hit a dev window. Dev is checked
-    /// first; assert the release lookup can't claim a dev-only window.
+    /// match on the release id would also hit a dev window. With both present
+    /// and a pid that identifies the dev one, the dev window must win.
     #[test]
     fn reader_lookup_prefers_dev_when_both_present() {
-        let s = r#"[{"app_id":"com.utono.linux-lit","id":9},{"app_id":"com.utono.linux-lit.dev","id":25}]"#;
-        assert_eq!(super::find_reader_window_id(s), Some(25));
+        let s = r#"[{"app_id":"com.utono.linux-lit","id":9,"pid":101},{"app_id":"com.utono.linux-lit.dev","id":25,"pid":102}]"#;
+        assert_eq!(find_reader_window_id_by_pid(s, 102), Some(25));
+    }
+
+    /// Two `crll` instances, each with its own MPV. Shape and ordering copied
+    /// from real `niri msg --json windows` output measured on niri 26.04 with
+    /// two readers running: the array is NOT ordered by id or by column, so
+    /// "the first mpv-lit" is whichever one niri happens to list first.
+    ///
+    /// The window ids here are the ones actually observed (176-180).
+    const TWO_INSTANCES: &str = r#"[{"app_id":"com.utono.linux-lit.dev","id":179,"pid":472079},{"app_id":"mpv-lit","id":177,"pid":470502},{"app_id":"kitty","id":165,"pid":459760},{"app_id":"mpv-lit","id":180,"pid":472129},{"app_id":"com.utono.linux-lit.dev","id":176,"pid":470453}]"#;
+
+    /// The bug: with two MPVs alive, instance 2 must expel ITS OWN window
+    /// (180, pid 472129) and not instance 1's (177), which is already expelled
+    /// so acting on it is a silent no-op that leaves instance 2's MPV stacked
+    /// in the terminal's column.
+    #[test]
+    fn finds_our_own_mpv_among_several_by_pid() {
+        assert_eq!(
+            super::find_mpv_lit_window_id_by_pid(TWO_INSTANCES, 472129),
+            Some(180)
+        );
+        assert_eq!(
+            super::find_mpv_lit_window_id_by_pid(TWO_INSTANCES, 470502),
+            Some(177)
+        );
+    }
+
+    /// The window must be matched on BOTH app-id and pid. A pid that belongs
+    /// to some other window (here the reader's own) must not resolve, or the
+    /// expel would act on the reader.
+    #[test]
+    fn pid_lookup_ignores_windows_that_are_not_mpv() {
+        assert_eq!(
+            super::find_mpv_lit_window_id_by_pid(TWO_INSTANCES, 472079),
+            None
+        );
+    }
+
+    /// MPV has spawned but its Wayland surface has not mapped yet, so it is
+    /// absent from IPC. The caller polls on this returning None.
+    #[test]
+    fn pid_lookup_none_when_our_mpv_has_not_mapped() {
+        assert_eq!(
+            super::find_mpv_lit_window_id_by_pid(TWO_INSTANCES, 999999),
+            None
+        );
+    }
+
+    /// niri emits object keys in an unspecified order, so `pid` may precede
+    /// `app_id` and `id` may follow both.
+    #[test]
+    fn pid_lookup_tolerates_key_order() {
+        let s = r#"[{"pid":472129,"app_id":"mpv-lit","id":180}]"#;
+        assert_eq!(super::find_mpv_lit_window_id_by_pid(s, 472129), Some(180));
+    }
+
+    /// A pid is matched as a whole number, not as a substring: 47212 must not
+    /// match the window whose pid is 472129.
+    #[test]
+    fn pid_lookup_does_not_match_a_pid_prefix() {
+        let s = r#"[{"app_id":"mpv-lit","id":180,"pid":472129}]"#;
+        assert_eq!(super::find_mpv_lit_window_id_by_pid(s, 47212), None);
+    }
+
+    /// The reader must likewise resolve to THIS process's window, not to
+    /// whichever reader niri lists first -- otherwise focus is handed to the
+    /// other instance at the end of the expel.
+    #[test]
+    fn finds_our_own_reader_among_several_by_pid() {
+        assert_eq!(
+            super::find_reader_window_id_by_pid(TWO_INSTANCES, 472079),
+            Some(179)
+        );
+        assert_eq!(
+            super::find_reader_window_id_by_pid(TWO_INSTANCES, 470453),
+            Some(176)
+        );
+    }
+
+    /// Release app-id resolves the same way; and a non-reader pid must not.
+    #[test]
+    fn reader_pid_lookup_matches_release_and_rejects_others() {
+        let s = r#"[{"app_id":"com.utono.linux-lit","id":9,"pid":42}]"#;
+        assert_eq!(super::find_reader_window_id_by_pid(s, 42), Some(9));
+        assert_eq!(
+            super::find_reader_window_id_by_pid(TWO_INSTANCES, 470502),
+            None
+        );
     }
 }
