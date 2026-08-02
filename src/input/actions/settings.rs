@@ -642,15 +642,21 @@ pub(crate) fn cycle_theme(state: &Rc<RefCell<crate::app::AppState>>, forward: bo
     let variant = s.config.root_variant_for(&cycle[next]);
     let theme = crate::theme::load_theme_with_fallback(&cycle[next], variant);
     apply_theme_to_state(&mut s, &theme);
-    // Desktop notification, mirroring the font-cycle pattern (font.rs). The
-    // synchronous hint replaces a still-visible previous theme toast instead
-    // of stacking.
-    let position = format!("{}/{}", next + 1, cycle.len());
-    let body = format!("{}\n{}", s.theme.display_name, s.theme.root_color);
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Theme [{}]", position), &body])
-        .spawn();
+    // In-app toast, mirroring the font-cycle pattern (font.rs). A later toast
+    // supersedes an earlier one via the generation counter, so rapid cycling
+    // replaces rather than stacks — the same effect the notification's
+    // synchronous hint used to give.
+    let text = format!(
+        "Theme [{}/{}] {}",
+        next + 1,
+        cycle.len(),
+        s.theme.display_name
+    );
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &text,
+        crate::input::navigation::SETTINGS_TOAST_SECS,
+    );
     // Standard clipboard payload (same as the root-color bind): the new theme's
     // root/vocab/gloss colors plus a screenshot path.
     copy_pairing_and_screenshot(&s.theme);
@@ -675,39 +681,33 @@ pub(crate) fn cycle_root_variant(state: &Rc<RefCell<crate::app::AppState>>, forw
     s.config.root_variants.insert(name.clone(), next);
     let theme = crate::theme::load_theme_with_fallback(&name, next);
     apply_theme_to_state(&mut s, &theme);
-    let body = format!("{}\n{}", s.theme.display_name, s.theme.root_color);
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h",
-               "string:x-canonical-private-synchronous:linux-lit-theme",
-               &format!("Root [{}/{}]", next + 1, count),
-               &body])
-        .spawn();
+    let text = format!("Root [{}/{}] {}", next + 1, count, s.theme.display_name);
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &text,
+        crate::input::navigation::SETTINGS_TOAST_SECS,
+    );
     // Standard clipboard payload (same as the theme bind): the new
     // root/vocab/gloss colors plus a screenshot path.
     copy_pairing_and_screenshot(&s.theme);
 }
 
 /// Ctrl+Alt+t: copy the current theme's color pairing to the system clipboard
-/// (and capture a screenshot), then notify — WITHOUT cycling. It reuses
+/// (and capture a screenshot), then toast — WITHOUT cycling. It reuses
 /// `copy_pairing_and_screenshot` so the clipboard payload is byte-identical to
 /// the theme/root cycle binds (Ctrl+t / Ctrl+Shift+t / Ctrl+$): the same
 /// `theme / root / vocab-fg / gloss-fg / toast-bg` block plus a screenshot
-/// path. The
-/// notification body surfaces those same colors so what you see matches what
-/// you paste; the title reads `Theme` with no counter (nothing changed).
+/// path. The toast names the theme with no counter (nothing changed); the
+/// individual hex values live on the clipboard, which is the thing you
+/// actually paste.
 pub(crate) fn show_theme_info(state: &Rc<RefCell<crate::app::AppState>>) {
     let s = state.borrow();
-    let body = format!(
-        "{}\nroot {}\nvocab-fg {}\ntoast-bg {}",
-        s.theme.display_name,
-        s.theme.root_color,
-        crate::theme::vocab_popup_fg(&s.theme),
-        crate::theme::chapter_toast_bg(&s.theme)
+    let text = format!("Theme {}", s.theme.display_name);
+    crate::input::navigation::show_chapter_toast_secs(
+        &s,
+        &text,
+        crate::input::navigation::SETTINGS_TOAST_SECS,
     );
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-theme",
-               "Theme", &body])
-        .spawn();
     // Same clipboard payload + screenshot as the theme/root cycle binds.
     copy_pairing_and_screenshot(&s.theme);
 }

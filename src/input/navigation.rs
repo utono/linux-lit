@@ -2767,6 +2767,12 @@ pub(crate) fn show_chapter_toast(state: &AppState, text: &str) {
     show_chapter_toast_secs(state, text, 3);
 }
 
+/// Dwell time for the settings-feedback toasts (theme / root variant / font).
+/// These replaced `notify-send` popups that used `-t 1500`; 2s reads slightly
+/// longer because an in-window toast is less attention-grabbing than a
+/// corner notification.
+pub(crate) const SETTINGS_TOAST_SECS: u64 = 2;
+
 /// Mark the act/scene strip as borrowed by a transient toast, saving the
 /// persistent pill's current text on the FALSE→TRUE edge so it can be restored
 /// verbatim when the last transient in a chain clears. Idempotent while already

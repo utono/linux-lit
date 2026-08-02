@@ -211,23 +211,29 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
     crate::input::prose_pages::resnap_prose_to_table(state);
     crate::input::navigation::invalidate_page_tops(state);
     crate::config::save(&state.config);
-    let position = format!("{}/{}", next + 1, cycle.len());
-    let body = format!("{} {}pt", state.config.font_family, state.config.font_size);
     log(&format!("FONT: cycled to {}", state.config.font_family));
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
-               &format!("Font [{}]", position), &body])
-        .spawn();
+    show_font_info(state);
 }
 
-/// Show current font info via desktop notification.
+/// Show current font info in the in-app chapter toast.
+///
+/// In-app toast rather than `notify-send`: the desktop notification depended on
+/// an external daemon that is not guaranteed to be running or visible above a
+/// fullscreen window, so the feedback silently vanished. The toast renders in
+/// our own window and is always seen. Single line — name plus position.
 pub fn show_font_info(state: &AppState) {
     let cycle = crate::config::FONT_CYCLE;
     let idx = cycle.iter().position(|f| *f == state.config.font_family).unwrap_or(0);
-    let position = format!("{}/{}", idx + 1, cycle.len());
-    let body = format!("{} {}pt", state.config.font_family, state.config.font_size);
-    let _ = std::process::Command::new("notify-send")
-        .args(["-t", "1500", "-h", "string:x-canonical-private-synchronous:linux-lit-font",
-               &format!("Font [{}]", position), &body])
-        .spawn();
+    let text = format!(
+        "Font [{}/{}] {} {}pt",
+        idx + 1,
+        cycle.len(),
+        state.config.font_family,
+        state.config.font_size
+    );
+    crate::input::navigation::show_chapter_toast_secs(
+        state,
+        &text,
+        crate::input::navigation::SETTINGS_TOAST_SECS,
+    );
 }
