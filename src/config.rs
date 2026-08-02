@@ -531,7 +531,22 @@ pub fn load() -> Config {
     }
     // Clamp the affect weight so a malformed config can never distort ranking.
     config.echo_affect_weight = config.echo_affect_weight.clamp(0.0, 1.0);
+    // LIT_THEME picks this instance's startup theme, so parallel instances are
+    // visually distinguishable (crll walks theme_cycle for one not already in
+    // use). Applied at LOAD only: an in-app Alt+t change still saves normally,
+    // and an unset/blank value leaves the stored theme untouched. An unknown
+    // name is left as-is — load_theme_with_fallback resolves it.
+    apply_theme_override(&mut config, std::env::var("LIT_THEME").ok().as_deref());
     config
+}
+
+/// Apply a `LIT_THEME` startup override to `config`. Blank/absent leaves the
+/// stored theme untouched; an unknown name is passed through for
+/// `load_theme_with_fallback` to resolve.
+pub(crate) fn apply_theme_override(config: &mut Config, requested: Option<&str>) {
+    if let Some(theme) = requested.map(str::trim).filter(|t| !t.is_empty()) {
+        config.theme = Some(theme.to_string());
+    }
 }
 
 /// Merge this instance's snapshot over the freshly-read on-disk config.
@@ -858,6 +873,31 @@ mod last_gloss_tests {
         let mut config = Config::default();
         config.theme = Some("zenbones-light".to_string());
         assert_eq!(config.theme_name(), "zenbones-light");
+    }
+
+    #[test]
+    fn theme_override_replaces_stored_theme() {
+        let mut config = Config::default();
+        config.theme = Some("zenbones-light".to_string());
+        apply_theme_override(&mut config, Some("rose-pine-dawn"));
+        assert_eq!(config.theme_name(), "rose-pine-dawn");
+    }
+
+    #[test]
+    fn theme_override_ignores_absent_or_blank() {
+        let mut config = Config::default();
+        config.theme = Some("zenbones-light".to_string());
+        apply_theme_override(&mut config, None);
+        assert_eq!(config.theme_name(), "zenbones-light");
+        apply_theme_override(&mut config, Some("   "));
+        assert_eq!(config.theme_name(), "zenbones-light");
+    }
+
+    #[test]
+    fn theme_override_trims_whitespace() {
+        let mut config = Config::default();
+        apply_theme_override(&mut config, Some("  sepia-light\n"));
+        assert_eq!(config.theme_name(), "sepia-light");
     }
 
     #[test]

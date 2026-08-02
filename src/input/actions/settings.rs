@@ -379,7 +379,13 @@ pub(crate) fn apply_theme_to_state(state: &mut crate::app::AppState, theme: &cra
         crate::app::setup_gutter(state);
     }
 
-    crate::logging::log(&format!("SETTINGS: theme changed to {}", theme.display_name));
+    // Log the slug alongside the display name: crll scans dev logs for the
+    // themes already in use, and matching on the slug keeps that detection
+    // correct after an in-app Alt+t change (not just at startup).
+    crate::logging::log(&format!(
+        "SETTINGS: theme changed to {} ({})",
+        theme.display_name, theme.name
+    ));
 }
 
 /// Revert AppState to the snapshot taken when the settings overlay opened,
