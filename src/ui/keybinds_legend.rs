@@ -82,8 +82,13 @@ impl KeybindsLegend {
 /// Both widgets start hidden; the caller attaches them to an outer overlay and
 /// toggles `show`/`hide`.
 pub fn build_legend(title: &str, groups: &[Group], mru: Option<Group>) -> (GtkBox, GtkBox) {
-    // Translucent dim (NOT the opaque gloss-scrim) so the parent overlay shows
-    // through, dimmed, behind the legend rather than being fully hidden.
+    // TRANSPARENT (2026-08-01). This used to be a 30% black wash, back when the
+    // parent overlay stayed visible behind the legend and wanted dimming. The
+    // parent card is now hidden outright (`suspend_for_legend`), leaving only
+    // the parent's opaque root-colored scrim behind us — so a black wash has
+    // nothing left to dim and instead visibly DARKENED the root, making the
+    // legend's backdrop a different color from the reader's. The layer is kept
+    // (rather than deleted) as the legend's full-bleed input/hit-test area.
     let scrim = GtkBox::builder().hexpand(true).vexpand(true).build();
     scrim.add_css_class("legend-scrim");
     scrim.set_visible(false);

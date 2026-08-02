@@ -638,8 +638,14 @@ fn draw_row_screen(
     widget_w: f64,
     widget_h: f64,
 ) {
-    // Full-screen scrim
-    cr.set_source_rgba(0.341, 0.322, 0.475, 0.95);
+    // Full-screen backdrop. OPAQUE (2026-08-01): this used to fill at alpha
+    // 0.95, and that 5% let the reading card's text ghost through behind the
+    // keycaps — the same complaint the per-overlay Ctrl+/ legends had, which
+    // they solve by hiding the parent card and letting the opaque root-colored
+    // scrim show. This overlay has no scrim widget of its own (it is a single
+    // full-bleed DrawingArea painted in Cairo), so the backdrop it paints here
+    // IS its matting and must be fully opaque.
+    cr.set_source_rgb(0.341, 0.322, 0.475);
     cr.rectangle(0.0, 0.0, widget_w, widget_h);
     let _ = cr.fill();
 

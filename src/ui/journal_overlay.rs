@@ -1276,6 +1276,22 @@ impl JournalOverlay {
         self.container.is_visible()
     }
 
+    /// Hide the journal CARD while a Ctrl+/ legend is up, so the legend is read
+    /// against the plain root instead of over the journal card. The SCRIM STAYS
+    /// VISIBLE — it is the opaque root-colored matting that hides the reader's
+    /// main card, which no overlay hides directly. NOT `hide`: that close funnel
+    /// resets the ask card, clears the word underline and stops the spinner,
+    /// while a legend is a temporary hop the overlay must survive intact.
+    /// Paired with `restore_after_legend`.
+    pub fn suspend_for_legend(&self) {
+        self.container.set_visible(false);
+    }
+
+    /// Re-show the card hidden by `suspend_for_legend`.
+    pub fn restore_after_legend(&self) {
+        self.container.set_visible(true);
+    }
+
     /// Set the footer-left label to the band identity (`<abbrev> <act>.<scene>`)
     /// Rebuild the footer from the stored band + Q&A-entry position + the current
     /// render-page count. LEFT label: `<abbrev> <act>.<scene> · Q&A 2 of 5` (the

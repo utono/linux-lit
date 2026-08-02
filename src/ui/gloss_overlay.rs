@@ -3644,6 +3644,28 @@ impl GlossOverlay {
     pub fn is_visible(&self) -> bool {
         self.container.is_visible()
     }
+
+    /// Hide the overlay CARD while a Ctrl+/ legend is up, so the legend is read
+    /// against the plain root instead of over the gloss/synopsis/echo card.
+    ///
+    /// Two deliberate choices:
+    /// - The SCRIM STAYS VISIBLE. `scrim_bg` is the live `root_color` verbatim
+    ///   and it is opaque, so it is what mattes out the reader's main card
+    ///   (which is never itself hidden by an overlay). Dropping it here would
+    ///   reveal the reading card behind the legend, not the bare root.
+    /// - This is NOT `hide`: the close funnel resets the ask card, clears the
+    ///   word underline and stops the spinner. A legend is a temporary hop, so
+    ///   only visibility flips and every piece of state survives the return.
+    ///
+    /// Paired with `restore_after_legend`.
+    pub fn suspend_for_legend(&self) {
+        self.container.set_visible(false);
+    }
+
+    /// Re-show the card hidden by `suspend_for_legend`.
+    pub fn restore_after_legend(&self) {
+        self.container.set_visible(true);
+    }
 }
 
 /// True when `line` of `buffer` is rendered as a speaker heading — i.e. its

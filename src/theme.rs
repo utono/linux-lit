@@ -1329,7 +1329,7 @@ pub fn generate_css(
            background-color: {toast_bg}; padding: 3px 10px; border-radius: 8px; \
            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); opacity: 0.95; }} \
          .gloss-scrim {{ background-color: {scrim}; }} \
-         .legend-scrim {{ background-color: rgba(0, 0, 0, 0.3); }} \
+         .legend-scrim {{ background-color: transparent; }} \
          .gloss-overlay {{ background-color: {gloss_bg}; color: {fg}; border-radius: 12px; \
            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }} \
          .gloss-bottom-clip {{ background-color: {gloss_bg}; }} \

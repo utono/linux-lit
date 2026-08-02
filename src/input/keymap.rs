@@ -3971,6 +3971,9 @@ fn handle_echoes_overlay_key(
             }
             "slash" => {
                 let mut s = state.borrow_mut();
+                // Legends float on the bare root: drop the echoes surface (it
+                // renders through the gloss overlay) while the legend is up.
+                s.gloss_overlay.suspend_for_legend();
                 s.echo_keybinds_overlay.show();
                 s.input_mode = crate::app::InputMode::EchoKeybindsOverlay;
                 return true;
@@ -4116,6 +4119,7 @@ fn handle_echo_keybinds_key(
     if key_name == "Escape" || (is_ctrl && key_name == "slash") {
         let mut s = state.borrow_mut();
         s.echo_keybinds_overlay.hide();
+        s.gloss_overlay.restore_after_legend();
         s.input_mode = crate::app::InputMode::EchoesOverlay;
     }
     true // consume all keys while the legend is up (modal)
@@ -4135,16 +4139,25 @@ enum OverlayLegend {
 /// close path in `handle_overlay_keybinds_key` (audit #51), keyed by the same
 /// `OverlayLegend` enum so the per-overlay field+mode mapping lives in ONE place.
 fn open_overlay_legend(s: &mut AppState, which: OverlayLegend) {
+    // A legend floats on the BARE ROOT (2026-08-01): suspend the parent overlay
+    // surface so the keybind card is read against the plain background rather
+    // than a dimmed gloss/journal card showing through the scrim. Suspend is not
+    // `hide` — it leaves the parent's session state (ask card, underline,
+    // spinner) intact for the return hop.
     match which {
         OverlayLegend::Gloss => {
+            s.gloss_overlay.suspend_for_legend();
             s.gloss_keybinds_overlay.show();
             s.input_mode = crate::app::InputMode::GlossKeybindsOverlay;
         }
         OverlayLegend::Synopsis => {
+            // Synopsis renders through the gloss overlay widget.
+            s.gloss_overlay.suspend_for_legend();
             s.synopsis_keybinds_overlay.show();
             s.input_mode = crate::app::InputMode::SynopsisKeybindsOverlay;
         }
         OverlayLegend::Journal => {
+            s.journal_overlay.suspend_for_legend();
             s.journal_keybinds_overlay.show();
             s.input_mode = crate::app::InputMode::JournalKeybindsOverlay;
         }
@@ -4165,14 +4178,17 @@ fn handle_overlay_keybinds_key(
         match which {
             OverlayLegend::Gloss => {
                 s.gloss_keybinds_overlay.hide();
+                s.gloss_overlay.restore_after_legend();
                 s.input_mode = crate::app::InputMode::GlossOverlay;
             }
             OverlayLegend::Synopsis => {
                 s.synopsis_keybinds_overlay.hide();
+                s.gloss_overlay.restore_after_legend();
                 s.input_mode = crate::app::InputMode::SynopsisOverlay;
             }
             OverlayLegend::Journal => {
                 s.journal_keybinds_overlay.hide();
+                s.journal_overlay.restore_after_legend();
                 s.input_mode = crate::app::InputMode::JournalOverlay;
             }
         }
@@ -4185,6 +4201,10 @@ fn handle_overlay_keybinds_key(
 /// it. Sibling of `open_overlay_legend` for the chat panel's own two contexts.
 fn open_chat_legend(s: &mut AppState, return_to: crate::app::InputMode) {
     s.chat_keybinds_return_mode = return_to;
+    // Legends float on the bare root: drop the panel while the legend is up.
+    // ChatPanel::hide only flips container visibility (no close funnel), so the
+    // transcript and any typed prompt survive the round trip.
+    s.chat_panel.hide();
     s.chat_keybinds_overlay.show();
     s.input_mode = crate::app::InputMode::ChatKeybindsOverlay;
 }
@@ -4200,6 +4220,7 @@ fn handle_chat_keybinds_key(
     if key_name == "Escape" || (is_ctrl && key_name == "slash") {
         let mut s = state.borrow_mut();
         s.chat_keybinds_overlay.hide();
+        s.chat_panel.show();
         s.input_mode = s.chat_keybinds_return_mode;
     }
     true // consume all keys while the legend is up (modal)
