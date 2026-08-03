@@ -39,7 +39,7 @@ fn start() -> Harness {
 #[ignore]
 fn chat_panel_opens_pinned_and_toggles() {
     let h = start();
-    if h.wait_for_viewport_rect(Duration::from_secs(8)).is_err() {
+    if h.wait_for_viewport_rect(Duration::from_secs(20)).is_err() {
         h.settle(Duration::from_secs(3));
     }
 

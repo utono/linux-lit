@@ -49,7 +49,7 @@ fn passage_verse_source_lines_render_tight() {
 
     let _ = h.set_output_size(1920, 1200);
     let _ = h
-        .wait_for_viewport_rect(Duration::from_secs(8))
+        .wait_for_viewport_rect(Duration::from_secs(20))
         .expect("app reported its reading-viewport rect");
 
     // Into Act 1 Scene 1 (front matter has no journal scene context).

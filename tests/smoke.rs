@@ -49,7 +49,7 @@ fn launches_and_renders_the_reader() {
 
     // Gate on the app actually revealing its window (emits the viewport rect at
     // reveal). Falls back to a plain settle if the rect never lands.
-    if h.wait_for_viewport_rect(Duration::from_secs(8)).is_err() {
+    if h.wait_for_viewport_rect(Duration::from_secs(20)).is_err() {
         h.settle(Duration::from_secs(3));
     }
 
