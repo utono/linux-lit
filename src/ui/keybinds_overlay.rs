@@ -49,8 +49,8 @@ const NUMBER_ROW: &[KeyDef] = &[
 const BACKSPACE: KeyDef = bare("\u{232b}", "", "ts tap");
 
 const UPPER_ROW: &[KeyDef] = &[
-    key(";", ":", "cursor \u{2191}", ":: cycle speed", &[]),
-    // M-, ("prev dlg") retired 2026-07-27 — see `;` (cursor ↑), its superset.
+    key(";", ":", "prev bkmk", ":: cycle speed", &[]),
+    // M-, ("prev dlg") retired 2026-07-27 — see `k` (cursor ↑), its superset.
     key(",", "<", "prev speaker", "", &[("C-,", "settings")]),
     key(".", ">", "bkmk tap", "", &[("C-.", "bookmarks")]),
     key("p", "P", "nudge \u{2212}0.2", "P: +0.2", &[("M-p", "karaoke")]),
@@ -86,12 +86,12 @@ const ESC_KEY: KeyDef = bare("Esc", "", "clear AB");
 const RETURN_KEY: KeyDef = bare("Ret", "", "syntax gloss");
 
 const BOTTOM_ROW: &[KeyDef] = &[
-    bare("'", "\"", "cursor \u{2193}"),
-    // Shift+q ("Q: next dlg") retired 2026-07-27 — see `'` (cursor ↓), its
+    bare("'", "\"", "next bkmk"),
+    // Shift+q ("Q: next dlg") retired 2026-07-27 — see `j` (cursor ↓), its
     // superset. `q` itself is unchanged.
     key("q", "Q", "next speaker", "", &[]),
-    key("j", "J", "next bkmk", "J: next speaker", &[("C-j", "jrnl Q&A picker"), ("M-j", "recent Q&A")]),
-    key("k", "K", "prev bkmk", "K: prev speaker", &[]),
+    key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "jrnl Q&A picker"), ("M-j", "recent Q&A")]),
+    key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
     key("b", "B", "start time", "", &[("C-b", "undo ts"), ("M-b", "set end time")]),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
@@ -1140,11 +1140,15 @@ mod retired_bind_legend_tests {
         }
     }
 
-    /// The supersets that replaced them must still be advertised.
+    /// The supersets that replaced them must still be advertised. They moved
+    /// from `'`/`;` to `j`/`k` on 2026-08-03 (swapped with the bookmark steps).
     #[test]
     fn superset_binds_are_still_in_the_legend() {
         let all: Vec<&KeyDef> = (0..ROW_COUNT).flat_map(row_keys).collect();
-        assert!(all.iter().any(|d| d.unshifted == "'" && d.action == "cursor \u{2193}"));
-        assert!(all.iter().any(|d| d.unshifted == ";" && d.action == "cursor \u{2191}"));
+        assert!(all.iter().any(|d| d.unshifted == "j" && d.action == "cursor \u{2193}"));
+        assert!(all.iter().any(|d| d.unshifted == "k" && d.action == "cursor \u{2191}"));
+        // The bookmark steps took the caps they vacated.
+        assert!(all.iter().any(|d| d.unshifted == "'" && d.action == "next bkmk"));
+        assert!(all.iter().any(|d| d.unshifted == ";" && d.action == "prev bkmk"));
     }
 }

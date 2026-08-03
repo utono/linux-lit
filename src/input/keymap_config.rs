@@ -208,16 +208,16 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("y"), Action::PageBackward),
         // space / Shift+space were PageForward/PageBackward; space is now a
         // global play/pause toggle handled directly in handle_key.
-        // Bookmark steps live on j / k (swapped with `'`/`;`, which carry
-        // the seeking cursor steps below). The speaker JUMPS j / k once
+        // The seeking cursor steps live on j / k (swapped back with `'`/`;`,
+        // which carry the bookmark steps below). The speaker JUMPS j / k once
         // duplicated stay on q / comma (and the shifted J / K forms below).
         // h / t are the cursor-only NO-SEEK dialogue twins.
-        (KeyCombo::plain("j"), Action::NextBookmark),
-        (KeyCombo::plain("k"), Action::PrevBookmark),
+        (KeyCombo::plain("j"), Action::CursorNextDialogue),
+        (KeyCombo::plain("k"), Action::CursorPrevDialogue),
         // RETIRED 2026-07-27: `Q` (JumpToNextDialogue) and `Alt+,`
         // (JumpToPrevDialogue). Both ran the play-only dialogue predicate with
         // NO prose branch, so on prose they walked headings and behaved
-        // erratically. `'` / `;` (Cursor{Next,Prev}Dialogue) are strict
+        // erratically. `j` / `k` (Cursor{Next,Prev}Dialogue) are strict
         // supersets — identical play predicate PLUS a prose branch and a
         // translation-overlay branch — so nothing is lost. The Action variants
         // and handlers are deliberately KEPT (unbound) so a rebind is one line.
@@ -254,11 +254,11 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // instead.
         (KeyCombo::shift("colon"), Action::TogglePlaybackSpeed),
         (KeyCombo::shift("semicolon"), Action::TogglePlaybackSpeed),
-        // `;`/`'` carry the seeking cursor steps (prev line / next dialogue),
-        // swapped with `k`/`j` (which took the bookmark steps above).
+        // `;`/`'` carry the bookmark steps, swapped back with `k`/`j` (which
+        // took the seeking cursor steps above).
         // `}`/`]` (braceright/bracketright) stay unbound.
-        (KeyCombo::plain("semicolon"), Action::CursorPrevDialogue),
-        (KeyCombo::plain("apostrophe"), Action::CursorNextDialogue),
+        (KeyCombo::plain("semicolon"), Action::PrevBookmark),
+        (KeyCombo::plain("apostrophe"), Action::NextBookmark),
         (KeyCombo::plain("m"), Action::ToggleBookmark),
         // `.` is overloaded (Action::BookmarkTap): single tap toggles the
         // bookmark; .. reverts the toggle and opens the picker.
@@ -638,8 +638,8 @@ mod tests {
         let m = default_reader_bindings();
         assert_eq!(m.get(&KeyCombo::plain("x")), Some(&Action::PageForward));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::NextBookmark));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::PrevBookmark));
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogue));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevDialogue));
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
@@ -758,8 +758,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("K")), Some(&Action::JumpToPrevSpeaker));
         // Lowercase j / k carry the bookmark steps (swapped with `'`/`;`);
         // the speaker jumps stay on q / comma and the capitals above.
-        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::NextBookmark));
-        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::PrevBookmark));
+        assert_eq!(m.get(&KeyCombo::plain("j")), Some(&Action::CursorNextDialogue));
+        assert_eq!(m.get(&KeyCombo::plain("k")), Some(&Action::CursorPrevDialogue));
         assert_eq!(m.get(&KeyCombo::plain("h")), Some(&Action::CursorNextDialogueNoSeek));
         assert_eq!(m.get(&KeyCombo::plain("t")), Some(&Action::CursorPrevDialogueNoSeek));
     }
@@ -783,8 +783,8 @@ mod tests {
         assert_eq!(km.lookup("Q", false, true, false), None, "Q retired");
         assert_eq!(km.lookup("comma", false, false, true), None, "Alt+, retired");
         // ...and the supersets that replaced them are still bound.
-        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
-        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogue));
+        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::NextBookmark));
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::PrevBookmark));
     }
 
     /// The `i` cap mirrors the `-` cap on all four levels, for every work type.
@@ -926,8 +926,8 @@ mod tests {
         // `;`/`'` carry the seeking cursor steps; `}`/`]` are unbound.
         assert_eq!(km.lookup("braceright", false, false, false), None);
         assert_eq!(km.lookup("bracketright", false, false, false), None);
-        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::CursorPrevDialogue));
-        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::CursorNextDialogue));
+        assert_eq!(km.lookup("semicolon", false, false, false), Some(Action::PrevBookmark));
+        assert_eq!(km.lookup("apostrophe", false, false, false), Some(Action::NextBookmark));
         assert_eq!(km.lookup("braceleft", false, false, false), Some(Action::JumpToNextDivision));
         // Shift+; (the shifted colon glyph) cycles playback speed; `+` copies
         // the work + division to the clipboard (was ShowCurrentChapter, which
@@ -1029,7 +1029,7 @@ mod tests {
         assert_eq!(km.lookup("x", false, false, false), Some(Action::PageBackward));
         // Other defaults preserved:
         assert_eq!(km.lookup("y", false, false, false), Some(Action::PageBackward));
-        assert_eq!(km.lookup("j", false, false, false), Some(Action::NextBookmark));
+        assert_eq!(km.lookup("j", false, false, false), Some(Action::CursorNextDialogue));
     }
 
     #[test]
