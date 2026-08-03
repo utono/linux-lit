@@ -1757,24 +1757,21 @@ pub fn build_window(
     card_focus_rule.set_visible(false);
     page_turn_overlay.add_overlay(&card_focus_rule);
 
-    // Centered text card container — width_request controls the card width
+    // Centered text card container. `apply_card_sizing` sets its width on every
+    // resize tick, always clamped to the window -- see the long note there for
+    // why the clamp is what makes a width_request safe here.
     let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
     content_hbox.set_halign(gtk4::Align::Center);
     content_hbox.set_valign(gtk4::Align::Fill);
     content_hbox.set_vexpand(true);
-    // Deliberately NOT `config.column_width`: a child's `width_request`
-    // propagates up as the WINDOW's minimum size, which GTK advertises to the
-    // compositor, and `column_width` (1050) plus the card's outer margins pins
-    // the window at 1098px. A window whose minimum exceeds the output cannot
-    // honour fullscreen — the 2026-08-01 bug in its second layer, exposed once
-    // the two-column floor (1585px) was lifted by `two_columns_fit`.
+    // No seed width. Before the first resize tick the window width is unknown,
+    // so there is no clamp to apply and any fixed value here is either a floor
+    // (pins the window) or a collapse (the 2026-08-03 bug rendered at exactly
+    // this seed's 320px). `apply_card_sizing` runs on the first tick with a real
+    // window width; until then the box simply has no width of its own.
     //
-    // This value is only the pre-first-allocation seed: `apply_card_sizing`
-    // overwrites it on the first resize tick and every one after, always
-    // clamped to the window. So it must be small enough never to act as a
-    // floor. Guarded by `window_can_shrink_below_its_card_width`
-    // (tests/niri_smoke.rs).
-    content_hbox.set_width_request(crate::app::layout::CARD_SEED_WIDTH);
+    // Guarded by `window_can_shrink_below_its_card_width` (tests/niri_smoke.rs)
+    // and `single_column_card_fills_its_computed_width` (tests/card_width.rs).
     // Vertical outer margins (window edge → card) are intentionally SMALLER than
     // the horizontal CARD_OUTER_MARGIN(24): a slightly taller card, whose gained
     // height funds more breathing room inside (header top-inset + bottom reserve)
@@ -2632,6 +2629,36 @@ pub fn build_window(
                 reveal_snap(&state_for_fallback);
                 vbox_for_fallback.set_opacity(1.0);
             }
+            // Emit the harness viewport rect on this path too, but only once
+            // the viewport has a real allocation -- at the instant the fallback
+            // fires it can still be 0x0, and a 0-width rect is worse than none
+            // (the harness would accept it and assert against garbage).
+            //
+            // Emitting the rect ONLY from the resize-tick reveal made every
+            // test that waits for it a coin flip: measured on master
+            // (unmodified), 2 of 3 cage launches took this 5s fallback, logged
+            // no rect, and `wait_for_viewport_rect` timed out -- a failure that
+            // reads as "the change under test broke startup".
+            if std::env::var_os("LIT_HEADLESS_TEST").is_none() {
+                return;
+            }
+            let state_poll = Rc::clone(&state_for_fallback);
+            let tries = std::cell::Cell::new(0u32);
+            glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+                tries.set(tries.get() + 1);
+                let Ok(s) = state_poll.try_borrow() else {
+                    return glib::ControlFlow::Continue;
+                };
+                if s.scrolled_window.width() > 0 {
+                    crate::input::scroll::emit_test_viewport_rect(&s);
+                    return glib::ControlFlow::Break;
+                }
+                // ~10s ceiling; never spin forever.
+                if tries.get() >= 40 {
+                    return glib::ControlFlow::Break;
+                }
+                glib::ControlFlow::Continue
+            });
         });
     }
 
