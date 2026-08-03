@@ -2723,7 +2723,17 @@ mod tests {
         let conn = open_db().unwrap();
         let works = list_works(&conn).unwrap();
         assert!(works.len() > 100, "Should have 100+ works");
-        assert!(works.iter().any(|w| w.abbrev == "Ham"));
+
+        // Assert the RULE, not a specific abbrev. This was
+        // `any(|w| w.abbrev == "Ham")` and broke when Hamlet's dedicated media
+        // moved onto its editions: `Ham` became a media-less base and
+        // `list_works` correctly stopped listing it, so a green-to-red flip
+        // here meant the DATA changed, not the query. A named work is only a
+        // safe assertion when the test also owns why that work qualifies.
+        assert!(
+            works.iter().any(|w| w.abbrev.starts_with("Ham")),
+            "some Hamlet work (base or edition) should be listed"
+        );
 
         // Every listed work must have at least one associated media file — the
         // picker filters out media-less works. Verify none of the listed works
@@ -2747,20 +2757,24 @@ mod tests {
         // Edition-leak: a base work (AWW) whose only media is a single-play file
         // shared with its own edition (AWW-BBC) is hidden — reach it via the
         // edition. The Hamlet+Macbeth+Romeo bundle m4b is now associated with
-        // the -BBCClassic editions (not the bases), so bases Rom/MND are
+        // the -BBCClassic editions (not the bases), so bases Rom/MND/Ham are
         // media-less and filtered like 2H6. Cym stays (base-only dedicated
-        // file); Ham stays (dedicated media).
+        // file).
         assert!(
             !works.iter().any(|w| w.abbrev == "AWW"),
             "edition-leak base AWW should be filtered out (reach it via an edition)"
         );
-        for gone in ["Rom", "MND"] {
+        for gone in ["Rom", "MND", "Ham"] {
             assert!(
                 !works.iter().any(|w| w.abbrev == gone),
                 "media-less base {gone} should be filtered (bundle moved to -BBCClassic)"
             );
         }
-        for keep in ["Cym", "Ham", "Rom-BBCClassic"] {
+        // `Ham` was in this list until 2026-08-03, when its dedicated media
+        // moved onto the editions and it became a media-less base — it is
+        // asserted FILTERED above now. Verified against lit.db:
+        // `work_media_associations` has 0 rows for `Ham`, 1 for `Cym`.
+        for keep in ["Cym", "Rom-BBCClassic"] {
             assert!(
                 works.iter().any(|w| w.abbrev == keep),
                 "{keep} should remain listed (has media association)"
@@ -2783,10 +2797,13 @@ mod tests {
     #[test]
     fn test_load_translations() {
         let conn = open_db().unwrap();
-        let translations = load_translations(&conn, "Ham").unwrap();
-        // Hamlet may or may not have translations — just verify no crash
-        // and that the return type is correct
-        assert!(translations.len() >= 0);
+        // Hamlet may or may not have translations — the point is that the query
+        // executes and deserializes. `unwrap()` is the real assertion; a
+        // `len() >= 0` check compiled to a tautology on usize (always true) and
+        // tripped clippy's `absurd_extreme_comparisons` without testing
+        // anything.
+        let _translations: std::collections::HashMap<i64, String> =
+            load_translations(&conn, "Ham").unwrap();
     }
 
     #[test]
