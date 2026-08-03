@@ -1536,6 +1536,46 @@ When a half line clips at the bottom edge of a scrolled surface:
       the wrong page on screen meanwhile. A resnap on a clean launch is a bug
       upstream of the clip.
 
+21. **A SECOND CARD behind the reader — HORIZONTAL overflow, not a text clip.**
+    Not a clipped line at all: a cream rectangle peeking out past the card's
+    right edge, reading as another card stacked behind the reader. No text is
+    cut, so none of the bottom-clip paths (a/b/c) apply and `CLIP_WARN` is
+    silent. **Do not debug the clip code for this one.**
+    - Tell: pixel-scan the rows and find TWO right edges at different x. The
+      reader's own edge is rounded + anti-aliased (`border-radius: 12px`); the
+      stray one is a HARD square edge, and it starts `TOP_SPACER_HEIGHT` (44px)
+      BELOW the card top — because `top_spacer` covers the overflow for exactly
+      the running-head strip's height, and the columns below it do not.
+      Measured 2026-08-03 on Per-Amb: card right edge 1723, stray edge 1732.
+    - Root cause: the card was allocated NARROWER than the block it must hold.
+      `apply_tiled_mode` hard-sizes each column with
+      `set_width_request(MIN_TWO_COLUMN_COLUMN_WIDTH)`, so the
+      `[col | divider | col]` block is a fixed width that CANNOT shrink;
+      `columns_hbox` is `halign: Center`, which has no way to compress an
+      oversized child. If `target_card_width`'s two-column floor reserves less
+      than the block really needs, the difference renders past the card's right
+      edge and paints its `.card-bottom` cream there. Nothing in that ancestor
+      chain sets `Overflow::Hidden` (only the two `ScrolledWindow`s do), so the
+      overflow is never clipped away.
+    - The specific defect: the floor reserved `+ 8` for the divider while
+      `.column-divider` actually costs 17px (`min-width: 1px` + `margin: 0 8px`).
+      At 1920 the card floored at 1528 while the block needed 1537 — a 9px
+      overhang, exactly the measured 1732-vs-1723.
+    - Fix: `two_col_floor = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + COLUMN_DIVIDER_WIDTH`
+      (`src/app/layout.rs`). Guarded by
+      `two_column_card_is_wide_enough_for_the_block_it_must_hold`.
+    - Generalisation: any constant reserving room for chrome must count the
+      chrome's FULL CSS box (margins included), not the rule's `min-width`.
+      Rounding DOWN is safe where the value is subtracted from a budget
+      (`TWO_COLUMN_CHROME_ALLOWANCE`) and unsafe where the card must be wide
+      enough to HOLD the block — the two uses need opposite rounding, which is
+      why they are now separate constants.
+    - Latent since the columns were fixed-width, but only became VISIBLE with
+      the `CardLayout` manager (a5ed3a0c): a `width_request` used to propagate a
+      child's minimum up so the box could never be under-allocated, whereas
+      `CardLayout::allocate` hands the child exactly `card_width` with no
+      renegotiation against what the child measured.
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

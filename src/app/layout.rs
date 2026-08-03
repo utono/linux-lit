@@ -54,11 +54,15 @@ pub(crate) const CARD_VERTICAL_OUTER_MARGIN: i32 = 14;
 /// width against the window in `apply_tiled_mode`.
 ///
 /// Measured, not guessed: with two 760px columns `page_turn_overlay` reports a
-/// 1537px minimum, i.e. 17px of chrome over the 1520px of columns. Rounded up
-/// to 20 for headroom — it is only ever SUBTRACTED from the available budget,
-/// so erring high costs a couple of px of column width and never lets the pair
-/// overflow the window.
-pub(crate) const TWO_COLUMN_CHROME_ALLOWANCE: i32 = 20;
+/// 1537px minimum, i.e. `COLUMN_DIVIDER_WIDTH` of chrome over the 1520px of
+/// columns. Rounded up for headroom — it is only ever SUBTRACTED from the
+/// available budget, so erring high costs a couple of px of column width and
+/// never lets the pair overflow the window.
+///
+/// Do NOT use this where the card must be wide enough to HOLD the block — there
+/// the exact `COLUMN_DIVIDER_WIDTH` is required, and rounding the other way
+/// (down) is what left the card 9px too narrow (see `target_card_width`).
+pub(crate) const TWO_COLUMN_CHROME_ALLOWANCE: i32 = COLUMN_DIVIDER_WIDTH + 3;
 
 /// Bottom margin on the shared ask/edit input card (`ui::ask_card`), lifting
 /// its bottom border above the act/scene toast pill with breathing room while
@@ -88,16 +92,25 @@ fn current_block_text_width(state: &AppState) -> i32 {
 // all now -- `CardLayout` owns it, driven by `apply_card_sizing`. The 320px seed
 // that used to live here is what the 2026-08-03 collapsed card rendered at.)
 
+/// Width the column divider occupies between the two columns.
+///
+/// The `.column-divider` CSS (src/theme.rs) is `min-width: 1px` with `margin: 0
+/// 8px`, so the separator costs `8 + 1 + 8` px of the card — NOT the 1px rule
+/// alone. Anything sizing the card for two columns must reserve all 17, or the
+/// `[col | divider | col]` block is wider than the card it sits in and overflows
+/// past the card's right edge (a second cream rectangle behind the card, 2026-08-03).
+pub(crate) const COLUMN_DIVIDER_WIDTH: i32 = 17;
+
 /// Narrowest window that can host the two-column reading block.
 ///
 /// Two verse-safe columns (`2 * MIN_TWO_COLUMN_COLUMN_WIDTH`) plus the divider
 /// and seams between them plus the card's two outer margins. Measured against
 /// the live widget tree: two 760px columns make `page_turn_overlay` report a
-/// 1537px minimum (17px of chrome over the 1520px of columns), and 1585px once
-/// `CARD_OUTER_MARGIN` is added on both sides. Rounded to 20px of chrome for
-/// headroom.
+/// 1537px minimum (`COLUMN_DIVIDER_WIDTH` of chrome over the 1520px of columns),
+/// and 1585px once `CARD_OUTER_MARGIN` is added on both sides. Uses the rounded-up
+/// `TWO_COLUMN_CHROME_ALLOWANCE` for headroom, since this is a threshold to clear.
 pub(crate) const MIN_TWO_COLUMN_WINDOW_WIDTH: i32 =
-    2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 20 + 2 * CARD_OUTER_MARGIN;
+    2 * MIN_TWO_COLUMN_COLUMN_WIDTH + TWO_COLUMN_CHROME_ALLOWANCE + 2 * CARD_OUTER_MARGIN;
 
 /// Whether two columns actually FIT in `window_width`.
 ///
@@ -437,9 +450,18 @@ pub(crate) fn target_card_width(
     // not translations are visible.
     if column_count >= 2 || translations {
         let proportional = (window_width as f32 * TWO_COLUMN_WIDTH_FRACTION) as i32;
-        // Never narrow a column below the verse-safe floor: two columns plus a
-        // few px for the divider. Also never below the single-column floor.
-        let two_col_floor = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + 8;
+        // Never narrow a column below the verse-safe floor: two columns plus the
+        // divider's FULL cost. Also never below the single-column floor.
+        //
+        // This must be `COLUMN_DIVIDER_WIDTH` (17), not the 1px rule or a rounded
+        // "few px" — `apply_tiled_mode` hard-sizes each column to
+        // MIN_TWO_COLUMN_COLUMN_WIDTH, so a floor that reserves less than the
+        // divider really costs makes the `[col | divider | col]` block WIDER than
+        // the card. `columns_hbox` is halign:Center, which cannot shrink an
+        // oversized child, so the block overflowed 9px past the card's right edge
+        // and painted its card-bottom cream there — reading as a second card
+        // behind the reader (2026-08-03).
+        let two_col_floor = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + COLUMN_DIVIDER_WIDTH;
         proportional.max(cw_cfg).max(two_col_floor)
     } else {
         cw_cfg
@@ -751,8 +773,8 @@ mod card_width_tests {
     #[test]
     fn two_columns_fill_fraction_of_wide_window() {
         // TWO_COLUMN_WIDTH_FRACTION (0.68) of 1920 = 1305, below the wrap-safe
-        // two-column floor (2*760+8 = 1528), so clamp up to 1528.
-        assert_eq!(target_card_width(1920, 1050, 2, false), 1528);
+        // two-column floor (2*760 + COLUMN_DIVIDER_WIDTH = 1537), so clamp up.
+        assert_eq!(target_card_width(1920, 1050, 2, false), 1537);
     }
 
     #[test]
@@ -764,8 +786,13 @@ mod card_width_tests {
     #[test]
     fn two_columns_never_below_verse_safe_floor() {
         // Narrow window: proportional (0.68*1300=884) and column_width (1050)
-        // are both below the 1528 two-column floor → clamp up to 1528.
-        assert_eq!(target_card_width(1300, 1050, 2, false), 1528);
+        // are both below the 1537 two-column floor → clamp up to 1537.
+        //
+        // The floor must equal the block's REAL width (2 columns + the divider's
+        // full 17px). At 1528 the card was 9px narrower than the block it holds,
+        // and the overflow painted a second cream rectangle past the card's right
+        // edge (2026-08-03).
+        assert_eq!(target_card_width(1300, 1050, 2, false), 1537);
     }
 
     #[test]
@@ -861,6 +888,45 @@ mod card_width_tests {
 
 
     #[test]
+    fn two_column_card_is_wide_enough_for_the_block_it_must_hold() {
+        use super::{
+            computed_card_width, COLUMN_DIVIDER_WIDTH, MIN_TWO_COLUMN_COLUMN_WIDTH,
+        };
+
+        // `apply_tiled_mode` hard-sizes each column to MIN_TWO_COLUMN_COLUMN_WIDTH
+        // via `set_width_request`, so the `[col | divider | col]` block is exactly
+        // this wide and CANNOT shrink. `columns_hbox` is halign:Center, which has
+        // no way to compress an oversized child -- so if the card is even 1px
+        // narrower than the block, the block overflows past the card's right edge
+        // and paints its `card-bottom` cream there, reading as a second card
+        // behind the reader.
+        //
+        // Regression: the floor reserved a rounded `+ 8` for the divider while the
+        // divider really costs 17 (1px rule + 8px margin per side), so at 1920 the
+        // card floored at 1528 while the block needed 1537 -- a 9px overhang,
+        // measured at right edge x=1732 vs the card's 1723 (2026-08-03).
+        let block = 2 * MIN_TWO_COLUMN_COLUMN_WIDTH + COLUMN_DIVIDER_WIDTH;
+
+        for ww in [1920, 2560, 3840] {
+            let card = computed_card_width(ww, 1050, 2, false);
+            assert!(
+                card >= block,
+                "two-column card at window {ww} is {card}px but the block it must \
+                 hold is {block}px -- the columns will overflow the card's right \
+                 edge by {}px",
+                block - card
+            );
+        }
+
+        // Translation mode renders two logical columns and shares the same floor.
+        let card = computed_card_width(1920, 1050, 1, true);
+        assert!(
+            card >= block,
+            "translation card is {card}px, narrower than the {block}px block"
+        );
+    }
+
+    #[test]
     fn computed_card_width_matches_what_apply_card_sizing_draws() {
         use super::{computed_card_width, CARD_OUTER_MARGIN};
 
@@ -873,7 +939,11 @@ mod card_width_tests {
         // Identical clamp to `apply_card_sizing`: window MINUS both outer
         // margins, because the margins sit outside the card.
         assert_eq!(computed_card_width(1920, 1050, 1, false), 1050);
-        assert_eq!(computed_card_width(1920, 1050, 2, false), 1528);
+        // 2 * 760 + COLUMN_DIVIDER_WIDTH(17) -- the block's true width. Was 1528
+        // when the floor under-reserved the divider at +8, which left the card 9px
+        // too narrow for its own columns (see
+        // `two_column_card_is_wide_enough_for_the_block_it_must_hold`).
+        assert_eq!(computed_card_width(1920, 1050, 2, false), 1537);
 
         // Narrow window: the card gives up width to keep its margins.
         assert_eq!(computed_card_width(1000, 1050, 1, false), 1000 - 2 * CARD_OUTER_MARGIN);
