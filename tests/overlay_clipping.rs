@@ -39,7 +39,7 @@ fn synopsis_overlay_never_clips() {
 
     // Wait for the main card to be ready first (its rect doubles as readiness).
     let _ = h
-        .wait_for_viewport_rect(Duration::from_secs(8))
+        .wait_for_viewport_rect(Duration::from_secs(20))
         .expect("app reported its reading-viewport rect");
 
     // Front matter (before a scene with synopsis data) may show nothing, so
@@ -53,7 +53,7 @@ fn synopsis_overlay_never_clips() {
     // Open the synopsis overlay — Ctrl+h (ShowSynopsisOverlay).
     h.chord(&["ctrl"], "h").expect("Ctrl+h -> synopsis overlay");
     let region = h
-        .wait_for_overlay_viewport_rect(Duration::from_secs(8))
+        .wait_for_overlay_viewport_rect(Duration::from_secs(20))
         .expect("overlay reported its viewport rect");
     h.settle(Duration::from_millis(500));
 

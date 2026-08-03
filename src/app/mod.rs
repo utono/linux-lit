@@ -10,6 +10,7 @@ use self::formatting::{apply_dialogue_formatting, apply_authorship_formatting, a
 pub mod division_synopsis;
 use self::division_synopsis::{is_first_line_of_division, division_heading_start};
 pub mod translations;
+pub mod card_layout;
 pub mod layout;
 use self::layout::{apply_tiled_mode, apply_card_sizing, line_number_gutter_geometry, overlay_card_size};
 
@@ -1757,21 +1758,28 @@ pub fn build_window(
     card_focus_rule.set_visible(false);
     page_turn_overlay.add_overlay(&card_focus_rule);
 
-    // Centered text card container. `apply_card_sizing` sets its width on every
-    // resize tick, always clamped to the window -- see the long note there for
-    // why the clamp is what makes a width_request safe here.
-    let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    content_hbox.set_halign(gtk4::Align::Center);
-    content_hbox.set_valign(gtk4::Align::Fill);
-    content_hbox.set_vexpand(true);
-    // No seed width. Before the first resize tick the window width is unknown,
-    // so there is no clamp to apply and any fixed value here is either a floor
-    // (pins the window) or a collapse (the 2026-08-03 bug rendered at exactly
-    // this seed's 320px). `apply_card_sizing` runs on the first tick with a real
-    // window width; until then the box simply has no width of its own.
+    // Text card container, sized by `CardLayout` (src/app/card_layout.rs).
+    //
+    // NOT `halign: Center` and NOT a `width_request` -- the manager does both
+    // jobs, and each of those properties has shipped a bug here. `halign:
+    // Center` allocates the box its NATURAL width, which with no width set
+    // anywhere collapsed the card to 281px (2026-08-03); a `width_request` IS
+    // the window's minimum, which pinned the tile and broke fullscreen
+    // (2026-08-01). The manager separates the two numbers: it advertises a tiny
+    // minimum so the window can always shrink, and allocates the card at
+    // `card_width`, centred. `apply_card_sizing` sets that width each tick.
     //
     // Guarded by `window_can_shrink_below_its_card_width` (tests/niri_smoke.rs)
-    // and `single_column_card_fills_its_computed_width` (tests/card_width.rs).
+    // and `single_column_card_fills_its_computed_width` (tests/card_width.rs) --
+    // the two together, which is the point: before the manager, no build could
+    // pass both.
+    let content_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    let card_layout = crate::app::card_layout::CardLayout::new();
+    content_hbox.set_layout_manager(Some(card_layout.clone()));
+    content_hbox.set_halign(gtk4::Align::Fill);
+    content_hbox.set_hexpand(true);
+    content_hbox.set_valign(gtk4::Align::Fill);
+    content_hbox.set_vexpand(true);
     // Vertical outer margins (window edge → card) are intentionally SMALLER than
     // the horizontal CARD_OUTER_MARGIN(24): a slightly taller card, whose gained
     // height funds more breathing room inside (header top-inset + bottom reserve)
@@ -2629,36 +2637,50 @@ pub fn build_window(
                 reveal_snap(&state_for_fallback);
                 vbox_for_fallback.set_opacity(1.0);
             }
-            // Emit the harness viewport rect on this path too, but only once
-            // the viewport has a real allocation -- at the instant the fallback
-            // fires it can still be 0x0, and a 0-width rect is worse than none
-            // (the harness would accept it and assert against garbage).
-            //
-            // Emitting the rect ONLY from the resize-tick reveal made every
-            // test that waits for it a coin flip: measured on master
-            // (unmodified), 2 of 3 cage launches took this 5s fallback, logged
-            // no rect, and `wait_for_viewport_rect` timed out -- a failure that
-            // reads as "the change under test broke startup".
-            if std::env::var_os("LIT_HEADLESS_TEST").is_none() {
-                return;
+        });
+    }
+
+    // Headless harness: emit the reading viewport's rect as soon as it HAS one.
+    //
+    // The resize-tick reveal emits this too, but only on the path where the
+    // deferred layout refresh wins the race against the 5s fallback. Measured on
+    // unmodified master, 2 of 3 cage launches lost that race, logged no rect,
+    // and every test waiting on it timed out -- a failure that reads as "the
+    // change under test broke startup" and cost a debugging cycle. Polling from
+    // startup makes it unconditional.
+    //
+    // Polls rather than firing at a fixed delay because the rect must be REAL,
+    // in two senses that both cost a debugging cycle when missed:
+    //
+    // 1. A non-zero ALLOCATION. A 0-width rect is worse than none -- the harness
+    //    would accept it and assert against garbage.
+    // 2. VISIBLE, PAINTED text. The allocation lands well before the buffer
+    //    renders; emitting on size alone produced a 559ms rect and
+    //    `line_clipping` failed with "no text rows found in region (wrong region
+    //    or blank pane?)" -- the detector scanned an empty pane. The reveal
+    //    (`opacity == 1`) is the app's own signal that the page is painted, so
+    //    gate on it.
+    if std::env::var_os("LIT_HEADLESS_TEST").is_some() {
+        let state_poll = Rc::clone(&state);
+        let vbox_poll = vbox.clone();
+        let tries = std::cell::Cell::new(0u32);
+        glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+            tries.set(tries.get() + 1);
+            // ~15s ceiling; never spin forever.
+            if tries.get() >= 100 {
+                return glib::ControlFlow::Break;
             }
-            let state_poll = Rc::clone(&state_for_fallback);
-            let tries = std::cell::Cell::new(0u32);
-            glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
-                tries.set(tries.get() + 1);
-                let Ok(s) = state_poll.try_borrow() else {
-                    return glib::ControlFlow::Continue;
-                };
-                if s.scrolled_window.width() > 0 {
-                    crate::input::scroll::emit_test_viewport_rect(&s);
-                    return glib::ControlFlow::Break;
-                }
-                // ~10s ceiling; never spin forever.
-                if tries.get() >= 40 {
-                    return glib::ControlFlow::Break;
-                }
-                glib::ControlFlow::Continue
-            });
+            if vbox_poll.opacity() < 1.0 {
+                return glib::ControlFlow::Continue;
+            }
+            let Ok(s) = state_poll.try_borrow() else {
+                return glib::ControlFlow::Continue;
+            };
+            if s.scrolled_window.width() > 0 && s.scrolled_window.height() > 0 {
+                crate::input::scroll::emit_test_viewport_rect(&s);
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
         });
     }
 

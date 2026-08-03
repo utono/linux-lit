@@ -93,13 +93,13 @@ Two of the flagship families (`g`, `j`) have their *plain* key doing navigation,
 not the concept:
 
 - plain `g` / `gg` / `G` = jump to start / end (navigation), NOT gloss.
-- plain `j` = next bookmark (reader) or next block (overlays), NOT journal.
+- plain `j` = next dialogue line (reader) or next block (overlays), NOT journal.
 
 This is fine and learnable — the rule is **"plain key = navigate, modified key =
 concept"** — but state it explicitly whenever you touch these keys, because it is
 the single most confusing thing about the scheme for a new user. Do NOT try to
-"fix" it by moving navigation off `g`/`j`; the vim-idiom `gg`/`G` and bookmark
-`j` are load-bearing.
+"fix" it by moving navigation off `g`/`j`; the vim-idiom `gg`/`G` and the
+down-is-`j` cursor step are load-bearing.
 
 ---
 
@@ -175,6 +175,16 @@ any multi-surface keybind change.
 ## Change log of consistency decisions
 
 Record each deliberate consistency move here so future sweeps know the intent.
+
+- **2026-08-03 — dialogue steps back on `j`/`k`; bookmark steps back on
+  `'`/`;`.** Reverses the earlier swap: plain `j` = `CursorNextDialogue`,
+  plain `k` = `CursorPrevDialogue` (the vim down/up idiom now carries the
+  seeking cursor step, the most-used pair), while `'` = `NextBookmark` and
+  `;` = `PrevBookmark` move to the home-region punctuation pair. Shifted
+  `J`/`K` (speaker jumps), `h`/`t` (the no-seek dialogue twins), `Shift+;`
+  (cycle speed), the `g;` latest-bookmark chord, and the echoes-overlay `;`
+  are all unchanged. Mirrors updated in lockstep: `keymap_config.rs`,
+  `keybinds_overlay.rs` (four keycap labels), and the stowed `keymap.json`.
 
 - **2026-07-28 — Alt+t expands: "cycle this picker's filter/scope" on both
   gloss and Q&A pickers.** The gloss picker already binds `Alt+t` to cycle its

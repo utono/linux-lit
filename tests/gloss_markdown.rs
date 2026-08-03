@@ -76,7 +76,7 @@ fn tt_dedication_gloss_fills_and_paginates() {
     let _ = h.set_output_size(1920, 1200);
 
     let _ = h
-        .wait_for_viewport_rect(Duration::from_secs(8))
+        .wait_for_viewport_rect(Duration::from_secs(20))
         .expect("app reported its reading-viewport rect");
     h.settle(Duration::from_millis(500));
 

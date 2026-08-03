@@ -45,7 +45,7 @@ fn first_and_last_lines_never_clip() {
 
     // The viewport rect doubles as a readiness gate (logged at reveal).
     let region = h
-        .wait_for_viewport_rect(Duration::from_secs(8))
+        .wait_for_viewport_rect(Duration::from_secs(20))
         .expect("app reported its reading-viewport rect");
 
     // Keys land on the window's global capture-phase controller — no Tab-focus

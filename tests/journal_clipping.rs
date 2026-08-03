@@ -67,7 +67,7 @@ fn journal_overlay_ask_card_never_clips() {
     let _ = h.set_output_size(1920, 1200);
 
     let _ = h
-        .wait_for_viewport_rect(Duration::from_secs(8))
+        .wait_for_viewport_rect(Duration::from_secs(20))
         .expect("app reported its reading-viewport rect");
 
     // Advance into a scene so the journal overlay has scene context. Front

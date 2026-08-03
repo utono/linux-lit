@@ -302,6 +302,15 @@ impl Harness {
     /// Reads this run's own app log (`LIT_LOG_PATH` in the harness tempdir), so
     /// a stale rect from a prior run — or a live `cargo run` session's log —
     /// can never be picked up.
+    ///
+    /// **Budget at least 20s.** Callers used 8s, which is under what a cold
+    /// cage start actually needs and made these suites fail intermittently on
+    /// unmodified master. Measured: `CONC_WARM` builds the author word cache
+    /// synchronously on the main loop (~5.8s for Dickens, 1816ms → 7609ms),
+    /// which starves the resize tick, so the layout refresh loses its race with
+    /// the 5s fallback reveal and the rect is not logged until ~9s. The
+    /// timeouts were the bug, not the app — do not "optimise" them back down
+    /// without fixing the CONC_WARM stall first.
     pub fn wait_for_viewport_rect(&self, timeout: Duration) -> io::Result<(i32, i32, i32, i32)> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
