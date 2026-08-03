@@ -1,7 +1,7 @@
 # Card width collapses to one word per line (single-column prose)
 
-_Design spec. 2026-08-03. Status: IMPLEMENTED, with one acceptance criterion
-knowingly unmet — see "Outcome" at the end._
+_Design spec. 2026-08-03. Status: FULLY IMPLEMENTED. All acceptance criteria
+met as of the `CardLayout` follow-up — see "Outcome" and "Follow-up landed"._
 
 ## Symptom
 
@@ -206,6 +206,52 @@ minimum and allocates `card_w` itself. It needs GObject subclassing, which this
 crate uses nowhere yet, so it is deferred rather than rushed. Tracked as a
 follow-up; a 1098 tiling floor is a far smaller defect than prose rendering one
 word per line.
+
+## Follow-up landed: `CardLayout` (2026-08-03)
+
+`src/app/card_layout.rs` — a `GtkLayoutManager` subclass on `content_hbox`.
+Acceptance criterion 5 now passes; the trade-off recorded above is GONE.
+
+The manager separates the two numbers a `width_request` conflates:
+`measure()` advertises `ADVERTISED_MIN_WIDTH` (64px) as the minimum, so the
+window can be tiled arbitrarily narrow, while returning `card_width` as the
+NATURAL width; `allocate()` gives the child `min(available, card_width)`,
+centred with a `gsk::Transform` translate. `apply_card_sizing` drives it through
+`set_card_layout_width` and no longer calls `set_width_request` on
+`content_hbox` at all — enforced by
+`card_sizing_drives_the_layout_manager_not_a_width_request`, which now forbids
+the call it previously required.
+
+Both guards pass in the SAME build for the first time:
+
+- `single_column_card_fills_its_computed_width` — viewport 1050px at x=435 on
+  1920 (allocation).
+- `window_can_shrink_below_its_card_width` — under real niri, a 33% column
+  shrinks the window as asked (minimum).
+
+Two implementation notes worth keeping, both found by a failing test:
+
+1. **`measure()` must measure the child against the width it will ACTUALLY get**
+   (`effective_width(for_size)`), not the `for_size` handed in. Passing it
+   through measures wrapped prose at the full window width while `allocate`
+   renders it at `card_width`, so every row that wraps differently is missing
+   from the height and the card's bottom clips.
+2. The chat branch passes `0` ("fill what you're given"), because its
+   asymmetric margins already carve out the card's region — re-centring
+   `card_w` inside that would float the card back toward the middle, which is
+   exactly what those margins exist to prevent.
+
+### Also fixed: the harness timeouts these suites were built on
+
+`line_clipping` and `overlay_clipping` were failing on unmodified master with
+`TEST_VIEWPORT_RECT never appeared`. Not a layout bug: `CONC_WARM` builds the
+author word cache synchronously on the main loop (~5.8s for Dickens, measured
+1816ms → 7609ms), starving the resize tick so the layout refresh loses its race
+with the 5s fallback reveal and the rect is not logged until ~9s — against an
+8s budget. The rect is now emitted by a poller that runs from startup
+(independent of which reveal path wins) once the viewport is both allocated AND
+painted, and the callers' budgets went 8s → 20s. The real fix is to get
+`CONC_WARM` off the main loop; that is a separate change.
 
 ## Follow-ups
 
