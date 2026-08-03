@@ -180,8 +180,27 @@ fn app_requests_fullscreen_itself() {
 /// minimum-pinned one refuses and sits at its floor. Verified by hand against
 /// the live session before writing this: `set-column-width 33%` on a 1920 output
 /// (asking for 640px) left the window at exactly 1585.
+/// KNOWN FAILING (2026-08-03) — see
+/// `docs/superpowers/specs/2026-08-03-card-width-collapse-design.md`.
+///
+/// The card must carry a `width_request` or single-column prose collapses to one
+/// word per line, and in GTK a `width_request` IS the window's minimum width —
+/// measured in cage, every alternative (on `scrolled_overlay`, via
+/// `min-content-width`, via margins) pins it identically. So the reader's
+/// minimum is now 1098 and niri will not tile it narrower.
+///
+/// This guard passed on master only because master had no width at all: it was
+/// green *because of* the collapse bug it does not test for. Fullscreen — the
+/// thing the 2026-08-01 bug actually broke — is unaffected, because 1098 is far
+/// below the output; that bug was a 1585 minimum.
+///
+/// Un-ignore when the custom `GtkLayoutManager` lands (report a small minimum,
+/// allocate `card_w`), which is the only known way to satisfy this AND
+/// `tests/card_width.rs` at once.
 #[test]
-#[ignore = "needs niri + cage; run with --ignored"]
+#[ignore = "KNOWN FAILING: card width_request pins the window minimum at 1098 \
+            (2026-08-03). Needs the custom LayoutManager; see the card-width \
+            collapse spec. Also needs niri + cage."]
 fn window_can_shrink_below_its_card_width() {
     let h = start();
     h.set_output_size(1920, 1236).expect("resize outer output");
@@ -220,13 +239,15 @@ fn window_can_shrink_below_its_card_width() {
         win.0 <= ceiling,
         "asked niri for a 33% column on a {out_w}px output (~{}px), but the \
          window is {}x{} — it did not shrink past ~{}px. A child \
-         `width_request` (content_hbox in build_window, src/app/mod.rs:1765, \
-         and target_card_width's `.max(cw_cfg)` floor in src/app/layout.rs) is \
+         `width_request` (`content_hbox` in `apply_card_sizing`, and \
+         `target_card_width`'s `.max(cw_cfg)` floor, both src/app/layout.rs) is \
          propagating up as the window's MINIMUM width, and niri shrinks the \
-         TILE to match it rather than the other way round. That same floor is \
-         why the reader opens ~1585 wide on a 1920 output instead of filling \
-         it: a window whose minimum exceeds the output cannot honour \
-         fullscreen, no matter that `window.fullscreen()` ran at startup.",
+         TILE to match it rather than the other way round. NOTE (2026-08-03): \
+         this is EXPECTED to fail at ~1098 while the card carries its \
+         width_request — that request is what stops single-column prose \
+         collapsing to one word per line. Only a failure ABOVE ~1098, or a \
+         regression to ~1585 (the two-column floor, which breaks fullscreen \
+         because it exceeds the output), is a new bug.",
         out_w / 3,
         win.0,
         win.1,

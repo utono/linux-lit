@@ -1564,6 +1564,40 @@ surface and the checklist item. Three sites, all gated on `logging::debug_mode()
   `bottom_head=`, which is usually enough to classify the failure without
   reading any code (see below).
 
+### An OVERFLOW an ORDER OF MAGNITUDE over `widget_h` is a WIDTH bug
+
+Check the ratio before reading any pagination code. A genuinely overfull page
+overshoots by tens or low hundreds of px. A `total` that is 5-20x `widget_h`
+is not a pagination fault at all — the text is being laid out against a
+near-zero WIDTH, so every word wraps onto its own row and the height explodes:
+
+```
+CLIP_WARN: main-card prose-1col OVERFLOW total=8566 > widget_h=1128 ... end=345
+```
+
+17 lines measuring 8566px (2026-08-03, BH-Barrett). At ~28px/row that should
+have been ~480px. The page table was correct and reported `table hit`; the card
+had collapsed to 281px on a 1920px window.
+
+**The tell that separates it from every other clip failure:** the window
+geometry in the log is healthy (`RESIZE_TICK: vbox.width … -> 1920`) and
+`CARD_SIZING` reports a correct `card_w=1050`, yet the card on screen is a
+narrow strip. `CARD_SIZING` logs what the code INTENDED, not what was drawn —
+never treat it as confirmation that the card is that wide.
+
+**Root cause (2026-08-03):** `apply_card_sizing` computed `card_w` and then
+discarded it, calling `set_width_request(-1)`. Nothing else in the chain from
+`content_hbox` down to the text view set a width, and a `WrapMode::Word`
+`GtkTextView`'s minimum width is only its margins (`gtk_text_view_measure`
+never consults the text layout horizontally — it is NOT "the widest word", a
+plausible-sounding guess that sends you looking at the text instead of the
+widget tree). Fix: request the window-clamped `card_w` on `content_hbox`.
+
+**Verify in pixels, not logs.** The oracle is `TEST_VIEWPORT_RECT` (the real
+allocation) or a screenshot — see `tests/card_width.rs`, which asserts the
+viewport width lands in a BAND, because the opposite failure (the card filling
+the whole window) is equally real and a one-sided floor misses it.
+
 ### A `total > widget_h` OVERFLOW is not always an overfull page
 
 Before hunting for a stale/overfull stored page, check whether `total` is
