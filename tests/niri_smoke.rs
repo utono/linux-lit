@@ -180,27 +180,16 @@ fn app_requests_fullscreen_itself() {
 /// minimum-pinned one refuses and sits at its floor. Verified by hand against
 /// the live session before writing this: `set-column-width 33%` on a 1920 output
 /// (asking for 640px) left the window at exactly 1585.
-/// KNOWN FAILING (2026-08-03) — see
-/// `docs/superpowers/specs/2026-08-03-card-width-collapse-design.md`.
-///
-/// The card must carry a `width_request` or single-column prose collapses to one
-/// word per line, and in GTK a `width_request` IS the window's minimum width —
-/// measured in cage, every alternative (on `scrolled_overlay`, via
-/// `min-content-width`, via margins) pins it identically. So the reader's
-/// minimum is now 1098 and niri will not tile it narrower.
-///
-/// This guard passed on master only because master had no width at all: it was
-/// green *because of* the collapse bug it does not test for. Fullscreen — the
-/// thing the 2026-08-01 bug actually broke — is unaffected, because 1098 is far
-/// below the output; that bug was a 1585 minimum.
-///
-/// Un-ignore when the custom `GtkLayoutManager` lands (report a small minimum,
-/// allocate `card_w`), which is the only known way to satisfy this AND
-/// `tests/card_width.rs` at once.
+/// Pairs with `single_column_card_fills_its_computed_width`
+/// (tests/card_width.rs): this one asserts the window's MINIMUM stays small,
+/// that one asserts the card's ALLOCATION stays at the reading measure. Between
+/// 2026-08-01 and 2026-08-03 no build passed both — a `width_request` IS the
+/// minimum in GTK, so the card's width and the window's floor were one number,
+/// and fixing either broke the other. `CardLayout`
+/// (src/app/card_layout.rs) exists to separate them; run these two together or
+/// neither result means anything.
 #[test]
-#[ignore = "KNOWN FAILING: card width_request pins the window minimum at 1098 \
-            (2026-08-03). Needs the custom LayoutManager; see the card-width \
-            collapse spec. Also needs niri + cage."]
+#[ignore = "needs niri + cage; run with --ignored"]
 fn window_can_shrink_below_its_card_width() {
     let h = start();
     h.set_output_size(1920, 1236).expect("resize outer output");

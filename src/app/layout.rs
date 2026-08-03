@@ -84,12 +84,9 @@ fn current_block_text_width(state: &AppState) -> i32 {
     w
 }
 
-/// True when the window is narrow enough that the text card nearly fills
-/// it — used to trigger tiled-mode visual adjustments.
-// (No card width seed constant. `content_hbox`'s width is set only by
-// `apply_card_sizing`, which needs a real window width to clamp against. The
-// 320px seed that used to live here is what the 2026-08-03 collapsed card
-// actually rendered at.)
+// (No card width seed constant. `content_hbox` carries no width of its own at
+// all now -- `CardLayout` owns it, driven by `apply_card_sizing`. The 320px seed
+// that used to live here is what the 2026-08-03 collapsed card rendered at.)
 
 /// Narrowest window that can host the two-column reading block.
 ///
@@ -449,6 +446,23 @@ pub(crate) fn target_card_width(
     }
 }
 
+/// Hand `content_hbox`'s width to its [`CardLayout`](crate::app::card_layout).
+///
+/// `width <= 0` means "fill whatever you are given" (the chat branch, where the
+/// margins already carve out the card's region).
+///
+/// Silently does nothing if the box is not running a `CardLayout`. That cannot
+/// happen for the real `content_hbox` -- `build_window` always installs one --
+/// and `card_sizing_drives_the_layout_manager_not_a_width_request` fails the
+/// build if this stops being the only width path.
+fn set_card_layout_width(content_hbox: &gtk4::Box, width: i32) {
+    if let Some(lm) = content_hbox.layout_manager() {
+        if let Ok(card) = lm.downcast::<crate::app::card_layout::CardLayout>() {
+            card.set_card_width(width);
+        }
+    }
+}
+
 /// Side margin for the card, given the window width and the card's drawn width.
 ///
 /// Capped at `CARD_OUTER_MARGIN`. Margins count toward a widget's minimum size,
@@ -491,11 +505,12 @@ pub(crate) fn apply_card_sizing(
         // nothing but the hairline shows between card and panel.
         let start = (slack / 2).clamp(0, CARD_OUTER_MARGIN).min(slack.max(0));
         let end = (slack - start).max(0);
-        // `card_w` is already clamped to the window by `computed_card_width`,
-        // so requesting it lets the window shrink -- see the long note in the
-        // non-chat branch below.
+        // The margins reserve the panel's region, so what remains for the box
+        // IS the card -- let `CardLayout` fill it rather than re-centring
+        // `card_w` inside it (that would float the card back toward the middle,
+        // the very thing the asymmetric margins exist to prevent).
         content_hbox.set_hexpand(true);
-        content_hbox.set_width_request(card_w);
+        set_card_layout_width(content_hbox, 0);
         content_hbox.set_margin_start(start);
         content_hbox.set_margin_end(end);
         crate::log_fmt!(
@@ -504,10 +519,9 @@ pub(crate) fn apply_card_sizing(
         );
         return;
     }
-    // The card's width is REQUESTED, and safely so because `card_w` is clamped
-    // to the window (`computed_card_width` -> `.min(ww - 2 * CARD_OUTER_MARGIN)`).
+    // The card's width goes to `CardLayout`, never to `set_width_request`.
     //
-    // The history here is two bugs that look like opposites but are one knob:
+    // The history is two bugs that look like opposites but are one knob:
     //
     // - An UNCLAMPED request (`config.column_width`, 1050) propagates up as the
     //   window's minimum and pins it -- niri shrinks its TILE to the minimum
@@ -518,32 +532,15 @@ pub(crate) fn apply_card_sizing(
     //   card collapsed to 281px and prose rendered one word per line
     //   (2026-08-03).
     //
-    // KNOWN TRADE-OFF (2026-08-03): this request pins the window's minimum at
-    // `card_w + 2 * CARD_OUTER_MARGIN` (1098 for the default 1050 card), so
-    // `window_can_shrink_below_its_card_width` (tests/niri_smoke.rs) FAILS --
-    // niri will not tile the reader narrower than 1098. Fullscreen and every
-    // normal tiling width are unaffected, because 1098 is far below the output;
-    // the 2026-08-01 bug was a 1585 minimum, which exceeded what the output
-    // could grant.
-    //
-    // Measured in cage, a `width_request` IS the window's minimum, and every
-    // alternative route to a 1050 allocation reports the same minimum: on this
-    // box, on `scrolled_overlay`, via `min-content-width`, via margins
-    // (435px of margin -> min 870). GTK exposes no property that allocates a
-    // width without advertising it. Nor can the request "follow the window
-    // down": once 1098 is the minimum the compositor never offers less, so the
-    // clamp in `computed_card_width` never sees a smaller `ww` and never
-    // re-engages -- verified, the guard still fails that way.
-    //
-    // The only known fix that satisfies BOTH is a custom `LayoutManager` that
-    // reports a small minimum and allocates `card_w` itself. That needs GObject
-    // subclassing, which this crate does not currently use anywhere.
-    // Deliberately deferred: a 1098 floor costs nothing at the sizes the reader
-    // is actually used at, whereas the alternative (no request) is the
-    // one-word-per-line collapse.
+    // In GTK a `width_request` IS the minimum, so no value satisfies both --
+    // measured in cage, every route to a 1050 allocation (this box,
+    // `scrolled_overlay`, `min-content-width`, margins) advertised ~1050 as the
+    // minimum too. `CardLayout` exists precisely to separate those numbers: it
+    // advertises a tiny minimum and allocates `card_w`. See
+    // src/app/card_layout.rs.
     let margin = card_side_margin(ww, card_w);
     content_hbox.set_hexpand(true);
-    content_hbox.set_width_request(card_w);
+    set_card_layout_width(content_hbox, card_w);
     content_hbox.set_margin_start(margin);
     content_hbox.set_margin_end(margin);
     crate::log_fmt!(
@@ -805,59 +802,63 @@ mod card_width_tests {
     }
 
     #[test]
-    fn content_hbox_width_request_is_always_the_window_clamped_card_width() {
-        // Two shipped bugs bracket this invariant, and a grep for "no
-        // width_request at all" (the previous form of this guard) permitted the
-        // second one:
-        //
-        // - 2026-08-01: `set_width_request(config.column_width)` -- UNCLAMPED.
-        //   Propagated up as the window's minimum, so niri shrank its TILE to
-        //   1098 on a 1920 output instead of granting fullscreen.
-        // - 2026-08-03: `set_width_request(-1)` -- NO width. Nothing else in the
-        //   chain set one (a WrapMode::Word text view's minimum width is just
-        //   its margins), so the card collapsed to 281px and prose rendered one
-        //   word per line.
-        //
-        // The rule is neither "always" nor "never" but "the CLAMPED value":
-        // `card_w` from `computed_card_width`, which is `.min(ww - 2 *
-        // CARD_OUTER_MARGIN)`. That makes the window's minimum TRACK the window
-        // rather than pin it -- the card yields first, so the window can always
-        // shrink. Measured in cage: 1920 -> card 1050 / min 1098; 960 -> card
-        // 912 / min 960; 640 -> card 592 / min 640.
-        //
-        // Enforced by grep because "this call passes THIS variable" is a
-        // property of the source, not of a pure function. The geometry oracles
-        // are `window_can_shrink_below_its_card_width` (tests/niri_smoke.rs)
-        // and `single_column_card_fills_its_computed_width`
-        // (tests/card_width.rs).
+    fn card_sizing_drives_the_layout_manager_not_a_width_request() {
+        // `content_hbox` must carry NO `width_request` -- its width comes from
+        // `CardLayout` (src/app/card_layout.rs), which advertises a small
+        // minimum and allocates the card. A `width_request` here IS the
+        // window's minimum and pins the tile (2026-08-01); the previous form of
+        // this guard demanded one, which was correct only while the layout
+        // manager did not exist.
         let src = include_str!("layout.rs");
-        let mut calls = 0;
         for (i, line) in src.lines().enumerate() {
             let t = line.trim();
-            // Statements only -- skip prose/doc mentions and this guard itself.
-            if !(t.starts_with("content_hbox.set_width_request(") && t.ends_with(");")) {
-                continue;
+            if t.starts_with("content_hbox.set_width_request(") && t.ends_with(");") {
+                panic!(
+                    "layout.rs:{}: `{}` -- content_hbox's width belongs to \
+                     CardLayout via `set_card_layout_width`. A width_request \
+                     becomes the WINDOW's minimum width and stops the \
+                     compositor tiling the reader narrow \
+                     (window_can_shrink_below_its_card_width).",
+                    i + 1,
+                    t
+                );
             }
-            calls += 1;
-            assert!(
-                t == "content_hbox.set_width_request(card_w);",
-                "layout.rs:{}: `{}` -- content_hbox's width_request must be \
-                 `card_w` (the window-clamped `computed_card_width`). A literal \
-                 or `column_width` pins the window's minimum above the output \
-                 and breaks fullscreen; `-1` leaves nothing setting the width \
-                 and the card collapses to one word per line.",
-                i + 1,
-                t
-            );
         }
+
+        // ...and the layout manager must actually be driven, in BOTH branches
+        // of `apply_card_sizing`. A branch that returns without setting a width
+        // leaves the card at whatever the previous tick left behind.
+        let calls = src
+            .lines()
+            .filter(|l| l.trim().starts_with("set_card_layout_width(content_hbox,"))
+            .count();
         assert_eq!(
             calls, 2,
-            "expected exactly 2 `content_hbox.set_width_request(card_w)` calls \
-             (the chat branch and the normal branch of `apply_card_sizing`), \
-             found {calls}. A branch that returns without setting the width \
-             leaves the card at whatever the previous tick left behind."
+            "expected exactly 2 `set_card_layout_width(content_hbox, ...)` \
+             calls (the chat branch and the normal branch), found {calls}"
         );
     }
+
+    #[test]
+    fn card_layout_reports_a_small_minimum_but_allocates_the_card() {
+        // The invariant the whole manager exists for, as arithmetic: the width
+        // it ADVERTISES must not track the width it ALLOCATES. Verified against
+        // the real widget in `single_column_card_fills_its_computed_width`
+        // (allocation) and `window_can_shrink_below_its_card_width` (minimum).
+        use crate::app::card_layout::ADVERTISED_MIN_WIDTH;
+
+        // A 1050 card must not advertise anything near 1050, or the window's
+        // minimum pins the tile exactly as a width_request did.
+        assert!(
+            ADVERTISED_MIN_WIDTH < 1050 / 4,
+            "ADVERTISED_MIN_WIDTH ({ADVERTISED_MIN_WIDTH}) is creeping toward a \
+             real card width; at that point CardLayout is an expensive \
+             width_request and the niri shrink guard will fail again"
+        );
+        // ...but not zero, which invites a degenerate window size.
+        assert!(ADVERTISED_MIN_WIDTH > 0);
+    }
+
 
     #[test]
     fn computed_card_width_matches_what_apply_card_sizing_draws() {
