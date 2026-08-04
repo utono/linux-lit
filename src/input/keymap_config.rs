@@ -511,9 +511,15 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::plain("P"), Action::NudgeStartForward),
         // Moved off plain `U` (2026-08-01) onto the `b` cap, which already
         // owns the timestamp write family: plain `b` sets the start time and
-        // Alt+b the end time, so Ctrl+b undoes them. Shift+u and Ctrl+u are
-        // now unbound (Ctrl+u had duplicated Ctrl+\ = lib picker).
-        (KeyCombo::ctrl("b"), Action::UndoTimestamp),
+        // Alt+b the end time, so the undo sits here too. Shift+u and Ctrl+u
+        // are unbound (Ctrl+u had duplicated Ctrl+\ = lib picker).
+        //
+        // Ctrl+b → Shift+b (2026-08-03). `b` is level 1 on RPD's <AB06>, so
+        // the shifted cap emits the distinct keysym "B"; GTK delivers it
+        // capitalized with is_shift=true and lookup() strips the redundant
+        // modifier, hence plain("B") (cf. the plain("G") normalization).
+        // Ctrl+b is now unbound.
+        (KeyCombo::plain("B"), Action::UndoTimestamp),
     ]
 }
 
@@ -525,9 +531,10 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
-        // Ctrl+u was a duplicate of Ctrl+\ (2026-07-26); dropped 2026-08-01 so
-        // the chord could take UndoTimestamp (see timestamp_bindings). Plain
-        // `u` still mirrors plain `\` (CycleSegmentOverlays).
+        // Ctrl+u was a duplicate of Ctrl+\ (2026-07-26); dropped 2026-08-01.
+        // It briefly freed the chord for UndoTimestamp, which went to Ctrl+b
+        // and then to Shift+b (2026-08-03), so Ctrl+u is simply unbound now.
+        // Plain `u` still mirrors plain `\` (CycleSegmentOverlays).
         // Both vocab-drill entries live on the `=` cap: Ctrl+= forward,
         // Ctrl+Shift+= backward (InputMode::VocabLoop); when the mode can't
         // start the reason is toasted — no jump fallback.
@@ -1015,6 +1022,22 @@ mod tests {
         // plain v (segment vim copy) vs Shift+v (reader visual mode) differ.
         assert_eq!(km.lookup("v", false, false, false), Some(Action::OpenSegmentVim));
         assert_eq!(km.lookup("V", false, true, false), Some(Action::EnterVisualMode));
+    }
+
+    /// UndoTimestamp moved Ctrl+b → Shift+b (2026-08-03). GTK delivers a
+    /// shifted ASCII letter as the CAPITALIZED name, so the bind is
+    /// plain("B") and lookup() strips the redundant shift flag — both the
+    /// ("B", shift=true) and ("B", shift=false) spellings must resolve.
+    /// Ctrl+b is retired and must resolve to nothing.
+    #[test]
+    fn undo_timestamp_is_shift_b_not_ctrl_b() {
+        let km = Keymap::default();
+        assert_eq!(km.lookup("B", false, true, false), Some(Action::UndoTimestamp));
+        assert_eq!(km.lookup("B", false, false, false), Some(Action::UndoTimestamp));
+        assert_eq!(km.lookup("b", true, false, false), None, "Ctrl+b retired");
+        // The rest of the `b` timestamp family is untouched.
+        assert_eq!(km.lookup("b", false, false, false), Some(Action::SetStartTime));
+        assert_eq!(km.lookup("b", false, false, true), Some(Action::SetEndTime));
     }
 
     #[test]

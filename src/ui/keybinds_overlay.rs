@@ -93,7 +93,7 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("j", "J", "cursor \u{2193}", "J: next speaker", &[("C-j", "jrnl Q&A picker"), ("M-j", "recent Q&A")]),
     key("k", "K", "cursor \u{2191}", "K: prev speaker", &[]),
     bare("x", "X", "pg fwd"),
-    key("b", "B", "start time", "", &[("C-b", "undo ts"), ("M-b", "set end time")]),
+    key("b", "B", "start time", "B: undo ts", &[("M-b", "set end time")]),
     key("m", "M", "bookmark", "", &[("C-m", "media picker")]),
     key("w", "W", "", "", &[("M-w", "Shx echoes"), ("C-w", "Shx echo turns"), ("S-C-w", "reopen Shx echoes")]),
     key("v", "V", "vim copy", "V: visual mode", &[]),
@@ -419,7 +419,8 @@ restoring each work's cursor line + MPV media) — src/input/actions/pickers.rs"
         "copy work+div" => "Action::CopyWorkDivision (\u{201c}ABBR d1.d2\u{201d} → wl-copy) — src/input/keymap.rs",
         "ts tap" => "Action::DeleteTimestampTap (toast only; 2x deletes via \
 ChordState::PendingBackspace) — src/input/keymap.rs",
-        "undo ts" => "Action::UndoTimestamp — src/input/timestamps.rs",
+        "undo ts" => "Action::UndoTimestamp (Shift+b since 2026-08-03, moved off \
+Ctrl+b) — src/input/timestamps.rs",
         "nudge −0.2" => "Action::NudgeStartBackward — src/input/timestamps.rs",
         "+0.2" => "Action::NudgeStartForward — src/input/timestamps.rs",
         "play from ts" => "Space intercept -> timestamps::play_current_line \
