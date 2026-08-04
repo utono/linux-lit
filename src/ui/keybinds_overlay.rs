@@ -100,7 +100,11 @@ const BOTTOM_ROW: &[KeyDef] = &[
     key("z", "Z", "conc picker", "", &[("C-z", "conc word"), ("M-z", "conc works"), ("S-C-z", "conc list")]),
 ];
 
-const SHIFT_KEY: KeyDef = bare("Shift", "", "del ts tap");
+/// Shift carries NO standalone action — it is a plain modifier everywhere. The
+/// cap is still listed so the physical bottom row is complete (it renders
+/// unbound/dimmed). A lone-Shift tap deleted the cursor line's timestamp until
+/// 2026-08-03; the timestamp binds are now ⌫ (double-tap) and Ctrl+b (undo).
+const SHIFT_KEY: KeyDef = bare("Shift", "", "");
 /// The spacebar sits below the bottom row physically, so it is appended to the
 /// BOTTOM ROW screen — and repeated on the MODIFIERS & SEQUENCES screen.
 const SPACE_KEY: KeyDef = bare("Space", "", "play from ts");
@@ -198,9 +202,8 @@ fn key_name_to_glyph(key_name: &str) -> Option<&'static str> {
         // Backspace jumps to it.
         "BackSpace" => "\u{232b}",
         // The Shift keys report "Shift_L"/"Shift_R"; the cap glyph is "Shift"
-        // (bottom row). Maps so a Shift press jumps to it in the overlay. (In
-        // Reader mode a lone Shift tap deletes a timestamp instead — handled
-        // before mode dispatch, so this only fires while an overlay is open.)
+        // (bottom row). Maps so a Shift press jumps to it in the overlay. The
+        // cap itself is unbound — Shift is a plain modifier in every mode.
         "Shift_L" | "Shift_R" => "Shift",
         // Arrow keys have caps on the MODIFIERS & SEQUENCES row; map their GTK
         // keyval names to those cap glyphs so a press jumps to them. (`g` is
@@ -416,9 +419,6 @@ restoring each work's cursor line + MPV media) — src/input/actions/pickers.rs"
         "copy work+div" => "Action::CopyWorkDivision (\u{201c}ABBR d1.d2\u{201d} → wl-copy) — src/input/keymap.rs",
         "ts tap" => "Action::DeleteTimestampTap (toast only; 2x deletes via \
 ChordState::PendingBackspace) — src/input/keymap.rs",
-        "del ts tap" => "Lone Shift tap (Reader only): deletes the cursor line's \
-timestamp; a second tap on the SAME line undoes it. keymap::handle_key_released. \
-Shift stays a plain modifier for chords (G, O, …) and in input overlays.",
         "undo ts" => "Action::UndoTimestamp — src/input/timestamps.rs",
         "nudge −0.2" => "Action::NudgeStartBackward — src/input/timestamps.rs",
         "+0.2" => "Action::NudgeStartForward — src/input/timestamps.rs",
