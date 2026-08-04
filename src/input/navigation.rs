@@ -1584,6 +1584,28 @@ fn keep_jump_if_on_page(state: &mut AppState, prev_line: usize, dir: Direction) 
     false
 }
 
+/// Backward-jump gate for binds that MAY turn to the previous page (`,` /
+/// `K` — `jump_to_prev_speaker`). Unlike `keep_jump_if_on_page`, an off-page
+/// target is NOT reverted: the caller falls through to
+/// `scroll_after_jump_backward`, which turns back to the page holding the
+/// target and leaves the highlight on it.
+///
+/// Kept separate from `keep_jump_if_on_page` because the other backward
+/// callers (`jump_to_prev_dialogue`, the segment/phrase steppers) deliberately
+/// stop at the page top; only the speaker jump was asked to page back
+/// (2026-08-04). Always returns `true` — it exists to name the intent at the
+/// call sites and to keep the `prev_line` argument meaningful in the log.
+fn keep_jump_paging_back(state: &AppState, prev_line: usize) -> bool {
+    if !crate::input::scroll::jump_stays_on_page(state) {
+        log_fmt!(
+            "SPEAKER_PREV: off-page target {} (from {}) — turning back a page",
+            state.current_line,
+            prev_line
+        );
+    }
+    true
+}
+
 /// Previous dialogue line. UNBOUND since 2026-07-27 (was `Alt+,`; retired
 /// because of exactly the defect below). Play-shaped stepping only: unlike
 /// `cursor_prev_dialogue` (`;`) this has NO prose branch and no translation-
@@ -2467,7 +2489,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
             state.pending_advance_ignore_bl = None;
             state.prev_highlight_line.set(None);
             log_fmt!("PARAGRAPH_PREV: {} -> {}", prev_line, target);
-            if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
+            if !keep_jump_paging_back(state, prev_line) {
                 return;
             }
             scroll_after_jump_backward(state);
@@ -2499,7 +2521,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
             state.pending_advance = None;
             state.pending_advance_ignore_bl = None;
             state.prev_highlight_line.set(None);
-            if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
+            if !keep_jump_paging_back(state, prev_line) {
                 return;
             }
             scroll_after_jump_backward(state);
@@ -2527,7 +2549,7 @@ pub fn jump_to_prev_speaker(state: &mut AppState) {
         state.pending_advance = None;
         state.pending_advance_ignore_bl = None;
         state.prev_highlight_line.set(None);
-        if !keep_jump_if_on_page(state, prev_line, Direction::Prev) {
+        if !keep_jump_paging_back(state, prev_line) {
             return;
         }
         scroll_after_jump_backward(state);
