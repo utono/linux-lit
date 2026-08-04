@@ -526,6 +526,33 @@ mod tests {
         }
     }
 
+    /// The shipped input.conf and the parser must agree on all six message
+    /// names — a typo in either would silently dead-key that bind.
+    #[test]
+    fn test_shipped_input_conf_matches_parser() {
+        let conf = include_str!("../../assets/mpv-input.conf");
+        let mut found = 0;
+        for line in conf.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let msg = line
+                .split("script-message ")
+                .nth(1)
+                .unwrap_or_else(|| panic!("non-comment line is not a script-message: {}", line))
+                .trim();
+            let fake = format!(r#"{{"event":"client-message","args":["{}"]}}"#, msg);
+            assert!(
+                parse_client_message(&fake).is_some(),
+                "input.conf sends '{}' but the parser does not know it",
+                msg
+            );
+            found += 1;
+        }
+        assert_eq!(found, 6, "expected exactly 6 binds in assets/mpv-input.conf");
+    }
+
     #[test]
     fn test_parse_client_message_rejects_others() {
         // A different script's message on the same socket.

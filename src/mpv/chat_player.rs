@@ -249,7 +249,8 @@ pub fn spawn_and_arm(
     std::thread::spawn(move || {
         if UnixStream::connect(&socket_path).is_err() {
             let _ = std::fs::remove_file(&socket_path); // stale leftover, if any
-            crate::mpv::discovery::launch_mpv_at(&socket_path, &media_path);
+            // `false`: no reader binds — see launch_mpv's note.
+            crate::mpv::discovery::launch_mpv_at(&socket_path, &media_path, false);
             for _ in 0..60 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 if UnixStream::connect(&socket_path).is_ok() {
