@@ -161,13 +161,43 @@ fn probe_socket(path: &Path) -> bool {
 /// already handles "no MPV" gracefully — see the discovery/connect path).
 pub fn launch_mpv(media_path: &str) -> String {
     let socket_path = derive_socket_path(media_path);
-    launch_mpv_at(&socket_path, media_path);
+    // `true`: the READING player gets the reader binds. The chat snippet
+    // player calls launch_mpv_at directly with `false` — it has no reader
+    // cursor of its own, so driving the reader from it would move the
+    // cursor mid-chat and timestamp a snippet position into lit.db.
+    launch_mpv_at(&socket_path, media_path, true);
     socket_path
+}
+
+/// Absolute path to the repo's `assets/mpv-input.conf`, or `None` if it is
+/// missing. Resolved next to the running binary first (release/installed
+/// layout: `<dir>/assets/`, then `<dir>/../../assets/` for
+/// `target/debug/linux-lit`), falling back to `CARGO_MANIFEST_DIR` for dev
+/// runs. Missing file is NOT an error — mpv simply launches with the user's
+/// own binds, exactly as before this feature.
+fn reader_input_conf() -> Option<String> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("assets/mpv-input.conf"));
+            candidates.push(dir.join("../../assets/mpv-input.conf"));
+        }
+    }
+    candidates.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/mpv-input.conf"),
+    );
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Launch mpv listening on an explicit socket path (the chat player passes a
 /// `chat-`-marked one). Same args and headless guards as `launch_mpv`.
-pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
+///
+/// `reader_binds` adds the lit-owned `--input-conf` whose six keys drive the
+/// reader (see `assets/mpv-input.conf`). True for the reading player only.
+pub fn launch_mpv_at(socket_path: &str, media_path: &str, reader_binds: bool) {
     // LIT_NO_MPV: diagnostic toggle to launch with no MPV at all (A/B the startup
     // flicker against the MPV window-map). Same skip as the headless test path.
     if std::env::var_os("LIT_HEADLESS_TEST").is_some()
@@ -198,12 +228,22 @@ pub fn launch_mpv_at(socket_path: &str, media_path: &str) {
             format!("--background-color={}", bg),
         ]
     };
+    // The lit-owned input.conf: six keys that drive the reader. Reading
+    // player only. Empty (no flag) when absent or for the chat player.
+    let input_conf_args: Vec<String> = match reader_binds.then(reader_input_conf).flatten() {
+        Some(path) => {
+            crate::logging::log(&format!("MPV: reader binds via {}", path));
+            vec![format!("--input-conf={}", path)]
+        }
+        None => Vec::new(),
+    };
     match std::process::Command::new("mpv")
         .arg(format!("--input-ipc-server={}", socket_path))
         .arg("--pause")
         .arg("--no-terminal")
         .arg(format!("--volume={}", MPV_VOLUME.load(Ordering::Relaxed)))
         .args(&bg_args)
+        .args(&input_conf_args)
         // Keep MPV's window: some works are videos, and the audiobook window
         // carries cover art. The compositor keeps it clear of the reader by
         // app-id — dwl routes `mpv-lit` to its own tag (config.h), niri marks

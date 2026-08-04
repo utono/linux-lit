@@ -664,6 +664,46 @@ fn main() {
                         let theme = crate::theme::load_theme_with_fallback(&name, variant);
                         crate::input::actions::settings::apply_theme_to_state(&mut s, &theme);
                     }
+                    MpvEvent::ReaderAction(action) => {
+                        use crate::mpv::commands::ReaderAction as RA;
+                        // b/B are gated on playback sync: from the MPV window
+                        // the reader's cursor is invisible, and sync-on is
+                        // what makes its position predictable enough to write
+                        // to blind. The reader's OWN b/B stay unconditional —
+                        // this gate is deliberately here, not in timestamps.rs.
+                        if matches!(action, RA::SetStartTime | RA::UndoTimestamp)
+                            && !state_for_events.borrow().sync_enabled
+                        {
+                            crate::logging::log(&format!(
+                                "MPV_BIND: {:?} ignored — sync off",
+                                action
+                            ));
+                            continue;
+                        }
+                        // No borrow may be held here: each handler takes
+                        // &mut AppState and borrows for itself.
+                        let mut s = state_for_events.borrow_mut();
+                        match action {
+                            RA::PrevSpeaker => {
+                                crate::input::navigation::jump_to_prev_speaker(&mut s)
+                            }
+                            RA::NextSpeaker => {
+                                crate::input::navigation::jump_to_next_speaker(&mut s)
+                            }
+                            RA::PrevDivision => {
+                                crate::input::navigation::jump_to_prev_section(&mut s)
+                            }
+                            RA::NextDivision => {
+                                crate::input::navigation::jump_to_next_section(&mut s)
+                            }
+                            RA::SetStartTime => {
+                                crate::input::timestamps::set_start_time(&mut s);
+                            }
+                            RA::UndoTimestamp => {
+                                crate::input::timestamps::undo_timestamp(&mut s);
+                            }
+                        }
+                    }
                 }
             }
         });

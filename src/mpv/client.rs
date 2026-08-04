@@ -4,7 +4,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
-use super::commands::{MpvCommand, MpvEvent};
+use super::commands::{MpvCommand, MpvEvent, ReaderAction};
 
 /// Deferred action applied on the next `file-loaded` event:
 /// (seek_time, resume_after_seek, optional ab_loop (a, b)).
@@ -87,6 +87,13 @@ pub async fn run(
                             }
                             if let Some(paused) = parse_pause_state(&line_buf) {
                                 let _ = evt_tx.send(MpvEvent::PlaybackState(!paused)).await;
+                            }
+                            if let Some(action) = parse_client_message(&line_buf) {
+                                crate::logging::log(&format!(
+                                    "MPV_BIND: {:?} from mpv window",
+                                    action
+                                ));
+                                let _ = evt_tx.send(MpvEvent::ReaderAction(action)).await;
                             }
                         }
                     }
@@ -379,6 +386,27 @@ fn parse_pause_state(line: &str) -> Option<bool> {
     }
 }
 
+/// Parse an mpv `client-message` event into the reader action it requests.
+/// The lit-owned input.conf (`assets/mpv-input.conf`) binds six keys to
+/// `script-message lit-*`, and mpv relays each as a client-message on the
+/// IPC socket we already read. Unknown names return `None` so other
+/// scripts' messages on this socket are ignored.
+fn parse_client_message(line: &str) -> Option<ReaderAction> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if v.get("event")?.as_str()? != "client-message" {
+        return None;
+    }
+    match v.get("args")?.as_array()?.first()?.as_str()? {
+        "lit-prev-speaker" => Some(ReaderAction::PrevSpeaker),
+        "lit-next-speaker" => Some(ReaderAction::NextSpeaker),
+        "lit-prev-division" => Some(ReaderAction::PrevDivision),
+        "lit-next-division" => Some(ReaderAction::NextDivision),
+        "lit-set-start-time" => Some(ReaderAction::SetStartTime),
+        "lit-undo-timestamp" => Some(ReaderAction::UndoTimestamp),
+        _ => None,
+    }
+}
+
 fn is_file_loaded_event(line: &str) -> bool {
     let v: serde_json::Value = match serde_json::from_str(line.trim()) {
         Ok(v) => v,
@@ -475,6 +503,75 @@ mod tests {
     fn test_parse_pause_state() {
         let line = r#"{"event":"property-change","id":2,"name":"pause","data":true}"#;
         assert_eq!(parse_pause_state(line), Some(true));
+    }
+
+    #[test]
+    fn test_parse_client_message_all_six() {
+        let cases = [
+            ("lit-prev-speaker", ReaderAction::PrevSpeaker),
+            ("lit-next-speaker", ReaderAction::NextSpeaker),
+            ("lit-prev-division", ReaderAction::PrevDivision),
+            ("lit-next-division", ReaderAction::NextDivision),
+            ("lit-set-start-time", ReaderAction::SetStartTime),
+            ("lit-undo-timestamp", ReaderAction::UndoTimestamp),
+        ];
+        for (name, expected) in cases {
+            let line = format!(r#"{{"event":"client-message","args":["{}"]}}"#, name);
+            assert_eq!(
+                parse_client_message(&line),
+                Some(expected),
+                "failed to parse {}",
+                name
+            );
+        }
+    }
+
+    /// The shipped input.conf and the parser must agree on all six message
+    /// names — a typo in either would silently dead-key that bind.
+    #[test]
+    fn test_shipped_input_conf_matches_parser() {
+        let conf = include_str!("../../assets/mpv-input.conf");
+        let mut found = 0;
+        for line in conf.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let msg = line
+                .split("script-message ")
+                .nth(1)
+                .unwrap_or_else(|| panic!("non-comment line is not a script-message: {}", line))
+                .trim();
+            let fake = format!(r#"{{"event":"client-message","args":["{}"]}}"#, msg);
+            assert!(
+                parse_client_message(&fake).is_some(),
+                "input.conf sends '{}' but the parser does not know it",
+                msg
+            );
+            found += 1;
+        }
+        assert_eq!(found, 6, "expected exactly 6 binds in assets/mpv-input.conf");
+    }
+
+    #[test]
+    fn test_parse_client_message_rejects_others() {
+        // A different script's message on the same socket.
+        assert_eq!(
+            parse_client_message(r#"{"event":"client-message","args":["some-other-script"]}"#),
+            None
+        );
+        // Right event, no args.
+        assert_eq!(
+            parse_client_message(r#"{"event":"client-message","args":[]}"#),
+            None
+        );
+        // A different event entirely.
+        assert_eq!(
+            parse_client_message(r#"{"event":"property-change","name":"time-pos","data":1.0}"#),
+            None
+        );
+        // Not JSON at all.
+        assert_eq!(parse_client_message("not json"), None);
     }
 
     /// Probe times below are the EFFECTIVE times the mapping should see;
