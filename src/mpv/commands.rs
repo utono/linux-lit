@@ -39,6 +39,28 @@ pub enum MpvCommand {
     Quit,
 }
 
+/// A reader action requested from the MPV window's own keyboard, delivered
+/// as an mpv `script-message` -> `client-message` on the IPC socket. Each
+/// variant maps to the SAME handler the reader's own keybind calls, so the
+/// two surfaces cannot drift. See
+/// `docs/superpowers/specs/2026-08-03-mpv-reader-binds-design.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReaderAction {
+    /// mpv `,` — previous speaker turn.
+    PrevSpeaker,
+    /// mpv `q` — next speaker turn.
+    NextSpeaker,
+    /// mpv `[` — previous division (scene/chapter boundary).
+    PrevDivision,
+    /// mpv `{` — next division.
+    NextDivision,
+    /// mpv `b` — write the current playback position to the cursor's line.
+    /// Gated on `sync_enabled` at dispatch (the reader's own `b` is not).
+    SetStartTime,
+    /// mpv `B` — undo the last timestamp write. Same sync gate as above.
+    UndoTimestamp,
+}
+
 /// Events sent from the Tokio runtime back to the GTK UI thread.
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -48,4 +70,6 @@ pub enum MpvEvent {
     PlaybackState(bool),
     TimePos(f64),
     ThemeChanged,
+    /// A key pressed in the MPV window that drives the reader.
+    ReaderAction(ReaderAction),
 }
