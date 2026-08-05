@@ -1145,6 +1145,22 @@ fn update_bottom_clip(
             })
             .collect();
         let total = exact_page_content_height(&heights, top_offset, bottom_head);
+        // DIAGNOSTIC: dump the per-line heights the RENDER side measured, so they
+        // can be diffed against the generation-time vector for the same page.
+        // Two back-to-back generation sweeps agree exactly (see
+        // PAGES_PROSE_SWEEP), so if these differ the change happens BETWEEN
+        // generation and render — a tag/font/width effect, not lazy validation.
+        if crate::logging::debug_mode() && total > widget_height {
+            let tvw = text_view.upcast_ref::<gtk4::TextView>();
+            crate::log_fmt!(
+                "RENDER_HEIGHTS: page_top={} end={} top_off={} \
+                 tv_width={} left_margin={} right_margin={} wrap_w={} heights={:?}",
+                page_top, end, top_offset,
+                text_view.width(), tvw.left_margin(), tvw.right_margin(),
+                text_view.width() - tvw.left_margin() - tvw.right_margin(),
+                heights
+            );
+        }
         // Drop the clip's top edge below the last line's logical bottom so its
         // flush descender ink (g/y/p/comma tails) isn't sliced — capped at the
         // strip guaranteed free of the NEXT line's ink (the shared buffer

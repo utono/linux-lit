@@ -341,9 +341,62 @@ pub fn record_prose_pages(
     // Force GTK to validate every line's true wrapped height once, so the
     // per-page boundary walk below never reads a lazy single-row estimate for a
     // far-off line (see the doc comment). The results are cached by GTK.
-    for i in 0..line_count {
-        if let Some(it) = state.buffer.iter_at_line(i as i32) {
-            let _ = state.text_view.line_yrange(&it);
+    let sweep1: Vec<i32> = (0..line_count)
+        .map(|i| {
+            state
+                .buffer
+                .iter_at_line(i as i32)
+                .map(|it| state.text_view.line_yrange(&it).1)
+                .unwrap_or(0)
+        })
+        .collect();
+    // DIAGNOSTIC: sweep a SECOND time and compare. `line_yrange` is documented
+    // (in this function's own comment) to validate synchronously and cache — if
+    // that held, pass 2 would be identical to pass 1. Any line whose height
+    // CHANGES between two back-to-back sweeps proves pass 1 returned a lazy
+    // ESTIMATE that GTK later refined, which is what lets generation store a
+    // page whose true rendered height overflows the card.
+    if crate::logging::debug_mode() {
+        let mut changed = 0usize;
+        let mut first_change = None;
+        let mut delta_sum = 0i64;
+        for i in 0..line_count {
+            let h2 = state
+                .buffer
+                .iter_at_line(i as i32)
+                .map(|it| state.text_view.line_yrange(&it).1)
+                .unwrap_or(0);
+            if h2 != sweep1[i] {
+                changed += 1;
+                delta_sum += (h2 - sweep1[i]) as i64;
+                if first_change.is_none() {
+                    first_change = Some((i, sweep1[i], h2));
+                }
+            }
+        }
+        use gtk4::prelude::WidgetExt;
+        crate::log_fmt!(
+            "PAGES_PROSE_SWEEP: lines={} changed_between_sweeps={} delta_sum={} first={:?} \
+             tv_width={} left_margin={} right_margin={} wrap_w={}",
+            line_count, changed, delta_sum, first_change,
+            state.text_view.width(),
+            state.text_view.left_margin(),
+            state.text_view.right_margin(),
+            state.text_view.width() - state.text_view.left_margin() - state.text_view.right_margin()
+        );
+        // Dump the generation-time heights for one window, to diff against
+        // RENDER_HEIGHTS for the same lines. `LIT_TRACE_HEIGHTS=<first>:<last>`.
+        if let Some((a, b)) = std::env::var("LIT_TRACE_HEIGHTS").ok().and_then(|v| {
+            let (x, y) = v.split_once(':')?;
+            Some((x.parse::<usize>().ok()?, y.parse::<usize>().ok()?))
+        }) {
+            let b = b.min(line_count.saturating_sub(1));
+            if a <= b {
+                crate::log_fmt!(
+                    "GEN_HEIGHTS: [{}..={}] = {:?}",
+                    a, b, &sweep1[a..=b]
+                );
+            }
         }
     }
     // Drive the walk through the real page state, then restore it.
@@ -453,6 +506,20 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
             .collect(),
         None => Vec::new(),
     };
+    // DIAGNOSTIC: the SAME window as GEN_HEIGHTS but measured AFTER the boundary
+    // walk — this is the vector the validator actually uses. If it differs from
+    // GEN_HEIGHTS the heights moved DURING the walk, not via lazy validation.
+    if crate::logging::debug_mode() {
+        if let Some((a, b)) = std::env::var("LIT_TRACE_HEIGHTS").ok().and_then(|v| {
+            let (x, y) = v.split_once(':')?;
+            Some((x.parse::<usize>().ok()?, y.parse::<usize>().ok()?))
+        }) {
+            let b = b.min(line_count.saturating_sub(1));
+            if a <= b {
+                crate::log_fmt!("POSTWALK_HEIGHTS: [{}..={}] = {:?}", a, b, &heights[a..=b]);
+            }
+        }
+    }
     let ctx = ProseValidateCtx {
         line_count,
         heights: &heights,
