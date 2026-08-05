@@ -326,7 +326,16 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // bump is what forces regeneration. (pv6 is skipped rather than reused:
     // it belongs to the reverted line-box fix e1b17ac0, and its tables carry
     // the same bad heights.)
-    format!("{base}|uh{usable}|cw{cw}|pv7")
+    // pv8: generation now measures TRUE wrapped heights, forcing GTK layout
+    // validation (`validate_all_lines_by_scrolling`) before the sweep instead
+    // of trusting `line_yrange` for lines far from the viewport. EVERY table
+    // stored at pv7 or earlier was built from a sweep that under-measured
+    // never-displayed lines by whole rows, so those tables pin pages that
+    // render 13-114px taller than the card. NOTE: the pv7 bump alone did NOT
+    // fix this — regeneration re-rolled the same race (the same fingerprint
+    // produced 801, 806, and 808 pages across separate runs), which is why
+    // the determinism test, not the bump, is what proves this fixed.
+    format!("{base}|uh{usable}|cw{cw}|pv8")
 }
 
 /// Diagnostic: re-measure every recorded page against the SAME heights vector
