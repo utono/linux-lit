@@ -281,6 +281,18 @@ fn log_generation_height_drift(
             if px - usable as i64 > worst.1 - usable as i64 || worst.1 == 0 {
                 worst = (i + 1, px);
             }
+            // Diagnostic: which boundary shape produced the overshoot. The
+            // page's own geometry says whether the extra pixels are a
+            // mid-paragraph straddle (end_off > 0), a whole-paragraph end
+            // (end_off == 0), or a top offset.
+            crate::log_fmt!(
+                "PAGES_PROSE_DRIFT: over page {} ({},{})..({},{}) px={} over={} \
+                 lines={} last_h={}",
+                i + 1, p.start_line, p.start_off, p.end_line, p.end_off,
+                px, px - usable as i64,
+                end.saturating_sub(p.start_line) + 1,
+                heights.get(end).copied().unwrap_or(-1)
+            );
             // Only the pages past the slack tolerance can actually floor the
             // render clip to 0; log those individually.
             if px > (usable + fit_slack) as i64 {
