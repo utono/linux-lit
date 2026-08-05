@@ -509,6 +509,15 @@ fn validate_all_lines_by_scrolling(state: &mut crate::app::AppState, line_count:
     }
 }
 
+/// Whether two per-line height vectors disagree beyond `tolerance_px` on any
+/// line. Used to refuse storing a table built on heights that do not match an
+/// independent measurement — a stronger check than the old two-sweep
+/// comparison, which read the same cache twice and so always agreed.
+pub(crate) fn heights_disagree(a: &[i32], b: &[i32], tolerance_px: i32) -> bool {
+    a.len() != b.len()
+        || a.iter().zip(b).any(|(x, y)| (x - y).abs() > tolerance_px)
+}
+
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
 /// Boundaries come from `navigation::prose_next_boundary` — the same function
 /// x/j use — so the stored grid IS the live grid.
@@ -893,33 +902,81 @@ pub fn record_prose_pages(
     }
     // CONVERGENCE GUARD (always on, not just debug builds).
     //
-    // Sweep a SECOND time. The first sweep itself forces validation, so if the
-    // layout was settled the two passes are identical. Any line whose height
-    // CHANGES between them means the first pass measured a face/width GTK then
-    // refined — exactly the state that produces an over-packed, overflowing
-    // table. Storing that table is worse than having none: the live engine
-    // measures at render time and is always self-consistent, whereas a bad
-    // pinned table persists in lit.db across sessions.
+    // Re-run `validate_all_lines_by_scrolling` a SECOND time — an
+    // independently-driven full layout pass, not a second read of the same
+    // cache — and sweep again. Compare `sweep1` against `sweep2` with
+    // `heights_disagree`.
     //
-    // Note this cannot catch the font-timing bug on its own (both sweeps run
-    // after the same invalidation and agree) — the layout pump above is what
-    // fixes that. This guard covers the residual case where heights are still
-    // in motion when generation runs.
-    {
-        let mut changed = 0usize;
-        let mut first_change = None;
-        let mut delta_sum = 0i64;
-        for i in 0..line_count {
-            let h2 = state
+    // This is a real independent check, unlike the guard this replaces: the
+    // old version swept `line_yrange` TWICE with NO validation between the
+    // two reads, so both hit the identical cache and it reported
+    // `changed_between_sweeps=0` / `delta_sum=0` on the very run whose real
+    // render disagreed with the stored table by up to 225px across a dozen
+    // lines (ROOT-CAUSE.md) — self-referential, and unable to see the bug it
+    // existed to catch.
+    //
+    // A tempting cheaper alternative — sweep once BEFORE validation, once
+    // after, and compare those — was tried FIRST and rejected: measured live
+    // (BH-Barrett ch37), it disagreed on 1283/7300 lines by construction,
+    // because the pre-validation sweep is exactly the lazy provisional
+    // estimate validation exists to correct. That comparison cannot
+    // distinguish "validation worked" from "validation is still broken" —
+    // both look like disagreement — so it is not a guard, it is a guaranteed
+    // false failure on every cold generation. Two INDEPENDENTLY-VALIDATED
+    // sweeps do not have that problem: if the scroll-and-settle pass is
+    // doing its job, driving it twice from scratch must land on the same
+    // heights both times, and a difference means validation itself did not
+    // converge (e.g. spun out on `MAX_LAYOUT_SPINS` before settling).
+    //
+    // Why not compare against Pango instead (the other independent
+    // measurement already in this file)? Task 1/1b measured it directly:
+    // Pango disagreed with `line_yrange` on 13/13 KNOWN-DISPLAYED lines
+    // across 3 chapters, under-counting wrapped rows by a margin that SCALES
+    // with row count (-1 row at 10 rows, -4 rows at 28), for a reason that
+    // resisted two separate corrective hypotheses (dialogue-indent per-line
+    // margins; line-spacing applied via tags — both tested and refuted, see
+    // the progress ledger). A guard built on that comparison would fire on
+    // every multi-row paragraph in a HEALTHY table — it would cry wolf
+    // constantly and get disabled, which is worse than no guard at all.
+    //
+    // Cost: one more `validate_all_lines_by_scrolling` pass, ≈ the same
+    // ~700-900ms as the first (see `PAGES_PROSE_VALIDATE` in the log, emitted
+    // twice per generation now). Generation is cached per (work,
+    // fingerprint) and only re-runs on a font/geometry/pv-version change, so
+    // paying for a genuinely independent check once per cache-miss is
+    // worthwhile: a table that fails this guard would otherwise be pinned in
+    // lit.db and served on every load until the next regeneration.
+    validate_all_lines_by_scrolling(state, line_count);
+    let sweep2: Vec<i32> = (0..line_count)
+        .map(|i| {
+            state
                 .buffer
                 .iter_at_line(i as i32)
                 .map(|it| state.text_view.line_yrange(&it).1)
-                .unwrap_or(0);
-            if h2 != sweep1[i] {
+                .unwrap_or(0)
+        })
+        .collect();
+    {
+        let tolerance_px = 0;
+        let disagree = heights_disagree(&sweep1, &sweep2, tolerance_px);
+        let mut changed = 0usize;
+        let mut first_change = None;
+        let mut worst_change: Option<(usize, i32, i32)> = None;
+        let mut worst_abs = 0i64;
+        let mut delta_sum = 0i64;
+        for i in 0..line_count {
+            let before = sweep1[i];
+            let after = sweep2[i];
+            if before != after {
                 changed += 1;
-                delta_sum += (h2 - sweep1[i]) as i64;
+                let delta = (after - before) as i64;
+                delta_sum += delta;
                 if first_change.is_none() {
-                    first_change = Some((i, sweep1[i], h2));
+                    first_change = Some((i, before, after));
+                }
+                if delta.abs() > worst_abs {
+                    worst_abs = delta.abs();
+                    worst_change = Some((i, before, after));
                 }
             }
         }
@@ -947,17 +1004,25 @@ pub fn record_prose_pages(
                 );
             }
         }
-        // Refuse rather than store a table built on heights that are still
-        // moving. The caller logs VALIDATE_FAIL and falls back to the live
-        // engine, which measures at render time and cannot disagree with
-        // itself. A small delta_sum is still a real defect here: the deltas
-        // concentrate in the long paragraphs that decide page boundaries.
-        if changed > 0 {
+        // Refuse rather than store a table built on heights that do not
+        // reproduce across two independently-driven validation passes. The
+        // caller logs VALIDATE_FAIL and falls back to the live engine, which
+        // measures at render time and cannot disagree with itself.
+        if disagree {
+            let (worst_i, worst_before, worst_after) =
+                worst_change.unwrap_or((0, 0, 0));
+            crate::log_fmt!(
+                "VALIDATE_FAIL: {changed}/{line_count} line heights disagree between \
+                 two independently-validated sweeps beyond {tolerance_px}px \
+                 (delta_sum={delta_sum}px, worst=line {worst_i} {worst_before}px -> \
+                 {worst_after}px, first={first_change:?})"
+            );
             return Err(format!(
                 "layout not settled: {changed}/{line_count} line heights changed \
-                 between two back-to-back sweeps (delta_sum={delta_sum}px, \
-                 first={first_change:?}). Generating now would pin an \
-                 over-packed table; deferring to the live engine."
+                 between two independently-validated sweeps (delta_sum={delta_sum}px, \
+                 worst=line {worst_i} {worst_before}px -> {worst_after}px). \
+                 Generating now would pin an over-packed table; deferring to the \
+                 live engine."
             ));
         }
     }
@@ -1779,5 +1844,32 @@ mod tests {
         // dropping it leaves the page 603px short of where it belongs.
         assert_eq!(prose_page_for_position(&pages, top, off), Some(i));
         assert_ne!(off, 0, "this page's offset is what a bare usize loses");
+    }
+}
+
+#[cfg(test)]
+mod height_agreement_tests {
+    use super::heights_disagree;
+
+    #[test]
+    fn identical_vectors_agree() {
+        assert!(!heights_disagree(&[40, 68, 96], &[40, 68, 96], 2));
+    }
+
+    #[test]
+    fn a_whole_row_of_drift_is_a_disagreement() {
+        // +28 is one wrapped row — the exact signature of the lazy-validation
+        // bug this guard exists to catch.
+        assert!(heights_disagree(&[40, 68, 96], &[40, 96, 96], 2));
+    }
+
+    #[test]
+    fn sub_tolerance_jitter_is_accepted() {
+        assert!(!heights_disagree(&[40, 68], &[41, 69], 2));
+    }
+
+    #[test]
+    fn a_length_mismatch_is_a_disagreement() {
+        assert!(heights_disagree(&[40, 68], &[40], 2));
     }
 }
