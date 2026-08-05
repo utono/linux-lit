@@ -379,6 +379,88 @@ fn deep_prose_pages_never_overflow_the_card() {
     }
 }
 
+/// Launch, resize, land at `start_scene` (if given), force generation, wait
+/// for `PAGES_PROSE: generated`, and return the dev log. Unlike
+/// `drive_forward_from` this does NOT drive any page turns — the determinism
+/// property under test is about GENERATION itself, not the live walk, so the
+/// only thing that matters is that the table gets (re)built once per launch.
+///
+/// A fresh `Harness` per call is deliberate: each call is a completely
+/// separate process launch, which is the axis the determinism bug lives on
+/// (scroll history / GTK validation state carried over from a PRIOR run
+/// cannot explain what's observed — the bug is that a SINGLE cold generation
+/// depends on incidental main-loop timing).
+fn generate_table_at(w: u32, h: u32, work: &str, start_scene: Option<&str>) -> String {
+    let mut env: Vec<(&str, &str)> = vec![
+        ("LIT_DEV", "1"),
+        ("LIT_HEADLESS_TEST", "1"),
+        ("LIT_START_WORK", work),
+        ("LIT_GEN_PAGE_TABLE", "1"),
+    ];
+    if let Some(scene) = start_scene {
+        env.push(("LIT_START_SCENE", scene));
+    }
+    let h_app = Harness::start_app(&app_binary(), std::iter::empty::<&str>(), &env)
+        .expect("launch linux-lit in cage");
+
+    let resized = h_app
+        .set_output_size(w, h)
+        .expect("wlr-randr resize must run");
+    assert!(
+        resized,
+        "wlr-randr could not set {w}x{h} — without production geometry this \
+         run cannot reproduce the bug"
+    );
+    h_app.settle(Duration::from_secs(1));
+
+    wait_for_log(&h_app, Duration::from_secs(30), |log| {
+        log.contains("PAGES_PROSE: generated") || log.contains("VALIDATE_FAIL")
+    })
+    .expect("prose table generation must settle (generated or VALIDATE_FAIL) within 30s");
+    h_app.settle(Duration::from_secs(1));
+
+    h_app.read_dev_log()
+}
+
+/// Pull the page count out of the LAST `PAGES_PROSE: generated N pages for
+/// ...` line in the log (there is exactly one per successful generation in
+/// these single-launch runs).
+fn parse_generated_page_count(log: &str) -> Option<usize> {
+    log.lines()
+        .rev()
+        .find_map(|l| l.split("PAGES_PROSE: generated ").nth(1))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+}
+
+/// Generation must be a pure function of content + geometry. Before the fix
+/// the same fingerprint produced 801, 806 and 808 pages on three runs,
+/// because the height sweep read whatever GTK happened to have validated —
+/// a provisional estimate for lines far from the viewport at generation time.
+///
+/// One cage launch per iteration (not one launch driven 3 times) is
+/// deliberate: each launch is a fresh cold generation, which is the exact
+/// circumstance the race was observed in (freshly opened work, viewport
+/// nowhere near the deep chapter being measured).
+#[test]
+#[ignore = "needs cage + grim + wtype; run with --ignored"]
+fn prose_generation_is_deterministic_across_runs() {
+    let mut counts = Vec::new();
+    for _ in 0..3 {
+        let log = generate_table_at(1920, 1236, "BH", Some("37.0"));
+        counts.push(
+            parse_generated_page_count(&log)
+                .unwrap_or_else(|| panic!("PAGES_PROSE: generated N pages must appear; full log:\n{log}")),
+        );
+        std::thread::sleep(Duration::from_secs(3));
+    }
+    assert!(
+        counts.iter().all(|c| *c == counts[0]),
+        "generation is not deterministic: {counts:?} — same content, same \
+         geometry, different tables"
+    );
+}
+
 /// Every rendered prose page must leave real breathing room below its last
 /// line. This is bug #2: a page spent the `prose_fit_slack` tolerance on INK
 /// rather than on a blank inter-paragraph gap, so the final paragraph sat

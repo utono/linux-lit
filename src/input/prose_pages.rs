@@ -413,25 +413,125 @@ fn log_generation_height_drift(
     );
 }
 
+/// Scroll the view's vadjustment through the ENTIRE buffer in viewport-sized
+/// steps, pumping the main context at each stop, so GTK actually validates
+/// every line's layout before the caller sweeps `line_yrange`.
+///
+/// `line_yrange` does NOT validate-and-measure synchronously as this file
+/// used to assume: GTK gates full layout validation on proximity to the
+/// scrolled position, and a line the viewport has never visited returns a
+/// PROVISIONAL estimate that GTK then caches as final. Two back-to-back
+/// sweeps taken from the same unmoved viewport therefore agree with each
+/// other while both are systematically short on far-off lines — which is
+/// exactly what let a stored table overflow the card by up to 225px while
+/// the convergence guard reported `delta_sum=0` (`ROOT-CAUSE.md`).
+///
+/// There is no synchronous "validate this range" call reachable from safe
+/// Rust: `gtk4`/`sourceview5`'s `TextView`/`View` bind `line_yrange`,
+/// `scroll_to_iter`, `scroll_mark_onscreen`, `move_mark_onscreen`,
+/// `place_cursor_onscreen`, but not `gtk_text_view_validate_onscreen` /
+/// `gtk_text_layout_validate` — checked directly against both crates'
+/// generated bindings, neither is exposed. Driving the SAME vadjustment the
+/// reader itself scrolls (`snap_scroll_to_line_offset` uses it too) is the
+/// least-bad remaining lever.
+///
+/// Cost: `ceil(buffer_height / viewport_height)` stops, NOT one per page —
+/// this function's callers' history includes a doc comment rejecting
+/// per-PAGE scrolling as "O(pages) full re-layouts, far too slow on a
+/// novel" (≈800 pages on BH). Stepping by a full viewport instead needs
+/// roughly one stop per RENDERED page rather than one per stored page (on BH,
+/// measured ≈700 stops, ≈700ms) — cheaper than per-page scrolling mainly
+/// because it skips the boundary-walk bookkeeping each page-stop would repeat,
+/// not because the stop COUNT differs much on a book whose pages are close to
+/// one viewport tall each. See the caller's generation-time log
+/// (`PAGES_PROSE_VALIDATE`) for the measured wall-clock on the work actually
+/// being generated.
+fn validate_all_lines_by_scrolling(state: &mut crate::app::AppState, line_count: usize) {
+    use gtk4::prelude::{AdjustmentExt, TextBufferExt, TextViewExt};
+    let adj = state.scrolled_window.vadjustment();
+    let saved_value = adj.value();
+    let page_size = adj.page_size();
+    if page_size <= 0.0 || line_count == 0 {
+        // No allocated viewport yet (e.g. a unit/headless context with a
+        // zero-height widget) — nothing to validate by scrolling; the sweep
+        // below will read whatever GTK already has, same as before this fix.
+        return;
+    }
+    // The buffer's total pixel extent: the bottom of the LAST line, which is
+    // also `adjustment.upper()` once the view has laid out that far — but we
+    // cannot assume it has yet (that is the whole problem), so read it off
+    // the end iter and step from there rather than trusting `adj.upper()`
+    // up front.
+    let last_line = line_count - 1;
+    let buffer_bottom = state
+        .buffer
+        .iter_at_line(last_line as i32)
+        .map(|it| {
+            let (y, h) = state.text_view.line_yrange(&it);
+            (y + h) as f64
+        })
+        .unwrap_or(0.0);
+    let started = std::time::Instant::now();
+    let mut pos = 0.0f64;
+    let mut spins_total = 0usize;
+    let mut stops = 0usize;
+    loop {
+        stops += 1;
+        adj.set_value(pos);
+        // Pump the main context so GTK actually re-lays-out around the new
+        // scroll position before we move on — a bare `set_value` only queues
+        // the work.
+        let mut spins = 0;
+        while glib::MainContext::default().pending() && spins < MAX_LAYOUT_SPINS {
+            glib::MainContext::default().iteration(false);
+            spins += 1;
+        }
+        spins_total += spins;
+        if pos >= buffer_bottom || pos >= adj.upper() {
+            break;
+        }
+        pos += page_size;
+    }
+    crate::log_fmt!(
+        "PAGES_PROSE_VALIDATE: scrolled through buffer_bottom={:.0} page_size={:.0} \
+         stops={} spins={} elapsed_ms={}",
+        buffer_bottom, page_size, stops, spins_total, started.elapsed().as_millis()
+    );
+    // Restore the viewport exactly where it was — this function must be
+    // invisible to anything watching scroll position (the caller restores
+    // `state.page_top` separately; this restores the underlying GTK
+    // adjustment those page-top scrolls drive).
+    adj.set_value(saved_value);
+    let mut spins = 0;
+    while glib::MainContext::default().pending() && spins < MAX_LAYOUT_SPINS {
+        glib::MainContext::default().iteration(false);
+        spins += 1;
+    }
+}
+
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
 /// Boundaries come from `navigation::prose_next_boundary` — the same function
 /// x/j use — so the stored grid IS the live grid.
 ///
 /// **Pre-validation is load-bearing.** `prose_next_boundary` accumulates REAL
-/// per-line heights via `line_yrange`, but GTK4 validates a TextView's line
-/// layout lazily around the currently-scrolled viewport. A walk that only
-/// mutated `page_top_line` (no scroll) left every line past the initial
-/// validation frontier reporting a coarse single-row height ESTIMATE — so the
-/// bounded walk under-accumulated, `total - y0` never exceeded `usable`,
-/// `prose_next_boundary` returned `None` mid-document, and the "final page"
-/// spanned the whole un-walked remainder (observed: a 601941px page ~1/4 into
-/// BH). We fix that by forcing GTK to validate EVERY line's true height up
-/// front (a single `line_yrange` sweep — `line_yrange` validates the line
-/// synchronously and GTK caches the result), so the subsequent walk reads real
-/// heights the whole way WITHOUT scrolling per page (which was O(pages) full
-/// re-layouts and far too slow on a novel). The walk then just mutates the page
-/// state and restores it; it is synchronous with no GTK main-loop iteration
-/// between steps, so no idle/render callback observes the intermediate state.
+/// per-line heights via `line_yrange`. `line_yrange` does NOT validate a far-
+/// off line synchronously — GTK gates full layout validation on proximity to
+/// the viewport, and an unvisited line returns a provisional estimate GTK
+/// then caches as final (see `validate_all_lines_by_scrolling`'s doc comment,
+/// and `ROOT-CAUSE.md`, for the measured evidence). A walk that only mutated
+/// `page_top_line` (no scroll) left every line past the initial validation
+/// frontier reporting that coarse estimate — so the bounded walk under-
+/// accumulated, `total - y0` never exceeded `usable`, `prose_next_boundary`
+/// returned `None` mid-document, and the "final page" spanned the whole
+/// un-walked remainder (observed: a 601941px page ~1/4 into BH). We fix that
+/// by scrolling the viewport through the WHOLE buffer up front
+/// (`validate_all_lines_by_scrolling`) so every line gets a real layout pass,
+/// then sweeping `line_yrange` once to read the now-genuine heights, so the
+/// subsequent walk reads real heights the whole way WITHOUT scrolling per
+/// PAGE (which was O(pages) full re-layouts and far too slow on a novel). The
+/// walk then just mutates the page state and restores it; it is synchronous
+/// with no GTK main-loop iteration between steps, so no idle/render callback
+/// observes the intermediate state.
 pub fn record_prose_pages(
     state: &mut crate::app::AppState,
 ) -> Result<Vec<ProsePage>, String> {
@@ -468,6 +568,50 @@ pub fn record_prose_pages(
             spins += 1;
         }
     }
+    // FORCE FULL VALIDATION BEFORE THE SWEEP (2026-08-05, Option B).
+    //
+    // `line_yrange` looked like a synchronous validate-and-measure call (the
+    // doc comment below used to say so), but it is not: GTK gates full layout
+    // validation on proximity to the viewport, and a line far from the
+    // scrolled position returns a PROVISIONAL single-row-ish estimate that GTK
+    // then caches as if it were final. A buffer-wide `line_yrange` sweep taken
+    // from wherever the viewport happens to sit at generation time therefore
+    // under-measures every line it has never displayed — by whole wrapped
+    // rows. Two back-to-back sweeps agree with each other (both read the same
+    // stale cache) while disagreeing with the real render by up to 225px
+    // across a dozen lines (ROOT-CAUSE.md); the same fingerprint produced
+    // 801/806/808 pages on three runs because generation depended on how much
+    // of the buffer GTK happened to have validated.
+    //
+    // Task 1/1b measured whether an independent Pango layout could replace
+    // this sweep (Option A) and found it disagrees with `line_yrange` even on
+    // KNOWN-DISPLAYED lines, under-counting wrapped rows by a margin that
+    // scales with row count, for a reason that resisted two separate
+    // corrective hypotheses (dialogue-indent per-line margins; line-spacing
+    // applied via tags) — both tested and refuted. So this is Option B: make
+    // the premise TRUE instead. Scroll the vadjustment through the whole
+    // buffer in viewport-sized steps, pumping the main context at each stop so
+    // GTK actually validates every line's layout, before taking the sweep.
+    // There is no synchronous "validate this range now" call reachable from
+    // safe Rust — `gtk4`/`sourceview5` bind `line_yrange`, `scroll_to_iter`,
+    // `scroll_mark_onscreen`, `move_mark_onscreen`, `place_cursor_onscreen`,
+    // but not `gtk_text_view_validate_onscreen` / `gtk_text_layout_validate`
+    // (checked directly against both crates' generated bindings; neither
+    // exists) — so stepping the viewport is the least-bad lever available.
+    //
+    // This IS a full-buffer re-layout cost, and it is real: measured ≈700
+    // stops / ≈700ms on BH (~7,300 lines), a ≈1.6x increase in total
+    // generation wall-clock (task-2b-report.md has the before/after). It is
+    // cheaper than the PER-PAGE scrolling this function's own doc comment
+    // once rejected mainly because each stop here is a bare scroll+pump —
+    // not because the stop COUNT is dramatically smaller on a book whose
+    // pages are close to one viewport tall each. Generation is cached in
+    // lit.db per (work, layout fingerprint) and only re-runs on a font/
+    // geometry/pv-version change, not on every load, which is what makes a
+    // one-time ~1.6x hit acceptable here; see the caller's generation-time
+    // log (`PAGES_PROSE_VALIDATE`, `record_prose_pages_ms`) for the measured
+    // cost on the work actually being generated.
+    validate_all_lines_by_scrolling(state, line_count);
     // Force GTK to validate every line's true wrapped height once, so the
     // per-page boundary walk below never reads a lazy single-row estimate for a
     // far-off line (see the doc comment). The results are cached by GTK.
@@ -885,13 +1029,18 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
     }
     use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
     let fp = prose_layout_fingerprint(state);
+    let gen_started = std::time::Instant::now();
     let pages = match record_prose_pages(state) {
         Ok(p) => p,
         Err(e) => {
-            crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
+            crate::logging::log(&format!(
+                "PAGES_PROSE: VALIDATE_FAIL {e} (record_prose_pages took {}ms)",
+                gen_started.elapsed().as_millis()
+            ));
             return;
         }
     };
+    let record_elapsed_ms = gen_started.elapsed().as_millis();
     // Build the validation context from live geometry (heights measured AFTER
     // the full forward walk, so every line has been really measured by GTK).
     let line_count = state.effective_line_count();
@@ -999,7 +1148,8 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
         }
     }
     crate::logging::log(&format!(
-        "PAGES_PROSE: generated {} pages for {} fp={}", rows.len(), work.abbrev, fp));
+        "PAGES_PROSE: generated {} pages for {} fp={} record_prose_pages_ms={} total_ms={}",
+        rows.len(), work.abbrev, fp, record_elapsed_ms, gen_started.elapsed().as_millis()));
     // Make the fresh table active this session.
     *state.prose_page_table.borrow_mut() = Some(std::rc::Rc::new(pages));
     *state.prose_page_table_fp.borrow_mut() = fp;
