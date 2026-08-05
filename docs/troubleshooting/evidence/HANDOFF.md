@@ -55,3 +55,23 @@ See `docs/troubleshooting/evidence/ROOT-CAUSE.md` for the full measurement
 trail and `docs/troubleshooting/clip-prevention.md` item 23 for the
 ledger entry (including how to distinguish this bug from item 22, an
 unrelated but symptomatically similar overflow fixed earlier).
+
+## Real-renderer verification — CONFIRMED (2026-08-05)
+
+The user ran the merged build (`crll`, master `1f5125e0`) and screenshotted
+BH-Barrett chapter 37 — the exact page that showed the defect.
+
+Pixel-measured from the two captures, at the card's cream/text boundary:
+
+- capture 16-43-03: card bottom y=1185, last ink y=1102 — **83px clear**
+- capture 16-43-08: card bottom y=1185, last ink y=1114 — **71px clear**
+
+Compare the pre-fix report: the final row rendered **8px of a ~28px line box**,
+sliced through the glyphs, with no clip band.
+
+Both pages end on complete lines ("…which she always did in the" /
+"…for I was going to ask him by whom he had"), so the text is intact rather
+than masked.
+
+This is the acceptance the headless suite could not give: cage is software
+rendering and has disagreed with the real GL renderer on layout before.
