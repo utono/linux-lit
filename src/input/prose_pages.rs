@@ -326,7 +326,16 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // bump is what forces regeneration. (pv6 is skipped rather than reused:
     // it belongs to the reverted line-box fix e1b17ac0, and its tables carry
     // the same bad heights.)
-    format!("{base}|uh{usable}|cw{cw}|pv7")
+    // pv8: generation now measures TRUE wrapped heights, forcing GTK layout
+    // validation (`validate_all_lines_by_scrolling`) before the sweep instead
+    // of trusting `line_yrange` for lines far from the viewport. EVERY table
+    // stored at pv7 or earlier was built from a sweep that under-measured
+    // never-displayed lines by whole rows, so those tables pin pages that
+    // render 13-114px taller than the card. NOTE: the pv7 bump alone did NOT
+    // fix this — regeneration re-rolled the same race (the same fingerprint
+    // produced 801, 806, and 808 pages across separate runs), which is why
+    // the determinism test, not the bump, is what proves this fixed.
+    format!("{base}|uh{usable}|cw{cw}|pv8")
 }
 
 /// Diagnostic: re-measure every recorded page against the SAME heights vector
@@ -413,25 +422,134 @@ fn log_generation_height_drift(
     );
 }
 
+/// Scroll the view's vadjustment through the ENTIRE buffer in viewport-sized
+/// steps, pumping the main context at each stop, so GTK actually validates
+/// every line's layout before the caller sweeps `line_yrange`.
+///
+/// `line_yrange` does NOT validate-and-measure synchronously as this file
+/// used to assume: GTK gates full layout validation on proximity to the
+/// scrolled position, and a line the viewport has never visited returns a
+/// PROVISIONAL estimate that GTK then caches as final. Two back-to-back
+/// sweeps taken from the same unmoved viewport therefore agree with each
+/// other while both are systematically short on far-off lines — which is
+/// exactly what let a stored table overflow the card by up to 225px while
+/// the convergence guard reported `delta_sum=0` (`ROOT-CAUSE.md`).
+///
+/// There is no synchronous "validate this range" call reachable from safe
+/// Rust: `gtk4`/`sourceview5`'s `TextView`/`View` bind `line_yrange`,
+/// `scroll_to_iter`, `scroll_mark_onscreen`, `move_mark_onscreen`,
+/// `place_cursor_onscreen`, but not `gtk_text_view_validate_onscreen` /
+/// `gtk_text_layout_validate` — checked directly against both crates'
+/// generated bindings, neither is exposed. Driving the SAME vadjustment the
+/// reader itself scrolls (`snap_scroll_to_line_offset` uses it too) is the
+/// least-bad remaining lever.
+///
+/// Cost: `ceil(buffer_height / viewport_height)` stops, NOT one per page —
+/// this function's callers' history includes a doc comment rejecting
+/// per-PAGE scrolling as "O(pages) full re-layouts, far too slow on a
+/// novel" (≈800 pages on BH). Stepping by a full viewport instead needs
+/// roughly one stop per RENDERED page rather than one per stored page (on BH,
+/// measured ≈700 stops, ≈700ms) — cheaper than per-page scrolling mainly
+/// because it skips the boundary-walk bookkeeping each page-stop would repeat,
+/// not because the stop COUNT differs much on a book whose pages are close to
+/// one viewport tall each. See the caller's generation-time log
+/// (`PAGES_PROSE_VALIDATE`) for the measured wall-clock on the work actually
+/// being generated.
+fn validate_all_lines_by_scrolling(state: &mut crate::app::AppState, line_count: usize) {
+    use gtk4::prelude::{AdjustmentExt, TextBufferExt, TextViewExt};
+    let adj = state.scrolled_window.vadjustment();
+    let saved_value = adj.value();
+    let page_size = adj.page_size();
+    if page_size <= 0.0 || line_count == 0 {
+        // No allocated viewport yet (e.g. a unit/headless context with a
+        // zero-height widget) — nothing to validate by scrolling; the sweep
+        // below will read whatever GTK already has, same as before this fix.
+        return;
+    }
+    // The buffer's total pixel extent: the bottom of the LAST line, which is
+    // also `adjustment.upper()` once the view has laid out that far — but we
+    // cannot assume it has yet (that is the whole problem), so read it off
+    // the end iter and step from there rather than trusting `adj.upper()`
+    // up front.
+    let last_line = line_count - 1;
+    let buffer_bottom = state
+        .buffer
+        .iter_at_line(last_line as i32)
+        .map(|it| {
+            let (y, h) = state.text_view.line_yrange(&it);
+            (y + h) as f64
+        })
+        .unwrap_or(0.0);
+    let started = std::time::Instant::now();
+    let mut pos = 0.0f64;
+    let mut spins_total = 0usize;
+    let mut stops = 0usize;
+    loop {
+        stops += 1;
+        adj.set_value(pos);
+        // Pump the main context so GTK actually re-lays-out around the new
+        // scroll position before we move on — a bare `set_value` only queues
+        // the work.
+        let mut spins = 0;
+        while glib::MainContext::default().pending() && spins < MAX_LAYOUT_SPINS {
+            glib::MainContext::default().iteration(false);
+            spins += 1;
+        }
+        spins_total += spins;
+        if pos >= buffer_bottom || pos >= adj.upper() {
+            break;
+        }
+        pos += page_size;
+    }
+    crate::log_fmt!(
+        "PAGES_PROSE_VALIDATE: scrolled through buffer_bottom={:.0} page_size={:.0} \
+         stops={} spins={} elapsed_ms={}",
+        buffer_bottom, page_size, stops, spins_total, started.elapsed().as_millis()
+    );
+    // Restore the viewport exactly where it was — this function must be
+    // invisible to anything watching scroll position (the caller restores
+    // `state.page_top` separately; this restores the underlying GTK
+    // adjustment those page-top scrolls drive).
+    adj.set_value(saved_value);
+    let mut spins = 0;
+    while glib::MainContext::default().pending() && spins < MAX_LAYOUT_SPINS {
+        glib::MainContext::default().iteration(false);
+        spins += 1;
+    }
+}
+
+/// Whether two per-line height vectors disagree beyond `tolerance_px` on any
+/// line. Used to refuse storing a table built on heights that do not match an
+/// independent measurement — a stronger check than the old two-sweep
+/// comparison, which read the same cache twice and so always agreed.
+pub(crate) fn heights_disagree(a: &[i32], b: &[i32], tolerance_px: i32) -> bool {
+    a.len() != b.len()
+        || a.iter().zip(b).any(|(x, y)| (x - y).abs() > tolerance_px)
+}
+
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
 /// Boundaries come from `navigation::prose_next_boundary` — the same function
 /// x/j use — so the stored grid IS the live grid.
 ///
 /// **Pre-validation is load-bearing.** `prose_next_boundary` accumulates REAL
-/// per-line heights via `line_yrange`, but GTK4 validates a TextView's line
-/// layout lazily around the currently-scrolled viewport. A walk that only
-/// mutated `page_top_line` (no scroll) left every line past the initial
-/// validation frontier reporting a coarse single-row height ESTIMATE — so the
-/// bounded walk under-accumulated, `total - y0` never exceeded `usable`,
-/// `prose_next_boundary` returned `None` mid-document, and the "final page"
-/// spanned the whole un-walked remainder (observed: a 601941px page ~1/4 into
-/// BH). We fix that by forcing GTK to validate EVERY line's true height up
-/// front (a single `line_yrange` sweep — `line_yrange` validates the line
-/// synchronously and GTK caches the result), so the subsequent walk reads real
-/// heights the whole way WITHOUT scrolling per page (which was O(pages) full
-/// re-layouts and far too slow on a novel). The walk then just mutates the page
-/// state and restores it; it is synchronous with no GTK main-loop iteration
-/// between steps, so no idle/render callback observes the intermediate state.
+/// per-line heights via `line_yrange`. `line_yrange` does NOT validate a far-
+/// off line synchronously — GTK gates full layout validation on proximity to
+/// the viewport, and an unvisited line returns a provisional estimate GTK
+/// then caches as final (see `validate_all_lines_by_scrolling`'s doc comment,
+/// and `ROOT-CAUSE.md`, for the measured evidence). A walk that only mutated
+/// `page_top_line` (no scroll) left every line past the initial validation
+/// frontier reporting that coarse estimate — so the bounded walk under-
+/// accumulated, `total - y0` never exceeded `usable`, `prose_next_boundary`
+/// returned `None` mid-document, and the "final page" spanned the whole
+/// un-walked remainder (observed: a 601941px page ~1/4 into BH). We fix that
+/// by scrolling the viewport through the WHOLE buffer up front
+/// (`validate_all_lines_by_scrolling`) so every line gets a real layout pass,
+/// then sweeping `line_yrange` once to read the now-genuine heights, so the
+/// subsequent walk reads real heights the whole way WITHOUT scrolling per
+/// PAGE (which was O(pages) full re-layouts and far too slow on a novel). The
+/// walk then just mutates the page state and restores it; it is synchronous
+/// with no GTK main-loop iteration between steps, so no idle/render callback
+/// observes the intermediate state.
 pub fn record_prose_pages(
     state: &mut crate::app::AppState,
 ) -> Result<Vec<ProsePage>, String> {
@@ -468,6 +586,50 @@ pub fn record_prose_pages(
             spins += 1;
         }
     }
+    // FORCE FULL VALIDATION BEFORE THE SWEEP (2026-08-05, Option B).
+    //
+    // `line_yrange` looked like a synchronous validate-and-measure call (the
+    // doc comment below used to say so), but it is not: GTK gates full layout
+    // validation on proximity to the viewport, and a line far from the
+    // scrolled position returns a PROVISIONAL single-row-ish estimate that GTK
+    // then caches as if it were final. A buffer-wide `line_yrange` sweep taken
+    // from wherever the viewport happens to sit at generation time therefore
+    // under-measures every line it has never displayed — by whole wrapped
+    // rows. Two back-to-back sweeps agree with each other (both read the same
+    // stale cache) while disagreeing with the real render by up to 225px
+    // across a dozen lines (ROOT-CAUSE.md); the same fingerprint produced
+    // 801/806/808 pages on three runs because generation depended on how much
+    // of the buffer GTK happened to have validated.
+    //
+    // Task 1/1b measured whether an independent Pango layout could replace
+    // this sweep (Option A) and found it disagrees with `line_yrange` even on
+    // KNOWN-DISPLAYED lines, under-counting wrapped rows by a margin that
+    // scales with row count, for a reason that resisted two separate
+    // corrective hypotheses (dialogue-indent per-line margins; line-spacing
+    // applied via tags) — both tested and refuted. So this is Option B: make
+    // the premise TRUE instead. Scroll the vadjustment through the whole
+    // buffer in viewport-sized steps, pumping the main context at each stop so
+    // GTK actually validates every line's layout, before taking the sweep.
+    // There is no synchronous "validate this range now" call reachable from
+    // safe Rust — `gtk4`/`sourceview5` bind `line_yrange`, `scroll_to_iter`,
+    // `scroll_mark_onscreen`, `move_mark_onscreen`, `place_cursor_onscreen`,
+    // but not `gtk_text_view_validate_onscreen` / `gtk_text_layout_validate`
+    // (checked directly against both crates' generated bindings; neither
+    // exists) — so stepping the viewport is the least-bad lever available.
+    //
+    // This IS a full-buffer re-layout cost, and it is real: measured ≈700
+    // stops / ≈700ms on BH (~7,300 lines), a ≈1.6x increase in total
+    // generation wall-clock (task-2b-report.md has the before/after). It is
+    // cheaper than the PER-PAGE scrolling this function's own doc comment
+    // once rejected mainly because each stop here is a bare scroll+pump —
+    // not because the stop COUNT is dramatically smaller on a book whose
+    // pages are close to one viewport tall each. Generation is cached in
+    // lit.db per (work, layout fingerprint) and only re-runs on a font/
+    // geometry/pv-version change, not on every load, which is what makes a
+    // one-time ~1.6x hit acceptable here; see the caller's generation-time
+    // log (`PAGES_PROSE_VALIDATE`, `record_prose_pages_ms`) for the measured
+    // cost on the work actually being generated.
+    validate_all_lines_by_scrolling(state, line_count);
     // Force GTK to validate every line's true wrapped height once, so the
     // per-page boundary walk below never reads a lazy single-row estimate for a
     // far-off line (see the doc comment). The results are cached by GTK.
@@ -488,7 +650,7 @@ pub fn record_prose_pages(
     // height is wrong at generation, which is exactly what lets a page be
     // charged too little and overflow at render.
     if crate::logging::debug_mode() && std::env::var_os("LIT_TRACE_PANGO").is_some() {
-        use gtk4::prelude::WidgetExt;
+        use gtk4::prelude::{TextTagExt, WidgetExt};
         let tv = &state.text_view;
         let wrap_w = tv.width() - tv.left_margin() - tv.right_margin();
         let above = tv.pixels_above_lines();
@@ -497,8 +659,32 @@ pub fn record_prose_pages(
         let mut delta_sum = 0i64;
         let mut worst: (usize, i32, i32) = (0, 0, 0);
         let mut examples: Vec<String> = Vec::new();
+        // Per-line (pango_h, yrange_h) pairs, kept so the DISPLAYED/OFFSCREEN
+        // split below can classify by position without re-measuring anything.
+        let mut pairs: Vec<(i32, i32)> = Vec::with_capacity(line_count);
+        // TASK 1b (2026-08-05-prose-page-height-truth): the view-level wrap_w
+        // above is BLIND to per-line TextTag margins (dialogue-indent,
+        // block-blockquote-indent, verse-indent-*), which is a candidate
+        // explanation for Task 1's whole-row misses on multi-row lines. This
+        // second, CORRECTED pass resolves the effective per-line left/right
+        // margin the same way GTK does: walk every tag applied at the line's
+        // start iter, and for each of left-margin/right-margin independently
+        // take the value from the highest-PRIORITY tag that has it explicitly
+        // set (`is_left_margin_set`/`is_right_margin_set`) — GTK resolves
+        // competing tag properties by priority, and tag-table insertion order
+        // is the default priority (later-added wins), so reading `.priority()`
+        // directly (rather than assuming insertion order) is exact regardless
+        // of any future re-ordering.
+        let mut corrected_disagree = 0usize;
+        let mut corrected_delta_sum = 0i64;
+        let mut corrected_examples: Vec<String> = Vec::new();
+        // Per-line (corrected_pango_h, yrange_h, corrected_wrap_w) kept for the
+        // displayed/offscreen split below.
+        let mut corrected_pairs: Vec<(i32, i32, i32)> = Vec::with_capacity(line_count);
         for i in 0..line_count {
             let Some(start) = state.buffer.iter_at_line(i as i32) else {
+                pairs.push((0, 0));
+                corrected_pairs.push((0, 0, wrap_w));
                 continue;
             };
             let mut end = start;
@@ -521,6 +707,7 @@ pub fn record_prose_pages(
             // The view charges each line box as ink + the paragraph spacing.
             let pango_h = layout.pixel_size().1 + above + below;
             let yr = sweep1[i];
+            pairs.push((pango_h, yr));
             if pango_h != yr {
                 disagree += 1;
                 delta_sum += (pango_h - yr) as i64;
@@ -531,6 +718,54 @@ pub fn record_prose_pages(
                     examples.push(format!("L{i}:yr={yr}/pango={pango_h}"));
                 }
             }
+
+            // Resolve the effective per-line left/right margin from applied
+            // tags, highest priority wins per property (independently).
+            let mut best_left: Option<(i32, i32)> = None; // (priority, value)
+            let mut best_right: Option<(i32, i32)> = None;
+            for tag in start.tags() {
+                let prio = tag.priority();
+                if tag.is_left_margin_set() {
+                    let v = tag.left_margin();
+                    if best_left.is_none_or(|(p, _)| prio > p) {
+                        best_left = Some((prio, v));
+                    }
+                }
+                if tag.is_right_margin_set() {
+                    let v = tag.right_margin();
+                    if best_right.is_none_or(|(p, _)| prio > p) {
+                        best_right = Some((prio, v));
+                    }
+                }
+            }
+            // Tag left/right margins are PARAGRAPH-absolute (they replace the
+            // view's own margin, they do not add to it) — same semantics
+            // `set_left_margin`/`set_right_margin` document for the view
+            // itself. Fall back to the view-level margin when no tag sets it.
+            let eff_left = best_left.map(|(_, v)| v).unwrap_or_else(|| tv.left_margin());
+            let eff_right = best_right.map(|(_, v)| v).unwrap_or_else(|| tv.right_margin());
+            let corrected_wrap_w = (tv.width() - eff_left - eff_right).max(0);
+
+            let clayout = tv.create_pango_layout(Some(text.as_str()));
+            clayout.set_width(corrected_wrap_w * pango::SCALE);
+            clayout.set_wrap(pango::WrapMode::WordChar);
+            clayout.set_font_description(Some(&pango::FontDescription::from_string(
+                &crate::ui::font_string(
+                    state.config.font_family.as_str(),
+                    state.config.font_size as i32,
+                ),
+            )));
+            let corrected_pango_h = clayout.pixel_size().1 + above + below;
+            corrected_pairs.push((corrected_pango_h, yr, corrected_wrap_w));
+            if corrected_pango_h != yr {
+                corrected_disagree += 1;
+                corrected_delta_sum += (corrected_pango_h - yr) as i64;
+                if corrected_examples.len() < 8 {
+                    corrected_examples.push(format!(
+                        "L{i}:yr={yr}/cpango={corrected_pango_h}/cw={corrected_wrap_w}"
+                    ));
+                }
+            }
         }
         crate::log_fmt!(
             "PAGES_PROSE_PANGO: lines={} disagree={} delta_sum={} \
@@ -539,36 +774,218 @@ pub fn record_prose_pages(
             worst.0, worst.1, worst.2, wrap_w, above, below,
             examples.join(" ")
         );
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO_CORRECTED: lines={} disagree={} delta_sum={} \
+             base_wrap_w={} ex=[{}]",
+            line_count, corrected_disagree, corrected_delta_sum, wrap_w,
+            corrected_examples.join(" ")
+        );
+        // DIAGNOSTIC (LIT_TRACE_PANGO=1), split by display state (Task 1,
+        // 2026-08-05-prose-page-height-truth plan).
+        //
+        // "Displayed" = lines GTK has actually laid out and painted on screen
+        // before this generation ran, as opposed to lines `line_yrange` has
+        // only ever estimated. Generation fires once per settled layout/resize
+        // with the viewport anchored at `state.page_top.line()` for the whole
+        // sweep (confirmed in TRACE-FINDINGS.md: page_top stayed constant
+        // through generation) — so the only lines with a real on-screen paint
+        // behind them are the single page's worth starting at page_top. We
+        // derive that count the same way the rest of this file computes a
+        // page's usable height (widget_height - descender_guard -
+        // SINGLE_COLUMN_BOTTOM_MARGIN), then walk forward from page_top
+        // summing `sweep1` (the SAME heights generation used — not a fresh
+        // GTK call, which would just re-ask the lazily-validated cache and
+        // beg the question of what "displayed" means) until the budget is
+        // exhausted. That walk can itself be one row optimistic about the
+        // very last line if that line's own height was under-measured, so we
+        // exclude a one-line margin band on each side of the displayed
+        // window's boundary from BOTH populations — a line that was only
+        // partially scrolled through, or whose displayed-ness hinges on the
+        // number we're trying to validate, is excluded rather than forced
+        // into a bucket.
+        let page_top = state.page_top.line().min(line_count.saturating_sub(1));
+        let descender_guard =
+            crate::input::viewport::descender_guard_px(&state.text_view, page_top);
+        let usable_height =
+            tv.height() - descender_guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
+        let mut displayed_end = page_top; // exclusive upper bound of the displayed window
+        if usable_height > 0 {
+            let mut total = 0i32;
+            for (i, &(_pango_h, yr)) in pairs.iter().enumerate().skip(page_top) {
+                if total + yr > usable_height {
+                    break;
+                }
+                total += yr;
+                displayed_end = i + 1;
+            }
+        }
+        const MARGIN: usize = 1;
+        let displayed_hi = displayed_end.saturating_sub(MARGIN);
+        let offscreen_lo = displayed_end + MARGIN;
+
+        let mut displayed_lines = 0usize;
+        let mut displayed_disagree = 0usize;
+        let mut displayed_delta_sum = 0i64;
+        let mut displayed_ex: Vec<String> = Vec::new();
+        let mut offscreen_lines = 0usize;
+        let mut offscreen_disagree = 0usize;
+        let mut offscreen_delta_sum = 0i64;
+        let mut offscreen_ex: Vec<String> = Vec::new();
+        for (i, &(pango_h, yr)) in pairs.iter().enumerate() {
+            if i >= page_top && i < displayed_hi {
+                displayed_lines += 1;
+                if pango_h != yr {
+                    displayed_disagree += 1;
+                    displayed_delta_sum += (pango_h - yr) as i64;
+                    if displayed_ex.len() < 8 {
+                        displayed_ex.push(format!("L{i}:yr={yr}/pango={pango_h}"));
+                    }
+                }
+            } else if i >= offscreen_lo {
+                offscreen_lines += 1;
+                if pango_h != yr {
+                    offscreen_disagree += 1;
+                    offscreen_delta_sum += (pango_h - yr) as i64;
+                    if offscreen_ex.len() < 8 {
+                        offscreen_ex.push(format!("L{i}:yr={yr}/pango={pango_h}"));
+                    }
+                }
+            }
+            // else: inside the excluded margin band around the displayed
+            // window's boundary, or before page_top (never reached this run
+            // — page_top is generation's starting scroll position) — skip.
+        }
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO_SPLIT: page_top={} displayed_end={} usable_height={} \
+             displayed_lines={} displayed_disagree={} displayed_delta_sum={} \
+             offscreen_lines={} offscreen_disagree={} offscreen_delta_sum={} \
+             displayed_ex=[{}] offscreen_ex=[{}]",
+            page_top, displayed_end, usable_height,
+            displayed_lines, displayed_disagree, displayed_delta_sum,
+            offscreen_lines, offscreen_disagree, offscreen_delta_sum,
+            displayed_ex.join(" "), offscreen_ex.join(" ")
+        );
+
+        // TASK 1b: same displayed/offscreen split, but against the
+        // per-line-margin-CORRECTED Pango measurement instead of the raw
+        // view-width one. Reuses the identical `page_top`/`displayed_hi`/
+        // `offscreen_lo` window computed above (from the SAME sweep1 heights),
+        // so the two splits are directly comparable line-for-line.
+        let mut c_displayed_lines = 0usize;
+        let mut c_displayed_disagree = 0usize;
+        let mut c_displayed_delta_sum = 0i64;
+        let mut c_displayed_ex: Vec<String> = Vec::new();
+        let mut c_offscreen_lines = 0usize;
+        let mut c_offscreen_disagree = 0usize;
+        let mut c_offscreen_delta_sum = 0i64;
+        for (i, &(cpango_h, yr, cw)) in corrected_pairs.iter().enumerate() {
+            if i >= page_top && i < displayed_hi {
+                c_displayed_lines += 1;
+                if cpango_h != yr {
+                    c_displayed_disagree += 1;
+                    c_displayed_delta_sum += (cpango_h - yr) as i64;
+                    if c_displayed_ex.len() < 8 {
+                        c_displayed_ex.push(format!(
+                            "L{i}:yr={yr}/cpango={cpango_h}/cw={cw}"
+                        ));
+                    }
+                }
+            } else if i >= offscreen_lo {
+                c_offscreen_lines += 1;
+                if cpango_h != yr {
+                    c_offscreen_disagree += 1;
+                    c_offscreen_delta_sum += (cpango_h - yr) as i64;
+                }
+            }
+        }
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO_CORRECTED_SPLIT: page_top={} displayed_end={} \
+             c_displayed_lines={} c_displayed_disagree={} c_displayed_delta_sum={} \
+             c_offscreen_lines={} c_offscreen_disagree={} c_offscreen_delta_sum={} \
+             c_displayed_ex=[{}]",
+            page_top, displayed_end,
+            c_displayed_lines, c_displayed_disagree, c_displayed_delta_sum,
+            c_offscreen_lines, c_offscreen_disagree, c_offscreen_delta_sum,
+            c_displayed_ex.join(" ")
+        );
     }
     // CONVERGENCE GUARD (always on, not just debug builds).
     //
-    // Sweep a SECOND time. The first sweep itself forces validation, so if the
-    // layout was settled the two passes are identical. Any line whose height
-    // CHANGES between them means the first pass measured a face/width GTK then
-    // refined — exactly the state that produces an over-packed, overflowing
-    // table. Storing that table is worse than having none: the live engine
-    // measures at render time and is always self-consistent, whereas a bad
-    // pinned table persists in lit.db across sessions.
+    // Re-run `validate_all_lines_by_scrolling` a SECOND time — an
+    // independently-driven full layout pass, not a second read of the same
+    // cache — and sweep again. Compare `sweep1` against `sweep2` with
+    // `heights_disagree`.
     //
-    // Note this cannot catch the font-timing bug on its own (both sweeps run
-    // after the same invalidation and agree) — the layout pump above is what
-    // fixes that. This guard covers the residual case where heights are still
-    // in motion when generation runs.
-    {
-        let mut changed = 0usize;
-        let mut first_change = None;
-        let mut delta_sum = 0i64;
-        for i in 0..line_count {
-            let h2 = state
+    // This is a real independent check, unlike the guard this replaces: the
+    // old version swept `line_yrange` TWICE with NO validation between the
+    // two reads, so both hit the identical cache and it reported
+    // `changed_between_sweeps=0` / `delta_sum=0` on the very run whose real
+    // render disagreed with the stored table by up to 225px across a dozen
+    // lines (ROOT-CAUSE.md) — self-referential, and unable to see the bug it
+    // existed to catch.
+    //
+    // A tempting cheaper alternative — sweep once BEFORE validation, once
+    // after, and compare those — was tried FIRST and rejected: measured live
+    // (BH-Barrett ch37), it disagreed on 1283/7300 lines by construction,
+    // because the pre-validation sweep is exactly the lazy provisional
+    // estimate validation exists to correct. That comparison cannot
+    // distinguish "validation worked" from "validation is still broken" —
+    // both look like disagreement — so it is not a guard, it is a guaranteed
+    // false failure on every cold generation. Two INDEPENDENTLY-VALIDATED
+    // sweeps do not have that problem: if the scroll-and-settle pass is
+    // doing its job, driving it twice from scratch must land on the same
+    // heights both times, and a difference means validation itself did not
+    // converge (e.g. spun out on `MAX_LAYOUT_SPINS` before settling).
+    //
+    // Why not compare against Pango instead (the other independent
+    // measurement already in this file)? Task 1/1b measured it directly:
+    // Pango disagreed with `line_yrange` on 13/13 KNOWN-DISPLAYED lines
+    // across 3 chapters, under-counting wrapped rows by a margin that SCALES
+    // with row count (-1 row at 10 rows, -4 rows at 28), for a reason that
+    // resisted two separate corrective hypotheses (dialogue-indent per-line
+    // margins; line-spacing applied via tags — both tested and refuted, see
+    // the progress ledger). A guard built on that comparison would fire on
+    // every multi-row paragraph in a HEALTHY table — it would cry wolf
+    // constantly and get disabled, which is worse than no guard at all.
+    //
+    // Cost: one more `validate_all_lines_by_scrolling` pass, ≈ the same
+    // ~700-900ms as the first (see `PAGES_PROSE_VALIDATE` in the log, emitted
+    // twice per generation now). Generation is cached per (work,
+    // fingerprint) and only re-runs on a font/geometry/pv-version change, so
+    // paying for a genuinely independent check once per cache-miss is
+    // worthwhile: a table that fails this guard would otherwise be pinned in
+    // lit.db and served on every load until the next regeneration.
+    validate_all_lines_by_scrolling(state, line_count);
+    let sweep2: Vec<i32> = (0..line_count)
+        .map(|i| {
+            state
                 .buffer
                 .iter_at_line(i as i32)
                 .map(|it| state.text_view.line_yrange(&it).1)
-                .unwrap_or(0);
-            if h2 != sweep1[i] {
+                .unwrap_or(0)
+        })
+        .collect();
+    {
+        let tolerance_px = 0;
+        let disagree = heights_disagree(&sweep1, &sweep2, tolerance_px);
+        let mut changed = 0usize;
+        let mut first_change = None;
+        let mut worst_change: Option<(usize, i32, i32)> = None;
+        let mut worst_abs = 0i64;
+        let mut delta_sum = 0i64;
+        for i in 0..line_count {
+            let before = sweep1[i];
+            let after = sweep2[i];
+            if before != after {
                 changed += 1;
-                delta_sum += (h2 - sweep1[i]) as i64;
+                let delta = (after - before) as i64;
+                delta_sum += delta;
                 if first_change.is_none() {
-                    first_change = Some((i, sweep1[i], h2));
+                    first_change = Some((i, before, after));
+                }
+                if delta.abs() > worst_abs {
+                    worst_abs = delta.abs();
+                    worst_change = Some((i, before, after));
                 }
             }
         }
@@ -596,17 +1013,25 @@ pub fn record_prose_pages(
                 );
             }
         }
-        // Refuse rather than store a table built on heights that are still
-        // moving. The caller logs VALIDATE_FAIL and falls back to the live
-        // engine, which measures at render time and cannot disagree with
-        // itself. A small delta_sum is still a real defect here: the deltas
-        // concentrate in the long paragraphs that decide page boundaries.
-        if changed > 0 {
+        // Refuse rather than store a table built on heights that do not
+        // reproduce across two independently-driven validation passes. The
+        // caller logs VALIDATE_FAIL and falls back to the live engine, which
+        // measures at render time and cannot disagree with itself.
+        if disagree {
+            let (worst_i, worst_before, worst_after) =
+                worst_change.unwrap_or((0, 0, 0));
+            crate::log_fmt!(
+                "VALIDATE_FAIL: {changed}/{line_count} line heights disagree between \
+                 two independently-validated sweeps beyond {tolerance_px}px \
+                 (delta_sum={delta_sum}px, worst=line {worst_i} {worst_before}px -> \
+                 {worst_after}px, first={first_change:?})"
+            );
             return Err(format!(
                 "layout not settled: {changed}/{line_count} line heights changed \
-                 between two back-to-back sweeps (delta_sum={delta_sum}px, \
-                 first={first_change:?}). Generating now would pin an \
-                 over-packed table; deferring to the live engine."
+                 between two independently-validated sweeps (delta_sum={delta_sum}px, \
+                 worst=line {worst_i} {worst_before}px -> {worst_after}px). \
+                 Generating now would pin an over-packed table; deferring to the \
+                 live engine."
             ));
         }
     }
@@ -678,13 +1103,18 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
     }
     use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
     let fp = prose_layout_fingerprint(state);
+    let gen_started = std::time::Instant::now();
     let pages = match record_prose_pages(state) {
         Ok(p) => p,
         Err(e) => {
-            crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
+            crate::logging::log(&format!(
+                "PAGES_PROSE: VALIDATE_FAIL {e} (record_prose_pages took {}ms)",
+                gen_started.elapsed().as_millis()
+            ));
             return;
         }
     };
+    let record_elapsed_ms = gen_started.elapsed().as_millis();
     // Build the validation context from live geometry (heights measured AFTER
     // the full forward walk, so every line has been really measured by GTK).
     let line_count = state.effective_line_count();
@@ -792,7 +1222,8 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
         }
     }
     crate::logging::log(&format!(
-        "PAGES_PROSE: generated {} pages for {} fp={}", rows.len(), work.abbrev, fp));
+        "PAGES_PROSE: generated {} pages for {} fp={} record_prose_pages_ms={} total_ms={}",
+        rows.len(), work.abbrev, fp, record_elapsed_ms, gen_started.elapsed().as_millis()));
     // Make the fresh table active this session.
     *state.prose_page_table.borrow_mut() = Some(std::rc::Rc::new(pages));
     *state.prose_page_table_fp.borrow_mut() = fp;
@@ -1422,5 +1853,32 @@ mod tests {
         // dropping it leaves the page 603px short of where it belongs.
         assert_eq!(prose_page_for_position(&pages, top, off), Some(i));
         assert_ne!(off, 0, "this page's offset is what a bare usize loses");
+    }
+}
+
+#[cfg(test)]
+mod height_agreement_tests {
+    use super::heights_disagree;
+
+    #[test]
+    fn identical_vectors_agree() {
+        assert!(!heights_disagree(&[40, 68, 96], &[40, 68, 96], 2));
+    }
+
+    #[test]
+    fn a_whole_row_of_drift_is_a_disagreement() {
+        // +28 is one wrapped row — the exact signature of the lazy-validation
+        // bug this guard exists to catch.
+        assert!(heights_disagree(&[40, 68, 96], &[40, 96, 96], 2));
+    }
+
+    #[test]
+    fn sub_tolerance_jitter_is_accepted() {
+        assert!(!heights_disagree(&[40, 68], &[41, 69], 2));
+    }
+
+    #[test]
+    fn a_length_mismatch_is_a_disagreement() {
+        assert!(heights_disagree(&[40, 68], &[40], 2));
     }
 }

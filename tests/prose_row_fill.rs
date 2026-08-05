@@ -135,7 +135,12 @@ fn active_fingerprint(log: &str, conn: &Connection) -> String {
         .find_map(|l| l.split("PAGES_PROSE: generated ").nth(1))
         .and_then(|rest| rest.split("fp=").nth(1))
     {
-        return fp.trim().to_string();
+        // Take only the fingerprint TOKEN, not the rest of the line. `fp=` is
+        // no longer last: generation now appends `record_prose_pages_ms=…
+        // total_ms=…` after it, and swallowing those into the fingerprint made
+        // every lookup miss and this test report "generation did not persist"
+        // when the rows were in fact present under the correct fingerprint.
+        return fp.split_whitespace().next().unwrap_or("").to_string();
     }
     conn.query_row(
         "SELECT layout_fingerprint FROM prose_pages_meta \
