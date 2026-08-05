@@ -316,7 +316,17 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // (was BASE_BOTTOM_MARGIN — every pv4 page is ~one line short). The `uh`
     // component already shifts with the reserve; the bump makes the miss
     // explicit and independent of geometry coincidences.
-    format!("{base}|uh{usable}|cw{cw}|pv5")
+    // pv7: prose generation now measures AFTER the buffer-wide `font-size`
+    // TextTag is in effect (see `record_prose_pages`). EVERY table stored at
+    // pv5 or pv6 was generated from heights for the pre-tag, smaller face —
+    // each 4+ row paragraph charged ~29px short — so those tables pin pages
+    // that render 44-127px taller than the card. The generation fix alone
+    // cannot repair them: the fingerprint is a function of geometry+font, and
+    // none of that changed, so a stale bad table stays a "hit" forever. The
+    // bump is what forces regeneration. (pv6 is skipped rather than reused:
+    // it belongs to the reverted line-box fix e1b17ac0, and its tables carry
+    // the same bad heights.)
+    format!("{base}|uh{usable}|cw{cw}|pv7")
 }
 
 /// Diagnostic: re-measure every recorded page against the SAME heights vector
