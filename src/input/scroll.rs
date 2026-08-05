@@ -1885,36 +1885,6 @@ fn snap_value_to_line_top(state: &AppState, target_y: f64) -> f64 {
 /// when the snapped row's bottom is within `raw`; `None` when the row
 /// genuinely straddles `raw` (keep `snapped`), can't be located, or is the
 /// document's last row.
-/// Bottom of the display row at `iter` in the SAME grid the page charge uses.
-///
-/// A wrapped line's intermediate rows tile with no spacing between them, so
-/// their ink rect bottom already is the row bottom. Only the LAST display row
-/// of a buffer line carries the line box's trailing `pixels_below_lines`, and
-/// only there do the ink grid and the `line_yrange` grid diverge — so for that
-/// row the bottom is the line BOX bottom (`line_yrange` top + height).
-///
-/// Returns `None` when the geometry can't be read, so the caller falls back to
-/// the ink rect rather than mis-deciding.
-fn row_line_box_bottom(
-    tv: &gtk4::TextView,
-    iter: &gtk4::TextIter,
-    top_margin: f64,
-) -> Option<f64> {
-    use gtk4::prelude::TextViewExt;
-    // Is this the last display row of its buffer line? Step one display row
-    // forward: if we land on a different buffer line (or the tail), it was.
-    let mut probe = *iter;
-    let same_line_after = tv
-        .forward_display_line(&mut probe)
-        .then(|| probe.line() == iter.line())
-        .unwrap_or(false);
-    if same_line_after {
-        return None; // intermediate row: ink bottom is already the row bottom
-    }
-    let (ly, lh) = tv.line_yrange(iter);
-    Some(ly as f64 + lh as f64 + top_margin)
-}
-
 pub(crate) fn next_row_top_if_row_fits(state: &AppState, snapped: f64, raw: f64) -> Option<f64> {
     use gtk4::prelude::TextViewExt;
     let tv = state.text_view.upcast_ref::<gtk4::TextView>();
@@ -1924,26 +1894,7 @@ pub(crate) fn next_row_top_if_row_fits(state: &AppState, snapped: f64, raw: f64)
         let rect = tv.iter_location(&iter);
         let row_top = rect.y() as f64 + top_margin;
         if rect.height() > 0 && (row_top - snapped).abs() <= 0.5 {
-            // Straddle test against the row's LINE-BOX bottom, not its INK
-            // bottom. `iter_location` gives the text row's ink rect, which
-            // EXCLUDES the below-line spacing (`pixels_below_lines`) — but the
-            // stored page is later charged by `line_yrange`, whose line box
-            // INCLUDES it (`page_px`, `exact_page_content_height`). Testing the
-            // ink bottom therefore accepted rows whose line box overflows the
-            // budget, and the page was stored `pixels_below_lines`-and-change
-            // over `usable`: the last paragraph rendered flush against the
-            // card's bottom rule with no breathing room.
-            //
-            // Traced on BH page 103 (`LIT_TRACE_BOUNDARY=798`, 2026-08-05):
-            // snapped=107151, raw=107179, ink bottom 107180 (h=29) passed the
-            // old test by 0.5px, while the line box ended at 107186 — 7px past
-            // the budget. Every one of the 34 over-budget pages overshot by
-            // 1..=7px, capped exactly at `pixels_below_lines` (5) + rounding
-            // (2), which is what identifies this as the sole cause rather than
-            // accumulated drift.
-            let box_bottom = row_line_box_bottom(tv, &iter, top_margin)
-                .unwrap_or(row_top + rect.height() as f64);
-            if box_bottom > raw + 0.5 {
+            if row_top + rect.height() as f64 > raw + 0.5 {
                 return None; // straddles the budget: the snap is correct
             }
             // Fits: the boundary belongs at the NEXT display row's top.
@@ -1954,21 +1905,7 @@ pub(crate) fn next_row_top_if_row_fits(state: &AppState, snapped: f64, raw: f64)
                 }
                 let r = tv.iter_location(&next);
                 if r.height() > 0 {
-                    let next_top = r.y() as f64 + top_margin;
-                    // The advance may not push the boundary past the budget.
-                    // Between two rows of ONE wrapped paragraph there is no
-                    // spacing, so the next row's top should equal this row's
-                    // bottom — but the ink grid and `line_yrange` disagree by a
-                    // pixel of rounding, and that pixel is charged to the page.
-                    // Two BH pages (both ending mid-paragraph in an over-tall
-                    // line) sat exactly 1px over `usable` for this reason.
-                    // Keeping the plain snap there costs nothing: the row still
-                    // renders, because the live bottom clip admits any row whose
-                    // bottom fits.
-                    if next_top > raw + 0.5 {
-                        return None;
-                    }
-                    return Some(next_top);
+                    return Some(r.y() as f64 + top_margin);
                 }
             }
             return None;
