@@ -299,6 +299,7 @@ fn default_theme_cycle() -> Vec<String> {
         "sepia-light",
         "green-lightest",
         "green-light",
+        "blush-rose",
         "papercolor-light",
         "kindle-sepia",
         "kindle-green",
@@ -913,6 +914,7 @@ mod last_gloss_tests {
                 "sepia-light",
                 "green-lightest",
                 "green-light",
+                "blush-rose",
                 "papercolor-light",
                 "kindle-sepia",
                 "kindle-green"
