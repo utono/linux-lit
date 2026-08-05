@@ -11,9 +11,16 @@
 //!      so `paged_bottom_clip` floored the clip to 0 and the last line poked
 //!      out unmasked (`CLIP_WARN: main-card prose-1col OVERFLOW total=1188 >
 //!      widget_h=1128 clip=0`). Reproduced on a FRESHLY generated, validated
-//!      table, which is what rules out staleness: generation and render compute
-//!      algebraically identical sums, so the per-line HEIGHTS must have differed
-//!      between the two moments.
+//!      table: generation and render compute algebraically identical sums, so
+//!      the per-line HEIGHTS differed between the two moments.
+//!
+//!      ROOT CAUSE (measured 2026-08-05): generation ran before the buffer-wide
+//!      `font-size` TextTag was in effect, so `line_yrange` returned heights for
+//!      a smaller face — every 4+ row paragraph short by ~29px. The deltas sum
+//!      to the whole overflow. NOTE the census cannot see this: it reads the
+//!      same wrong heights generation used, so it reports `over_usable=0` while
+//!      the bug is fully present. Only a RENDER-side assertion catches it,
+//!      which is what `deep_prose_pages_never_overflow_the_card` exists for.
 //!   2. NO BREATHING ROOM — a page packed to `usable + fit_slack` with real ink
 //!      instead of spending the slack on a blank inter-paragraph gap, leaving
 //!      the final paragraph flush against the bottom rule (observed clip=48 on
@@ -177,19 +184,30 @@ fn parse_drift_summary(log: &str) -> Option<DriftSummary> {
 /// both fit assertions so one cage launch covers both (these tests contend
 /// over the compositor — see CLAUDE.md's one-at-a-time rule).
 fn drive_forward(turns: usize) -> String {
-    let h = Harness::start_app(
-        &app_binary(),
-        std::iter::empty::<&str>(),
-        &[
-            ("LIT_DEV", "1"),
-            ("LIT_HEADLESS_TEST", "1"),
-            ("LIT_START_WORK", "BH"),
-            // Force generation at THIS run's headless geometry, so the table
-            // under test is the one this card height actually needs.
-            ("LIT_GEN_PAGE_TABLE", "1"),
-        ],
-    )
-    .expect("launch linux-lit in cage");
+    drive_forward_from(turns, None)
+}
+
+/// `drive_forward`, optionally LANDING DEEP first via `LIT_START_SCENE`.
+///
+/// Sampling from page 1 is not sufficient coverage. The BH-Barrett overflow
+/// lives at pages 335+; a 14-turn drive from the start visits pages 1-15 and
+/// misses every over-budget page, which is why the original suite passed green
+/// while the bug was fully present. A deep landing is the only way this test
+/// exercises the pages the user actually reported.
+fn drive_forward_from(turns: usize, start_scene: Option<&str>) -> String {
+    let mut env: Vec<(&str, &str)> = vec![
+        ("LIT_DEV", "1"),
+        ("LIT_HEADLESS_TEST", "1"),
+        ("LIT_START_WORK", "BH"),
+        // Force generation at THIS run's headless geometry, so the table
+        // under test is the one this card height actually needs.
+        ("LIT_GEN_PAGE_TABLE", "1"),
+    ];
+    if let Some(scene) = start_scene {
+        env.push(("LIT_START_SCENE", scene));
+    }
+    let h = Harness::start_app(&app_binary(), std::iter::empty::<&str>(), &env)
+        .expect("launch linux-lit in cage");
 
     // PRODUCTION GEOMETRY IS LOAD-BEARING — do not drop this resize.
     // cage defaults to 1280x720, which yields a ~591px text view and a
@@ -293,6 +311,63 @@ fn prose_pages_never_overflow_the_card() {
             c.total <= c.widget_h,
             "page at top=({},{}) end={} measured total={}px against widget_h={}px \
              (over by {}px, clip={}). A page taller than the card cannot be masked.",
+            c.page_top,
+            c.top_off,
+            c.end,
+            c.total,
+            c.widget_h,
+            c.total - c.widget_h,
+            c.clip
+        );
+    }
+}
+
+/// The SAME overflow invariant, exercised on the DEEP pages where the reported
+/// bug actually lives (BH-Barrett ch. 26, pages ~335+).
+///
+/// This is the regression guard for the generation-time FONT TIMING defect:
+/// prose generation measured per-line heights before the buffer-wide
+/// `font-size` TextTag was in effect, so every multi-row paragraph was charged
+/// ~29px short. Pages built from those heights tile perfectly and satisfy the
+/// generation-time census (`over_usable=0` — it reads the same wrong heights,
+/// so it agrees with itself), then render 44-127px too tall and floor the clip
+/// to 0.
+///
+/// Landing deep is load-bearing: the front of the book is short dialogue lines
+/// (1-3 rows) that are unaffected by a per-paragraph re-wrap, so a drive from
+/// page 1 cannot see this no matter how many turns it takes.
+#[test]
+#[ignore = "needs cage + grim + wtype; run with --ignored"]
+fn deep_prose_pages_never_overflow_the_card() {
+    // ch. 26 == buffer lines ~2960-3020 == the pages in the user's report.
+    let log = drive_forward_from(8, Some("26.0"));
+
+    let clips = parse_exact_clips(&log);
+    assert!(
+        !clips.is_empty(),
+        "no `BOTTOM_CLIP_EXACT` lines found at the deep landing — did \
+         LIT_START_SCENE=26.0 resolve? full log:\n{log}"
+    );
+
+    let warns: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains("CLIP_WARN") && l.contains("prose-1col OVERFLOW"))
+        .collect();
+    assert!(
+        warns.is_empty(),
+        "{} DEEP prose page(s) overflowed the card. The table was generated \
+         this run, so this is a generation-vs-render height disagreement — \
+         check that prose generation measures AFTER the font tag is applied \
+         (PAGES_PROSE_PANGO / GEN_HEIGHTS under LIT_TRACE_*). Offending:\n{}",
+        warns.len(),
+        warns.join("\n")
+    );
+
+    for c in &clips {
+        assert!(
+            c.total <= c.widget_h,
+            "deep page at top=({},{}) end={} measured total={}px against \
+             widget_h={}px (over by {}px, clip={})",
             c.page_top,
             c.top_off,
             c.end,

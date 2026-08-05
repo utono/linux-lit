@@ -917,22 +917,6 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
         }
     };
     let mut chapter_clamp: Option<usize> = None;
-    // Boundary trace (opt-in): `LIT_TRACE_BOUNDARY=<buffer line>` logs this
-    // walk line-by-line for the page whose top IS that line. Answers "is the
-    // few-px page overshoot accumulated rounding between the LOGICAL line
-    // boxes this loop sums (`line_yrange`) and the DISPLAY-ROW grid the
-    // boundary is snapped to?" — a question the per-page census can pose but
-    // not settle. Off by default; one page's worth of lines when on.
-    let trace = std::env::var("LIT_TRACE_BOUNDARY")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .is_some_and(|t| t == top);
-    if trace {
-        crate::log_fmt!(
-            "BWALK: begin top={} top_y={} page_off={} y0={} usable={} widget_h={} guard={}",
-            top, top_y, state.page_top.offset(), y0, usable, widget_height, guard
-        );
-    }
     let mut total = top_y; // pixel top of `top`; walk accumulates to its bottom and beyond
     for i in top..line_count {
         let Some(li) = state.buffer.iter_at_line(i as i32) else { break };
@@ -941,16 +925,6 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
             chapter_clamp = Some(i);
         }
         total = ly + lh;
-        if trace {
-            // `first_row_top` is the leading gap: the distance from the LOGICAL
-            // line-box top (`ly`) down to the first TEXT row's top. Where the
-            // two grids differ, this is the per-line discrepancy.
-            let first_row_top = state.text_view.iter_location(&li).y() - ly;
-            crate::log_fmt!(
-                "BWALK: line={} ly={} lh={} first_row_top={} total={} used={} (usable={})",
-                i, ly, lh, first_row_top, total, total - y0, usable
-            );
-        }
         // Stop once we've walked far enough past the current viewport's
         // bottom fold that we know for certain more content remains below
         // it — no need to walk the whole document to prove that.
@@ -965,15 +939,6 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     };
     // Snap DOWN to a real visual-row top; never start a page mid-glyph-row.
     let snapped = crate::input::scroll::snap_value_to_display_row(state, raw as f64);
-    if trace {
-        // `raw` is y0+usable by construction; `snapped` is the display-row top
-        // at/below it. `raw - snapped` is how far the boundary retreats to
-        // reach the row grid — the per-page (not accumulated) grid gap.
-        crate::log_fmt!(
-            "BWALK: raw={} snapped={} raw_minus_snapped={} snapped_used={}",
-            raw, snapped, raw as f64 - snapped, snapped - y0 as f64
-        );
-    }
     // Row-fit correction: when `raw` falls in the ink-free gap AFTER the
     // snapped row's bottom (inter-paragraph spacing), that row fully fits
     // this page — the live bottom clip shows it (`bottom_clip_height` admits
@@ -982,8 +947,7 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     // early and the next page re-shows a row already read. Advance the
     // boundary to the next row's top, bounded by the same spacing-sized
     // slack the fit invariant tolerates (a pathological gap keeps the snap).
-    let row_fit = crate::input::scroll::next_row_top_if_row_fits(state, snapped, raw as f64);
-    let snapped = match row_fit {
+    let snapped = match crate::input::scroll::next_row_top_if_row_fits(state, snapped, raw as f64) {
         Some(next_top)
             if next_top - y0 as f64
                 <= (usable + crate::input::prose_pages::prose_fit_slack(&state.text_view)) as f64 =>
@@ -992,13 +956,6 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
         }
         _ => snapped,
     };
-    if trace {
-        crate::log_fmt!(
-            "BWALK: row_fit={:?} accepted_snapped={} used={} slack={}",
-            row_fit, snapped, snapped - y0 as f64,
-            crate::input::prose_pages::prose_fit_slack(&state.text_view)
-        );
-    }
     if snapped <= y0 as f64 {
         // Degenerate snap: fall back to a whole-line turn — unless a chapter
         // heading inside the page window gives a well-defined break point.
@@ -1069,20 +1026,6 @@ pub(crate) fn prose_next_boundary(state: &mut AppState) -> Option<(usize, i32)> 
     }
     if (new_top, new_off) <= (top, state.page_top.offset()) {
         return None;
-    }
-    if trace {
-        // The stored boundary. Compare `used` here against `usable`: the
-        // difference IS the overshoot the census reports for this page, now
-        // attributable to a specific step above.
-        let end_y = state
-            .buffer
-            .iter_at_line(new_top as i32)
-            .map(|it| state.text_view.line_yrange(&it).0 + new_off)
-            .unwrap_or(-1);
-        crate::log_fmt!(
-            "BWALK: end boundary=({},{}) end_y={} used={} usable={} overshoot={}",
-            new_top, new_off, end_y, end_y - y0, usable, end_y - y0 - usable
-        );
     }
     Some((new_top, new_off))
 }

@@ -6,6 +6,98 @@
 //! zero gaps, zero overlaps: the machine-checked no-text-loss guarantee.
 
 use crate::input::page_top::PageTop;
+
+/// Bound on main-loop iterations spun while waiting for a pending re-layout.
+/// Generation runs synchronously on the main loop, so an unbounded spin would
+/// hang the app if some source stays permanently ready.
+const MAX_LAYOUT_SPINS: usize = 256;
+
+/// DIAGNOSTIC: dump every tag applied across a buffer line, plus its text and
+/// its measured height, so the SAME line can be compared at generation and at
+/// render. `LIT_TRACE_TAGS=<first>:<last>` selects the window; `phase` names
+/// the moment ("GEN" / "RENDER"). Tag names are collected per toggle point, so
+/// a tag covering only part of the line is still listed, with its span.
+///
+/// Two back-to-back generation sweeps agree exactly (PAGES_PROSE_SWEEP), and
+/// wrap width is identical at both moments, so any height divergence must come
+/// from the line's CONTENT or its TAGS. This prints both.
+pub fn trace_line_tags(
+    buffer: &impl gtk4::prelude::IsA<gtk4::TextBuffer>,
+    text_view: &impl gtk4::prelude::IsA<gtk4::TextView>,
+    phase: &str,
+) {
+    use gtk4::prelude::{Cast, TextBufferExt, TextTagExt, TextViewExt, WidgetExt};
+    let buffer = buffer.upcast_ref::<gtk4::TextBuffer>();
+    let text_view = text_view.upcast_ref::<gtk4::TextView>();
+    if !crate::logging::debug_mode() {
+        return;
+    }
+    let Some((a, b)) = std::env::var("LIT_TRACE_TAGS").ok().and_then(|v| {
+        let (x, y) = v.split_once(':')?;
+        Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?))
+    }) else {
+        return;
+    };
+    let total = buffer.line_count();
+    for line in a..=b.min(total.saturating_sub(1)) {
+        let Some(start) = buffer.iter_at_line(line) else {
+            continue;
+        };
+        let mut end = start;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        let text = buffer.text(&start, &end, false);
+        let height = text_view.line_yrange(&start).1;
+        // Walk the toggle points so partial-line tags are captured with spans.
+        let mut spans: Vec<String> = Vec::new();
+        let mut it = start;
+        loop {
+            for tag in it.toggled_tags(true) {
+                let name = tag
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "<anon>".to_string());
+                spans.push(format!("{}@{}", name, it.line_offset()));
+            }
+            if !it.forward_to_tag_toggle(None::<&gtk4::TextTag>)
+                || it.offset() >= end.offset()
+            {
+                break;
+            }
+        }
+        // Row geometry straight from Pango: the layout the view will actually
+        // render. `rows` is the wrapped-row count; `pw` the layout's own pixel
+        // width. If `rows` differs between phases at equal wrap width, the
+        // FONT/metrics changed, not the geometry.
+        let (rows, pw, ph) = {
+            let layout = text_view.create_pango_layout(Some(text.as_str()));
+            let (w, h) = layout.pixel_size();
+            (layout.line_count(), w, h)
+        };
+        crate::log_fmt!(
+            "TAGTRACE[{}]: line={} h={} rows={} pw={} ph={} chars={} \
+             above={} below={} inwrap={} font={:?} tags=[{}] text={:?}",
+            phase,
+            line,
+            height,
+            rows,
+            pw,
+            ph,
+            text.chars().count(),
+            text_view.pixels_above_lines(),
+            text_view.pixels_below_lines(),
+            text_view.pixels_inside_wrap(),
+            text_view
+                .pango_context()
+                .font_description()
+                .map(|d| d.to_str().to_string()),
+            spans.join(" "),
+            text.as_str()
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProsePage {
     pub start_line: usize,
@@ -224,14 +316,7 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // (was BASE_BOTTOM_MARGIN — every pv4 page is ~one line short). The `uh`
     // component already shifts with the reserve; the bump makes the miss
     // explicit and independent of geometry coincidences.
-    // pv6: the row-fit straddle test now measures the candidate row's LINE-BOX
-    // bottom instead of its INK bottom (`next_row_top_if_row_fits`,
-    // scroll.rs). The ink rect excludes `pixels_below_lines` while the page
-    // charge (`page_px` / `exact_page_content_height`) includes it, so pv5
-    // tables stored pages up to `pixels_below_lines`+rounding OVER `usable` —
-    // their last paragraph renders flush against the card's bottom rule. Those
-    // boundaries must miss and regenerate with breathing room.
-    format!("{base}|uh{usable}|cw{cw}|pv6")
+    format!("{base}|uh{usable}|cw{cw}|pv5")
 }
 
 /// Diagnostic: re-measure every recorded page against the SAME heights vector
@@ -345,12 +430,174 @@ pub fn record_prose_pages(
     if line_count == 0 {
         return Err("no lines".into());
     }
+    // FONT MUST BE IN EFFECT BEFORE THE SWEEP (2026-08-05).
+    //
+    // The body font is a buffer-wide `font-size` TextTag applied by
+    // `reapply_font`, NOT the view's CSS font. Applying that tag invalidates
+    // every line's layout, but GTK re-measures lazily: a `line_yrange` sweep
+    // run before the view has processed the invalidation returns heights for
+    // the PREVIOUS (smaller) face. Every 4+ row paragraph then comes back ~29px
+    // short, the boundary walk over-fills each page, and the stored table
+    // renders 44-127px taller than the card — `paged_bottom_clip` floors to 0
+    // and the last line poked out unmasked (clip-prevention.md #12, prose).
+    //
+    // This is NOT the lazy-validation-frontier problem the doc comment above
+    // describes (that one is about far-off lines never validated at all, and is
+    // still handled by the sweep itself). Two back-to-back sweeps cannot detect
+    // it — both read the same post-invalidation cache and agree exactly, which
+    // is why `changed_between_sweeps=0` looked like proof and was not.
+    //
+    // Pumping the main loop lets GTK apply the pending re-layout, so the sweep
+    // below measures the face the view will actually render.
+    {
+        use gtk4::prelude::WidgetExt;
+        state.text_view.queue_resize();
+        let mut spins = 0;
+        while glib::MainContext::default().pending() && spins < MAX_LAYOUT_SPINS {
+            glib::MainContext::default().iteration(false);
+            spins += 1;
+        }
+    }
     // Force GTK to validate every line's true wrapped height once, so the
     // per-page boundary walk below never reads a lazy single-row estimate for a
     // far-off line (see the doc comment). The results are cached by GTK.
-    for i in 0..line_count {
-        if let Some(it) = state.buffer.iter_at_line(i as i32) {
-            let _ = state.text_view.line_yrange(&it);
+    let sweep1: Vec<i32> = (0..line_count)
+        .map(|i| {
+            state
+                .buffer
+                .iter_at_line(i as i32)
+                .map(|it| state.text_view.line_yrange(&it).1)
+                .unwrap_or(0)
+        })
+        .collect();
+    // DIAGNOSTIC (LIT_TRACE_PANGO=1): compare EVERY line's `line_yrange` height
+    // against an independent Pango layout at the view's real wrap width. Two
+    // back-to-back `line_yrange` sweeps agreeing proves only that they read the
+    // same cache — not that the cache is right. Pango is the ground truth the
+    // view itself renders from, so a disagreement here is a line whose stored
+    // height is wrong at generation, which is exactly what lets a page be
+    // charged too little and overflow at render.
+    if crate::logging::debug_mode() && std::env::var_os("LIT_TRACE_PANGO").is_some() {
+        use gtk4::prelude::WidgetExt;
+        let tv = &state.text_view;
+        let wrap_w = tv.width() - tv.left_margin() - tv.right_margin();
+        let above = tv.pixels_above_lines();
+        let below = tv.pixels_below_lines();
+        let mut disagree = 0usize;
+        let mut delta_sum = 0i64;
+        let mut worst: (usize, i32, i32) = (0, 0, 0);
+        let mut examples: Vec<String> = Vec::new();
+        for i in 0..line_count {
+            let Some(start) = state.buffer.iter_at_line(i as i32) else {
+                continue;
+            };
+            let mut end = start;
+            if !end.ends_line() {
+                end.forward_to_line_end();
+            }
+            let text = state.buffer.text(&start, &end, false);
+            let layout = tv.create_pango_layout(Some(text.as_str()));
+            layout.set_width(wrap_w * pango::SCALE);
+            layout.set_wrap(pango::WrapMode::WordChar);
+            // The body font comes from the buffer-wide `font-size` TextTag, NOT
+            // the view's context (which still reports the CSS default). Without
+            // this the probe measures the wrong face and every line disagrees.
+            layout.set_font_description(Some(&pango::FontDescription::from_string(
+                &crate::ui::font_string(
+                    state.config.font_family.as_str(),
+                    state.config.font_size as i32,
+                ),
+            )));
+            // The view charges each line box as ink + the paragraph spacing.
+            let pango_h = layout.pixel_size().1 + above + below;
+            let yr = sweep1[i];
+            if pango_h != yr {
+                disagree += 1;
+                delta_sum += (pango_h - yr) as i64;
+                if (pango_h - yr).abs() > (worst.1 - worst.2).abs() {
+                    worst = (i, pango_h, yr);
+                }
+                if examples.len() < 8 {
+                    examples.push(format!("L{i}:yr={yr}/pango={pango_h}"));
+                }
+            }
+        }
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO: lines={} disagree={} delta_sum={} \
+             worst=line {} pango={} yrange={} wrap_w={} above={} below={} ex=[{}]",
+            line_count, disagree, delta_sum,
+            worst.0, worst.1, worst.2, wrap_w, above, below,
+            examples.join(" ")
+        );
+    }
+    // CONVERGENCE GUARD (always on, not just debug builds).
+    //
+    // Sweep a SECOND time. The first sweep itself forces validation, so if the
+    // layout was settled the two passes are identical. Any line whose height
+    // CHANGES between them means the first pass measured a face/width GTK then
+    // refined — exactly the state that produces an over-packed, overflowing
+    // table. Storing that table is worse than having none: the live engine
+    // measures at render time and is always self-consistent, whereas a bad
+    // pinned table persists in lit.db across sessions.
+    //
+    // Note this cannot catch the font-timing bug on its own (both sweeps run
+    // after the same invalidation and agree) — the layout pump above is what
+    // fixes that. This guard covers the residual case where heights are still
+    // in motion when generation runs.
+    {
+        let mut changed = 0usize;
+        let mut first_change = None;
+        let mut delta_sum = 0i64;
+        for i in 0..line_count {
+            let h2 = state
+                .buffer
+                .iter_at_line(i as i32)
+                .map(|it| state.text_view.line_yrange(&it).1)
+                .unwrap_or(0);
+            if h2 != sweep1[i] {
+                changed += 1;
+                delta_sum += (h2 - sweep1[i]) as i64;
+                if first_change.is_none() {
+                    first_change = Some((i, sweep1[i], h2));
+                }
+            }
+        }
+        use gtk4::prelude::WidgetExt;
+        crate::log_fmt!(
+            "PAGES_PROSE_SWEEP: lines={} changed_between_sweeps={} delta_sum={} first={:?} \
+             tv_width={} left_margin={} right_margin={} wrap_w={}",
+            line_count, changed, delta_sum, first_change,
+            state.text_view.width(),
+            state.text_view.left_margin(),
+            state.text_view.right_margin(),
+            state.text_view.width() - state.text_view.left_margin() - state.text_view.right_margin()
+        );
+        // Dump the generation-time heights for one window, to diff against
+        // RENDER_HEIGHTS for the same lines. `LIT_TRACE_HEIGHTS=<first>:<last>`.
+        if let Some((a, b)) = std::env::var("LIT_TRACE_HEIGHTS").ok().and_then(|v| {
+            let (x, y) = v.split_once(':')?;
+            Some((x.parse::<usize>().ok()?, y.parse::<usize>().ok()?))
+        }) {
+            let b = b.min(line_count.saturating_sub(1));
+            if a <= b {
+                crate::log_fmt!(
+                    "GEN_HEIGHTS: [{}..={}] = {:?}",
+                    a, b, &sweep1[a..=b]
+                );
+            }
+        }
+        // Refuse rather than store a table built on heights that are still
+        // moving. The caller logs VALIDATE_FAIL and falls back to the live
+        // engine, which measures at render time and cannot disagree with
+        // itself. A small delta_sum is still a real defect here: the deltas
+        // concentrate in the long paragraphs that decide page boundaries.
+        if changed > 0 {
+            return Err(format!(
+                "layout not settled: {changed}/{line_count} line heights changed \
+                 between two back-to-back sweeps (delta_sum={delta_sum}px, \
+                 first={first_change:?}). Generating now would pin an \
+                 over-packed table; deferring to the live engine."
+            ));
         }
     }
     // Drive the walk through the real page state, then restore it.
@@ -460,6 +707,21 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
             .collect(),
         None => Vec::new(),
     };
+    // DIAGNOSTIC: the SAME window as GEN_HEIGHTS but measured AFTER the boundary
+    // walk — this is the vector the validator actually uses. If it differs from
+    // GEN_HEIGHTS the heights moved DURING the walk, not via lazy validation.
+    if crate::logging::debug_mode() {
+        if let Some((a, b)) = std::env::var("LIT_TRACE_HEIGHTS").ok().and_then(|v| {
+            let (x, y) = v.split_once(':')?;
+            Some((x.parse::<usize>().ok()?, y.parse::<usize>().ok()?))
+        }) {
+            let b = b.min(line_count.saturating_sub(1));
+            if a <= b {
+                crate::log_fmt!("POSTWALK_HEIGHTS: [{}..={}] = {:?}", a, b, &heights[a..=b]);
+            }
+        }
+        trace_line_tags(&state.buffer, &state.text_view, "GEN");
+    }
     let ctx = ProseValidateCtx {
         line_count,
         heights: &heights,

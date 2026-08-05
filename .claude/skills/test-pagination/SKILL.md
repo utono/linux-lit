@@ -82,19 +82,10 @@ same geometry — treat a small delta as normal, a jump as a regression.
 
 ### Interpreting a fit failure
 
-- `over_usable > 0` — pages are stored over the fill budget, so their
-  last paragraph renders flush against the card's bottom rule. **Read the
-  overshoot size first, it names the bug:** 1..=`pixels_below_lines + 2`
-  px means the INK-vs-LINE-BOX grid mismatch (`clip-prevention.md` #2c);
-  a whole-row overshoot means the fill decision itself. Fix the boundary
-  decision, never the `prose_fit_slack` tolerance that hides it.
-- **Trace one page's boundary walk** with
-  `LIT_TRACE_BOUNDARY=<page-top-buffer-line>` — logs `BWALK:` lines
-  (`ly`/`lh`/`first_row_top`/`total`/`used` per line, then `raw`,
-  `snapped`, `row_fit`, `end`). This is the tool that settles which step
-  overshoots; two plausible hypotheses were disproven by it before the
-  real cause (2026-08-05). Get the page's top line from the
-  `over page N (l,o)..(l,o)` census line.
+- `over_usable > 0` — pages are stored over the fill budget. The
+  boundary walk spent `prose_fit_slack` on INK; the slack is only meant
+  to absorb an ink-free inter-paragraph gap. Fix the boundary decision,
+  not the tolerance.
 - `CLIP_WARN ... OVERFLOW` on a table generated THIS run — not
   staleness. Generation and render compute algebraically identical sums
   (`page_px` vs `scroll::exact_page_content_height`), so a disagreement

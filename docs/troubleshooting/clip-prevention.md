@@ -619,46 +619,6 @@ When a half line clips at the bottom edge of a scrolled surface:
    so those are unaffected. Mirrors `viewport::is_line_start_visible` (top) and
    `prose_pages::page_px` (both edges) — when the render-side measurement and
    `page_px` disagree, the render side is wrong.
-2c. **MAIN CARD, single-column prose — the last paragraph sits FLUSH against the
-   card's bottom rule with no breathing room (INK grid vs LINE-BOX grid).** Not
-   a clip bug: the clip is correct for a page that was paginated too full.
-   - **Tell:** text touches (or nearly touches) the bottom edge, the residual
-     clip is visibly smaller than on neighbouring pages (~48px where healthy
-     pages keep 57-84), and NO `CLIP_WARN` fires — the page is over `usable`
-     but still under `widget_h`, so nothing trips the overflow tripwire. The
-     decisive signal is the generation-time census
-     `PAGES_PROSE_DRIFT: summary … over_usable=K` with `K > 0`.
-   - **Root cause:** `next_row_top_if_row_fits` (`scroll.rs`) decided whether a
-     candidate row fits the budget using `iter_location` — the text row's INK
-     rect, which EXCLUDES the trailing `pixels_below_lines`. The stored page is
-     later charged by `line_yrange`, whose line box INCLUDES it (`page_px`,
-     `exact_page_content_height`). So a row whose ink fit but whose line box
-     overflowed was accepted, and the page was stored `pixels_below_lines` +
-     rounding OVER `usable`. `validate_prose_pages` accepted it because the
-     overshoot hid inside `prose_fit_slack`.
-   - **The arithmetic that identifies it:** every over-budget page overshoots by
-     1..=`pixels_below_lines + 2` px — never a whole row. A whole-row overshoot
-     is a different bug (the fill decision); a few-px one is this grid mismatch.
-     On BH at `line_spacing=5` the observed spread was exactly 1..=7 across 34
-     pages, capped at 5+2.
-   - **Fix (2026-08-05):** measure the straddle against the row's LINE-BOX
-     bottom (`row_line_box_bottom`) — but ONLY for the last display row of a
-     buffer line, since a wrapped line's intermediate rows tile with no spacing
-     and their ink bottom already IS the row bottom. Separately, bound the
-     advance itself by `raw` (`next_top > raw + 0.5 → None`): between two rows of
-     one wrapped paragraph the ink and `line_yrange` grids still disagree by a
-     pixel of rounding, which left two pages exactly 1px over. Both are needed —
-     the first took 34 over-budget pages to 1, the second took 1 to 0.
-   - **Diagnose with `LIT_TRACE_BOUNDARY=<page-top-buffer-line>`**, which logs
-     the boundary walk line-by-line (`BWALK:` — `ly`/`lh`/`first_row_top`/
-     `total`/`used`, then `raw`/`snapped`/`row_fit`/`end`). That trace is what
-     separated this from two plausible wrong hypotheses (the row-fit advance
-     spending the slack on ink; the leading-gap normalization) — both were coded
-     or considered and disproven. Bumps the prose fingerprint to `pv6`.
-   - **Guarded by** `tests/prose_page_fit.rs`
-     (`prose_pages_keep_bottom_breathing_room`), which asserts the census's
-     `over_usable == 0` across the WHOLE table — not just the pages a drive
-     visits (a 14-turn drive samples 14 of ~765 and missed all 34).
 3. **`display_rows` not adding `top_margin`** → both edges clip at once
    (coordinate-space gotcha above).
 4. **Recompute runs against unsettled geometry on open** (0-height viewport) and
@@ -1615,6 +1575,59 @@ When a half line clips at the bottom edge of a scrolled surface:
       child's minimum up so the box could never be under-allocated, whereas
       `CardLayout::allocate` hands the child exactly `card_width` with no
       renegotiation against what the child measured.
+
+22. **MAIN CARD, single-column PROSE — DEEP pages overflow by 44-127px on a
+    FRESHLY generated table, because generation measured before the FONT was in
+    effect.** The reported symptom is text cut mid-glyph at the bottom rule deep
+    in a novel (BH-Barrett ch. 26, pages 335+), with
+    `CLIP_WARN: main-card prose-1col OVERFLOW total=… > widget_h=… clip=0`.
+    - Tell (the one that separates this from every other prose overflow): the
+      overflow is **positional**. Early pages are healthy (clips 53-87px);
+      deep pages all overflow. Anything that only drives pages 1-15 passes
+      while the bug is fully present. Second tell: the generation-time census
+      reports `PAGES_PROSE_DRIFT: summary … over_usable=0` — a CLEAN bill of
+      health — because it reads the same wrong heights generation used and so
+      agrees with itself. **Only a render-side assertion can see this.**
+    - Root cause: the reader's body font is a buffer-wide `font-size` TextTag
+      applied by `reapply_font`, NOT the view's CSS font. Applying it
+      invalidates every line's layout, but GTK re-measures lazily, so a
+      `line_yrange` sweep run before the view processes that invalidation
+      returns heights for the PREVIOUS, smaller face. Heights decompose as
+      `40 + 28*(rows-1)`: every paragraph of 4+ wrapped rows came back exactly
+      one row (~29px) short, while 1-3 row lines were unaffected — which is why
+      dialogue-heavy openings look fine and dense later chapters do not. The
+      per-page deltas sum to the whole overflow (measured: +115px on the page
+      that rendered 1189 against widget_h 1164).
+    - **Two back-to-back sweeps CANNOT detect it.** Both run after the same
+      invalidation and read the same cache, so `PAGES_PROSE_SWEEP:
+      changed_between_sweeps=0 delta_sum=0` is reported while every height is
+      wrong. That zero was read for a whole session as proof that lazy
+      validation was eliminated; it proves only that the cache is stable, not
+      that it is correct. Do not re-run that experiment expecting an answer.
+    - Ruled out by measurement, each costing a cycle: stale table (reproduces
+      on a fresh `validated=1` table); wrap width (`wrap_w=899` identical at
+      both moments); tags (the growing lines carry `tags=[]` at both moments);
+      `pv5`-vs-`pv6` page version (both engines store BYTE-IDENTICAL boundaries
+      over the overflow range — only the page NUMBERING differs).
+    - Fix: pump the main loop (`queue_resize` + bounded
+      `MainContext::iteration`) at the top of `record_prose_pages`, BEFORE the
+      validating sweep, so the sweep measures the face the view will render.
+      Plus a convergence guard — the second sweep is now load-bearing, not a
+      diagnostic: if any height still moves between passes, `record_prose_pages`
+      returns `Err` and the caller falls back to the live engine rather than
+      pinning an over-packed table into lit.db, where it would outlive the
+      session.
+    - Guard: `deep_prose_pages_never_overflow_the_card` (`tests/prose_page_fit.rs`)
+      lands at ch. 26 via `LIT_START_SCENE=26.0` and asserts on render-side
+      `CLIP_WARN`/`BOTTOM_CLIP_EXACT`. Verified failing before the fix (5 pages
+      over by 23-114px) and passing after (all pages 1081-1113 against 1164,
+      clips 46-78).
+    - Diagnosing a recurrence: `LIT_TRACE_HEIGHTS=<a>:<b>` dumps the
+      generation-time height vector, `LIT_TRACE_TAGS=<a>:<b>` dumps per-line
+      tags+text+height at BOTH generation and render (diff them), and
+      `LIT_TRACE_PANGO=1` compares every line against an independent Pango
+      layout. Caveat: the Pango probe carries a ±1px line-box offset, so trust
+      its CHANGES between sweeps, not its absolute values.
 
 ## The CLIP_WARN tripwire (grep this FIRST)
 
