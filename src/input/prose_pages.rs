@@ -488,7 +488,7 @@ pub fn record_prose_pages(
     // height is wrong at generation, which is exactly what lets a page be
     // charged too little and overflow at render.
     if crate::logging::debug_mode() && std::env::var_os("LIT_TRACE_PANGO").is_some() {
-        use gtk4::prelude::WidgetExt;
+        use gtk4::prelude::{TextTagExt, WidgetExt};
         let tv = &state.text_view;
         let wrap_w = tv.width() - tv.left_margin() - tv.right_margin();
         let above = tv.pixels_above_lines();
@@ -500,9 +500,29 @@ pub fn record_prose_pages(
         // Per-line (pango_h, yrange_h) pairs, kept so the DISPLAYED/OFFSCREEN
         // split below can classify by position without re-measuring anything.
         let mut pairs: Vec<(i32, i32)> = Vec::with_capacity(line_count);
+        // TASK 1b (2026-08-05-prose-page-height-truth): the view-level wrap_w
+        // above is BLIND to per-line TextTag margins (dialogue-indent,
+        // block-blockquote-indent, verse-indent-*), which is a candidate
+        // explanation for Task 1's whole-row misses on multi-row lines. This
+        // second, CORRECTED pass resolves the effective per-line left/right
+        // margin the same way GTK does: walk every tag applied at the line's
+        // start iter, and for each of left-margin/right-margin independently
+        // take the value from the highest-PRIORITY tag that has it explicitly
+        // set (`is_left_margin_set`/`is_right_margin_set`) — GTK resolves
+        // competing tag properties by priority, and tag-table insertion order
+        // is the default priority (later-added wins), so reading `.priority()`
+        // directly (rather than assuming insertion order) is exact regardless
+        // of any future re-ordering.
+        let mut corrected_disagree = 0usize;
+        let mut corrected_delta_sum = 0i64;
+        let mut corrected_examples: Vec<String> = Vec::new();
+        // Per-line (corrected_pango_h, yrange_h, corrected_wrap_w) kept for the
+        // displayed/offscreen split below.
+        let mut corrected_pairs: Vec<(i32, i32, i32)> = Vec::with_capacity(line_count);
         for i in 0..line_count {
             let Some(start) = state.buffer.iter_at_line(i as i32) else {
                 pairs.push((0, 0));
+                corrected_pairs.push((0, 0, wrap_w));
                 continue;
             };
             let mut end = start;
@@ -536,6 +556,54 @@ pub fn record_prose_pages(
                     examples.push(format!("L{i}:yr={yr}/pango={pango_h}"));
                 }
             }
+
+            // Resolve the effective per-line left/right margin from applied
+            // tags, highest priority wins per property (independently).
+            let mut best_left: Option<(i32, i32)> = None; // (priority, value)
+            let mut best_right: Option<(i32, i32)> = None;
+            for tag in start.tags() {
+                let prio = tag.priority();
+                if tag.is_left_margin_set() {
+                    let v = tag.left_margin();
+                    if best_left.is_none_or(|(p, _)| prio > p) {
+                        best_left = Some((prio, v));
+                    }
+                }
+                if tag.is_right_margin_set() {
+                    let v = tag.right_margin();
+                    if best_right.is_none_or(|(p, _)| prio > p) {
+                        best_right = Some((prio, v));
+                    }
+                }
+            }
+            // Tag left/right margins are PARAGRAPH-absolute (they replace the
+            // view's own margin, they do not add to it) — same semantics
+            // `set_left_margin`/`set_right_margin` document for the view
+            // itself. Fall back to the view-level margin when no tag sets it.
+            let eff_left = best_left.map(|(_, v)| v).unwrap_or_else(|| tv.left_margin());
+            let eff_right = best_right.map(|(_, v)| v).unwrap_or_else(|| tv.right_margin());
+            let corrected_wrap_w = (tv.width() - eff_left - eff_right).max(0);
+
+            let clayout = tv.create_pango_layout(Some(text.as_str()));
+            clayout.set_width(corrected_wrap_w * pango::SCALE);
+            clayout.set_wrap(pango::WrapMode::WordChar);
+            clayout.set_font_description(Some(&pango::FontDescription::from_string(
+                &crate::ui::font_string(
+                    state.config.font_family.as_str(),
+                    state.config.font_size as i32,
+                ),
+            )));
+            let corrected_pango_h = clayout.pixel_size().1 + above + below;
+            corrected_pairs.push((corrected_pango_h, yr, corrected_wrap_w));
+            if corrected_pango_h != yr {
+                corrected_disagree += 1;
+                corrected_delta_sum += (corrected_pango_h - yr) as i64;
+                if corrected_examples.len() < 8 {
+                    corrected_examples.push(format!(
+                        "L{i}:yr={yr}/cpango={corrected_pango_h}/cw={corrected_wrap_w}"
+                    ));
+                }
+            }
         }
         crate::log_fmt!(
             "PAGES_PROSE_PANGO: lines={} disagree={} delta_sum={} \
@@ -543,6 +611,12 @@ pub fn record_prose_pages(
             line_count, disagree, delta_sum,
             worst.0, worst.1, worst.2, wrap_w, above, below,
             examples.join(" ")
+        );
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO_CORRECTED: lines={} disagree={} delta_sum={} \
+             base_wrap_w={} ex=[{}]",
+            line_count, corrected_disagree, corrected_delta_sum, wrap_w,
+            corrected_examples.join(" ")
         );
         // DIAGNOSTIC (LIT_TRACE_PANGO=1), split by display state (Task 1,
         // 2026-08-05-prose-page-height-truth plan).
@@ -628,6 +702,49 @@ pub fn record_prose_pages(
             displayed_lines, displayed_disagree, displayed_delta_sum,
             offscreen_lines, offscreen_disagree, offscreen_delta_sum,
             displayed_ex.join(" "), offscreen_ex.join(" ")
+        );
+
+        // TASK 1b: same displayed/offscreen split, but against the
+        // per-line-margin-CORRECTED Pango measurement instead of the raw
+        // view-width one. Reuses the identical `page_top`/`displayed_hi`/
+        // `offscreen_lo` window computed above (from the SAME sweep1 heights),
+        // so the two splits are directly comparable line-for-line.
+        let mut c_displayed_lines = 0usize;
+        let mut c_displayed_disagree = 0usize;
+        let mut c_displayed_delta_sum = 0i64;
+        let mut c_displayed_ex: Vec<String> = Vec::new();
+        let mut c_offscreen_lines = 0usize;
+        let mut c_offscreen_disagree = 0usize;
+        let mut c_offscreen_delta_sum = 0i64;
+        for (i, &(cpango_h, yr, cw)) in corrected_pairs.iter().enumerate() {
+            if i >= page_top && i < displayed_hi {
+                c_displayed_lines += 1;
+                if cpango_h != yr {
+                    c_displayed_disagree += 1;
+                    c_displayed_delta_sum += (cpango_h - yr) as i64;
+                    if c_displayed_ex.len() < 8 {
+                        c_displayed_ex.push(format!(
+                            "L{i}:yr={yr}/cpango={cpango_h}/cw={cw}"
+                        ));
+                    }
+                }
+            } else if i >= offscreen_lo {
+                c_offscreen_lines += 1;
+                if cpango_h != yr {
+                    c_offscreen_disagree += 1;
+                    c_offscreen_delta_sum += (cpango_h - yr) as i64;
+                }
+            }
+        }
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO_CORRECTED_SPLIT: page_top={} displayed_end={} \
+             c_displayed_lines={} c_displayed_disagree={} c_displayed_delta_sum={} \
+             c_offscreen_lines={} c_offscreen_disagree={} c_offscreen_delta_sum={} \
+             c_displayed_ex=[{}]",
+            page_top, displayed_end,
+            c_displayed_lines, c_displayed_disagree, c_displayed_delta_sum,
+            c_offscreen_lines, c_offscreen_disagree, c_offscreen_delta_sum,
+            c_displayed_ex.join(" ")
         );
     }
     // CONVERGENCE GUARD (always on, not just debug builds).

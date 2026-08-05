@@ -156,3 +156,130 @@ with the 1-line margin exclusion specifically to guard against that, and
 displayed) independently shows a whole-row miss in 2 of 3 runs, which isn't
 subject to that boundary-walk concern at all. I consider that concern
 addressed, not open, but it's the one place a reviewer should double-check.
+
+## Task 1b
+
+**Premise tested:** the controller's amendment hypothesized that Task 1's
+whole-row misses are an artifact of the probe's `wrap_w = tv.width() -
+tv.left_margin() - tv.right_margin()` being blind to a PER-LINE TextTag
+margin (specifically `dialogue-indent`, `DIALOGUE_INDENT = 60px`), which would
+make Pango assume a wider column than the view actually wraps to and
+under-count rows on exactly the multi-row lines that show the deficit.
+
+### Per-line properties found (code read, then confirmed empirically)
+
+Reading `src/app/formatting.rs` before touching the probe: **`dialogue-indent`
+never applies to BH-Barrett at all.** `apply_dialogue_formatting` (the only
+place that tag is created/applied) early-returns at its `block_indent_tiers`
+check (`formatting.rs:110`) for any "block-aware" work — and BH-Barrett is
+exactly that: `work_has_blocks` is true (its `line_mapping.block_type` column
+has `blockquote`/`heading` rows alongside `prose`, confirmed via
+`sqlite3 lit.db "select block_type, count(*) from line_mapping where
+work_abbrev='BH-Barrett' group by block_type"` → `blockquote|20 heading|135
+prose|7145`). Block-aware works instead run `apply_block_typography`
+(`formatting.rs:730`), which applies margin tags ONLY to non-prose block
+types: `verse-indent-{0,1,2}` (verse, 48+32×tier px), `block-blockquote-indent`
+(blockquote, 64px symmetric), `block-heading-center` (heading, no margin —
+justification only). **Ordinary `prose` lines get NO margin tag at all** —
+they inherit the view-level margin unmodified. Chapter 37 (the failure zone)
+has only 5 blockquote + 2 heading lines out of 149 in that chapter; the
+disagreeing multi-row lines sampled in Task 1 were plain prose, not
+blockquote/heading.
+
+### Corrected-width instrumentation
+
+Extended the `LIT_TRACE_PANGO` probe (still inside its existing guard,
+`src/input/prose_pages.rs`) to resolve the effective per-line left/right
+margin from `iter.tags()` at each line's start — for each property
+independently, the highest-`priority()` tag that has it explicitly set
+(`is_left_margin_set`/`is_right_margin_set`), falling back to the view-level
+margin when no tag sets it — then re-measures that same line's Pango layout
+at the corrected width. Two new log lines: `PAGES_PROSE_PANGO_CORRECTED`
+(whole-file) and `PAGES_PROSE_PANGO_CORRECTED_SPLIT` (displayed/offscreen,
+same window as Task 1's split, reusing the identical `page_top`/boundary
+computation for a line-for-line comparable result).
+
+### Corrected wrap-width formula
+
+```
+eff_left  = highest-priority tag with left_margin  set, else tv.left_margin()
+eff_right = highest-priority tag with right_margin set, else tv.right_margin()
+corrected_wrap_w = tv.width() - eff_left - eff_right
+```
+
+### Before/after, three chapters (production geometry, 1920×1236 resize
+confirmed via `RESIZE_TICK: text_view.height changed -1 -> 1164` each run —
+1164 not 1128 this run's cage/decoration state, but the SAME grid used for
+generation, so before/after stays comparable; PROSE_PAGES generated at
+`1920x1236` fingerprint each time, not the 720p fallback):
+
+| chapter | displayed_lines | base disagree | corrected disagree | corrected_wrap_w seen |
+|---|---|---|---|---|
+| 37 | 7 | 7 (100%) | 7 (100%), byte-identical deltas | 899 (== base 899), every sampled line |
+| 26 | 3 | 3 (100%) | 3 (100%), byte-identical deltas | 899 (== base 899) |
+| 10 | 4 | 4 (100%) | 4 (100%), byte-identical deltas | 899 (== base 899) |
+
+Example (ch37): `L4226:yr=293/pango=266` uncorrected → `L4226:yr=293/cpango=266/cw=899`
+corrected — same disagreement, same wrap width, because no tag applied.
+`page_top` whole-row misses reproduce again at the corrected width: ch26
+`L2910:yr=209/cpango=181` (-28px), ch10 `L930:yr=237/cpango=209` (-28px) and
+`L933:yr=434/cpango=378` (-56px, two rows) — identical to Task 1's uncorrected
+numbers.
+
+Whole-run summary confirms this isn't a sampling artifact of the truncated
+`ex=[...]` lists: `PAGES_PROSE_PANGO_CORRECTED`'s `disagree`/`delta_sum`
+matched `PAGES_PROSE_PANGO`'s exactly in every run (e.g. ch37
+`disagree=6453` both passes), and grepping all three logs for every
+`cw=` value emitted found `cw=899` and nothing else — the corrected width
+never differed from the base width for any line the probe touched.
+
+### +1px single-row offset
+
+Unaffected by the correction (expected — single-row lines can't show a
+width-driven row-count effect). Still a flat `pango = yr + 1` on every
+single-row example across all three runs (e.g. ch37 `L0:yr=40/pango=41`,
+`L2:yr=124/pango=125`), consistent with Task 1's finding of a constant
+rounding-mode difference, not something that varies with width.
+
+### Verdict: **B CONFIRMED**
+
+The hypothesized mechanism does not apply to this work. `dialogue-indent` is
+never in effect for BH-Barrett (block-aware works skip that code path
+entirely), and the block-aware margin tags that DO apply
+(`block-blockquote-indent`, `verse-indent-*`) don't land on the prose lines
+in either sampled example set — every corrected wrap width measured equals
+the uncorrected 899px. Feeding Pango the "true" per-line width (by this
+formula) produces byte-identical disagreement to the uncorrected probe,
+including the same whole-row-magnitude misses on displayed lines (`page_top`
+itself, twice). Task 1's Option B verdict stands: Pango is not a safe
+drop-in replacement for `line_yrange`, and the remaining whole-row deficit is
+unexplained by any per-line margin tag. Task 2 should proceed with forcing
+validation (2B), not adopting Pango (2A).
+
+### What remains unexplained
+
+The mechanism for the whole-row deficit is still open. Ruled out by this
+task: per-line left/right margin tags (dialogue-indent, block-blockquote,
+verse-indent). Not yet checked: per-line `indent` (first-line indent, a
+distinct Pango/GTK property from left_margin — `is_indent_set()` was not
+included in this pass since no tag in this codebase's block-typography or
+dialogue-formatting sets it, confirmed by `rg -n "set_indent\|\.indent\("
+src/app/`), and any interaction between GTK's line-box accounting and Pango's
+`pixel_size()` at wrap boundaries beyond a simple width/rounding difference
+(e.g. hyphenation-adjacent word-break behavior, or a pixel/subpixel rounding
+mode that compounds per wrapped row rather than being a flat per-line
+constant).
+
+### Confidence
+
+High. The corrected-width mechanism was implemented and run at production
+geometry across the same three chapters Task 1 used, with the SAME
+displayed/offscreen boundary logic (so the two splits are line-for-line
+comparable), and the result was unambiguous and reproduced identically three
+times: `corrected_wrap_w` never differed from the base view-width in any
+sampled line, so the correction is a no-op for this work. The one soft spot
+is that `text_view.height` landed at 1164px rather than 1128px this session
+(a minor cage/decoration-state difference from Task 1's original run, not a
+geometry regression — generation still ran at the 1920×1236 resize, not the
+720p fallback) — this affects `usable_height` slightly but not which tags
+apply to which lines, so it does not weaken the wrap-width finding.
