@@ -560,6 +560,16 @@ from lit.db `play_pages`/`prose_pages` (`src/input/page_table.rs`;
 Flags: `LIT_NO_PAGE_TABLE=1` forces the live engine, `LIT_GEN_PAGE_TABLE=1`
 forces generation at current geometry. Audit with `validate-play-pages`.
 
+**Prose page generation forces layout validation before measuring** —
+`line_yrange` alone is not trustworthy for lines the viewport hasn't been
+near; GTK returns a provisional, systematically-short estimate for them and
+caches it as final. This is load-bearing, not an optimization to trim if
+generation feels slow. The general lesson behind it generalizes past
+pagination: **a convergence check that compares a measurement against a
+second copy of itself proves self-consistency, not correctness** — two
+sweeps of the same stale cache agree with each other and with nothing real.
+See `docs/troubleshooting/clip-prevention.md` item 23.
+
 ## MPV Integration
 
 - MPV is reused across work switches via `loadfile replace`; state on
