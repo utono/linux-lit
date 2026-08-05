@@ -224,7 +224,14 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // (was BASE_BOTTOM_MARGIN — every pv4 page is ~one line short). The `uh`
     // component already shifts with the reserve; the bump makes the miss
     // explicit and independent of geometry coincidences.
-    format!("{base}|uh{usable}|cw{cw}|pv5")
+    // pv6: the row-fit straddle test now measures the candidate row's LINE-BOX
+    // bottom instead of its INK bottom (`next_row_top_if_row_fits`,
+    // scroll.rs). The ink rect excludes `pixels_below_lines` while the page
+    // charge (`page_px` / `exact_page_content_height`) includes it, so pv5
+    // tables stored pages up to `pixels_below_lines`+rounding OVER `usable` —
+    // their last paragraph renders flush against the card's bottom rule. Those
+    // boundaries must miss and regenerate with breathing room.
+    format!("{base}|uh{usable}|cw{cw}|pv6")
 }
 
 /// Diagnostic: re-measure every recorded page against the SAME heights vector

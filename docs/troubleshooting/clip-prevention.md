@@ -619,6 +619,46 @@ When a half line clips at the bottom edge of a scrolled surface:
    so those are unaffected. Mirrors `viewport::is_line_start_visible` (top) and
    `prose_pages::page_px` (both edges) — when the render-side measurement and
    `page_px` disagree, the render side is wrong.
+2c. **MAIN CARD, single-column prose — the last paragraph sits FLUSH against the
+   card's bottom rule with no breathing room (INK grid vs LINE-BOX grid).** Not
+   a clip bug: the clip is correct for a page that was paginated too full.
+   - **Tell:** text touches (or nearly touches) the bottom edge, the residual
+     clip is visibly smaller than on neighbouring pages (~48px where healthy
+     pages keep 57-84), and NO `CLIP_WARN` fires — the page is over `usable`
+     but still under `widget_h`, so nothing trips the overflow tripwire. The
+     decisive signal is the generation-time census
+     `PAGES_PROSE_DRIFT: summary … over_usable=K` with `K > 0`.
+   - **Root cause:** `next_row_top_if_row_fits` (`scroll.rs`) decided whether a
+     candidate row fits the budget using `iter_location` — the text row's INK
+     rect, which EXCLUDES the trailing `pixels_below_lines`. The stored page is
+     later charged by `line_yrange`, whose line box INCLUDES it (`page_px`,
+     `exact_page_content_height`). So a row whose ink fit but whose line box
+     overflowed was accepted, and the page was stored `pixels_below_lines` +
+     rounding OVER `usable`. `validate_prose_pages` accepted it because the
+     overshoot hid inside `prose_fit_slack`.
+   - **The arithmetic that identifies it:** every over-budget page overshoots by
+     1..=`pixels_below_lines + 2` px — never a whole row. A whole-row overshoot
+     is a different bug (the fill decision); a few-px one is this grid mismatch.
+     On BH at `line_spacing=5` the observed spread was exactly 1..=7 across 34
+     pages, capped at 5+2.
+   - **Fix (2026-08-05):** measure the straddle against the row's LINE-BOX
+     bottom (`row_line_box_bottom`) — but ONLY for the last display row of a
+     buffer line, since a wrapped line's intermediate rows tile with no spacing
+     and their ink bottom already IS the row bottom. Separately, bound the
+     advance itself by `raw` (`next_top > raw + 0.5 → None`): between two rows of
+     one wrapped paragraph the ink and `line_yrange` grids still disagree by a
+     pixel of rounding, which left two pages exactly 1px over. Both are needed —
+     the first took 34 over-budget pages to 1, the second took 1 to 0.
+   - **Diagnose with `LIT_TRACE_BOUNDARY=<page-top-buffer-line>`**, which logs
+     the boundary walk line-by-line (`BWALK:` — `ly`/`lh`/`first_row_top`/
+     `total`/`used`, then `raw`/`snapped`/`row_fit`/`end`). That trace is what
+     separated this from two plausible wrong hypotheses (the row-fit advance
+     spending the slack on ink; the leading-gap normalization) — both were coded
+     or considered and disproven. Bumps the prose fingerprint to `pv6`.
+   - **Guarded by** `tests/prose_page_fit.rs`
+     (`prose_pages_keep_bottom_breathing_room`), which asserts the census's
+     `over_usable == 0` across the WHOLE table — not just the pages a drive
+     visits (a 14-turn drive samples 14 of ~765 and missed all 34).
 3. **`display_rows` not adding `top_margin`** → both edges clip at once
    (coordinate-space gotcha above).
 4. **Recompute runs against unsettled geometry on open** (0-height viewport) and
