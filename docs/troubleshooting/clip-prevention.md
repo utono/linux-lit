@@ -1617,6 +1617,23 @@ When a half line clips at the bottom edge of a scrolled surface:
       returns `Err` and the caller falls back to the live engine rather than
       pinning an over-packed table into lit.db, where it would outlive the
       session.
+    - **Fixing generation is only HALF the fix — bump the page version too.**
+      The layout fingerprint is a function of geometry + font. Neither changes
+      when the measuring bug is fixed, so every table ALREADY stored with the
+      bad heights stays a valid `table hit` forever and the corrected generator
+      never runs. This was caught only because the user's screenshots still
+      showed the bug after the generation fix shipped: their log read
+      `PAGES_PROSE: table hit (793 pages)`, never `generated`. `pv7` forces the
+      miss. Skip a version rather than reuse one belonging to a reverted
+      change (`pv6` = the reverted `e1b17ac0`, whose tables carry the same bad
+      heights). **Generalisation: any fix that changes what a stored table
+      CONTAINS, without changing what the fingerprint MEASURES, must bump the
+      version — otherwise it is a no-op for every existing reader.**
+    - Real-renderer acceptance (required by this doc, cage is software
+      rendering): measured on the user's own display at 1920x1200 — bottom
+      clearance 62/86/66px across three consecutive ch. 26 pages, vs 6/16px on
+      the same pages before the fix, with text continuous across every page
+      boundary (a whole clause had been swallowed between pages).
     - Guard: `deep_prose_pages_never_overflow_the_card` (`tests/prose_page_fit.rs`)
       lands at ch. 26 via `LIT_START_SCENE=26.0` and asserts on render-side
       `CLIP_WARN`/`BOTTOM_CLIP_EXACT`. Verified failing before the fix (5 pages
