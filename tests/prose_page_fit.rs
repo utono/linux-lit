@@ -379,6 +379,59 @@ fn deep_prose_pages_never_overflow_the_card() {
     }
 }
 
+/// The SAME overflow invariant, exercised on chapter 37 — the chapter the user
+/// actually reported (text sliced mid-glyph, no masking band). A PRIOR fix's
+/// acceptance test (`deep_prose_pages_never_overflow_the_card` above) lands on
+/// chapter 26 and is green; chapter 37 has 22 pages overflowing the card by
+/// 13-114px on the pre-fix sweep. Chapter 26 happening to be healthy is exactly
+/// how that defect stayed green — a deep sample of ONE chapter is not coverage,
+/// this pins the chapter that actually failed.
+///
+/// The known-bad pages ran continuously from buffer line ~4223 to 4402+ (22
+/// pages); 20 turns from the chapter-37 landing is enough to walk into and
+/// through that span at BH's prose density, but the census below is the real
+/// gate (it covers every stored page, not just the ones this drive visits) —
+/// see the file-level doc comment on why a sampled drive alone is insufficient.
+#[test]
+#[ignore = "needs cage + grim + wtype; run with --ignored"]
+fn chapter_37_pages_never_overflow_the_card() {
+    let log = drive_forward_from(20, Some("37.0"));
+
+    let clips = parse_exact_clips(&log);
+    assert!(
+        !clips.is_empty(),
+        "no `BOTTOM_CLIP_EXACT` lines found at the deep landing — did \
+         LIT_START_SCENE=37.0 resolve? full log:\n{log}"
+    );
+
+    let overflows: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains("CLIP_WARN") && l.contains("OVERFLOW"))
+        .collect();
+    assert!(
+        overflows.is_empty(),
+        "chapter 37 overflowed {} page(s):\n{}",
+        overflows.len(),
+        overflows.join("\n")
+    );
+
+    // Independent of the warning's own gating: the measured page must fit.
+    for c in &clips {
+        assert!(
+            c.total <= c.widget_h,
+            "ch37 page at top=({},{}) end={} measured total={}px against \
+             widget_h={}px (over by {}px, clip={})",
+            c.page_top,
+            c.top_off,
+            c.end,
+            c.total,
+            c.widget_h,
+            c.total - c.widget_h,
+            c.clip
+        );
+    }
+}
+
 /// Launch, resize, land at `start_scene` (if given), force generation, wait
 /// for `PAGES_PROSE: generated`, and return the dev log. Unlike
 /// `drive_forward_from` this does NOT drive any page turns — the determinism
