@@ -1576,6 +1576,59 @@ When a half line clips at the bottom edge of a scrolled surface:
       `CardLayout::allocate` hands the child exactly `card_width` with no
       renegotiation against what the child measured.
 
+22. **MAIN CARD, single-column PROSE — DEEP pages overflow by 44-127px on a
+    FRESHLY generated table, because generation measured before the FONT was in
+    effect.** The reported symptom is text cut mid-glyph at the bottom rule deep
+    in a novel (BH-Barrett ch. 26, pages 335+), with
+    `CLIP_WARN: main-card prose-1col OVERFLOW total=… > widget_h=… clip=0`.
+    - Tell (the one that separates this from every other prose overflow): the
+      overflow is **positional**. Early pages are healthy (clips 53-87px);
+      deep pages all overflow. Anything that only drives pages 1-15 passes
+      while the bug is fully present. Second tell: the generation-time census
+      reports `PAGES_PROSE_DRIFT: summary … over_usable=0` — a CLEAN bill of
+      health — because it reads the same wrong heights generation used and so
+      agrees with itself. **Only a render-side assertion can see this.**
+    - Root cause: the reader's body font is a buffer-wide `font-size` TextTag
+      applied by `reapply_font`, NOT the view's CSS font. Applying it
+      invalidates every line's layout, but GTK re-measures lazily, so a
+      `line_yrange` sweep run before the view processes that invalidation
+      returns heights for the PREVIOUS, smaller face. Heights decompose as
+      `40 + 28*(rows-1)`: every paragraph of 4+ wrapped rows came back exactly
+      one row (~29px) short, while 1-3 row lines were unaffected — which is why
+      dialogue-heavy openings look fine and dense later chapters do not. The
+      per-page deltas sum to the whole overflow (measured: +115px on the page
+      that rendered 1189 against widget_h 1164).
+    - **Two back-to-back sweeps CANNOT detect it.** Both run after the same
+      invalidation and read the same cache, so `PAGES_PROSE_SWEEP:
+      changed_between_sweeps=0 delta_sum=0` is reported while every height is
+      wrong. That zero was read for a whole session as proof that lazy
+      validation was eliminated; it proves only that the cache is stable, not
+      that it is correct. Do not re-run that experiment expecting an answer.
+    - Ruled out by measurement, each costing a cycle: stale table (reproduces
+      on a fresh `validated=1` table); wrap width (`wrap_w=899` identical at
+      both moments); tags (the growing lines carry `tags=[]` at both moments);
+      `pv5`-vs-`pv6` page version (both engines store BYTE-IDENTICAL boundaries
+      over the overflow range — only the page NUMBERING differs).
+    - Fix: pump the main loop (`queue_resize` + bounded
+      `MainContext::iteration`) at the top of `record_prose_pages`, BEFORE the
+      validating sweep, so the sweep measures the face the view will render.
+      Plus a convergence guard — the second sweep is now load-bearing, not a
+      diagnostic: if any height still moves between passes, `record_prose_pages`
+      returns `Err` and the caller falls back to the live engine rather than
+      pinning an over-packed table into lit.db, where it would outlive the
+      session.
+    - Guard: `deep_prose_pages_never_overflow_the_card` (`tests/prose_page_fit.rs`)
+      lands at ch. 26 via `LIT_START_SCENE=26.0` and asserts on render-side
+      `CLIP_WARN`/`BOTTOM_CLIP_EXACT`. Verified failing before the fix (5 pages
+      over by 23-114px) and passing after (all pages 1081-1113 against 1164,
+      clips 46-78).
+    - Diagnosing a recurrence: `LIT_TRACE_HEIGHTS=<a>:<b>` dumps the
+      generation-time height vector, `LIT_TRACE_TAGS=<a>:<b>` dumps per-line
+      tags+text+height at BOTH generation and render (diff them), and
+      `LIT_TRACE_PANGO=1` compares every line against an independent Pango
+      layout. Caveat: the Pango probe carries a ±1px line-box offset, so trust
+      its CHANGES between sweeps, not its absolute values.
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip

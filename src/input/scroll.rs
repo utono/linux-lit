@@ -1160,6 +1160,11 @@ fn update_bottom_clip(
                 text_view.width() - tvw.left_margin() - tvw.right_margin(),
                 heights
             );
+            crate::input::prose_pages::trace_line_tags(
+                &buf_sv,
+                tvw,
+                "RENDER",
+            );
         }
         // Drop the clip's top edge below the last line's logical bottom so its
         // flush descender ink (g/y/p/comma tails) isn't sliced — capped at the
