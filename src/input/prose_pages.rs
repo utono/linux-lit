@@ -227,6 +227,90 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     format!("{base}|uh{usable}|cw{cw}|pv5")
 }
 
+/// Diagnostic: re-measure every recorded page against the SAME heights vector
+/// the validator used, and report any page whose occupied height exceeds the
+/// card. Emits `PAGES_PROSE_DRIFT:` lines.
+///
+/// This exists because a page can pass `validate_prose_pages` at generation
+/// time and still overflow at RENDER time (`CLIP_WARN ... prose-1col OVERFLOW`,
+/// clip floored to 0, last line poking out unmasked). The two sides compute
+/// algebraically identical sums — `page_px` and
+/// `scroll::exact_page_content_height` both charge `[start_line ..= end-1]`
+/// minus `start_off` when `end_off == 0` — so a disagreement can ONLY mean the
+/// per-line HEIGHTS differed between the two moments, never the arithmetic.
+/// That makes this the decisive probe: a page reported here as fitting, which
+/// the reader later logs as overflowing, proves the generation-time heights
+/// were stale (GTK validates TextView line layout lazily and CACHES the coarse
+/// single-row estimate it returns for a far-off line, so the pre-validation
+/// sweep in `record_prose_pages` can seed wrong values that the per-page walk
+/// then reads back). Conversely a page flagged here never should have been
+/// stored, and the bug is in the boundary walk.
+///
+/// Cheap (one pass over the pages, no GTK calls — `heights` is already built)
+/// and debug-gated, so it can stay in permanently as a tripwire.
+fn log_generation_height_drift(
+    pages: &[ProsePage],
+    heights: &[i32],
+    usable: i32,
+    fit_slack: i32,
+) {
+    if !crate::logging::debug_mode() {
+        return;
+    }
+    let mut over = 0usize;
+    let mut worst = (0usize, 0i64);
+    for (i, p) in pages.iter().enumerate() {
+        // The render side's charge for this page: whole lines
+        // `[start_line ..= last_rendered_line]`, less the part of the first
+        // line scrolled off the top, less the unrendered tail of a
+        // mid-paragraph last line. Mirrors `exact_page_content_height` +
+        // `prose_bottom_head_for` (which yields `None` when `end_off == 0`).
+        let last = last_rendered_line(p);
+        let end = last.min(heights.len().saturating_sub(1));
+        if p.start_line > end {
+            continue;
+        }
+        let mut px: i64 = heights[p.start_line..=end].iter().map(|&h| h as i64).sum();
+        px -= p.start_off as i64;
+        if p.end_off > 0 {
+            // Last line straddles: only its first `end_off` px are on-page.
+            px -= (heights[end] - p.end_off).max(0) as i64;
+        }
+        if px > usable as i64 {
+            over += 1;
+            if px - usable as i64 > worst.1 - usable as i64 || worst.1 == 0 {
+                worst = (i + 1, px);
+            }
+            // Diagnostic: which boundary shape produced the overshoot. The
+            // page's own geometry says whether the extra pixels are a
+            // mid-paragraph straddle (end_off > 0), a whole-paragraph end
+            // (end_off == 0), or a top offset.
+            crate::log_fmt!(
+                "PAGES_PROSE_DRIFT: over page {} ({},{})..({},{}) px={} over={} \
+                 lines={} last_h={}",
+                i + 1, p.start_line, p.start_off, p.end_line, p.end_off,
+                px, px - usable as i64,
+                end.saturating_sub(p.start_line) + 1,
+                heights.get(end).copied().unwrap_or(-1)
+            );
+            // Only the pages past the slack tolerance can actually floor the
+            // render clip to 0; log those individually.
+            if px > (usable + fit_slack) as i64 {
+                crate::log_fmt!(
+                    "PAGES_PROSE_DRIFT: page {} ({},{})..({},{}) px={} > usable={} (+slack {}) \
+                     — stored anyway; render will log CLIP_WARN",
+                    i + 1, p.start_line, p.start_off, p.end_line, p.end_off,
+                    px, usable, fit_slack
+                );
+            }
+        }
+    }
+    crate::log_fmt!(
+        "PAGES_PROSE_DRIFT: summary pages={} over_usable={} worst=page {} at {}px usable={} slack={}",
+        pages.len(), over, worst.0, worst.1, usable, fit_slack
+    );
+}
+
 /// Walk the LIVE engine's forward chain from (0,0), recording every page.
 /// Boundaries come from `navigation::prose_next_boundary` — the same function
 /// x/j use — so the stored grid IS the live grid.
@@ -380,6 +464,7 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
         crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
         return;
     }
+    log_generation_height_drift(&pages, &heights, usable, ctx.fit_slack);
     // Citation mapping: BOUNDARY LINES ONLY (start_line / end_line of each
     // page). A boundary line with no line_mapping id is a hard failure — do NOT
     // snap (snapping would break the exact page-to-page adjacency the no-text-
