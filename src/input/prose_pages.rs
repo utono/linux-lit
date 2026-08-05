@@ -497,8 +497,12 @@ pub fn record_prose_pages(
         let mut delta_sum = 0i64;
         let mut worst: (usize, i32, i32) = (0, 0, 0);
         let mut examples: Vec<String> = Vec::new();
+        // Per-line (pango_h, yrange_h) pairs, kept so the DISPLAYED/OFFSCREEN
+        // split below can classify by position without re-measuring anything.
+        let mut pairs: Vec<(i32, i32)> = Vec::with_capacity(line_count);
         for i in 0..line_count {
             let Some(start) = state.buffer.iter_at_line(i as i32) else {
+                pairs.push((0, 0));
                 continue;
             };
             let mut end = start;
@@ -521,6 +525,7 @@ pub fn record_prose_pages(
             // The view charges each line box as ink + the paragraph spacing.
             let pango_h = layout.pixel_size().1 + above + below;
             let yr = sweep1[i];
+            pairs.push((pango_h, yr));
             if pango_h != yr {
                 disagree += 1;
                 delta_sum += (pango_h - yr) as i64;
@@ -538,6 +543,91 @@ pub fn record_prose_pages(
             line_count, disagree, delta_sum,
             worst.0, worst.1, worst.2, wrap_w, above, below,
             examples.join(" ")
+        );
+        // DIAGNOSTIC (LIT_TRACE_PANGO=1), split by display state (Task 1,
+        // 2026-08-05-prose-page-height-truth plan).
+        //
+        // "Displayed" = lines GTK has actually laid out and painted on screen
+        // before this generation ran, as opposed to lines `line_yrange` has
+        // only ever estimated. Generation fires once per settled layout/resize
+        // with the viewport anchored at `state.page_top.line()` for the whole
+        // sweep (confirmed in TRACE-FINDINGS.md: page_top stayed constant
+        // through generation) — so the only lines with a real on-screen paint
+        // behind them are the single page's worth starting at page_top. We
+        // derive that count the same way the rest of this file computes a
+        // page's usable height (widget_height - descender_guard -
+        // SINGLE_COLUMN_BOTTOM_MARGIN), then walk forward from page_top
+        // summing `sweep1` (the SAME heights generation used — not a fresh
+        // GTK call, which would just re-ask the lazily-validated cache and
+        // beg the question of what "displayed" means) until the budget is
+        // exhausted. That walk can itself be one row optimistic about the
+        // very last line if that line's own height was under-measured, so we
+        // exclude a one-line margin band on each side of the displayed
+        // window's boundary from BOTH populations — a line that was only
+        // partially scrolled through, or whose displayed-ness hinges on the
+        // number we're trying to validate, is excluded rather than forced
+        // into a bucket.
+        let page_top = state.page_top.line().min(line_count.saturating_sub(1));
+        let descender_guard =
+            crate::input::viewport::descender_guard_px(&state.text_view, page_top);
+        let usable_height =
+            tv.height() - descender_guard - crate::input::scroll::SINGLE_COLUMN_BOTTOM_MARGIN;
+        let mut displayed_end = page_top; // exclusive upper bound of the displayed window
+        if usable_height > 0 {
+            let mut total = 0i32;
+            for (i, &(_pango_h, yr)) in pairs.iter().enumerate().skip(page_top) {
+                if total + yr > usable_height {
+                    break;
+                }
+                total += yr;
+                displayed_end = i + 1;
+            }
+        }
+        const MARGIN: usize = 1;
+        let displayed_hi = displayed_end.saturating_sub(MARGIN);
+        let offscreen_lo = displayed_end + MARGIN;
+
+        let mut displayed_lines = 0usize;
+        let mut displayed_disagree = 0usize;
+        let mut displayed_delta_sum = 0i64;
+        let mut displayed_ex: Vec<String> = Vec::new();
+        let mut offscreen_lines = 0usize;
+        let mut offscreen_disagree = 0usize;
+        let mut offscreen_delta_sum = 0i64;
+        let mut offscreen_ex: Vec<String> = Vec::new();
+        for (i, &(pango_h, yr)) in pairs.iter().enumerate() {
+            if i >= page_top && i < displayed_hi {
+                displayed_lines += 1;
+                if pango_h != yr {
+                    displayed_disagree += 1;
+                    displayed_delta_sum += (pango_h - yr) as i64;
+                    if displayed_ex.len() < 8 {
+                        displayed_ex.push(format!("L{i}:yr={yr}/pango={pango_h}"));
+                    }
+                }
+            } else if i >= offscreen_lo {
+                offscreen_lines += 1;
+                if pango_h != yr {
+                    offscreen_disagree += 1;
+                    offscreen_delta_sum += (pango_h - yr) as i64;
+                    if offscreen_ex.len() < 8 {
+                        offscreen_ex.push(format!("L{i}:yr={yr}/pango={pango_h}"));
+                    }
+                }
+            }
+            // else: inside the excluded margin band around the displayed
+            // window's boundary, or before page_top (never reached this run
+            // — page_top is generation's starting scroll position) — skip.
+        }
+        crate::log_fmt!(
+            "PAGES_PROSE_PANGO_SPLIT: page_top={} displayed_end={} usable_height={} \
+             displayed_lines={} displayed_disagree={} displayed_delta_sum={} \
+             offscreen_lines={} offscreen_disagree={} offscreen_delta_sum={} \
+             displayed_ex=[{}] offscreen_ex=[{}]",
+            page_top, displayed_end, usable_height,
+            displayed_lines, displayed_disagree, displayed_delta_sum,
+            offscreen_lines, offscreen_disagree, offscreen_delta_sum,
+            displayed_ex.join(" "), offscreen_ex.join(" ")
         );
     }
     // CONVERGENCE GUARD (always on, not just debug builds).
