@@ -210,6 +210,13 @@ pub struct JournalSource {
 struct SourceLineRoles {
     speaker_line: Option<i32>,
     verse_lines: Vec<i32>,
+    /// EVERY buffer line of the quoted passage — all quote paragraphs, not just
+    /// the one `verse_lines` designates. A prose quote is routinely several
+    /// paragraphs (BH ch.9's Q&A is six), and `verse_lines` deliberately covers
+    /// only the single verse block that takes the hang-indent, so it is the
+    /// wrong set for anything that must style the whole quotation — such as the
+    /// `journal-src-quote` italic.
+    quote_lines: Vec<i32>,
     citation_line: Option<i32>,
     /// The BLANK separator lines inside the quotation: the one under the speaker
     /// label and the one above the citation. They are collapsed to a hairline so
@@ -273,9 +280,29 @@ fn source_line_roles(paras: &[String], has_speaker: bool, has_citation: bool) ->
             inner_gap_lines.push(starts[c] - 1);
         }
     }
+    // Every quoted paragraph — all source paragraphs except the speaker label
+    // and the citation, both of which carry their own styling. Unlike
+    // `verse_lines` (one designated block), this spans the WHOLE quotation, so a
+    // multi-paragraph prose quote is fully covered.
+    //
+    // Indexed by BLOCK, not by the `starts` blank-line stride the other roles
+    // use. A Q&A body renders through the styled Markdown renderer, which emits
+    // one buffer line per planned block and supplies the paragraph gap with tag
+    // spacing — there are no blank separator rows in the buffer. Using `starts`
+    // here computed lines 0,2,4,6,8,10 for a 6-line buffer: the out-of-range
+    // half silently did nothing and the rest landed on the wrong paragraphs,
+    // which rendered as every OTHER paragraph italicized.
+    let mut quote_lines: Vec<i32> = Vec::new();
+    for i in 0..count {
+        if Some(i) == speaker_para || Some(i) == citation_para {
+            continue;
+        }
+        quote_lines.push(i as i32);
+    }
     SourceLineRoles {
         speaker_line: speaker_para.map(|p| starts[p]),
         verse_lines,
+        quote_lines,
         citation_line: citation_para.map(|p| starts[p]),
         inner_gap_lines,
     }
@@ -1875,6 +1902,22 @@ impl JournalOverlay {
                 table.remove(&old);
             }
         }
+        // The quoted passage is the WORK'S OWN TEXT, set off from the reader's
+        // question and the model's answer below it. Italic marks it as quoted
+        // matter on sight, the same signal the citation line already carries.
+        //
+        // Its own tag rather than a `style` on `journal-src-verse`, because that
+        // tag is VERSE-ONLY: prose quotes skip it (see the hang-indent note at
+        // the apply site), so styling it there would leave every prose Q&A —
+        // the BH case this was reported on — visually unchanged.
+        if table.lookup("journal-src-quote").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("journal-src-quote")
+                    .style(gtk4::pango::Style::Italic)
+                    .build(),
+            );
+        }
         // Collapse the blank separator lines INSIDE the quotation by shrinking
         // their font (see `SOURCE_GAP_SCALE` — negative pixel spacing is not an
         // option; GTK aborts on it).
@@ -1952,6 +1995,27 @@ impl JournalOverlay {
         if !self.prose_reading.get() {
             for l in &roles.verse_lines {
                 apply_line("journal-src-verse", *l);
+            }
+        }
+        // Italicize the quoted lines themselves on BOTH work types — unlike the
+        // hang-indent above, which is verse-only. `apply_font` re-added the
+        // buffer-wide `journal-font` tag at top priority, and that flattens any
+        // style a lower tag asks for (the same trap `apply_emphasis` documents),
+        // so raise this one above it or the quote renders upright.
+        //
+        // Priority sits just UNDER the two Markdown emphasis tags, which
+        // `apply_emphasis` parked at `top-1`/`top-2` moments earlier (it runs
+        // first — see render_page). Anything at or above those would shuffle
+        // them back down and un-bold the answer body. The three never overlap in
+        // practice (emphasis lives in the answer, this in the source block), but
+        // the ordering is what keeps that independent of the text.
+        if let Some(tag) = table.lookup("journal-src-quote") {
+            let top = table.size();
+            if top > 3 {
+                tag.set_priority(top - 3);
+            }
+            for l in &roles.quote_lines {
+                apply_line("journal-src-quote", *l);
             }
         }
         if let Some(l) = roles.citation_line {
@@ -3131,6 +3195,64 @@ mod source_line_roles_tests {
         // the quote starts at line 0 with no blank above it to collapse.
         assert_eq!(roles.inner_gap_lines, vec![2]);
     }
+
+    /// A PROSE quote (the BH/novel shape) is ONE long paragraph that the view
+    /// wraps — a single buffer line, not one line per visual row. `verse_lines`
+    /// must still report it, because the italic `journal-src-quote` tag is
+    /// applied over those lines on BOTH work types (only the hang-indent is
+    /// verse-only). If this ever returned empty for prose, prose Q&As would
+    /// silently render the quotation upright.
+    #[test]
+    fn a_prose_quote_is_one_buffer_line_and_is_still_reported() {
+        let paras = p("A long prose paragraph that the view wraps across rows.");
+        let roles = source_line_roles(&paras, false, false);
+        assert_eq!(
+            roles.verse_lines,
+            vec![0],
+            "prose quote must be reported so it can be italicized"
+        );
+        assert_eq!(roles.quote_lines, vec![0]);
+    }
+
+    /// THE case the italic shipped broken on: a prose Q&A quotes SEVERAL
+    /// paragraphs (BH ch.9 quotes six). `verse_lines` names only the single
+    /// designated verse block — the last paragraph — so styling the quotation
+    /// through it leaves every earlier paragraph upright. `quote_lines` must
+    /// cover all of them.
+    #[test]
+    fn a_multi_paragraph_prose_quote_is_italicized_throughout() {
+        // 3 quote paragraphs, one buffer line each, blank-separated:
+        //   0 q1  1 blank  2 q2  3 blank  4 q3
+        let paras = p("First para.|Second para.|Third para.");
+        let roles = source_line_roles(&paras, false, false);
+        assert_eq!(
+            roles.verse_lines,
+            vec![4],
+            "verse_lines still names only the designated block"
+        );
+        assert_eq!(
+            roles.quote_lines,
+            vec![0, 1, 2],
+            "every quoted paragraph must be italicized, not just the last; \
+             indexed by BLOCK (the md renderer emits one line per block)"
+        );
+    }
+
+    /// A speaker label and a citation carry their own styling (reduced-scale
+    /// bold, right-aligned italic), so the quote italic must skip both.
+    #[test]
+    fn quote_lines_exclude_the_speaker_and_citation() {
+        // 0 speaker  1 blank  2 v1  3 v2  4 blank  5 citation
+        let paras = p("MERCUTIO|v1\nv2|— cite");
+        let roles = source_line_roles(&paras, true, true);
+        assert_eq!(roles.speaker_line, Some(0));
+        assert_eq!(roles.citation_line, Some(5));
+        assert_eq!(
+            roles.quote_lines,
+            vec![1],
+            "only the quoted block, never the speaker or citation"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3388,4 +3510,5 @@ mod source_block_count_tests {
         }
     }
 }
+
 
