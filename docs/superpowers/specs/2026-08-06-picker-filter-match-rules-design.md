@@ -158,5 +158,20 @@ Unit tests against `row_matches` — pure, no GTK, runs under `cargo test --bins
 ## Acceptance
 
 Searching `simile` in the journal Q&A picker returns exactly one row —
-division 9.0, the Jarndyce "no simile for his lungs" entry. Verified on screen
-in the real picker, not from tests alone.
+division 9.0, the Jarndyce "no simile for his lungs" entry.
+
+**Verified 2026-08-06** headlessly (`land-on.sh BH-Barrett 9.0`, Ctrl+j,
+`simile`): ONE row returned, down from five. The four false positives at 3.0,
+4.0, 8.0 and 8.0 are gone; the true hit survives via the body haystack despite
+a visible label about breakfast.
+
+Body search confirmed intact in the same run: `jellyby` returns four rows —
+one matching the visible label (4.0) plus three whose ANSWER bodies discuss
+Jellyby (0.0, 8.0, 8.0). Only the letter-scavenging was removed, not the
+ability to find terms that never appear in the truncated row label.
+
+Short-target immunity was also checked against real data rather than inferred:
+across all 14 BH `journal_entries` rows and all three live scope values
+(`passage`, `division`, `unassigned-after-reimport`), with and without the
+author name, `short_target` never fuzzy-matches `simile`. The fix does not
+merely relocate the false positives into the short field.
