@@ -201,6 +201,23 @@ pub struct JournalSource {
     pub has_citation: bool,
 }
 
+/// Shift a GLOBAL block index into the buffer line it occupies on the page
+/// showing blocks `page_start..page_end`, or `None` when it renders on another
+/// page. A Q&A page holds one buffer line per block, so the shift is a
+/// subtraction plus a range check.
+///
+/// Extracted so the page-window arithmetic is testable: `apply_source_style`
+/// used to bail on any page but 0, which silently dropped ALL styling —
+/// including the quotation italic — from a source passage long enough to
+/// paginate.
+fn page_local_line(line: i32, page_start: usize, page_end: usize) -> Option<i32> {
+    let local = line - page_start as i32;
+    if local < 0 || local >= (page_end.saturating_sub(page_start)) as i32 {
+        return None;
+    }
+    Some(local)
+}
+
 /// Which buffer lines the prepended source paragraphs occupy, by role.
 /// Paragraphs render joined by "\n\n", so paragraph `i` starts one blank line
 /// after paragraph `i-1` ends. The verse paragraph is a single `\n`-joined
@@ -1868,20 +1885,43 @@ impl JournalOverlay {
         }
     }
 
-    /// Style the prepended passage source on page 0: small-caps-ish speaker
-    /// (smaller + bold), hang-indented verse, dim italic right-aligned
-    /// citation. No-op off page 0 or when there is no source block.
+    /// Style the prepended passage source: small-caps-ish speaker (smaller +
+    /// bold), italic quotation, hang-indented verse, dim italic right-aligned
+    /// citation. No-op when there is no source block, or on a page the source
+    /// does not reach.
+    ///
+    /// Runs on EVERY page, not just page 0 — a long quoted passage paginates,
+    /// and its later paragraphs must stay styled (see the page-window shift
+    /// below).
     /// Runs after `set_text` (like `apply_hi_color`), applying tags by buffer
     /// line. The source paragraphs are the first `source_para_count` entries of
     /// `all_paragraphs`, joined by "\n\n"; `source_line_roles` maps each to its
     /// buffer line(s) from the paragraph texts (the verse block is one
     /// `\n`-joined paragraph spanning several lines).
     fn apply_source_style(&self) {
-        if self.page_idx.get() != 0 {
-            return;
-        }
         let count = self.source_para_count.get();
         if count == 0 {
+            return;
+        }
+        // Which blocks does THIS page render? Blocks are global indices into
+        // `all_paragraphs`; the page shows `paras[page_start..page_end]`, one
+        // buffer line each, so global block `i` sits at buffer line
+        // `i - page_start`.
+        //
+        // This used to be a hard `page_idx != 0` bail. A source passage long
+        // enough to paginate then lost ALL its styling — italic included — from
+        // page 2 on, which read as the quotation turning upright mid-passage
+        // (BH ch.9: the last quote paragraph spills onto page 2).
+        let (page_start, page_end) = {
+            let pages = self.pages.borrow();
+            let pidx = self.page_idx.get().min(pages.len().saturating_sub(1));
+            match pages.get(pidx) {
+                Some(p) => (p.start, p.end),
+                None => return,
+            }
+        };
+        // Nothing of the source block reaches this page.
+        if page_start >= count {
             return;
         }
         let buffer = self.view.buffer();
@@ -1972,7 +2012,12 @@ impl JournalOverlay {
             self.source_has_citation.get(),
         );
         drop(paras);
+        // `line` is a GLOBAL block index; shift it into this page's buffer and
+        // drop anything that renders on another page.
         let apply_line = |name: &str, line: i32| {
+            let Some(line) = page_local_line(line, page_start, page_end) else {
+                return;
+            };
             if let Some(tag) = table.lookup(name) {
                 let Some(start) = buffer.iter_at_line(line) else {
                     return;
@@ -2026,7 +2071,11 @@ impl JournalOverlay {
         // instead — that is the character carrying the blank line's height.
         if let Some(tag) = table.lookup("journal-src-gap") {
             for l in &roles.inner_gap_lines {
-                let Some(start) = buffer.iter_at_line(*l) else {
+                // Same global→page-local shift as `apply_line`.
+                let Some(l) = page_local_line(*l, page_start, page_end) else {
+                    continue;
+                };
+                let Some(start) = buffer.iter_at_line(l) else {
                     continue;
                 };
                 let mut end = start.clone();
@@ -3144,7 +3193,7 @@ mod prefix_question_tests {
 
 #[cfg(test)]
 mod source_line_roles_tests {
-    use super::source_line_roles;
+    use super::{page_local_line, source_line_roles};
 
     fn p(s: &str) -> Vec<String> {
         s.split('|').map(|x| x.to_string()).collect()
@@ -3236,6 +3285,29 @@ mod source_line_roles_tests {
             "every quoted paragraph must be italicized, not just the last; \
              indexed by BLOCK (the md renderer emits one line per block)"
         );
+    }
+
+    /// A quoted passage long enough to paginate keeps its styling on the LATER
+    /// pages. `apply_source_style` used to bail on any page but 0, so the tail
+    /// of a split quote rendered upright while its head was italic — the
+    /// quotation appeared to stop being a quotation mid-passage.
+    #[test]
+    fn a_split_quote_keeps_its_styling_on_the_second_page() {
+        // Page 2 shows blocks 5..9. Block 5 is the quote's spilled tail.
+        assert_eq!(page_local_line(5, 5, 9), Some(0), "tail lands at page top");
+        // Blocks on page 1 must NOT be tagged while page 2 renders.
+        assert_eq!(page_local_line(0, 5, 9), None);
+        assert_eq!(page_local_line(4, 5, 9), None);
+        // Nor blocks past this page's end.
+        assert_eq!(page_local_line(9, 5, 9), None);
+    }
+
+    /// Page 0 keeps its original behavior: block index == buffer line.
+    #[test]
+    fn page_zero_is_an_identity_shift() {
+        assert_eq!(page_local_line(0, 0, 6), Some(0));
+        assert_eq!(page_local_line(5, 0, 6), Some(5));
+        assert_eq!(page_local_line(6, 0, 6), None, "one past the page end");
     }
 
     /// A speaker label and a citation carry their own styling (reduced-scale
