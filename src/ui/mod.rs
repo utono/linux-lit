@@ -106,6 +106,30 @@ pub(crate) fn prose_reading_card_margin(card_width: i32) -> i32 {
 /// and clip their tail line.
 pub(crate) const OVERLAY_LINE_LEADING: i32 = 2;
 
+/// Gap ABOVE each synopsis paragraph (`pixels_above_lines` on the
+/// `synopsis-para` tag), i.e. the section break. Twice the measured
+/// intra-paragraph line gap (9px at production geometry), the typographic
+/// convention for a paragraph break.
+///
+/// Synopsis paragraphs used to be joined with a literal `"\n\n"`, so the break
+/// was a full EMPTY TEXT ROW (~30px) plus the leading on either side — measured
+/// at 47-53px against a 9px line gap, a 5.5x ratio that scattered the one-line
+/// metadata entries instead of grouping them. The gap is now tag-driven, which
+/// makes it a tunable number rather than a side effect of an empty row. This
+/// mirrors the gloss body (`gloss_render.rs`), which has always spaced its
+/// paragraphs with tags rather than blank lines.
+///
+/// `repaginate` MUST charge this per synopsis block (see
+/// `block_height_overhead`) — it replaces the blank-line separator the old
+/// per-block `line_h` headroom was compensating for.
+pub(crate) const SYNOPSIS_PARA_GAP: i32 = 18;
+
+/// Gap BELOW a synopsis label paragraph ("Gist:", "Shakespearean parallels:").
+/// Much smaller than `SYNOPSIS_PARA_GAP` so a label binds to the body it heads
+/// instead of floating equidistant between two sections — standard heading
+/// behavior. The label keeps the full `SYNOPSIS_PARA_GAP` above it.
+pub(crate) const SYNOPSIS_LABEL_GAP: i32 = 6;
+
 /// Re-assert the italic verse tags (`gloss-stage`, `gloss-bracket`) to the top
 /// of `table`'s priority order. An overlay's buffer-wide font tag is built with
 /// `.font("Family Size")`, whose Pango description carries a regular (upright)

@@ -1553,10 +1553,57 @@ impl GlossOverlay {
         self.paginated_mode.get() == PaginatedMode::Synopsis
     }
 
+    /// Space the synopsis paragraphs. Each paragraph is ONE buffer line (joined
+    /// with a single `\n`), so the section break is `pixels_above_lines` on the
+    /// `synopsis-para` tag rather than a blank row — see `SYNOPSIS_PARA_GAP` for
+    /// why the blank row went away.
+    ///
+    /// Applied to every line but the FIRST: the first paragraph sits directly
+    /// under the title rule, whose own margin already supplies separation
+    /// (`set_top_margin(8)` in `show_synopsis`), so charging a gap there would
+    /// push the body down for no reason.
+    ///
+    /// Call BEFORE `apply_synopsis_label_bold` — that one raises the label tag to
+    /// top priority, and these two tags govern disjoint properties (spacing vs
+    /// weight), so their relative order only matters for the label's own
+    /// `pixels_below_lines`, which must not be outranked.
+    fn apply_synopsis_para_spacing(&self) {
+        if self.paginated_mode.get() != PaginatedMode::Synopsis {
+            return;
+        }
+        let buffer = self.gloss_view.buffer();
+        let table = buffer.tag_table();
+        if table.lookup("synopsis-para").is_none() {
+            table.add(
+                &gtk4::TextTag::builder()
+                    .name("synopsis-para")
+                    .pixels_above_lines(crate::ui::SYNOPSIS_PARA_GAP)
+                    .build(),
+            );
+        }
+        let Some(tag) = table.lookup("synopsis-para") else {
+            return;
+        };
+        let n_lines = buffer.line_count();
+        for line in 1..n_lines {
+            let Some(s) = buffer.iter_at_line(line) else {
+                continue;
+            };
+            let mut e = s;
+            if !e.ends_line() {
+                e.forward_to_line_end();
+            }
+            buffer.apply_tag(&tag, &s, &e);
+        }
+    }
+
     /// Bold the stored synopsis label ranges on the gloss view. Adds the
     /// `synopsis-label` weight tag if absent and (re-)applies it last so it
     /// outranks the regular-weight `gloss-font` tag. No-op when no ranges are
     /// stored (glosses, echoes, loading states).
+    ///
+    /// The tag also carries `SYNOPSIS_LABEL_GAP` below, binding a label to the
+    /// body it heads instead of leaving it equidistant between two sections.
     fn apply_synopsis_label_bold(&self) {
         let ranges = self.synopsis_label_ranges.borrow();
         if ranges.is_empty() {
@@ -1569,6 +1616,7 @@ impl GlossOverlay {
                 &gtk4::TextTag::builder()
                     .name("synopsis-label")
                     .weight(700)
+                    .pixels_below_lines(crate::ui::SYNOPSIS_LABEL_GAP)
                     .build(),
             );
         }
@@ -2202,7 +2250,15 @@ impl GlossOverlay {
         // ~one line (was 32) — the title's own margin/padding-bottom already
         // supplies separation, so the prose can sit closer under the rule.
         self.gloss_view.set_top_margin(8);
-        self.gloss_view.set_pixels_below_lines(6);
+        // NO view-wide `pixels_below_lines`: each synopsis paragraph is now ONE
+        // buffer line, so a view-wide 6px would land once per paragraph and stack
+        // on top of the `synopsis-para` gap (18 + 6 = 24), making the constant
+        // mean something other than the rendered gap. All synopsis paragraph
+        // spacing lives on the tags — SYNOPSIS_PARA_GAP above, and
+        // SYNOPSIS_LABEL_GAP below a label. (Wrapped lines WITHIN a paragraph are
+        // spaced by `pixels_inside_wrap`/OVERLAY_LINE_LEADING, set on the view at
+        // construction and unaffected by this.)
+        self.gloss_view.set_pixels_below_lines(0);
         // Match the gloss overlay's accent color (theme root_color) so the bar is
         // the same saturated accent, not the pale constructor default.
         self.set_bar_color_from_root(root_color);
@@ -2245,6 +2301,10 @@ impl GlossOverlay {
             let (start, end) = buffer.bounds();
             buffer.apply_tag(&tag, &start, &end);
             crate::ui::reassert_italic_tags(&table);
+            // The font swap replaced the buffer-wide tag; re-assert the synopsis
+            // spacing + label weight over it (same reason the bold is re-applied
+            // here — a later-added tag would otherwise outrank them).
+            self.apply_synopsis_para_spacing();
             self.apply_synopsis_label_bold();
         }
         self.reset_scroll_top();
@@ -2722,6 +2782,18 @@ impl GlossOverlay {
         // fix in commit 4df9352). Per-block charging scales proportionally
         // with block count instead.
         let line_h = crate::ui::pagination::measure_text_height(&pctx, "Mg", size, &family, 200);
+        // Per-block paragraph gap. GLOSS still renders a blank-line separator, so
+        // it charges the measured line height (see the note above). SYNOPSIS now
+        // spaces paragraphs with the `synopsis-para` tag and has NO blank row, so
+        // it charges that tag's exact value — charging `line_h` there would
+        // over-estimate every block and underfill the page.
+        let spacing = match self.paginated_mode.get() {
+            PaginatedMode::Gloss => ParaSpacing { para: line_h, label: line_h },
+            PaginatedMode::Synopsis => ParaSpacing {
+                para: crate::ui::SYNOPSIS_PARA_GAP,
+                label: crate::ui::SYNOPSIS_LABEL_GAP,
+            },
+        };
         let markups = self.gloss_block_markups.borrow();
         let heights: Vec<i32> = blocks
             .iter()
@@ -2731,7 +2803,16 @@ impl GlossOverlay {
                     PaginatedMode::Gloss => markups.get(i).map(|s| s.as_str()),
                     PaginatedMode::Synopsis => None,
                 };
-                gloss_block_height(b, m, &pctx, &family, size, wrap_for(b.kind), doc_has_speaker, line_h)
+                gloss_block_height(
+                    b,
+                    m,
+                    &pctx,
+                    &family,
+                    size,
+                    wrap_for(b.kind),
+                    doc_has_speaker,
+                    spacing,
+                )
             })
             .collect();
         drop(markups);
@@ -2808,6 +2889,7 @@ impl GlossOverlay {
             buffer.set_text(&text);
             *self.synopsis_label_ranges.borrow_mut() = label_ranges;
             *self.hi_ranges.borrow_mut() = hi_ranges;
+            self.apply_synopsis_para_spacing();
             self.apply_synopsis_label_bold();
             self.apply_hi_color();
             self.rebuild_block_ranges_from(crate::ui::gloss_block::synopsis_blocks(&synopsis));
@@ -2831,9 +2913,12 @@ impl GlossOverlay {
                     // LeadLabel variant (gloss echoes ride in the markup string, not
                     // here), so `if let`/`let-else` would be flagged irrefutable.
                     let crate::ui::gloss_block::Attachment::LeadLabel(lbl) = a;
+                    // Single `\n`: one paragraph per buffer line. The visible
+                    // break is the `synopsis-para` tag's SYNOPSIS_PARA_GAP, not
+                    // a blank row (see render_synopsis_with_labels).
                     if !body.is_empty() {
-                        body.push_str("\n\n");
-                        char_off += 2;
+                        body.push('\n');
+                        char_off += 1;
                     }
                     let len = lbl.chars().count();
                     label_ranges.push((char_off, char_off + len));
@@ -2841,8 +2926,8 @@ impl GlossOverlay {
                     char_off += len;
                 }
                 if !body.is_empty() {
-                    body.push_str("\n\n");
-                    char_off += 2;
+                    body.push('\n');
+                    char_off += 1;
                 }
                 // `b.display` is IPA-stripped but may still carry `<hi>` tags
                 // and Markdown emphasis; strip both and shift each range set
@@ -2868,6 +2953,7 @@ impl GlossOverlay {
             buffer.set_text(&body);
             *self.synopsis_label_ranges.borrow_mut() = label_ranges;
             *self.hi_ranges.borrow_mut() = hi_ranges;
+            self.apply_synopsis_para_spacing();
             self.apply_synopsis_label_bold();
             self.apply_hi_color();
             crate::ui::gloss_render::apply_emphasis_ranges(&buffer, 0, &emph_spans);
@@ -3755,6 +3841,11 @@ fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32, line_h
         // Speakerless verse: no trailing paragraph gap — just a small safety pad.
         text_h + SPEAKERLESS_SOURCE_PAD
     } else {
+        // Explication: the block's own text plus the paragraph gap that renders
+        // below/above it. `line_h` is the GLOSS charge (that path still renders a
+        // blank-line separator between paragraphs plus per-line
+        // `pixels_below_lines`). SYNOPSIS passes its real tag gap instead — see
+        // `gloss_block_height`'s `para_gap`.
         text_h + line_h
     }
 }
@@ -3765,6 +3856,24 @@ fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32, line_h
 ///
 /// Calls `crate::ui::pagination::measure_text_height` for the raw text height,
 /// then adds the appropriate overhead via `block_height_overhead`.
+/// The per-block paragraph spacing `repaginate` must charge, which differs by
+/// render mode.
+///
+/// GLOSS uses the measured line height for both: its paragraphs are still
+/// separated by a blank buffer line plus per-line `pixels_below_lines`, neither
+/// modeled by a plain `pango::Layout`. SYNOPSIS uses its real tag values — the
+/// blank-line separator is gone, replaced by exactly `SYNOPSIS_PARA_GAP`, so
+/// charging a full line height there would over-estimate every block by most of
+/// a line and underfill the page.
+#[derive(Clone, Copy)]
+struct ParaSpacing {
+    /// Gap charged for a paragraph break (the `synopsis-para` gap in synopsis
+    /// mode, the measured line height in gloss mode).
+    para: i32,
+    /// Gap charged between a lead label and the body it heads.
+    label: i32,
+}
+
 fn gloss_block_height(
     block: &GlossBlock,
     markup: Option<&str>,
@@ -3773,26 +3882,33 @@ fn gloss_block_height(
     size_pt: i32,
     wrap_w: i32,
     has_speaker: bool,
-    line_h: i32,
+    spacing: ParaSpacing,
 ) -> i32 {
     // Leaded: the gloss view renders with `pixels_inside_wrap`
     // (ui::OVERLAY_LINE_LEADING), so wrap heights must charge the same.
     let text_h = crate::ui::pagination::measure_text_height_leaded(
         pctx, &block.display, size_pt, family, wrap_w,
     );
-    let mut h = block_height_overhead(block.kind == BlockKind::Source, has_speaker, text_h, line_h);
-    let line = size_pt + size_pt / 2;
+    let mut h =
+        block_height_overhead(block.kind == BlockKind::Source, has_speaker, text_h, spacing.para);
     // Synopsis: lead label paragraph(s) ride ABOVE the block body (in `attached`).
+    // A label renders as its own buffer line: its own ink, the section gap ABOVE
+    // it, and the tight `label_gap` binding it to the body below.
     // Plain irrefutable `let`: Attachment has the single LeadLabel variant.
     for a in &block.attached {
         let crate::ui::gloss_block::Attachment::LeadLabel(s) = a;
         h += crate::ui::pagination::measure_text_height_leaded(pctx, s, size_pt, family, wrap_w)
-            + line;
+            + spacing.para
+            + spacing.label;
     }
     // Gloss: a trailing echo lives in the block's MARKUP (A3), not in `display`.
     // Each `<gloss>[...]</gloss>` echo renders as a quote line + a citation line;
     // reserve room (over-measure) so a paginated page never clips it. Count the
     // echo `<gloss>` tags in the markup beyond the block's own content.
+    //
+    // GLOSS-ONLY: `markup` is None in synopsis mode, so this reserve — and its
+    // font-derived `line` estimate — is unchanged by the synopsis spacing work.
+    let line = size_pt + size_pt / 2;
     if let Some(m) = markup {
         for seg in m.split("<gloss>").skip(1) {
             let inner = seg.split("</gloss>").next().unwrap_or("").trim();
@@ -3806,6 +3922,80 @@ fn gloss_block_height(
         }
     }
     h
+}
+
+#[cfg(test)]
+mod synopsis_spacing_tests {
+    use super::*;
+
+    /// The synopsis paragraph gap is now TAG spacing, not a blank buffer line, so
+    /// `repaginate` must charge exactly what the tag renders. Charging the
+    /// measured line height instead (the GLOSS value, which covers that path's
+    /// still-present blank-row separator) over-estimates every block and
+    /// underfills the page.
+    ///
+    /// Guards the coupling flagged in the design: the per-block `line_h` headroom
+    /// existed to compensate for the blank row this change removed. If someone
+    /// reintroduces a `"\n\n"` join without restoring the charge — or vice versa —
+    /// pages silently clip or underfill.
+    #[test]
+    fn synopsis_charges_the_tag_gap_not_a_full_line() {
+        let text_h = 300;
+        let line_h = 30; // a realistic measured line height at reader size
+
+        let synopsis = ParaSpacing {
+            para: crate::ui::SYNOPSIS_PARA_GAP,
+            label: crate::ui::SYNOPSIS_LABEL_GAP,
+        };
+        let gloss = ParaSpacing { para: line_h, label: line_h };
+
+        let syn_h = block_height_overhead(false, false, text_h, synopsis.para);
+        let gloss_h = block_height_overhead(false, false, text_h, gloss.para);
+
+        assert_eq!(syn_h, text_h + crate::ui::SYNOPSIS_PARA_GAP);
+        assert!(
+            syn_h < gloss_h,
+            "synopsis must charge less than gloss now that its blank row is gone \
+             (synopsis={syn_h}, gloss={gloss_h})"
+        );
+    }
+
+    /// A label binds to the body it heads, so its gap below is much tighter than a
+    /// section break. Keeping this ordering is what stops "Gist:" from floating
+    /// equidistant between two sections.
+    #[test]
+    fn a_label_binds_tighter_than_a_section_break() {
+        assert!(
+            crate::ui::SYNOPSIS_LABEL_GAP < crate::ui::SYNOPSIS_PARA_GAP,
+            "label gap ({}) must be tighter than the section gap ({})",
+            crate::ui::SYNOPSIS_LABEL_GAP,
+            crate::ui::SYNOPSIS_PARA_GAP,
+        );
+    }
+
+    /// Reclaiming space is the POINT of the change: a page must fit at least as
+    /// many synopsis paragraphs as before, never fewer. Models the real
+    /// BH ch.11 card (one-line metadata paragraphs ahead of the Gist section)
+    /// against a production-ish budget.
+    #[test]
+    fn the_new_charge_never_fits_fewer_blocks_per_page() {
+        let budget = 1050;
+        // Seven one-line metadata paragraphs, then longer prose sections.
+        let text_hs = [90, 180, 90, 60, 90, 60, 30, 120, 480, 330];
+
+        let old: Vec<i32> = text_hs.iter().map(|t| t + 30).collect();
+        let new: Vec<i32> = text_hs
+            .iter()
+            .map(|t| t + crate::ui::SYNOPSIS_PARA_GAP)
+            .collect();
+
+        let n_old = crate::ui::pagination::paginate(&old, budget).len();
+        let n_new = crate::ui::pagination::paginate(&new, budget).len();
+        assert!(
+            n_new <= n_old,
+            "tighter spacing must not ADD pages (old={n_old}, new={n_new})"
+        );
+    }
 }
 
 #[cfg(test)]

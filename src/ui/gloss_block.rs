@@ -59,17 +59,25 @@ pub fn render_synopsis_with_labels(
         let (clean, hi) = strip_hi_spans(synopsis.trim());
         return (clean, Vec::new(), hi);
     }
-    // Join with a blank line, tracking each paragraph's char offset so label
-    // paragraphs can be located precisely in the assembled string. `<hi>` spans
-    // are stripped per paragraph; their ranges are shifted into the joined string.
+    // Join with a SINGLE newline — one buffer line per paragraph — tracking each
+    // paragraph's char offset so label paragraphs can be located precisely in the
+    // assembled string. `<hi>` spans are stripped per paragraph; their ranges are
+    // shifted into the joined string.
+    //
+    // The separator used to be `"\n\n"`, whose second newline rendered as a full
+    // EMPTY TEXT ROW that no spacing tag governed (~30px, measured as a 47-53px
+    // section gap against a 9px intra-paragraph gap). The visible break is now
+    // supplied by the `synopsis-para` tag's `SYNOPSIS_PARA_GAP`, applied per
+    // buffer line by the caller. Keep this a single `\n`: the gap is a tag, and
+    // one paragraph must stay one buffer line or the tag double-charges.
     let mut out = String::new();
     let mut labels: Vec<(usize, usize)> = Vec::new();
     let mut hi_ranges: Vec<(usize, usize)> = Vec::new();
     let mut char_off = 0usize;
     for (i, p) in paras.iter().enumerate() {
         if i > 0 {
-            out.push_str("\n\n");
-            char_off += 2;
+            out.push('\n');
+            char_off += 1;
         }
         let (clean, hi) = strip_hi_spans(p);
         let len = clean.chars().count();
@@ -1455,15 +1463,34 @@ mod label_tests {
     fn bolds_standalone_label_paragraph() {
         let syn = "<p>Plot stuff here.</p><p>Shakespearean parallels:</p><p>The Court of Chancery is Elsinore.</p>";
         let (text, labels, _hi) = render_synopsis_with_labels(syn);
+        // ONE `\n` per paragraph break, not two: the visible section gap is the
+        // `synopsis-para` tag's SYNOPSIS_PARA_GAP, not a blank buffer line. A
+        // blank line here would render an unbudgeted ~30px empty row AND make
+        // every label offset below wrong by one char per preceding break.
         assert_eq!(
             text,
-            "Plot stuff here.\n\nShakespearean parallels:\n\nThe Court of Chancery is Elsinore."
+            "Plot stuff here.\nShakespearean parallels:\nThe Court of Chancery is Elsinore."
         );
         assert_eq!(labels.len(), 1, "exactly one label paragraph");
         let (s, e) = labels[0];
         let chars: Vec<char> = text.chars().collect();
         let slice: String = chars[s..e].iter().collect();
         assert_eq!(slice, "Shakespearean parallels:");
+    }
+
+    /// The label range is a CHAR OFFSET into the joined string, so it must track
+    /// the separator width exactly — `apply_synopsis_label_bold` slices the
+    /// buffer by it. With several paragraphs ahead of the label, an off-by-one
+    /// per break compounds and bolds the wrong characters.
+    #[test]
+    fn label_offsets_track_the_separator_across_many_paragraphs() {
+        let syn = "<p>One.</p><p>Two.</p><p>Three.</p><p>Gist:</p><p>The body.</p>";
+        let (text, labels, _hi) = render_synopsis_with_labels(syn);
+        assert_eq!(labels.len(), 1, "exactly one label paragraph");
+        let (s, e) = labels[0];
+        let chars: Vec<char> = text.chars().collect();
+        let slice: String = chars[s..e].iter().collect();
+        assert_eq!(slice, "Gist:", "label offset must survive 3 preceding breaks");
     }
 
     #[test]
