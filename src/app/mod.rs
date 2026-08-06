@@ -1264,6 +1264,15 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// original pass — usable height and the row grid are untouched and no pinned
 /// page table needs regenerating. Keep the three in step.
 ///
+/// MEASURED NON-FIX — do NOT retry 58 -> 63 to gain head clearance. The strip
+/// CENTRES its labels (`valign: Center`), so growing it moves the running head
+/// down too: at 63 the label sat at y=48-57 instead of 41-50 and the visible
+/// head-to-text gap SHRANK 32 -> 25px, the opposite of the intent, even though
+/// the body text itself moved down 13px. Raising this constant buys body
+/// offset, never clearance. To move text down while the head stays put, the
+/// labels would have to be top-aligned instead — a change to how the head band
+/// reads on every surface, not a constant tweak.
+///
 /// Everything in the strip now CENTRES itself (the running-head labels and, as
 /// of this pass, `card_focus_rule` — it was pinned with a fixed 36px top margin
 /// that capped how far the strip could shrink). So there is no arithmetic floor

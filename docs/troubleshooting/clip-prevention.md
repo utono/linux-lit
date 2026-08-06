@@ -1750,6 +1750,15 @@ When a half line clips at the bottom edge of a scrolled surface:
       Measured: trimming it alone moved the visible foot gap the WRONG way
       (61 -> 68). Freed pixels only surface if they buy a WHOLE extra row;
       otherwise they reappear as residue. It works ONLY paired with the spacer.
+    - **MEASURED NON-FIX — do not retry `TOP_SPACER_HEIGHT` 58 -> 63 to gain
+      MORE head clearance.** The strip CENTRES its labels (`valign: Center`),
+      so growing it moves the running head down with the text: at 63 the label
+      sat at y=48-57 instead of 41-50 and the visible head-to-text gap SHRANK
+      **32 -> 25px** — the opposite of the intent — even though the body text
+      itself moved down 13px. Raising this constant buys BODY OFFSET, never
+      CLEARANCE. To move text down while the head stays put, the labels would
+      have to be top-aligned instead, which changes how the head band reads on
+      every surface; that is a design change, not a constant tweak.
     - Note `top_spacer_height` IS in the `play_pages`/`prose_pages`
       fingerprint, so tables self-heal (regenerate once per work on next open)
       even though usable height is unchanged. Expected, not a defect.
