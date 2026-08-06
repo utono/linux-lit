@@ -849,7 +849,17 @@ pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 /// height (and therefore the same row grid) while the foot gains the breathing
 /// room the head gave up. Raising this alone would cost a line per page; the
 /// two constants must move together.
-pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 52;
+///
+/// 52 -> 38 (2026-08-05): 14px goes BACK to `TOP_SPACER_HEIGHT` (44 -> 58) —
+/// that pass overshot and left continuation-first rows crowding the running
+/// head. Same invariant, opposite direction: usable height and the row grid are
+/// unchanged, so no pinned page table needs regenerating.
+///
+/// NOTE this is NOT a whitespace knob on its own. Measured 2026-08-05: trimming
+/// it in isolation moved the visible foot gap the WRONG way (61 -> 68), because
+/// the freed pixels only surface if they buy a WHOLE extra row; otherwise they
+/// reappear as residue. It only works paired with `TOP_SPACER_HEIGHT`.
+pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 38;
 
 /// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
 /// single-column path (whose clip covers the full descender_guard +
@@ -868,7 +878,11 @@ pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 52;
 /// `SINGLE_COLUMN_BOTTOM_MARGIN` — the 30px removed from `TOP_SPACER_HEIGHT`
 /// moves to the foot on this layout too, so the two-column spread keeps its
 /// usable height and line count.
-pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 52;
+///
+/// 52 -> 38 (2026-08-05): mirrors `SINGLE_COLUMN_BOTTOM_MARGIN` again as 14px
+/// returns to `TOP_SPACER_HEIGHT` (44 -> 58). Usable height and line count are
+/// again unchanged, so stored `play_pages` fingerprints stay valid.
+pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 38;
 
 /// The pixel reserve the two-column fill leaves BELOW the last possible line:
 /// `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` — exactly the band

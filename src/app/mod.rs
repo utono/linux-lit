@@ -1255,12 +1255,21 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// `TWO_COLUMN_BOTTOM_MARGIN`, 22 -> 52), so the usable height is unchanged and
 /// the row grid is preserved. Keep the three in step.
 ///
+/// 44 -> 58 (2026-08-05): that pass overshot. At 44 a page whose first row is a
+/// PARAGRAPH CONTINUATION renders its ascenders within ~6px of the running-head
+/// labels (measured across four user-labelled captures: the two "about right"
+/// pages cleared the head by 25-31px, the two rejected ones by 6px), while ~90px
+/// of unused cream pooled at the foot. Top and foot are one defect, not two. The
+/// 14px comes BACK off the two bottom reserves (52 -> 38), so — as in the
+/// original pass — usable height and the row grid are untouched and no pinned
+/// page table needs regenerating. Keep the three in step.
+///
 /// Everything in the strip now CENTRES itself (the running-head labels and, as
 /// of this pass, `card_focus_rule` — it was pinned with a fixed 36px top margin
 /// that capped how far the strip could shrink). So there is no arithmetic floor
 /// left, only a typographic one: the labels are 14px, and below ~24 the strip
 /// stops reading as a head band at all.
-pub const TOP_SPACER_HEIGHT: i32 = 44;
+pub const TOP_SPACER_HEIGHT: i32 = 58;
 
 /// Top margin for the header-band toasts (`chapter_toast`, `speed_toast`;
 /// `search_toast` adds +2 for its smaller face and thinner pill padding).
@@ -1784,10 +1793,11 @@ pub fn build_window(
     // the horizontal CARD_OUTER_MARGIN(24): a slightly taller card, whose gained
     // height funds more breathing room inside (header top-inset + bottom reserve)
     // WITHOUT costing a text row. See layout.rs `main_card_rect` (mirrors this in
-    // its fallback height) and CARD_VERTICAL_OUTER_MARGIN. Horizontal start/end
-    // are overwritten by apply_card_sizing; top/bottom are set once here.
-    content_hbox.set_margin_top(crate::app::layout::CARD_VERTICAL_OUTER_MARGIN);
-    content_hbox.set_margin_bottom(crate::app::layout::CARD_VERTICAL_OUTER_MARGIN);
+    // its fallback height) and CARD_MARGIN_TOP / CARD_MARGIN_BOTTOM, which are
+    // asymmetric so the card sits lower without changing height. Horizontal
+    // start/end are overwritten by apply_card_sizing; top/bottom are set here.
+    content_hbox.set_margin_top(crate::app::layout::CARD_MARGIN_TOP);
+    content_hbox.set_margin_bottom(crate::app::layout::CARD_MARGIN_BOTTOM);
     content_hbox.set_margin_start(24);
     content_hbox.set_margin_end(24);
     content_hbox.append(&page_turn_overlay);

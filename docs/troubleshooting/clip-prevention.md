@@ -1724,6 +1724,43 @@ When a half line clips at the bottom edge of a scrolled surface:
       it addresses a different mechanism (a stale face, not an unvalidated
       viewport-distant line) and does not stop the race.
 
+24. **MAIN CARD, single-column PROSE — the FIRST row crowds the running head
+    while the FOOT pools unused cream. NOT a clip; a head/foot BALANCE bug,
+    and the two symptoms are ONE defect.**
+    - Tell: the user reports "not enough breathing room at top, too much at
+      bottom." Measured on four user-labelled captures at 1920x1200: the
+      REJECTED pages cleared the running-head labels by **6px**, the
+      "about right" ones by **25-31px**, while 60-93px sat unused at the foot.
+    - **The top gap the user means is NOT the card's outer margin.** Window
+      edge -> card top, and card top -> header ink (17px), were CONSTANT across
+      every capture, good and bad alike. Only `hdr -> first body row` varied.
+      Measure THAT before touching `CARD_MARGIN_TOP` — the outer margin looks
+      like the obvious knob and is the wrong one.
+    - Root cause: `TOP_SPACER_HEIGHT` 74 -> 44 (2026-07-28) overshot. It only
+      bites when a page's first row is a PARAGRAPH CONTINUATION — a row with
+      tall ascenders and no paragraph gap above it. A page opening on a
+      heading or a paragraph start looks fine at the same constant, which is
+      why the regression shipped.
+    - Fix (2026-08-05): `TOP_SPACER_HEIGHT` 44 -> 58, with BOTH bottom reserves
+      52 -> 38. Keep the three in step: `top_spacer` is a SIBLING above the
+      text view, so +14 to it takes 14 off `text_view.height()`, and -14 to the
+      reserve restores `usable = view_h - guard - BOTTOM_MARGIN` exactly. Row
+      grid preserved, so no pinned page table changes shape.
+    - **`SINGLE_COLUMN_BOTTOM_MARGIN` is NOT a whitespace knob on its own.**
+      Measured: trimming it alone moved the visible foot gap the WRONG way
+      (61 -> 68). Freed pixels only surface if they buy a WHOLE extra row;
+      otherwise they reappear as residue. It works ONLY paired with the spacer.
+    - Note `top_spacer_height` IS in the `play_pages`/`prose_pages`
+      fingerprint, so tables self-heal (regenerate once per work on next open)
+      even though usable height is unchanged. Expected, not a defect.
+    - **Retracted claim — do not re-inherit it:** an earlier note held that
+      `TOP_SPACER_HEIGHT` 44 -> 58 "BREAKS the synopsis overlay (2/2 fail,
+      `TEST_OVERLAY_VIEWPORT_RECT` never appears)." It does not. Verified
+      2026-08-05 by stashing the change: `overlay_clipping` fails **identically
+      2/2 at the 44/52/52 baseline**, and nothing in the synopsis overlay reads
+      the constant. It is a PRE-EXISTING `overlay_clipping` failure that a
+      one-run comparison during harness flux mis-attributed to the edit.
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
