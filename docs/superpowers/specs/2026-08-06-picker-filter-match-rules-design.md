@@ -154,11 +154,28 @@ against the database, not inferred from the field's name or its role in the UI.
 
 ## Not changing
 
-`media_picker` matches `format_path` (basename plus parent directory), which is
-bounded and not degenerate — 126/235 on `simile`, worth noting but not a filter
-failure. `journal_move_picker` matches a division label, `library_picker` uses
-its own scorer over title/author/abbrev, and `journal_term_input` matches single
-terms. All genuinely short; left alone.
+**`media_picker` — measured and deliberately left fuzzy (2026-08-06).** The
+whole-branch review reported "126/235 on `simile`" and flagged it as borderline.
+That figure does not reproduce and appears to have been computed over full
+filesystem paths rather than the labels the picker actually builds. Re-measured
+against all 235 real `media_files` rows, simulating `format_media_label`:
+
+- Label length: mean **46** chars, max **114** (`parent-dir/filename`), or a
+  curated `display_name` — 8 exist, max **49** chars.
+- `simile` fuzzy-matches **6/235 (2%)**, `bleak` 14 (5%), `romeo` 44 (18%),
+  `ration` 43 (18%).
+
+Nothing near filter collapse (gloss_picker was 96%). Two further reasons to
+leave it: this picker MATCHES EXACTLY WHAT IT DISPLAYS — the same `display`
+string feeds both the label and the filter — so it has none of the
+invisible-matched-text problem that made the other four bugs hard to see. And
+filenames are precisely where fuzzy earns its keep: scattered matching is what
+lets `bhep6` find `BleakHouse_ep6_Sean_Barrett.m4b`. Converting would trade a
+working affordance for a non-existent problem.
+
+`journal_move_picker` matches a division label, `library_picker` uses its own
+scorer over title/author/abbrev, and `journal_term_input` matches single terms.
+All genuinely short; left alone.
 
 The `scope='passage'` source-line labelling and the 80-char truncation are
 deliberate existing behavior and are out of scope.
