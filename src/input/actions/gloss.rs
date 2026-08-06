@@ -2226,6 +2226,21 @@ fn play_block_tts(state_rc: &Rc<RefCell<AppState>>, kind: BlockKind, index: i32)
         recolor_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
+        // Cursor may have moved during the await — see the journal path. Compare
+        // the KIND too: source and explication blocks number independently, so
+        // index alone would match the wrong block. The clip is cached either
+        // way, so the next press is a cache hit.
+        let still_current = should_play_after_synth(
+            (kind, index),
+            state_for_result.borrow().gloss_overlay.current_block(),
+        );
+        if !still_current {
+            crate::log_fmt!(
+                "TTS: synthesized gloss {} {} {} — cursor moved, not playing",
+                gloss_id, kind_str, index
+            );
+            return;
+        }
         state_for_result.borrow().tts.play_file(&path);
         crate::log_fmt!(
             "TTS: synthesized gloss {} {} {} (voice {})",
@@ -2557,6 +2572,20 @@ fn play_synopsis_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
         recolor_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
+        // Cursor may have moved during the await — see the journal path. Play
+        // only if this is still the cursor's block; the clip is cached either
+        // way, so the next press is a cache hit.
+        let still_current = should_play_after_synth(
+            index,
+            state_for_result.borrow().gloss_overlay.current_block().map(|(_k, i)| i),
+        );
+        if !still_current {
+            crate::log_fmt!(
+                "SYNOPSIS TTS: synthesized {} {}-{} para {} — cursor moved, not playing",
+                work_abbrev, div1, div2, index
+            );
+            return;
+        }
         state_for_result.borrow().tts.play_file(&path);
         crate::log_fmt!(
             "SYNOPSIS TTS: synthesized {} {}-{} para {} (voice {})",
@@ -2762,6 +2791,22 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
         recolor_journal_cached_blocks_rc(&state_for_result);
         // Playback begins now — dismiss the persistent "Synthesizing…" pill.
         hide_tts_toast(&state_for_result);
+        // The cursor may have MOVED during the await (synthesis takes seconds,
+        // and j/k/x/y stay live throughout). Play only if this block is still
+        // the cursor's; otherwise the reader hears a paragraph they navigated
+        // away from. The clip is already cached and persisted above, so the
+        // work is not wasted — the next `a`/Space on this block is a cache hit.
+        let still_current = should_play_after_synth(
+            index as usize,
+            state_for_result.borrow().journal_overlay.current_full_block_index(),
+        );
+        if !still_current {
+            crate::log_fmt!(
+                "JOURNAL TTS: synthesized entry {} para {} — cursor moved, not playing",
+                entry_id, index
+            );
+            return;
+        }
         state_for_result.borrow().tts.play_file(&path);
         crate::log_fmt!(
             "JOURNAL TTS: synthesized entry {} para {} (voice {})",
@@ -2796,6 +2841,22 @@ pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     // see `stop_overlay_tts_only`.
     stop_all_gloss_audio(state_rc);
     play_journal_block(state_rc, index);
+}
+
+/// Should a just-synthesized clip actually play? Only when the block it was
+/// synthesized for is STILL the cursor's block.
+///
+/// Synthesis is asynchronous and takes seconds, during which every navigation
+/// bind stays live. Without this check the reader hears a paragraph they
+/// already navigated away from. The clip is written to the cache and the DB
+/// before this point either way, so suppressing playback wastes nothing — the
+/// next press on that block is a cache hit.
+///
+/// Compares the WHOLE cursor identity, not just an index: the gloss overlay
+/// numbers source and explication blocks independently, so equal indices of
+/// different kinds are different blocks.
+pub(crate) fn should_play_after_synth<T: PartialEq>(synthesized: T, cursor_now: Option<T>) -> bool {
+    cursor_now == Some(synthesized)
 }
 
 /// What Space should do to the TTS player, given its current state. Pure so the
@@ -4355,6 +4416,45 @@ mod source_timing_tests {
         // DOES match and resolves the time.
         let display = "To be, or not to be";
         assert_eq!(first_source_start_time(display, &work), Some(42.0));
+    }
+}
+
+#[cfg(test)]
+mod should_play_after_synth_tests {
+    use super::should_play_after_synth;
+    use crate::ui::gloss_block::BlockKind;
+
+    #[test]
+    fn plays_when_the_cursor_never_moved() {
+        assert!(should_play_after_synth(3usize, Some(3usize)));
+    }
+
+    /// THE reported case: the reader navigates away while ElevenLabs is still
+    /// synthesizing, and the clip must not start on a paragraph they left.
+    #[test]
+    fn stays_silent_when_the_cursor_moved_away() {
+        assert!(!should_play_after_synth(3usize, Some(4usize)));
+    }
+
+    /// The overlay closed (or the page emptied) during the await.
+    #[test]
+    fn stays_silent_when_there_is_no_cursor_block() {
+        assert!(!should_play_after_synth(3usize, None::<usize>));
+    }
+
+    /// The gloss overlay numbers Source and Explication blocks independently,
+    /// so index alone is not an identity — comparing only the index would play
+    /// explication 2's audio while the cursor sits on source 2.
+    #[test]
+    fn kind_is_part_of_the_identity() {
+        assert!(should_play_after_synth(
+            (BlockKind::Explication, 2),
+            Some((BlockKind::Explication, 2))
+        ));
+        assert!(!should_play_after_synth(
+            (BlockKind::Explication, 2),
+            Some((BlockKind::Source, 2))
+        ));
     }
 }
 
