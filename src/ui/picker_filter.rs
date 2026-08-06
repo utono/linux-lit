@@ -94,7 +94,8 @@ pub(crate) fn subsequence_match(filter: &str, target: &str) -> bool {
 ///
 /// - `short_target` — the short label fields joined (author, work, division,
 ///   type). Fuzzy subsequence matching, so `ch. 2` and `dickens` still narrow.
-/// - `long_target` — the ~80-char row label. Contiguous substring only.
+/// - `long_target` — the row's long text field (e.g. the row label, or the
+///   full passage/line body backing it). Contiguous substring only.
 /// - `haystack` — the entry's full question + answer. Contiguous substring only.
 ///
 /// A subsequence over long prose degenerates: six common letters match almost
@@ -200,6 +201,30 @@ mod tests {
         assert!(row_matches("jellyby", "", label, ""));
         // Typo tolerance is deliberately gone on the long target.
         assert!(!row_matches("jelby", "", label, ""));
+    }
+
+    /// The gloss-picker call site (Task 5): `source_text` is the full
+    /// glossed-passage body, not a row label — measured on BH-Barrett at a
+    /// mean of 524 chars, max 7123. A realistic passage-length string where
+    /// s-i-m-i-l-e occurs scattered and in order must still be rejected,
+    /// while a literal "simile" substring must still be accepted.
+    #[test]
+    fn gloss_source_text_rejects_scattered_accepts_literal() {
+        let scattered_passage = "sir, is my brother's love to me the same as \
+            it is upon his image, live but so long as thy mother? if you can \
+            look into the seeds of time, and say which grain will grow and \
+            which will not, speak then to me, who neither beg nor fear your \
+            favours nor your hate. i am silenced, mildly, in that we may \
+            resolve this contradiction easily.";
+        assert!(
+            !row_matches("simile", "", scattered_passage, ""),
+            "long_target must not fuzzy-match a scattered subsequence in a \
+             full passage body: {scattered_passage}"
+        );
+
+        let literal_passage = "his rage is like a simile drawn too far, \
+            straining the comparison past what the sense can bear.";
+        assert!(row_matches("simile", "", literal_passage, ""));
     }
 
     #[test]

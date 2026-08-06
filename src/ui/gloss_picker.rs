@@ -82,8 +82,14 @@ impl GlossPicker {
 
         for (idx, item) in self.items.iter().enumerate() {
             if !filter.is_empty() {
-                let target = format!("{} {}", item.speaker, item.source_text).to_lowercase();
-                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
+                let short_target = item.speaker.to_lowercase();
+                let long_target = item.source_text.to_lowercase();
+                if !crate::ui::picker_filter::row_matches(
+                    &filter_lower,
+                    &short_target,
+                    &long_target,
+                    "",
+                ) {
                     continue;
                 }
             }
