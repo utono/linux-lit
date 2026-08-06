@@ -2777,7 +2777,11 @@ fn play_journal_block(state_rc: &Rc<RefCell<AppState>>, index: i32) {
 pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     {
         let s = state_rc.borrow();
-        if s.tts.is_playing() {
+        // Stop-toggle, but only while actually SOUNDING. `is_playing` reports a
+        // loaded clip and stays true while Space has it paused; without the
+        // `is_paused` guard, `a` on a paused clip would silently discard it
+        // instead of restarting the block — an apparent dead key.
+        if s.tts.is_playing() && !s.tts.is_paused() {
             s.tts.stop();
             return;
         }
@@ -2794,10 +2798,63 @@ pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
     play_journal_block(state_rc, index);
 }
 
-/// Space in the journal Q&A overlay: ALWAYS begin playback of the cursor's
-/// paragraph from its start (no pause-toggle). Stops any current audio first,
-/// then plays the paragraph's TTS. Mirrors `begin_current_synopsis_block`.
+/// What Space should do to the TTS player, given its current state. Pure so the
+/// transport logic is testable: under `LIT_HEADLESS_TEST` the player is built
+/// with no audio device, so `is_playing`/`is_paused` are always false and a
+/// cage-driven Space can only ever exercise the `Start` arm.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum SpaceTransport {
+    Resume,
+    Pause,
+    Start,
+}
+
+/// `is_playing` reports a LOADED clip and stays true while paused, so `paused`
+/// must be tested FIRST or the toggle only ever pauses and never resumes.
+pub(crate) fn space_transport(playing: bool, paused: bool) -> SpaceTransport {
+    if paused {
+        SpaceTransport::Resume
+    } else if playing {
+        SpaceTransport::Pause
+    } else {
+        SpaceTransport::Start
+    }
+}
+
+/// Space in the journal Q&A overlay: TOGGLE play/pause on the rodio TTS player.
+///
+/// - A clip paused -> resume it in place.
+/// - A clip playing -> pause it in place.
+/// - Nothing loaded -> start the cursor paragraph's TTS from its beginning.
+///
+/// Deliberately NOT the same as `a` (`read_current_journal_block`), which always
+/// (re)starts the cursor block from the top. Space is the transport control;
+/// `a` is "read this block". They used to do the same thing, which left the
+/// overlay with no way to pause a clip mid-sentence and pick it back up.
+///
+/// Diverges from `begin_current_synopsis_block`, which this once mirrored.
 pub(crate) fn begin_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
+    // PAUSE/RESUME the rodio player when a clip is loaded — Space is a transport
+    // control, not a second "play from the start" (that is `a`). `is_playing`
+    // reports a LOADED clip, so it stays true while paused; check `is_paused`
+    // first or the toggle only ever pauses.
+    {
+        let s = state_rc.borrow();
+        match space_transport(s.tts.is_playing(), s.tts.is_paused()) {
+            SpaceTransport::Resume => {
+                s.tts.resume();
+                crate::log_fmt!("JOURNAL TTS: space -> resume");
+                return;
+            }
+            SpaceTransport::Pause => {
+                s.tts.pause();
+                crate::log_fmt!("JOURNAL TTS: space -> pause");
+                return;
+            }
+            SpaceTransport::Start => {}
+        }
+    }
+    // Nothing loaded: start the cursor block from its beginning.
     stop_all_gloss_audio(state_rc);
     let index = match state_rc.borrow().journal_overlay.current_full_block_index() {
         Some(i) => i as i32,
@@ -4298,5 +4355,45 @@ mod source_timing_tests {
         // DOES match and resolves the time.
         let display = "To be, or not to be";
         assert_eq!(first_source_start_time(display, &work), Some(42.0));
+    }
+}
+
+#[cfg(test)]
+mod space_transport_tests {
+    use super::{space_transport, SpaceTransport};
+
+    /// The ordering trap. `TtsPlayer::is_playing` reports a LOADED clip, so it
+    /// is true while the clip is paused. Testing `playing` before `paused`
+    /// makes Space pause an already-paused clip forever — it can never resume.
+    #[test]
+    fn a_paused_clip_resumes_even_though_it_reports_playing() {
+        assert_eq!(
+            space_transport(true, true),
+            SpaceTransport::Resume,
+            "paused must win over playing, or Space never resumes"
+        );
+    }
+
+    #[test]
+    fn a_sounding_clip_pauses() {
+        assert_eq!(space_transport(true, false), SpaceTransport::Pause);
+    }
+
+    /// Nothing loaded: Space falls back to starting the cursor block. This is
+    /// the ONLY arm a headless cage run can reach (no audio device there), so
+    /// the two above are covered here or nowhere.
+    #[test]
+    fn an_idle_player_starts_the_cursor_block() {
+        assert_eq!(space_transport(false, false), SpaceTransport::Start);
+    }
+
+    /// Space must never be a no-op: every state maps to an action.
+    #[test]
+    fn every_state_maps_to_an_action() {
+        for playing in [false, true] {
+            for paused in [false, true] {
+                let _: SpaceTransport = space_transport(playing, paused);
+            }
+        }
     }
 }
