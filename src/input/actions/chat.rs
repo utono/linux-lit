@@ -2863,7 +2863,7 @@ pub(crate) fn size_panel(s: &AppState) {
             // the same height. The header band inside the panel mirrors the
             // card's running-head strip AND lands the transcript's first line
             // level with the card's first reading line.
-            let top_margin = crate::app::layout::CARD_VERTICAL_OUTER_MARGIN;
+            let top_margin = crate::app::layout::CARD_MARGIN_TOP;
             let panel_h = card_h.max(0);
             s.chat_panel
                 .set_header_band_height(chat_header_band_height(s.config.line_spacing as i32));
@@ -2897,7 +2897,7 @@ pub(crate) fn size_panel(s: &AppState) {
             // This paints over the portion of the card's running head above
             // the overlaid column — the same trade the panel already makes
             // with the column text itself.
-            let top_margin = crate::app::layout::CARD_VERTICAL_OUTER_MARGIN;
+            let top_margin = crate::app::layout::CARD_MARGIN_TOP;
             s.chat_panel
                 .set_header_band_height(chat_header_band_height(s.config.line_spacing as i32));
             // The two-column DIVIDER stops short of the card's bottom by its own
@@ -2908,7 +2908,7 @@ pub(crate) fn size_panel(s: &AppState) {
             let divider_inset =
                 crate::input::scroll::two_column_divider_bottom_px(&s.text_view);
             let panel_h = (card_h
-                - (top_margin - crate::app::layout::CARD_VERTICAL_OUTER_MARGIN)
+                - (top_margin - crate::app::layout::CARD_MARGIN_TOP)
                 - divider_inset)
                 .max(0);
             s.chat_panel.container.set_valign(gtk4::Align::Start);

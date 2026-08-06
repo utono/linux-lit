@@ -47,7 +47,27 @@ pub(crate) const CARD_OUTER_MARGIN: i32 = 24;
 /// a text row. Set once on `content_hbox` (mod.rs) and mirrored in the
 /// `main_card_rect` height fallback below. Vertical only — never applied to
 /// start/end.
-pub(crate) const CARD_VERTICAL_OUTER_MARGIN: i32 = 14;
+///
+/// This is the SUM of the top and bottom margins below; every height computation
+/// wants the total, so it stays the single value `main_card_rect` subtracts.
+/// Splitting it asymmetrically shifts the card WITHOUT changing its height, so
+/// the row grid and the pinned page tables are unaffected.
+pub(crate) const CARD_VERTICAL_OUTER_MARGIN: i32 = CARD_MARGIN_TOP + CARD_MARGIN_BOTTOM;
+
+/// Top outer margin. Asymmetric with the bottom (2026-08-05): pixel-measuring a
+/// production prose capture showed the running head 19px below the card's top
+/// edge while the last line kept 61px beneath it — the head read as cramped and
+/// the foot as slack. 10px moves from the foot to the head (24/4 from 14/14).
+///
+/// The two bottom RESERVE constants in scroll.rs are deliberately NOT the lever
+/// here: they are fill reserves that decide how many whole rows fit, so trimming
+/// one only shows up if it buys an entire extra row — otherwise the pixels just
+/// reappear as residue at the foot (measured: -14 there moved the visible gap
+/// 61 -> 68, the wrong way). Shifting the CARD is what moves the visible band.
+pub(crate) const CARD_MARGIN_TOP: i32 = 24;
+
+/// Bottom outer margin — see `CARD_MARGIN_TOP` for why it is smaller.
+pub(crate) const CARD_MARGIN_BOTTOM: i32 = 4;
 
 /// Horizontal room the two-column reading block needs BESIDES the two columns
 /// themselves: the centre divider plus its seams. Used to clamp each column's
@@ -661,7 +681,9 @@ pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
     let card_h = if alloc_h > 0 {
         alloc_h
     } else {
-        (s.window.height() - 2 * CARD_VERTICAL_OUTER_MARGIN).max(0)
+        // CARD_VERTICAL_OUTER_MARGIN is already top + bottom, so it is
+        // subtracted once (it was `2 *` when top and bottom were one 14px value).
+        (s.window.height() - CARD_VERTICAL_OUTER_MARGIN).max(0)
     };
     (card_w, card_h)
 }
