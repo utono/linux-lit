@@ -1264,21 +1264,42 @@ pub const BCP_SENTENCE_GAP: i32 = 12;
 /// original pass — usable height and the row grid are untouched and no pinned
 /// page table needs regenerating. Keep the three in step.
 ///
-/// MEASURED NON-FIX — do NOT retry 58 -> 63 to gain head clearance. The strip
+/// 58 -> 66 (2026-08-05): +8 to push the first text row down, now that the
+/// running-head labels are TOP-aligned (`RUNNING_HEAD_TOP_OFFSET`) and no
+/// longer ride the strip's midpoint. This constant now controls ONLY where the
+/// text starts; the head's position is `RUNNING_HEAD_TOP_OFFSET`'s job. The
+/// bottom reserves follow 38 -> 30 as always, so usable height and the row
+/// grid are unchanged.
+///
+/// SUPERSEDED CONTEXT (kept: it explains why the split above exists). Before
+/// the labels were top-aligned, 58 -> 63 was tried to gain head clearance and
+/// did the OPPOSITE. The strip
 /// CENTRES its labels (`valign: Center`), so growing it moves the running head
 /// down too: at 63 the label sat at y=48-57 instead of 41-50 and the visible
 /// head-to-text gap SHRANK 32 -> 25px, the opposite of the intent, even though
-/// the body text itself moved down 13px. Raising this constant buys body
-/// offset, never clearance. To move text down while the head stays put, the
-/// labels would have to be top-aligned instead — a change to how the head band
-/// reads on every surface, not a constant tweak.
+/// the body text itself moved down 13px. While the labels were CENTRED this
+/// constant bought body offset, never clearance — which is exactly what
+/// top-aligning them fixed.
 ///
-/// Everything in the strip now CENTRES itself (the running-head labels and, as
-/// of this pass, `card_focus_rule` — it was pinned with a fixed 36px top margin
-/// that capped how far the strip could shrink). So there is no arithmetic floor
-/// left, only a typographic one: the labels are 14px, and below ~24 the strip
-/// stops reading as a head band at all.
-pub const TOP_SPACER_HEIGHT: i32 = 58;
+/// `card_focus_rule` still centres itself, but it lives in `page_turn_overlay`
+/// (and is hidden outside the chat layout), so it centres against the CARD,
+/// not this strip. There is no arithmetic floor left, only a typographic one:
+/// the labels are 14px, and below ~24 the strip stops reading as a head band
+/// at all.
+pub const TOP_SPACER_HEIGHT: i32 = 66;
+
+/// Top margin on the running-head labels, which are `Align::Start` (NOT
+/// centred) so `TOP_SPACER_HEIGHT` can grow the gap above the first text row
+/// WITHOUT dragging the head down with it. Chosen to reproduce the labels'
+/// measured on-screen position at the moment they stopped being centred
+/// (ink at y=48-57 against a 24px card top, i.e. ~20px of box above the ink at
+/// spacer 58): keeping the head still was the point of the change.
+///
+/// Raise this to move the head DOWN; raise `TOP_SPACER_HEIGHT` to move the
+/// TEXT down. They are independent now — that separation is the whole reason
+/// the labels are top-aligned, so do not "simplify" this back to
+/// `Align::Center`.
+pub const RUNNING_HEAD_TOP_OFFSET: i32 = 20;
 
 /// Top margin for the header-band toasts (`chapter_toast`, `speed_toast`;
 /// `search_toast` adds +2 for its smaller face and thinner pill padding).
@@ -1719,7 +1740,14 @@ pub fn build_window(
 
     let running_head_work = gtk4::Label::new(None);
     running_head_work.set_halign(gtk4::Align::Start);
-    running_head_work.set_valign(gtk4::Align::Center);
+    // TOP-aligned, not centred (2026-08-05). Centring tied the labels to the
+    // strip's height, so growing the strip to push text down dragged the head
+    // down with it and the visible head-to-text gap SHRANK — see
+    // TOP_SPACER_HEIGHT's "measured non-fix" note. Pinning to the top with
+    // RUNNING_HEAD_TOP_OFFSET decouples the two: the strip's height now sets
+    // ONLY where the text starts, and this offset sets where the head sits.
+    running_head_work.set_valign(gtk4::Align::Start);
+    running_head_work.set_margin_top(RUNNING_HEAD_TOP_OFFSET);
     running_head_work.set_hexpand(true);
     running_head_work.add_css_class("running-head-work");
     // Keep a visible gap between the abbrev and the position even when the
@@ -1733,7 +1761,9 @@ pub fn build_window(
 
     let running_head_division = gtk4::Label::new(None);
     running_head_division.set_halign(gtk4::Align::End);
-    running_head_division.set_valign(gtk4::Align::Center);
+    // Top-aligned to match `running_head_work` — the pair must share a baseline.
+    running_head_division.set_valign(gtk4::Align::Start);
+    running_head_division.set_margin_top(RUNNING_HEAD_TOP_OFFSET);
     running_head_division.set_hexpand(true);
     running_head_division.add_css_class("running-head-division");
     running_head_division.set_margin_start(16);

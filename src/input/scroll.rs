@@ -859,7 +859,7 @@ pub(crate) const BASE_BOTTOM_MARGIN: i32 = 46;
 /// it in isolation moved the visible foot gap the WRONG way (61 -> 68), because
 /// the freed pixels only surface if they buy a WHOLE extra row; otherwise they
 /// reappear as residue. It only works paired with `TOP_SPACER_HEIGHT`.
-pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 38;
+pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 30;
 
 /// Bottom reserve for a TWO-COLUMN paged column's FILL decision. Unlike the
 /// single-column path (whose clip covers the full descender_guard +
@@ -882,7 +882,7 @@ pub(crate) const SINGLE_COLUMN_BOTTOM_MARGIN: i32 = 38;
 /// 52 -> 38 (2026-08-05): mirrors `SINGLE_COLUMN_BOTTOM_MARGIN` again as 14px
 /// returns to `TOP_SPACER_HEIGHT` (44 -> 58). Usable height and line count are
 /// again unchanged, so stored `play_pages` fingerprints stay valid.
-pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 38;
+pub(crate) const TWO_COLUMN_BOTTOM_MARGIN: i32 = 30;
 
 /// The pixel reserve the two-column fill leaves BELOW the last possible line:
 /// `descender_guard + TWO_COLUMN_BOTTOM_MARGIN` — exactly the band

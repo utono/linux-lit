@@ -1750,15 +1750,26 @@ When a half line clips at the bottom edge of a scrolled surface:
       Measured: trimming it alone moved the visible foot gap the WRONG way
       (61 -> 68). Freed pixels only surface if they buy a WHOLE extra row;
       otherwise they reappear as residue. It works ONLY paired with the spacer.
-    - **MEASURED NON-FIX — do not retry `TOP_SPACER_HEIGHT` 58 -> 63 to gain
-      MORE head clearance.** The strip CENTRES its labels (`valign: Center`),
-      so growing it moves the running head down with the text: at 63 the label
-      sat at y=48-57 instead of 41-50 and the visible head-to-text gap SHRANK
-      **32 -> 25px** — the opposite of the intent — even though the body text
-      itself moved down 13px. Raising this constant buys BODY OFFSET, never
-      CLEARANCE. To move text down while the head stays put, the labels would
-      have to be top-aligned instead, which changes how the head band reads on
-      every surface; that is a design change, not a constant tweak.
+    - **The strip's height and the head's position were ONE knob, and that is
+      why the obvious fix backfires.** With the labels centred
+      (`valign: Center`) they ride the strip's midpoint, so growing the strip
+      moves the running head down along with the text. Measured: at
+      `TOP_SPACER_HEIGHT` 63 the label sat at y=48-57 instead of 41-50 and the
+      visible head-to-text gap SHRANK **32 -> 25px** — the opposite of the
+      intent — even though the body text itself moved down 13px.
+    - **Fix (2026-08-05, follow-up): TOP-ALIGN the labels and split the knob.**
+      `running_head_work` / `running_head_division` are now `Align::Start` with
+      `RUNNING_HEAD_TOP_OFFSET` (20), chosen to reproduce their measured
+      position at the moment they stopped being centred. `TOP_SPACER_HEIGHT`
+      (58 -> 66, reserves 38 -> 30) now controls ONLY where the TEXT starts.
+      Result: head label unmoved at y=48-57, first body row 82 -> 95, clearance
+      **32 -> 38px**, row count unchanged at 34. Raise the offset to move the
+      HEAD; raise the spacer to move the TEXT. Do not "simplify" the labels
+      back to `Align::Center` — that re-couples them.
+    - Scope note: the running-head strip is built once in `build_window` and is
+      MAIN-CARD only; the overlays keep their own head pair
+      (`division_synopsis.rs`), and `card_focus_rule` lives in
+      `page_turn_overlay` (hidden outside chat layout), so neither is affected.
     - Note `top_spacer_height` IS in the `play_pages`/`prose_pages`
       fingerprint, so tables self-heal (regenerate once per work on next open)
       even though usable height is unchanged. Expected, not a defect.
