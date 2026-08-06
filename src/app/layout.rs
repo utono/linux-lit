@@ -54,20 +54,27 @@ pub(crate) const CARD_OUTER_MARGIN: i32 = 24;
 /// the row grid and the pinned page tables are unaffected.
 pub(crate) const CARD_VERTICAL_OUTER_MARGIN: i32 = CARD_MARGIN_TOP + CARD_MARGIN_BOTTOM;
 
-/// Top outer margin. Asymmetric with the bottom (2026-08-05): pixel-measuring a
-/// production prose capture showed the running head 19px below the card's top
-/// edge while the last line kept 61px beneath it — the head read as cramped and
-/// the foot as slack. 10px moves from the foot to the head (24/4 from 14/14).
+/// Top outer margin. EQUAL to `CARD_MARGIN_BOTTOM` — the card must sit with the
+/// same gap to the top of the screen as to the bottom. This is a user-visible
+/// requirement, not an internal tuning knob: an asymmetric card reads as
+/// mis-hung on screen however good the typography inside it is.
 ///
-/// The two bottom RESERVE constants in scroll.rs are deliberately NOT the lever
-/// here: they are fill reserves that decide how many whole rows fit, so trimming
-/// one only shows up if it buys an entire extra row — otherwise the pixels just
-/// reappear as residue at the foot (measured: -14 there moved the visible gap
-/// 61 -> 68, the wrong way). Shifting the CARD is what moves the visible band.
-pub(crate) const CARD_MARGIN_TOP: i32 = 24;
+/// History (2026-08-05): these were briefly 24/4, shifting the card down 10px to
+/// buy clearance under the running head. That was the wrong lever — it fixed an
+/// INSIDE-the-card problem by moving the WHOLE card, which the user immediately
+/// spotted as unequal screen padding. The inside problem is now solved at its
+/// actual source: the running-head labels are top-aligned
+/// (`RUNNING_HEAD_TOP_OFFSET`) and `TOP_SPACER_HEIGHT` sets where text starts,
+/// so the card itself no longer has to move. Restored to 14/14.
+///
+/// If a future change needs more room under the head, raise
+/// `TOP_SPACER_HEIGHT`; to move the head itself, raise
+/// `RUNNING_HEAD_TOP_OFFSET`. Do NOT reach for these two — they are the card's
+/// position on screen, and they stay equal.
+pub(crate) const CARD_MARGIN_TOP: i32 = 14;
 
-/// Bottom outer margin — see `CARD_MARGIN_TOP` for why it is smaller.
-pub(crate) const CARD_MARGIN_BOTTOM: i32 = 4;
+/// Bottom outer margin — always EQUAL to `CARD_MARGIN_TOP`; see its doc.
+pub(crate) const CARD_MARGIN_BOTTOM: i32 = 14;
 
 /// Horizontal room the two-column reading block needs BESIDES the two columns
 /// themselves: the centre divider plus its seams. Used to clamp each column's
@@ -1005,5 +1012,30 @@ mod card_width_tests {
         // Narrow window: margins shrink with the slack rather than going negative.
         assert_eq!(card_side_margin(1000, 990), 5);
         assert_eq!(card_side_margin(1000, 1000), 0);
+    }
+
+    /// The card must hang with the SAME gap above and below it. This shipped
+    /// broken once (24/4 on 2026-08-05, to buy clearance under the running
+    /// head) and the user spotted the uneven screen padding immediately. The
+    /// head/foot balance INSIDE the card is `TOP_SPACER_HEIGHT` +
+    /// `RUNNING_HEAD_TOP_OFFSET`'s job — never these two.
+    #[test]
+    fn card_hangs_with_equal_gaps_above_and_below() {
+        use super::{CARD_MARGIN_BOTTOM, CARD_MARGIN_TOP, CARD_VERTICAL_OUTER_MARGIN};
+
+        assert_eq!(
+            CARD_MARGIN_TOP, CARD_MARGIN_BOTTOM,
+            "the card's top and bottom outer margins must be equal, or it reads \
+             as mis-hung on screen; tune the head/foot balance INSIDE the card \
+             with TOP_SPACER_HEIGHT / RUNNING_HEAD_TOP_OFFSET instead"
+        );
+
+        // The sum is what every height computation subtracts, so a change that
+        // keeps the sum leaves the card height, the row grid, and the pinned
+        // page tables untouched.
+        assert_eq!(
+            CARD_VERTICAL_OUTER_MARGIN,
+            CARD_MARGIN_TOP + CARD_MARGIN_BOTTOM
+        );
     }
 }
