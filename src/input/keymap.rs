@@ -2041,7 +2041,7 @@ fn handle_journal_key(
         // reaching the Ctrl+g consumed no-op arm below).
         if !is_ctrl {
             if key_name == "g" {
-                crate::input::actions::gloss::stop_all_gloss_audio(state);
+                crate::input::actions::gloss::stop_overlay_tts_only(state);
                 state.borrow().journal_overlay.cursor_first_block();
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
                 refresh_overlay_vocab_scope(state);
@@ -2289,7 +2289,7 @@ fn handle_journal_key(
             true
         }
         "G" => {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            crate::input::actions::gloss::stop_overlay_tts_only(state);
             state.borrow().journal_overlay.cursor_last_block();
             crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
             refresh_overlay_vocab_scope(state);
@@ -2302,7 +2302,7 @@ fn handle_journal_key(
         // dialogue-nav keys (q = next, comma = prev) so the same fingers move the
         // block cursor here.
         "j" | "q" => {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            crate::input::actions::gloss::stop_overlay_tts_only(state);
             // Block-less render (pending-passage source): scroll the viewport.
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.cursor_next_block();
@@ -2315,7 +2315,7 @@ fn handle_journal_key(
             true
         }
         "k" | "comma" => {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            crate::input::actions::gloss::stop_overlay_tts_only(state);
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.cursor_prev_block();
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
@@ -2329,7 +2329,7 @@ fn handle_journal_key(
         // landing the cursor on the first block of that page — a whole-page jump,
         // unlike j/k which step one block. No-op at the first/last page.
         "x" => {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            crate::input::actions::gloss::stop_overlay_tts_only(state);
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.page_turn(1);
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);
@@ -2340,7 +2340,7 @@ fn handle_journal_key(
             true
         }
         "y" => {
-            crate::input::actions::gloss::stop_all_gloss_audio(state);
+            crate::input::actions::gloss::stop_overlay_tts_only(state);
             if state.borrow().journal_overlay.has_nav_blocks() {
                 state.borrow().journal_overlay.page_turn(-1);
                 crate::input::actions::gloss::recolor_journal_cached_blocks_rc(state);

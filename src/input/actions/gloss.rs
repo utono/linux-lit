@@ -1729,9 +1729,14 @@ pub(crate) fn edit_gloss(state_rc: &Rc<RefCell<AppState>>, pasted_lines: &str) {
 }
 
 /// Stop all gloss audio so only one source can ever play: pause MPV media and
-/// stop the rodio TTS player. Called on every cursor move (j/k/gg/G) so moving
-/// off a playing block silences it before the user starts the next one. Both
+/// stop the rodio TTS player. Called on cursor moves in the GLOSS/SYNOPSIS
+/// overlays, whose source blocks play the work's own media — there, moving off
+/// a playing block should silence it before the user starts the next one. All
 /// calls are harmless no-ops when nothing is playing.
+///
+/// The JOURNAL overlay's nav binds deliberately use `stop_overlay_tts_only`
+/// instead: its blocks are a quoted passage plus a Q&A, not media anchors, so
+/// paging through it must not pause the reader's audiobook.
 pub(crate) fn stop_all_gloss_audio(state_rc: &Rc<RefCell<AppState>>) {
     let mut s = state_rc.borrow_mut();
     s.tts.stop();
@@ -1739,6 +1744,21 @@ pub(crate) fn stop_all_gloss_audio(state_rc: &Rc<RefCell<AppState>>) {
     // TTS never plays over the looping source passage.
     crate::input::actions::chat::chat_loop_stop(&mut s);
     let _ = s.cmd_tx.try_send(crate::mpv::MpvCommand::Pause);
+}
+
+/// Stop only the OVERLAY's own audio — the rodio TTS player and the Space
+/// source loop — leaving the main card's MPV playback alone.
+///
+/// For overlay NAVIGATION binds. Moving the block cursor is not a playback
+/// command: an overlay is something the reader opens while the audiobook plays,
+/// and paging through it silently paused their book (`stop_all_gloss_audio`
+/// sends `MpvCommand::Pause`). Only the binds that themselves produce audio —
+/// `a` and Space, which synthesize TTS — should touch playback, and they manage
+/// it through their own paths.
+pub(crate) fn stop_overlay_tts_only(state_rc: &Rc<RefCell<AppState>>) {
+    let mut s = state_rc.borrow_mut();
+    s.tts.stop();
+    crate::input::actions::chat::chat_loop_stop(&mut s);
 }
 
 /// Space in the gloss overlay: toggle play/pause for the cursor's block.
@@ -2766,6 +2786,11 @@ pub(crate) fn read_current_journal_block(state_rc: &Rc<RefCell<AppState>>) {
         Some(i) => i as i32,
         None => return,
     };
+    // `a` is a PLAYBACK bind, so it may touch the main card's media: pause MPV
+    // so the block's TTS is not spoken over the audiobook. (Space does the same
+    // via `stop_all_gloss_audio`.) The journal's NAV binds deliberately do not —
+    // see `stop_overlay_tts_only`.
+    stop_all_gloss_audio(state_rc);
     play_journal_block(state_rc, index);
 }
 
