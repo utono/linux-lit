@@ -79,8 +79,14 @@ impl BookmarkPicker {
 
         for item in &self.items {
             if !filter.is_empty() {
-                let target = format!("{} {}", item.speaker, item.line_text).to_lowercase();
-                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
+                let short_target = item.speaker.to_lowercase();
+                let long_target = item.line_text.to_lowercase();
+                if !crate::ui::picker_filter::row_matches(
+                    &filter_lower,
+                    &short_target,
+                    &long_target,
+                    "",
+                ) {
                     continue;
                 }
             }

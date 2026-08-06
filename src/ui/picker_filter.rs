@@ -89,6 +89,36 @@ pub(crate) fn subsequence_match(filter: &str, target: &str) -> bool {
     match_score(filter, target).is_some()
 }
 
+/// True when `filter` matches a picker row, with the match rule scaled to each
+/// field's LENGTH rather than its identity.
+///
+/// - `short_target` — the short label fields joined (author, work, division,
+///   type). Fuzzy subsequence matching, so `ch. 2` and `dickens` still narrow.
+/// - `long_target` — the row's long text field (e.g. the row label, or the
+///   full passage/line body backing it). Contiguous substring only.
+/// - `haystack` — the entry's full question + answer. Contiguous substring only.
+///
+/// A subsequence over long prose degenerates: six common letters match almost
+/// any passage. Searching `simile` returned four unrelated rows because
+/// s-i-m-i-l-e occurs scattered and in order in ordinary Dickens prose, so the
+/// filter stopped filtering. Only the short fields may be fuzzy.
+///
+/// PRECONDITION: `filter` is non-empty (callers guard with
+/// `if !filter.is_empty()`), because `"".contains("")` is true and would
+/// otherwise accept every row including absent targets. Pass `""` for a target
+/// the caller does not have. All arguments must already be lowercased —
+/// `subsequence_match` is case-sensitive by contract.
+pub(crate) fn row_matches(
+    filter: &str,
+    short_target: &str,
+    long_target: &str,
+    haystack: &str,
+) -> bool {
+    subsequence_match(filter, short_target)
+        || long_target.contains(filter)
+        || haystack.contains(filter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +160,86 @@ mod tests {
     fn subsequence_match_preserves_boolean() {
         assert!(subsequence_match("hml", "hamlet"));
         assert!(!subsequence_match("xyz", "hamlet"));
+    }
+
+    /// The four rows that "simile" wrongly matched in the journal Q&A picker.
+    /// Each is a real `scope='passage'` label from BH-Barrett. None contains
+    /// the substring "simile"; all four matched fuzzily because the letters
+    /// s-i-m-i-l-e occur scattered and in order (the leading `s` came from the
+    /// word "passage" in the type column, which no longer shares a target with
+    /// the prose).
+    const SIMILE_FALSE_POSITIVES: [&str; 4] = [
+        "i was brought up, from my earliest remembrance—like some of the princesses in th",
+        "i opened it softly and found miss jellyby shivering there with a broken candle i",
+        "among the ladies who were most distinguished for this rapacious benevolence (if",
+        "\u{201C}these, young ladies,\u{201D} said mrs. pardiggle with great volubility after the first",
+    ];
+
+    #[test]
+    fn long_target_rejects_scattered_subsequence() {
+        for label in SIMILE_FALSE_POSITIVES {
+            assert!(
+                !row_matches("simile", "", label, ""),
+                "long target must not fuzzy-match: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn body_hit_survives_with_unrelated_label() {
+        // Division 9.0: the ONE true hit. Its visible label is about breakfast,
+        // not similes — the term appears only in the answer body. Body search
+        // must still reach it.
+        let label = "we were going on in this way, when one morning at breakfast mr. jarndyce receive";
+        let body = "there's no simile for his lungs, said mr. jarndyce.";
+        assert!(row_matches("simile", "", label, body));
+    }
+
+    #[test]
+    fn long_target_accepts_contiguous_substring() {
+        let label = "i opened it softly and found miss jellyby shivering there with a broken candle i";
+        assert!(row_matches("jellyby", "", label, ""));
+        // Typo tolerance is deliberately gone on the long target.
+        assert!(!row_matches("jelby", "", label, ""));
+    }
+
+    /// The gloss-picker call site (Task 5): `source_text` is the full
+    /// glossed-passage body, not a row label — measured on BH-Barrett at a
+    /// mean of 524 chars, max 7123. A realistic passage-length string where
+    /// s-i-m-i-l-e occurs scattered and in order must still be rejected,
+    /// while a literal "simile" substring must still be accepted.
+    #[test]
+    fn gloss_source_text_rejects_scattered_accepts_literal() {
+        let scattered_passage = "sir, is my brother's love to me the same as \
+            it is upon his image, live but so long as thy mother? if you can \
+            look into the seeds of time, and say which grain will grow and \
+            which will not, speak then to me, who neither beg nor fear your \
+            favours nor your hate. i am silenced, mildly, in that we may \
+            resolve this contradiction easily.";
+        assert!(
+            !row_matches("simile", "", scattered_passage, ""),
+            "long_target must not fuzzy-match a scattered subsequence in a \
+             full passage body: {scattered_passage}"
+        );
+
+        let literal_passage = "his rage is like a simile drawn too far, \
+            straining the comparison past what the sense can bear.";
+        assert!(row_matches("simile", "", literal_passage, ""));
+    }
+
+    #[test]
+    fn short_target_stays_fuzzy() {
+        // Division/type queries still narrow on the short fields.
+        assert!(row_matches("3.0", "3.0 passage", "", ""));
+        assert!(row_matches("passage", "3.0 passage", "", ""));
+        // Abbreviation-style fuzzy matching survives where labels are short.
+        assert!(row_matches("psg", "3.0 passage", "", ""));
+    }
+
+    #[test]
+    fn absent_long_target_loses_nothing() {
+        // A caller with no haystack (RecentQaPicker) passes "" and still
+        // matches on its short target.
+        assert!(row_matches("bh", "bh", "some unrelated label", ""));
     }
 }

@@ -129,12 +129,36 @@ fuzzy-matches the pair. Split the same way — `work_label` fuzzy,
 - **Typo tolerance is lost on the row label.** `jelby` no longer finds
   "Jellyby"; `jellyby` does. Accepted as the cost of a predictable rule.
 
+### Change 3 — `gloss_picker.rs` and `bookmark_picker.rs` (added mid-branch)
+
+**This section corrects an error in the original spec.** The first draft
+exempted these two as "genuinely short labels". That claim was never measured,
+and it is false. A whole-branch review checked both against `lit.db`:
+
+- `gloss_picker` matches `speaker + source_text`, where `source_text` is the
+  FULL passage body — 7007 glossed passages, mean 524 chars, max 7123. On
+  BH-Barrett, `metaphor` fuzzy-matches 438 of 464 rows against 1 real literal
+  hit; on Henry IV, all 154 rows match `romeo` with ZERO literal hits.
+- `bookmark_picker` matches `speaker + line_text`, where `line_text` is
+  `line_mapping.canonical_text` — NOT one short line. Across 66 live bookmarks
+  it means 343 chars, max 2156, because prose works store a whole paragraph per
+  row. `simile` fuzzy-matches 36 of 66 with zero literal hits.
+
+Both DISPLAY only the first line while MATCHING the whole text, so the
+degeneration is invisible in the row label — the same shape as the journal
+picker bug, at a higher false-positive rate. Both get the same split: `speaker`
+fuzzy, the long text contiguous-only, empty haystack.
+
+The lesson: "this field is short" is a claim about DATA and must be measured
+against the database, not inferred from the field's name or its role in the UI.
+
 ## Not changing
 
-`bookmark_picker`, `gloss_picker`, `media_picker`, `journal_move_picker`, and
-`library_picker` all fuzzy-match over genuinely short labels (work titles,
-bookmark names), where fuzzy is the feature and degeneration cannot occur.
-`journal_term_input` matches single terms. Left alone.
+`media_picker` matches `format_path` (basename plus parent directory), which is
+bounded and not degenerate — 126/235 on `simile`, worth noting but not a filter
+failure. `journal_move_picker` matches a division label, `library_picker` uses
+its own scorer over title/author/abbrev, and `journal_term_input` matches single
+terms. All genuinely short; left alone.
 
 The `scope='passage'` source-line labelling and the 80-char truncation are
 deliberate existing behavior and are out of scope.
@@ -158,5 +182,20 @@ Unit tests against `row_matches` — pure, no GTK, runs under `cargo test --bins
 ## Acceptance
 
 Searching `simile` in the journal Q&A picker returns exactly one row —
-division 9.0, the Jarndyce "no simile for his lungs" entry. Verified on screen
-in the real picker, not from tests alone.
+division 9.0, the Jarndyce "no simile for his lungs" entry.
+
+**Verified 2026-08-06** headlessly (`land-on.sh BH-Barrett 9.0`, Ctrl+j,
+`simile`): ONE row returned, down from five. The four false positives at 3.0,
+4.0, 8.0 and 8.0 are gone; the true hit survives via the body haystack despite
+a visible label about breakfast.
+
+Body search confirmed intact in the same run: `jellyby` returns four rows —
+one matching the visible label (4.0) plus three whose ANSWER bodies discuss
+Jellyby (0.0, 8.0, 8.0). Only the letter-scavenging was removed, not the
+ability to find terms that never appear in the truncated row label.
+
+Short-target immunity was also checked against real data rather than inferred:
+across all 14 BH `journal_entries` rows and all three live scope values
+(`passage`, `division`, `unassigned-after-reimport`), with and without the
+author name, `short_target` never fuzzy-matches `simile`. The fix does not
+merely relocate the false positives into the short field.
