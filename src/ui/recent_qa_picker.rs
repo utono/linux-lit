@@ -104,9 +104,18 @@ impl RecentQaPicker {
 
         for (idx, item) in self.items.iter().enumerate() {
             if !filter.is_empty() {
-                let target =
-                    format!("{} {}", item.work_label, item.question_prefix).to_lowercase();
-                if !crate::ui::picker_filter::subsequence_match(&filter_lower, &target) {
+                // Same length-scaled rule as the journal Q&A picker: the short
+                // work label stays fuzzy, the 80-char question label is
+                // contiguous-substring only. This picker carries no body
+                // haystack, so it passes "".
+                let short_target = item.work_label.to_lowercase();
+                let long_target = item.question_prefix.to_lowercase();
+                if !crate::ui::picker_filter::row_matches(
+                    &filter_lower,
+                    &short_target,
+                    &long_target,
+                    "",
+                ) {
                     continue;
                 }
             }
