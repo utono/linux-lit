@@ -160,35 +160,39 @@ impl JournalQaPicker {
                 None => item.question_prefix.clone(),
             };
             if !filter.is_empty() {
-                // Two targets, matched SEPARATELY (never concatenated).
+                // Match rule scales to field LENGTH (see picker_filter::row_matches).
                 //
-                // 1. What the row DISPLAYS. In author scope that is the five
-                //    columns — so typing a surname ("dickens") or a division
-                //    ("ch. 2") narrows, which is the natural gesture on a
-                //    global cross-work list. `synopsis_division_label` stays in
-                //    the target for the two-column scopes, where it IS the
-                //    visible detail. Fuzzy (subsequence) matching, as before.
-                // 2. The entry's full question + answer, as a CONTIGUOUS
-                //    substring only.
+                // SHORT fields stay fuzzy so a surname ("dickens") or a division
+                // ("ch. 2") still narrows — the natural gesture on a global
+                // cross-work list.
                 //
-                // The body must not go through `subsequence_match`: over a
-                // multi-thousand-character answer, a scattered subsequence
-                // matches almost any short filter, so every row would survive
-                // and the filter would stop filtering. Requiring a literal
-                // substring there keeps body hits meaningful while leaving the
-                // display target's fuzzy behavior untouched.
-                let display_target = format!(
+                // The 80-char row label and the multi-thousand-character body
+                // are CONTIGUOUS-substring only. A scattered subsequence over
+                // prose that long matches almost any short filter, so every row
+                // survives and the filter stops filtering.
+                //
+                // `type_label` belongs with the SHORT fields, deliberately away
+                // from the passage prose: while it shared one concatenated
+                // target with the label, the "s" in "passage" supplied the
+                // leading letter for every "simile" false positive.
+                let short_target = format!(
                     "{} {} {} {}",
                     item.author_label.as_deref().unwrap_or(""),
                     item.synopsis_division_label,
                     item.div_label,
-                    primary,
+                    item.type_label,
                 )
                 .to_lowercase();
-                let hit = crate::ui::picker_filter::subsequence_match(
+                // `primary` already embeds `work_label`, so the work title still
+                // matches literally here (fuzzy work-finding lives in the
+                // library picker).
+                let long_target = primary.to_lowercase();
+                let hit = crate::ui::picker_filter::row_matches(
                     &filter_lower,
-                    &display_target,
-                ) || item.search_haystack.contains(&filter_lower);
+                    &short_target,
+                    &long_target,
+                    &item.search_haystack,
+                );
                 if !hit {
                     continue;
                 }
