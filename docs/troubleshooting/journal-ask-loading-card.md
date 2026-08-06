@@ -3,7 +3,75 @@
 Frequency-ordered ledger for what the journal overlay shows between submitting
 a question and the answer arriving.
 
-## 1. Vocab Q&A (Ctrl+Shift+r) showed an empty card (fixed 2026-07-29)
+**There are THREE ask paths, and each has now shipped this same bug once.**
+Before diagnosing, establish WHICH path the report came from — the two already
+fixed do not reproduce it, so a static trace of the wrong one concludes "not a
+bug." The tell is the log line right after `KEY: name=Return ctrl=true`:
+
+- **Passage ask** — reader Ctrl+a; submits in `JournalOverlay`; no
+  `RETURN_TO_READER` line. Fixed from the start.
+- **Vocab Q&A** — popup Ctrl+Shift+r; submits in `Reader`; marked by
+  `VOCAB QA: asking about '<word>'`. Fixed 2026-07-29 (item 2).
+- **Gloss passage ask** — gloss overlay Ctrl+a; submits in `GlossOverlay`;
+  marked by `RETURN_TO_READER: from GlossOverlay`. Fixed 2026-08-05 (item 1).
+
+## 1. Gloss-overlay passage ask showed an empty card (fixed 2026-08-05)
+
+**Tell.** Ask a question from inside the GLOSS overlay (Ctrl+g, then Ctrl+a,
+type, Ctrl+Return). A collapsed cream strip — running head only ("BH-Barrett …
+Chapter 9"), no question, no indicator — sits on screen for the whole round
+trip. Measured: submit at 281711ms, `IMPROVE-Q` at 287321ms, answer at
+309835ms, so the blank strip was up ~28s. The answer itself lands correctly;
+only the wait is broken.
+
+**Root cause.** The SAME `last_card_size == (0,0)` mechanism as item 2 below,
+reached by a third route. `submit_passage_question` (`journal.rs`) does call
+`show_loading`, so the path looks correct — but the card was never SIZED:
+
+- `open_passage_qa_float` (`gloss.rs`) floats its input card inside the GLOSS
+  overlay and **deliberately never opens the journal overlay** (its own comment
+  says so). So `JournalOverlay::size_card` — the ONLY writer of
+  `last_card_size` (`journal_overlay.rs`), reachable only via `show_page` and
+  `show_passage_source` — had never run for this session's journal overlay.
+- `show_loading` then hit its `if w > 0` guard FALSE and skipped
+  `set_size_request` entirely, while `set_visible(true)` ran unconditionally.
+  Hence: visible, but at the natural (collapsed) size, with no body.
+
+The reader-side ask escapes this only because `begin_passage_ask` sets
+`input_mode = JournalOverlay` and calls `render_current` BEFORE opening its ask
+card, priming `last_card_size` as a side effect.
+
+**Fix.** `submit_passage_question` now claims the overlay and renders before
+showing the loading state, so every caller is primed regardless of entry point:
+
+```rust
+let mut s = state.borrow_mut();
+s.input_mode = crate::app::InputMode::JournalOverlay;
+render_current(&mut s);
+let head = crate::app::division_synopsis::cursor_head(&s);
+s.journal_overlay.set_running_head(&head.0, &head.1);
+s.journal_overlay.show_loading(text, "Refining question…");
+```
+
+`render_current` takes its `pending_passage`-matches-band early return here and
+calls `show_passage_source(…, cw, h)` → `size_card`, which is what primes the
+size. Claiming `JournalOverlay` at submit is safe: `ask_claude`'s arrival branch
+sets `input_mode = JournalOverlay` **unconditionally** (no guard to break — it
+was made unconditional on 2026-07-23 for exactly this gloss-side path).
+
+**Lesson that generalizes.** `show_loading`'s silent-skip guard has now caused
+this bug on two of three paths. The guard makes a MISSING PRIME look like a
+working call: the code reads as if it sizes, and fails only at runtime, only on
+the path that never rendered first. Any NEW ask entry point must either render
+before `show_loading` or be added to `submit_passage_question`'s shared prime.
+
+**Verification.** `scripts/land-on.sh BH-Barrett 9.0`, then Ctrl+g, Ctrl+a,
+type, Ctrl+Return. Expect a FULL-HEIGHT card in three states: typed question +
+"Refining question…", improved question + "Answering…", then the rendered Q&A
+with the footer back. Verified headlessly 2026-08-05 (spends a real paid API
+call). Note the first chord after launch is dropped — re-send it.
+
+## 2. Vocab Q&A (Ctrl+Shift+r) showed an empty card (fixed 2026-07-29)
 
 **Tell.** After asking a vocab Q&A from the popup, a collapsed journal card
 sits on screen — running head only ("BH-Barrett … Chapter 4"), no body — for

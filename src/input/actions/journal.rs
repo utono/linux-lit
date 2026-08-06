@@ -2562,8 +2562,22 @@ pub(crate) fn submit_passage_question(state: &Rc<RefCell<AppState>>, text: &str)
     // Show the loading card immediately with the raw text so the UI isn't
     // dead during the improve-question round-trip; `ask_claude` re-shows it
     // with the improved phrasing once that call returns.
+    //
+    // The ordering here is load-bearing (see
+    // docs/troubleshooting/journal-ask-loading-card.md): `show_loading`
+    // SILENTLY SKIPS sizing while `last_card_size` is still (0, 0), and only a
+    // real render ever writes it. The reader-side ask primes it in
+    // `begin_passage_ask` (render_current before the ask card opens), but the
+    // GLOSS-side ask (`open_passage_qa_float` -> `submit_gloss_prompt`) floats
+    // its input card inside the GLOSS overlay and deliberately never opens the
+    // journal one — so on that path the journal overlay had never been sized,
+    // and the wait showed a collapsed, empty card for the whole ~28s round
+    // trip. Claim the overlay and render first so the card is sized, then show
+    // the loading state.
     {
-        let s = state.borrow();
+        let mut s = state.borrow_mut();
+        s.input_mode = crate::app::InputMode::JournalOverlay;
+        render_current(&mut s);
         let head = crate::app::division_synopsis::cursor_head(&s);
         s.journal_overlay.set_running_head(&head.0, &head.1);
         s.journal_overlay.show_loading(text, "Refining question\u{2026}");
