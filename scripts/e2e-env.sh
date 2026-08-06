@@ -42,30 +42,37 @@ if [[ $# -eq 0 ]]; then
   exit 64
 fi
 
-# Bring up the AT-SPI registry on the a11y bus ourselves. at-spi2-core would
-# normally autostart it, but on Arch the bus launcher embeds dbus-broker, which
-# routes service activation through systemd — absent in a nested
-# dbus-run-session — so org.a11y.atspi.Registry fails with "unit failed" and
-# every dogtail/pyatspi assertion dies. Forcing the classic dbus-daemon
-# implementation and starting the launcher MANUALLY (so it inherits the var;
-# autostart strips the environment) makes the registry activatable headlessly.
-export ATSPI_DBUS_IMPLEMENTATION=dbus-daemon
-/usr/lib/at-spi-bus-launcher --launch-immediately &
-_atspi_launcher_pid=$!
-cleanup() { kill "$_atspi_launcher_pid" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+# The AT-SPI registry is OPT-IN (LIT_TEST_ANNOTATE=1). It exists only for
+# scripts/annotate_ui.py and scripts/atspi_assert.py; linux-lit's GTK4 window
+# does not appear on the a11y bus in this harness, so for the normal
+# screenshot/clipping suites the launcher plus the bus-name wait below are pure
+# startup cost on every single run and buy nothing. Set LIT_TEST_ANNOTATE=1 when
+# you actually want widget-tree introspection.
+if [[ -n "${LIT_TEST_ANNOTATE:-}" ]]; then
+  # at-spi2-core would normally autostart the registry, but on Arch the bus
+  # launcher embeds dbus-broker, which routes service activation through systemd
+  # — absent in a nested dbus-run-session — so org.a11y.atspi.Registry fails with
+  # "unit failed" and every dogtail/pyatspi assertion dies. Forcing the classic
+  # dbus-daemon implementation and starting the launcher MANUALLY (so it inherits
+  # the var; autostart strips the environment) makes it activatable headlessly.
+  export ATSPI_DBUS_IMPLEMENTATION=dbus-daemon
+  /usr/lib/at-spi-bus-launcher --launch-immediately &
+  _atspi_launcher_pid=$!
+  cleanup() { kill "$_atspi_launcher_pid" 2>/dev/null || true; }
+  trap cleanup EXIT INT TERM
 
-# Wait for the a11y bus name, then export its address for dogtail/pyatspi.
-for _ in $(seq 1 20); do
-  _atspi_raw=$(gdbus call --session --dest org.a11y.Bus \
-    --object-path /org/a11y/bus \
-    --method org.a11y.Bus.GetAddress 2>/dev/null) && [[ -n "$_atspi_raw" ]] && break
-  sleep 0.2
-done
-if [[ -n "${_atspi_raw:-}" ]]; then
-  export AT_SPI_BUS=$(python3 -c \
-    "import sys,re; m=re.search(r\"unix:[^')]*\", sys.argv[1]); print(m.group(0) if m else '')" \
-    "$_atspi_raw")
+  # Wait for the a11y bus name, then export its address for dogtail/pyatspi.
+  for _ in $(seq 1 20); do
+    _atspi_raw=$(gdbus call --session --dest org.a11y.Bus \
+      --object-path /org/a11y/bus \
+      --method org.a11y.Bus.GetAddress 2>/dev/null) && [[ -n "$_atspi_raw" ]] && break
+    sleep 0.2
+  done
+  if [[ -n "${_atspi_raw:-}" ]]; then
+    export AT_SPI_BUS=$(python3 -c \
+      "import sys,re; m=re.search(r\"unix:[^')]*\", sys.argv[1]); print(m.group(0) if m else '')" \
+      "$_atspi_raw")
+  fi
 fi
 
 # Run the command as a child (not exec) so the trap above can reap the launcher.

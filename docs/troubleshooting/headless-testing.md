@@ -698,6 +698,24 @@ stray instance is disruptive.
   PID, confirm `pgrep -f "cage -- ./target/debug/linux-lit"` is empty. Root
   cause was `run-fuzz.sh` not forcing `WLR_BACKENDS=headless` (cage then nested
   on the live dwl); now fixed there.
+- **`wlr-randr` "succeeds" but the app stays 1280x648, and every later key is
+  dropped** → the resize was issued AFTER the client mapped. Once cage has
+  committed its single client fullscreen at the old mode, a later `wlr-randr` is
+  accepted (exit 0, the output even reports the new mode) but the client never
+  reconfigures — and the attempt costs the window its keyboard focus, so every
+  subsequent `wtype` goes nowhere and overlay-opening tests time out with
+  "TEST_OVERLAY_VIEWPORT_RECT never appeared". Resize ~1s after the socket
+  appears, BEFORE the surface settles (what `Harness::start_app` and
+  `run-fuzz.sh` both do). The natural-looking order — wait for
+  `TEST_VIEWPORT_RECT`, then resize — is the one ordering guaranteed to fail.
+  Verify the ACHIEVED size (the rect's 4th value, or `region` in the
+  `*.clip.json`), never `wlr-randr`'s exit status.
+- **A cage e2e passes at 720p and fails at 1920x1200 (or vice versa)** → 720p is
+  a layout that exists nowhere else; card margins, the title bar and the page
+  grid interact differently there. Assertions made at the cage default are about
+  a fictional geometry. Since 2026-08-05 `Harness::start_app` always moves to
+  1920x1200, which immediately surfaced a pre-existing `line_clipping` failure
+  (`clip_bottom: true`, `last_row_height: 2`) that 720p had been hiding.
 - **A decisive keypress produced no `ACTION:` line** → the press never landed
   (`wtype` too fast, or the window wasn't focused yet) — add settle time and a
   warm-up key; don't debug the handler. Note the FIRST `wtype` after launch is

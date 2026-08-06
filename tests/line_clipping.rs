@@ -43,7 +43,9 @@ fn first_and_last_lines_never_clip() {
     )
     .expect("launch linux-lit in cage");
 
-    // The viewport rect doubles as a readiness gate (logged at reveal).
+    // The viewport rect doubles as a readiness gate (logged at reveal). The
+    // harness has already switched the output to production geometry, so this
+    // rect is the one the user actually reads at.
     let region = h
         .wait_for_viewport_rect(Duration::from_secs(20))
         .expect("app reported its reading-viewport rect");

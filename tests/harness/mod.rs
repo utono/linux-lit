@@ -29,6 +29,19 @@
 /// geometry); cage remains the default for everything else. See `niri.rs`.
 pub mod niri;
 
+/// Output geometry every harness run starts at — the user's real screen size.
+///
+/// cage's headless backend would otherwise default to 1280x720. Production
+/// geometry is the only size worth asserting against; see `start_app`, which
+/// applies this before returning so no test inherits 720p by accident.
+///
+/// Note the pair with CLAUDE.md's manual flow, which uses 1920x**1236** to hit a
+/// `text_view.height` of 1098: that extra 36px compensates for a title bar the
+/// kiosk-fullscreen cage surface does not have, so the same text-view height is
+/// reached here from 1200.
+pub const DEFAULT_OUTPUT_W: u32 = 1920;
+pub const DEFAULT_OUTPUT_H: u32 = 1200;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self};
@@ -116,13 +129,37 @@ impl Harness {
             io::Error::new(io::ErrorKind::TimedOut, "cage wayland socket never appeared")
         })?;
 
-        Ok(Self {
+        let h = Self {
             _runtime: runtime,
             runtime_dir,
             wayland_display,
             cage,
             log_path,
-        })
+        };
+
+        // Every run starts at PRODUCTION geometry. cage's headless backend
+        // defaults to 1280x720 — a size the app never has on the user's screen,
+        // where card margins, the title bar and the page grid interact in ways
+        // that reproduce nothing real. A purely vertical card-margin change
+        // (top/bottom rebalanced, card HEIGHT identical) rendered correctly at
+        // 1920x1200 while tearing the run down at 720p.
+        //
+        // TIMING IS THE WHOLE TRICK, and it is the opposite of what it looks
+        // like. The resize must happen while the client is still mapping: once
+        // cage has committed its single client fullscreen at the old mode, a
+        // later `wlr-randr` is ACCEPTED (exit 0, and the output reports the new
+        // mode) but the client never reconfigures — the app sits at 1280x648
+        // forever while the test believes it is 1920x1200. Waiting for the
+        // viewport rect first and resizing after is therefore the one ordering
+        // guaranteed to fail; `run-fuzz.sh` encodes the same "~1s after the
+        // socket, before the surface settles" timing for the same reason.
+        //
+        // Doing it here rather than per-test is what stops a test from silently
+        // inheriting 720p again.
+        sleep(Duration::from_millis(1000));
+        h.set_output_size(DEFAULT_OUTPUT_W, DEFAULT_OUTPUT_H).ok();
+
+        Ok(h)
     }
 
     /// Resize cage's headless output via `wlr-randr` (wlr-output-management).
@@ -195,18 +232,29 @@ impl Harness {
         fs::create_dir_all("target/ui")?;
         let png = PathBuf::from(format!("target/ui/{name}.png"));
         self.screenshot(&png)?;
-        // `--app` is REQUIRED by the script; omitting it made every call exit
-        // with a usage error, so the annotation silently never ran (the tests
-        // still passed, because this is best-effort). The value is the
-        // accessible name on the a11y bus, which for a GTK app is its prgname.
-        let _ = self
-            .client_cmd("python3")
-            .arg("scripts/annotate_ui.py")
-            .arg("--shot")
-            .arg(&png)
-            .arg("--app")
-            .arg(ATSPI_APP_NAME)
-            .status(); // best-effort; review hook still has the raw PNG
+        // Annotation is OPT-IN (`LIT_TEST_ANNOTATE=1`), because it is pure cost
+        // by default: linux-lit's GTK4 window never appears on the a11y bus in
+        // this harness, so every call spins up an AT-SPI registry, waits, prints
+        // "app 'linux-lit' not on a11y bus; skipping" and exits having produced
+        // nothing. Measured: 5.17s per call against 0.085s for the `grim` capture
+        // it decorates — 60x the cost of the screenshot, ~15s per 3-capture test.
+        //
+        // The raw PNG (which the UI-review protocol actually reads) is written
+        // above either way, so the default path loses no diagnostic value.
+        if std::env::var_os("LIT_TEST_ANNOTATE").is_some() {
+            // `--app` is REQUIRED by the script; omitting it made every call exit
+            // with a usage error, so the annotation silently never ran (the tests
+            // still passed, because this is best-effort). The value is the
+            // accessible name on the a11y bus, which for a GTK app is its prgname.
+            let _ = self
+                .client_cmd("python3")
+                .arg("scripts/annotate_ui.py")
+                .arg("--shot")
+                .arg(&png)
+                .arg("--app")
+                .arg(ATSPI_APP_NAME)
+                .status(); // best-effort; review hook still has the raw PNG
+        }
         Ok(png)
     }
 
