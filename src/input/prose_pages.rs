@@ -1101,8 +1101,43 @@ pub fn generate_and_store_prose(state: &mut crate::app::AppState) {
     if state.prose_page_table.borrow().is_some() && !force {
         return; // already loaded from the DB this session
     }
-    use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
     let fp = prose_layout_fingerprint(state);
+
+    // Tell the user why the window is about to stop responding.
+    //
+    // `record_prose_pages` walks and measures EVERY line, and on a long work
+    // that blocks the main loop for a long time — LoJ (21,520 rows) measured
+    // 36.7s. The window cannot repaint and keys are declined (see
+    // keymap::handle_key's re-entrancy guard) for the whole of it, which is
+    // indistinguishable from a hang; it was reported as "linux-lit is frozen"
+    // on 2026-08-08.
+    //
+    // The toast must be PAINTED before we block, so pump the loop until it is
+    // on screen. `record_prose_pages` pumps too, but only after it has already
+    // begun the work this message is meant to announce.
+    let toast_gen = crate::input::navigation::show_chapter_toast_hold(
+        state,
+        "Paginating\u{2026}",
+    );
+    {
+        let mut spins = 0;
+        while glib::MainContext::default().pending() && spins < MAX_LAYOUT_SPINS {
+            glib::MainContext::default().iteration(false);
+            spins += 1;
+        }
+    }
+    // The body below has several early returns (validate/citation/store
+    // failures). Wrapping it keeps the release on ONE path, so a future edit
+    // that adds another `return` cannot strand a held toast on screen.
+    generate_and_store_prose_inner(state, fp);
+    crate::input::navigation::release_chapter_toast_hold(state, toast_gen);
+}
+
+/// Body of `generate_and_store_prose`, split out so the caller owns the
+/// "Paginating…" toast's lifetime. Returns early on any failure; the caller
+/// releases the toast regardless.
+fn generate_and_store_prose_inner(state: &mut crate::app::AppState, fp: String) {
+    use gtk4::prelude::{TextBufferExt, TextViewExt, WidgetExt};
     let gen_started = std::time::Instant::now();
     let pages = match record_prose_pages(state) {
         Ok(p) => p,
