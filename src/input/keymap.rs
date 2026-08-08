@@ -58,6 +58,26 @@ impl KeyState {
 ///
 /// `suspend_for_overlay` no-ops when no popup is visible, so arming on every
 /// leave-the-reader transition costs nothing.
+///
+/// # Re-entrancy
+///
+/// Declines the key (returns false, changing nothing) when `state` is
+/// already borrowed. That happens when prose pagination pumps the GTK main
+/// loop to force layout validation — `input::prose_pages` calls
+/// `MainContext::iteration(false)` up to `MAX_LAYOUT_SPINS` times while
+/// `app::mod`'s call site holds `st.borrow_mut()` — and the pump dispatches
+/// pending input RE-ENTRANTLY, landing back here mid-pagination.
+///
+/// Without the guard the `state.borrow()` below is a `BorrowMutError`, and
+/// because the caller is a `connect_key_pressed` trampoline the panic
+/// cannot unwind across GTK's C frames: the process ABORTS with "thread
+/// caused non-unwinding panic". Reported 2026-08-08 loading LoJ (21,520
+/// rows), whose pagination window is long enough to type into.
+///
+/// Dropping the key is the correct outcome, not a workaround: mid-layout
+/// the reader has no settled page grid to act on, so a page turn or
+/// cursor move would be computed against measurements that are about to
+/// change. The keystroke is simply not consumed.
 pub fn handle_key(
     state: &Rc<RefCell<AppState>>,
     key_state: &Rc<RefCell<KeyState>>,
@@ -68,6 +88,12 @@ pub fn handle_key(
     is_alt: bool,
     tokio_handle: &tokio::runtime::Handle,
 ) -> bool {
+    // Deliberately silent: a single pagination pump can dispatch many
+    // queued keys, so logging each one would flood stderr during exactly
+    // the slow operation the user is already waiting on.
+    if state.try_borrow_mut().is_err() {
+        return false;
+    }
     let before = state.borrow().input_mode;
     let consumed = handle_key_inner(
         state, key_state, key_name, key_char, is_ctrl, is_shift, is_alt, tokio_handle,
