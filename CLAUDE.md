@@ -585,6 +585,13 @@ See `docs/troubleshooting/clip-prevention.md` item 23.
 
 - Database: `~/utono/litdb/data/lit.db` (read-write). Theme palettes:
   `~/utono/themes/.config/themes/themes-unified.json` (read-only).
+- **Do NOT back up `lit.db` yourself.** A systemd timer
+  (`lit-db-backup-local.timer`, every 2h) snapshots it to `~/backups/lit-db/`,
+  verifies each copy with `PRAGMA quick_check`, and prunes to one per day for
+  60 days. Each ad-hoc copy is ~1.5 GB; seven piled up in one day on
+  2026-08-08. Confirm the timer is healthy rather than copying the file:
+  `systemctl --user list-timers lit-db-backup-local.timer --all --no-pager`.
+  Canonical rule: `~/utono/litdb/CLAUDE.md`.
 - **Never rename a work's abbrev with raw SQL** — `works.abbrev` is the
   de-facto FK for ~15 tables plus the snapshot cache and config; use the
   `rename-work-abbrev` skill in litdb (close linux-lit first).
