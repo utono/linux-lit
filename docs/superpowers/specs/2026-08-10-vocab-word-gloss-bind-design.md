@@ -101,7 +101,7 @@ legend:
 
 - `src/input/actions/mod.rs` — `Action::ShowVocabGloss` variant
 - `src/input/keymap.rs` — dispatch arm
-- `src/input/keymap_config.rs` — `KeyCombo::ctrl_shift("g")` + `g`-hub comment
+- `src/input/keymap_config.rs` — `KeyCombo::ctrl_alt("r")` + `r`-hub comment
 - `src/ui/keybinds_overlay.rs` — keycap strip AND `describe()` arm
 - `~/tty-dotfiles/linux-lit/.config/linux-lit/keymap.json` — else the JSON
   silently shadows the compiled default
@@ -116,8 +116,9 @@ legend:
 
 ## Testing
 
-- **Unit:** `ctrl_shift("g")` resolves to `ShowVocabGloss`; `ctrl("g")`
-  still resolves to `ToggleGlossOverlay` (guards the level-2 distinctness).
+- **Unit:** `ctrl_alt("r")` resolves to `ShowVocabGloss`, its vocab-hub
+  neighbours keep their meanings, and all four occupied `g` chords still
+  resolve as before (`vocab_word_gloss_is_on_ctrl_alt_r`).
 - **Headless (cage):** land on a LoJ `solicitude` passage and confirm the
   overlay actually PAINTS. A green build does not prove the overlay opens
   — acceptance must exercise the visible surface, per the #13 lesson.
