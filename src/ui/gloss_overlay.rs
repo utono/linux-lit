@@ -3033,11 +3033,34 @@ impl GlossOverlay {
             .collect();
         self.cursor_block.set(0);
 
-        // No source bar, no verse numbers, no synopsis labels on this path.
-        self.bar_ranges.borrow_mut().clear();
+        // Re-pin the scroll to the height `size_scroll` set for this card.
+        // The tagged path renders a PAGE already measured to fit; this path
+        // renders the WHOLE gloss, so the TextView's natural height reflects
+        // all of it and the scroll would otherwise be free to grow past the
+        // card (a `height_request` is a MINIMUM — `max_content_height` is the
+        // real cap). Belt-and-braces: `size_scroll` runs before this and sets
+        // the same values, and measurement confirms the container comes out at
+        // the requested height either way. Kept because this renderer, unlike
+        // the tagged one, hands the view unbounded content.
+        let pinned = self.gloss_scrolled.height_request();
+        if pinned > 0 {
+            self.gloss_scrolled.set_max_content_height(pinned);
+            self.gloss_scrolled.set_min_content_height(pinned);
+            self.gloss_scrolled.set_propagate_natural_height(false);
+            self.gloss_scrolled.set_vexpand(false);
+        }
+
+        // No verse numbers or synopsis labels on this path.
         self.line_numbers.borrow_mut().clear();
         self.synopsis_label_ranges.borrow_mut().clear();
         self.hi_ranges.borrow_mut().clear();
+
+        // Paint the accent bar beside the cursor block. `mark_cursor_block`
+        // derives it from `blocks`, which is populated above — so the cursor,
+        // its accent bar, TTS (`current_block_text`) and the `rr` vocab popup
+        // all work on these cards, exactly as on a tagged gloss.
+        self.mark_cursor_block();
+
         // Single page: hide the ⌄/• page marker.
         self.update_page_marker(0, 1);
     }
