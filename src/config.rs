@@ -128,6 +128,19 @@ pub struct Config {
     /// re-imports). Preferred over `work_positions` (legacy raw buffer index).
     #[serde(default)]
     pub work_position_ids: HashMap<String, i64>,
+    /// Per-work reading face, keyed by work_abbrev. Mirrors `work_positions`.
+    /// Written by `cycle_font` (both directions of `F`); read at work load,
+    /// where it is resolved INTO `font_family` so every downstream consumer —
+    /// `reapply_font`, the prose layout fingerprint, the overlay — sees one
+    /// value and needs no per-work awareness.
+    ///
+    /// A work with no entry opens on the global `font_family` default
+    /// (Charis). Changing the font in one work never affects another, and
+    /// never moves the global default.
+    ///
+    /// Seeded with `LoJ -> Charter` (see `default_work_fonts`).
+    #[serde(default = "default_work_fonts")]
+    pub work_fonts: HashMap<String, String>,
     /// Per-work most-recently-viewed gloss, keyed by work_abbrev. Mirrors
     /// `work_positions`. Written at every gloss-display site; read by Ctrl+g.
     #[serde(default)]
@@ -227,6 +240,34 @@ pub struct Config {
 /// archaic sorts and the IPA that Charter lacks — see the FONT_CYCLE comment.
 fn default_font_family() -> String {
     "Charis".to_string()
+}
+
+/// Per-work reading faces a fresh config starts with.
+///
+/// These four are the ONLY works whose glosses carry IPA — the OP
+/// pronunciations — measured against lit.db on 2026-08-11: `TT` 13 glosses,
+/// `H8` 6, `Jn` 1, `Ant` 1. **Charter has no IPA glyphs at all** (verified:
+/// U+0283 ʃ, U+0259 ə, U+026A ɪ, U+02D0 ː are all absent from
+/// `Charter Regular.otf` and all present in `Charis-Regular.ttf`), so under
+/// a Charter reading font those 21 glosses render their pronunciations with
+/// a mid-word Noto Sans fallback. Pinning them to Charis fixes that without
+/// touching the global face.
+///
+/// Everything else — LoJ included — inherits the global `font_family`,
+/// whatever the reader has it set to.
+///
+/// Before seeding another work, check whether it needs Charis:
+/// ```sql
+/// SELECT p.work_abbrev, COUNT(*) FROM glosses g
+///   JOIN passages p ON p.id = g.passage_id
+///  WHERE g.gloss_text GLOB '*[ɪɛəʊʃʒθðŋæɑɔʌː]*'
+///  GROUP BY 1;
+/// ```
+fn default_work_fonts() -> HashMap<String, String> {
+    ["TT", "H8", "Jn", "Ant"]
+        .iter()
+        .map(|w| (w.to_string(), "Charis".to_string()))
+        .collect()
 }
 
 /// Reading families cycled by `F` (forward) and `Ctrl+Shift+f` (backward) —
@@ -422,6 +463,10 @@ impl Default for Config {
             recent_works: Vec::new(),
             work_positions: HashMap::new(),
             work_position_ids: HashMap::new(),
+            // Not HashMap::new(): a `Default` config must agree with what
+            // serde builds for a file that omits the key, or LoJ's face would
+            // depend on whether the key happened to be present.
+            work_fonts: default_work_fonts(),
             last_gloss: HashMap::new(),
             column_overrides: HashMap::new(),
             last_column_count: None,
@@ -655,6 +700,45 @@ mod merge_tests {
         // Default impl).
         assert_eq!(default_font_family(), "Charis");
         assert_eq!(default_font_size(), 16);
+    }
+
+    /// The four IPA-bearing works pin to Charis; everything else (LoJ
+    /// included) inherits the global face. The seed must survive BOTH
+    /// construction paths — `Default` and a deserialized config that omits
+    /// the key — or a work's face would depend on whether the key happened to
+    /// have been written.
+    #[test]
+    fn ipa_works_pin_to_charis_others_inherit_the_global_family() {
+        let c = Config::default();
+        for w in ["TT", "H8", "Jn", "Ant"] {
+            assert_eq!(
+                c.work_fonts.get(w).map(String::as_str),
+                Some("Charis"),
+                "{w} carries IPA glosses and must not fall back to Charter"
+            );
+        }
+        assert_eq!(c.work_fonts.get("LoJ"), None, "LoJ inherits the global face");
+        assert_eq!(c.work_fonts.get("BH"), None);
+
+        let from_empty: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            from_empty.work_fonts.get("TT").map(String::as_str),
+            Some("Charis"),
+            "a config omitting work_fonts must still seed the IPA works"
+        );
+    }
+
+    /// Every seeded per-work face must be a real cycle entry, or `F` would
+    /// jump to index 0 (`position(...).unwrap_or(0)`) and the work would
+    /// silently lose its face on the first press.
+    #[test]
+    fn seeded_work_fonts_are_all_cycle_entries() {
+        for (work, fam) in default_work_fonts() {
+            assert!(
+                FONT_CYCLE.contains(&fam.as_str()),
+                "work_fonts[{work}] = {fam:?} is not in FONT_CYCLE — `F` would reset it"
+            );
+        }
     }
 
     #[test]

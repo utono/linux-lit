@@ -4370,6 +4370,31 @@ pub fn display_work_at_with_prepared(
         }
     }
 
+    // Resolve this work's saved face into `font_family` BEFORE reapply_font,
+    // so every downstream consumer (the font tag, the prose layout
+    // fingerprint, the translation overlay) reads one already-correct value.
+    // A work with no entry keeps whatever `font_family` currently holds —
+    // the global default on a fresh config, or the last resolved face.
+    //
+    // Resolving here rather than at each read site is what keeps the prose
+    // page cache honest: the fingerprint includes the family, so a work with
+    // its own face gets its own table, and switching works re-resolves before
+    // any pagination decision is made.
+    if let Some(fam) = state
+        .current_work
+        .as_ref()
+        .and_then(|w| state.config.work_fonts.get(&w.abbrev))
+        .cloned()
+    {
+        if fam != state.config.font_family {
+            crate::logging::log(&format!(
+                "FONT: per-work face {fam} (was {})",
+                state.config.font_family
+            ));
+            state.config.font_family = fam;
+        }
+    }
+
     // Apply font tag to new buffer content (uses the configured/saved size —
     // do NOT override it here, or in-app !/| adjustments won't stick and the
     // saved size won't survive a work load).

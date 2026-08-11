@@ -200,6 +200,21 @@ pub fn cycle_font(state: &mut AppState, forward: bool) {
         (idx + cycle.len() - 1) % cycle.len()
     };
     state.config.font_family = cycle[next].to_string();
+    // Record the choice for THIS work, not as the global default. Both `F`
+    // and `Ctrl+Shift+f` land here, so both directions of the cycle set the
+    // per-work face. A work with no entry opens on the global default
+    // (Charis); changing the font in one work never affects another.
+    //
+    // `font_family` still carries the live value so every downstream consumer
+    // — reapply_font, the prose layout fingerprint, the translation overlay —
+    // reads ONE field and needs no per-work awareness. `work_fonts` is the
+    // durable record; `font_family` is the resolved current value.
+    if let Some(w) = state.current_work.as_ref() {
+        state
+            .config
+            .work_fonts
+            .insert(w.abbrev.clone(), cycle[next].to_string());
+    }
     reapply_font(state);
     crate::input::page_table::revalidate_on_resize(state);
     crate::input::prose_pages::revalidate_prose_on_resize(state);
