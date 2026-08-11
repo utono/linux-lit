@@ -4475,8 +4475,15 @@ fn dispatch_action(
         CursorPrevDialogueNoSeek => navigation::cursor_prev_dialogue_no_seek(&mut state.borrow_mut()),
         JumpToNextSpeaker => navigation::jump_to_next_speaker(&mut state.borrow_mut()),
         JumpToPrevSpeaker => navigation::jump_to_prev_speaker(&mut state.borrow_mut()),
-        JumpToNextChapter => navigation::jump_to_next_chapter(&mut state.borrow_mut()),
-        JumpToPrevChapter => navigation::jump_to_prev_chapter(&mut state.borrow_mut()),
+        // Routed through jump_to_next/prev_section, NOT the raw chapter jump.
+        // These are unbound by default, but `parse_action` deserializes any
+        // Action by name, so a user config CAN bind them — and calling the raw
+        // chapter jump would make them step LoJ by VOLUME while `[`/`{` step
+        // it by UNIT: two "next section" keys disagreeing on what a section
+        // is. The section functions fall back to the chapter path for a work
+        // without units, so this is identical for every other work.
+        JumpToNextChapter => navigation::jump_to_next_section(&mut state.borrow_mut()),
+        JumpToPrevChapter => navigation::jump_to_prev_section(&mut state.borrow_mut()),
         JumpToNextDivision => navigation::jump_to_next_section(&mut state.borrow_mut()),
         JumpToPrevDivision => navigation::jump_to_prev_section(&mut state.borrow_mut()),
 

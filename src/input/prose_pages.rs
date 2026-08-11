@@ -335,6 +335,23 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
     // fix this — regeneration re-rolled the same race (the same fingerprint
     // produced 801, 806, and 808 pages across separate runs), which is why
     // the determinism test, not the bump, is what proves this fixed.
+    //
+    // ⚠ 2026-08-11 — a NEAR-MISS worth reading before the next boundary
+    // change. `mark_chapter_starts` was changed to mark vocab-UNIT starts for
+    // a prose work with units (LoJ: 6 marks -> 482), which is exactly the
+    // "meaning of a stored boundary changed" that pv3 was bumped for — and
+    // `pv` was NOT bumped. It happened to be safe only because the same
+    // project's data migration changed every LoJ `div2`, and `db_fingerprint`
+    // (`snapshot.rs:87-89`) hashes `div1`/`div2`/`line_in_div`, so both
+    // stored LoJ tables (2,384 and 2,860 pages) missed and regenerated.
+    // Verified by recomputing FNV-1a over all 21,520 rows: computed
+    // 16816624198772025201 vs stored 9743255957853003769.
+    //
+    // THE RULE THAT ALMOST BROKE: a change to which lines carry `is_chapter`
+    // must bump `pv` ON ITS OWN. Do not rely on a co-occurring data change to
+    // invalidate for you — the next such change without a `div1`/`div2`/
+    // `normalized`/`id`/`line_in_div` change WILL serve stale grids whose
+    // page breaks sit at the old boundaries.
     format!("{base}|uh{usable}|cw{cw}|pv8")
 }
 

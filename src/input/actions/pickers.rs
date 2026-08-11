@@ -1158,6 +1158,17 @@ pub(crate) fn author_surname(author: &str) -> &str {
 /// identically 0, so printing it was pure noise. A two-level work keeps bare
 /// `act.scene` numerals, where both numbers carry meaning and a noun would
 /// crowd the column.
+///
+/// ⚠ STALE AS OF 2026-08-11 — that measurement no longer holds. `prose_book`
+/// is now a fourth `div2`-using type: LoJ carries 482 vocab units on `div2`
+/// (117/93/83/92/69/28 across six volumes). It is deliberately NOT added to
+/// `uses_two_level_divisions` yet, because "1.47" is the wrong label for a
+/// vocab unit — it is neither an act.scene nor a chapter.verse, and the
+/// picker column has no noun for it. CONSEQUENCE: a LoJ journal entry at
+/// `(1, 47)` renders as "Chapter 1", so all 117 volume-1 units collide onto
+/// one label. Harmless today (LoJ has 0 journal entries, verified
+/// 2026-08-11); the first LoJ Q&A makes it visible. Decide on a unit label
+/// before then — not by silently widening the two-level list.
 pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
     // Sentinel divisions have no numeric address to show: (-1,-1) is a
     // whole-work entry, (-2,-2) a corpus note. Printing "-2.-2" is noise —
@@ -1188,6 +1199,10 @@ pub(crate) fn division_label(work_type: &str, div1: i64, div2: i64) -> String {
 /// Measured against lit.db rather than assumed: only plays (act.scene), bible
 /// books (chapter.verse) and anthologies have any non-zero `div2`. Everything
 /// else is single-level, so showing the second number is noise.
+///
+/// ⚠ `prose_book` became a fourth `div2`-using type on 2026-08-11 (LoJ's 482
+/// vocab units) and is deliberately excluded — see `division_label`'s doc for
+/// why, and for what breaks when the first LoJ journal entry is written.
 fn uses_two_level_divisions(work_type: &str) -> bool {
     matches!(work_type, "play" | "bible_book" | "anthology")
 }
