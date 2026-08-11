@@ -295,7 +295,15 @@ LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
   **1236, not 1200** — pagination keys on the TEXT VIEW height, and only 1236
   reproduces production's `text_view.height = 1098` (1200 gives 1062, a 36px
   miss that changes the page grid and can hide the bug entirely). Verify with
-  `RESIZE_TICK: text_view.height changed … -> 1098` in the log. The resize
+  `RESIZE_TICK: text_view.height changed … -> 1098` in the log.
+  **Do not confuse this MONITOR mode with the WINDOW size in the layout
+  fingerprint, which reads `1920x1200`** — the fingerprint embeds the window,
+  and `prose_pages`' `REAL_GEOMETRY` gate keys on that literal, so a cage run
+  at the 1236 monitor mode still produces a cacheable `1920x1200`
+  fingerprint. Two numbers, one setup. Measured 2026-08-11: the observed
+  height at the 1200 monitor mode was 1106, not the 1062 stated above — if
+  you are chasing an exact page grid, trust the log's `RESIZE_TICK` over
+  these figures and re-measure. The resize
   lands after the app maps, so the first page table is built at 720p and
   dropped — wait for the settled-layout hook to regenerate before driving, or
   the run has no table and table-mode bugs cannot reproduce.
