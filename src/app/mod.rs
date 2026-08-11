@@ -2925,11 +2925,21 @@ pub fn build_window(
                     {
                         let st = state_for_tick.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                            {
-                                let s = st.borrow();
-                                crate::input::page_table::load_for_work(&s);
-                                crate::input::page_table::generate_and_store(&s);
-                                crate::input::prose_pages::load_for_prose_work(&s);
+                            // try_borrow, never borrow — see the sibling resize
+                            // hook below: both hooks can be armed by one resize
+                            // and collide on the outer state RefCell.
+                            match st.try_borrow() {
+                                Ok(s) => {
+                                    crate::input::page_table::load_for_work(&s);
+                                    crate::input::page_table::generate_and_store(&s);
+                                    crate::input::prose_pages::load_for_prose_work(&s);
+                                }
+                                Err(_) => {
+                                    crate::logging::log(
+                                        "PAGES: settled-layout load skipped (state busy)",
+                                    );
+                                    return;
+                                }
                             }
                             // Prose generation needs &mut (drives page_top during
                             // the walk); the play gate no-ops it for a 2-col work
@@ -2990,14 +3000,30 @@ pub fn build_window(
                         // revalidate_on_resize's doc comment.
                         let st = state_for_tick.clone();
                         glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                            let prose_dropped = {
-                                let s = st.borrow();
-                                crate::input::page_table::revalidate_on_resize(&s);
-                                let had = s.prose_page_table.borrow().is_some();
-                                crate::input::prose_pages::revalidate_prose_on_resize(&s);
-                                // Dropped and not reloaded from lit.db at the new
-                                // fingerprint: nothing pinned covers this geometry.
-                                had && s.prose_page_table.borrow().is_none()
+                            // try_borrow, never borrow: a width+height resize arms
+                            // BOTH 400ms hooks (settled-layout above and this one)
+                            // in the same tick, so they land in the same main-loop
+                            // iteration and the second one runs while the first
+                            // still holds a borrow_mut below. A hard borrow() here
+                            // panicked "already mutably borrowed" ~400ms after any
+                            // resize that changed both axes. Skipping is safe: the
+                            // resize tick re-arms this on the next qualifying
+                            // allocation, and the sibling hook does the same work.
+                            let prose_dropped = match st.try_borrow() {
+                                Ok(s) => {
+                                    crate::input::page_table::revalidate_on_resize(&s);
+                                    let had = s.prose_page_table.borrow().is_some();
+                                    crate::input::prose_pages::revalidate_prose_on_resize(&s);
+                                    // Dropped and not reloaded from lit.db at the new
+                                    // fingerprint: nothing pinned covers this geometry.
+                                    had && s.prose_page_table.borrow().is_none()
+                                }
+                                Err(_) => {
+                                    crate::logging::log(
+                                        "PAGES: resize revalidate skipped (state busy)",
+                                    );
+                                    return;
+                                }
                             };
                             // REGENERATE at the settled geometry (2026-07-27).
                             // `revalidate_prose_on_resize` only drops + retries a
