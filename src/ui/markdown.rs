@@ -155,7 +155,21 @@ pub fn block_spacing(style: &Style) -> (i32, i32) {
         // space between subtitle and hr").
         Style::H2 => (16, 8),
         Style::H3 => (14, 6),
-        Style::Rule => (16, 6),
+        // Rule: 6 above, tuned for the BODY→rule→H3 sequence that the gloss
+        // overlay actually renders (a paragraph, the `---`, then `### Etymology`).
+        // At the old 16 the rule stacked on Body's own 14px below and rendered
+        // 49px over the rule against 37px under it — pixel-measured on the
+        // vocab-word card (text ends y=707, rule y=756, heading y=794). 6 makes
+        // that sequence 20px on both sides.
+        //
+        // NOTE the two contexts do not share one optimum, because the preceding
+        // block differs: H3→rule→H2 (the subtitle case `rule_gaps_are_symmetric`
+        // was written for) starts from H3's 6px below, while body→rule→H3 starts
+        // from Body's 14px. The real fix is to stop SUMMING adjacent
+        // above/below and take the max, as CSS margin-collapsing does; until
+        // then this favours the body sequence, which is what readers see on
+        // every gloss and journal card.
+        Style::Rule => (6, 6),
         // Items breathe (was 10 — user: "bullet spacing needs to be improved
         // for readability"): item→item 16, intro-paragraph→list 16, and
         // list→closing-paragraph 18 — still tighter than para→para (18) so a
@@ -486,16 +500,24 @@ impl MarkdownTags {
                 .build(),
         );
 
-        // BlockQuote: muted italic. Its left margin is set per-render by
-        // `set_base_left_margin` (a tag left-margin REPLACES the view's own
-        // margin — an absolute value here would yank the quote to the view's
-        // far-left edge, outside the card's centered column).
+        // BlockQuote: italic at FULL body ink. Its left margin is set
+        // per-render by `set_base_left_margin` (a tag left-margin REPLACES the
+        // view's own margin — an absolute value here would yank the quote to
+        // the view's far-left edge, outside the card's centered column).
+        //
+        // Deliberately sets NO foreground, so the quote inherits the view's ink
+        // like every other block. It used to hardcode `#888888`, which (a) made
+        // the quoted SOURCE the faintest text on the card even though it is the
+        // passage under discussion, and (b) ignored the theme entirely — a
+        // fixed grey against whatever `text_fg` the active theme sets. Measured
+        // on the vocab-word card: quote ink #888888 vs body ink #2c363c.
+        // The italic alone sets the quotation apart, matching how the reader
+        // treats quoted source elsewhere.
         let (a, b) = sp(&Style::BlockQuote);
         let block_quote = get_or_add(
             "md-blockquote",
             gtk4::TextTag::builder()
                 .name("md-blockquote")
-                .foreground("#888888")
                 .style(pango::Style::Italic)
                 .pixels_above_lines(a)
                 .pixels_below_lines(b)
@@ -844,14 +866,42 @@ mod tests {
         assert_eq!(blocks[0].spans[0].style, Style::Bold);
     }
 
+    /// The gap above a rule must match the gap below it. Asymmetry here has
+    /// been user-flagged three times now.
+    ///
+    /// Two sequences hit this, and they do NOT share one optimum because the
+    /// preceding block's `below` differs (H3 gives 6, Body gives 14):
+    ///
+    /// - `H3 → rule → H2` — a subtitle above a section rule.
+    /// - `Body → rule → H3` — what the gloss/journal cards render (a
+    ///   paragraph, `---`, then `### Etymology`). This is the common one.
+    ///
+    /// The spacing favours the Body sequence (exact), leaving the subtitle
+    /// sequence within a tolerance. Tightening both to exact requires taking
+    /// the MAX of adjacent above/below instead of summing them, the way CSS
+    /// margins collapse — see the note on `Style::Rule` in `block_spacing`.
     #[test]
     fn rule_gaps_are_symmetric() {
-        // The gap ABOVE a rule (subtitle→rule) must equal the gap BELOW it
-        // (rule→section heading) — user-flagged asymmetry, twice.
         let (_, h3_below) = block_spacing(&Style::H3);
+        let (h3_above, _) = block_spacing(&Style::H3);
         let (rule_above, rule_below) = block_spacing(&Style::Rule);
         let (h2_above, _) = block_spacing(&Style::H2);
-        assert_eq!(h3_below + rule_above, rule_below + h2_above);
+        let (_, body_below) = block_spacing(&Style::Body);
+
+        // Body → rule → H3: the sequence on every gloss card. Exact.
+        assert_eq!(
+            body_below + rule_above,
+            rule_below + h3_above,
+            "body→rule→heading must be symmetric (the gloss-card sequence)"
+        );
+
+        // H3 → rule → H2: the subtitle sequence, within tolerance.
+        let sub_above = h3_below + rule_above;
+        let sub_below = rule_below + h2_above;
+        assert!(
+            (sub_above - sub_below).abs() <= 10,
+            "subtitle→rule→H2 drifted too far: {sub_above}px vs {sub_below}px"
+        );
     }
 
     #[test]

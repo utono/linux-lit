@@ -667,6 +667,32 @@ pub(crate) fn computed_card_width(
     target.min((ww - 2 * CARD_OUTER_MARGIN).max(1))
 }
 
+/// Pick the card height from the `content_hbox` allocation and the window
+/// height, preferring the allocation only when the two AGREE.
+///
+/// `alloc_h > 0` alone is NOT "settled": a STALE allocation left over from
+/// before a resize is also > 0. Opening an overlay in that window measured the
+/// card at the pre-resize height (measured: alloc 692 while the window was
+/// already 1236), and because the overlay container is `valign=Center` and
+/// requests this height, the card rendered ~19px too tall and sat 5px from the
+/// screen edge instead of `CARD_MARGIN_TOP`'s 14 — the "no padding on FIRST
+/// open, correct after Escape + reopen" bug. The second open was fine only
+/// because the allocation had caught up by then.
+///
+/// Both inputs express the same quantity, so a disagreement larger than the
+/// outer margin means one is stale; the window is the authority then. Pure so
+/// the rule is testable without a realized widget tree.
+pub(crate) fn settled_card_height(alloc_h: i32, window_h: i32) -> i32 {
+    let window_card_h = (window_h - CARD_VERTICAL_OUTER_MARGIN).max(0);
+    if alloc_h > 0 && (alloc_h - window_card_h).abs() <= CARD_VERTICAL_OUTER_MARGIN {
+        alloc_h
+    } else if window_card_h > 0 {
+        window_card_h
+    } else {
+        alloc_h.max(0)
+    }
+}
+
 pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
     // Width is COMPUTED, never read from `content_hbox`'s allocation.
     //
@@ -682,16 +708,23 @@ pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
         s.column_count(),
         s.translations_visible,
     );
-    // Height still comes from the allocation when settled -- nothing constrains
-    // it the way width is constrained, so the measurement is trustworthy.
-    let alloc_h = s.content_hbox.height();
-    let card_h = if alloc_h > 0 {
-        alloc_h
-    } else {
-        // CARD_VERTICAL_OUTER_MARGIN is already top + bottom, so it is
-        // subtracted once (it was `2 *` when top and bottom were one 14px value).
-        (s.window.height() - CARD_VERTICAL_OUTER_MARGIN).max(0)
-    };
+    // Height comes from the allocation when settled -- nothing constrains it
+    // the way width is constrained, so the measurement is trustworthy ONCE IT
+    // AGREES WITH THE WINDOW.
+    //
+    // `alloc_h > 0` alone is NOT "settled": a STALE allocation left over from
+    // before a resize is also > 0. Opening an overlay in that window measured
+    // the card at the pre-resize height (measured: alloc 692 while the window
+    // was already 1236), and because the overlay container is `valign=Center`
+    // and requests this height, the card rendered ~19px too tall and sat 5px
+    // from the screen edge instead of CARD_MARGIN_TOP's 14 -- the "no padding
+    // on FIRST open, correct after Escape + reopen" bug. The second open was
+    // fine only because the allocation had caught up by then.
+    //
+    // So take the window-derived height as the authority and use the
+    // allocation only when it is consistent with it. Both express the same
+    // quantity, so any disagreement means one of them is stale.
+    let card_h = settled_card_height(s.content_hbox.height(), s.window.height());
     (card_w, card_h)
 }
 
@@ -1019,6 +1052,32 @@ mod card_width_tests {
     /// head) and the user spotted the uneven screen padding immediately. The
     /// head/foot balance INSIDE the card is `TOP_SPACER_HEIGHT` +
     /// `RUNNING_HEAD_TOP_OFFSET`'s job — never these two.
+    /// A STALE allocation (left from before a resize) must not be trusted just
+    /// because it is > 0 — that shipped the "vocab-word overlay has no top or
+    /// bottom padding on FIRST open, correct after Escape + reopen" bug. The
+    /// numbers below are the measured ones from that report.
+    #[test]
+    fn stale_allocation_loses_to_the_window_height() {
+        use super::{settled_card_height, CARD_VERTICAL_OUTER_MARGIN};
+
+        // The bug: window already 1236, allocation still the 720p-era 692.
+        // Trusting the allocation made the card ~19px too tall (5px screen gap
+        // instead of 14). The window-derived height must win.
+        assert_eq!(settled_card_height(692, 1236), 1236 - CARD_VERTICAL_OUTER_MARGIN);
+
+        // A settled allocation that AGREES with the window is still preferred
+        // (it is the more precise measurement).
+        let settled = 1236 - CARD_VERTICAL_OUTER_MARGIN;
+        assert_eq!(settled_card_height(settled, 1236), settled);
+
+        // Pre-realization (no allocation yet) falls back to the window, which
+        // is the behaviour that already existed.
+        assert_eq!(settled_card_height(0, 1236), settled);
+
+        // No window either: nothing to go on, and never negative.
+        assert_eq!(settled_card_height(0, 0), 0);
+    }
+
     #[test]
     fn card_hangs_with_equal_gaps_above_and_below() {
         use super::{CARD_MARGIN_BOTTOM, CARD_MARGIN_TOP, CARD_VERTICAL_OUTER_MARGIN};

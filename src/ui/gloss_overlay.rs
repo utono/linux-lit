@@ -3011,7 +3011,27 @@ impl GlossOverlay {
         // Idempotent: returns the tags already registered in `new`.
         let tags = crate::ui::markdown::MarkdownTags::register(&buffer);
         let blocks = crate::ui::markdown::plan_markdown_blocks(&gloss);
-        crate::ui::markdown::render_markdown_blocks(&buffer, &blocks, &tags);
+        let md_blocks = crate::ui::markdown::render_markdown_blocks(&buffer, &blocks, &tags);
+
+        // Publish the rendered blocks as cursor-stop ranges. Without this
+        // `blocks` stays empty, and everything keyed to the cursor block goes
+        // dead on a vocab-word card: `current_block_text` returns None, so the
+        // `rr` vocab popup finds no words to show (user-reported), and block
+        // nav (j/k, Alt+n) has nothing to step through. Only `stoppable`
+        // blocks become stops — headings and rules are chrome, matching the
+        // journal overlay's rule.
+        *self.blocks.borrow_mut() = md_blocks
+            .iter()
+            .filter(|b| b.stoppable)
+            .enumerate()
+            .map(|(i, b)| BlockRange {
+                kind: BlockKind::Explication,
+                index: i as i32,
+                start_line: b.start_line,
+                end_line: b.end_line,
+            })
+            .collect();
+        self.cursor_block.set(0);
 
         // No source bar, no verse numbers, no synopsis labels on this path.
         self.bar_ranges.borrow_mut().clear();
