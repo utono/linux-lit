@@ -692,6 +692,34 @@ pub(crate) fn computed_card_width(
 /// equality removes the ambiguity; the allocation is now a tie-breaker only
 /// when it confirms the window, which is the only case it adds anything.
 /// Pure so the rule is testable without a realized widget tree.
+///
+/// Equality alone was still not enough, because the WINDOW is stale too on a
+/// first open. Measured on the user's 1920x1200 screen: the first
+/// `Ctrl+Alt+r` produced a 1191px card (a 5/4 screen gap), the second 1172
+/// (14/14). Under the equality rule 1191 is unreachable at `window_h = 1200`
+/// — every allocation yields 1172 — so `window.height()` itself must have
+/// reported **1219** on that first call, 19px too tall. The resize tick names
+/// the cause in `app/mod.rs`: "first open before dwl applies the final tile
+/// geometry". No rule over `(alloc, window)` can recover the right answer
+/// when BOTH inputs are pre-settle.
+///
+/// So the MONITOR height is the outermost authority: it is a property of the
+/// output, not of a window still being configured, so it does not fluctuate
+/// during the settle. `monitor_h <= 0` means "unknown" (not realized yet, or
+/// no display) and simply falls back to the previous window/allocation rule,
+/// which is correct once things settle.
+pub(crate) fn settled_card_height_on(alloc_h: i32, window_h: i32, monitor_h: i32) -> i32 {
+    // A fullscreen/kiosk window IS the monitor, so the card is the monitor
+    // height less the outer margins. Trust the window only when it agrees.
+    if monitor_h > 0 {
+        let monitor_card_h = (monitor_h - CARD_VERTICAL_OUTER_MARGIN).max(0);
+        if monitor_card_h > 0 {
+            return monitor_card_h;
+        }
+    }
+    settled_card_height(alloc_h, window_h)
+}
+
 pub(crate) fn settled_card_height(alloc_h: i32, window_h: i32) -> i32 {
     let window_card_h = (window_h - CARD_VERTICAL_OUTER_MARGIN).max(0);
     if alloc_h > 0 && alloc_h == window_card_h {
@@ -701,6 +729,19 @@ pub(crate) fn settled_card_height(alloc_h: i32, window_h: i32) -> i32 {
     } else {
         alloc_h.max(0)
     }
+}
+
+/// The height of the monitor this window is on, or 0 when it cannot be
+/// determined (not realized yet / headless quirk). Isolated here so
+/// `settled_card_height_on` stays pure.
+fn monitor_height(s: &AppState) -> i32 {
+    s.window
+        .surface()
+        .and_then(|surf| {
+            gtk4::gdk::Display::default().and_then(|d| d.monitor_at_surface(&surf))
+        })
+        .map(|m| m.geometry().height())
+        .unwrap_or(0)
 }
 
 pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
@@ -734,7 +775,11 @@ pub(crate) fn main_card_rect(s: &AppState) -> (i32, i32) {
     // So take the window-derived height as the authority and use the
     // allocation only when it is consistent with it. Both express the same
     // quantity, so any disagreement means one of them is stale.
-    let card_h = settled_card_height(s.content_hbox.height(), s.window.height());
+    let card_h = settled_card_height_on(
+        s.content_hbox.height(),
+        s.window.height(),
+        monitor_height(s),
+    );
     (card_w, card_h)
 }
 
@@ -1114,6 +1159,36 @@ mod card_width_tests {
 
         // Exact agreement is still preferred.
         assert_eq!(settled_card_height(correct, 1200), correct);
+    }
+
+    /// Equality on (alloc, window) is not sufficient, because on a FIRST open
+    /// the WINDOW is stale too — it reports the pre-settle tile geometry.
+    ///
+    /// Measured on a 1920x1200 screen: first `Ctrl+Alt+r` gave a 1191px card
+    /// (5/4 screen gap), second gave 1172 (14/14). 1191 is unreachable at
+    /// `window_h = 1200` under the equality rule, so the window itself
+    /// reported 1219 on that first call. The MONITOR height is the authority
+    /// that does not fluctuate mid-settle.
+    #[test]
+    fn monitor_height_beats_a_stale_window() {
+        use super::{settled_card_height_on, CARD_VERTICAL_OUTER_MARGIN};
+
+        let correct = 1200 - CARD_VERTICAL_OUTER_MARGIN; // 1172
+
+        // The reported bug: window AND allocation both pre-settle at 1219,
+        // monitor knows the truth. Previously produced 1191.
+        assert_eq!(settled_card_height_on(1191, 1219, 1200), correct);
+
+        // Once the window settles, the monitor still governs — same answer,
+        // so the first and second open now agree (that WAS the bug).
+        assert_eq!(settled_card_height_on(correct, 1200, 1200), correct);
+
+        // Monitor unknown (0): fall back to the window/allocation rule.
+        assert_eq!(settled_card_height_on(correct, 1200, 0), correct);
+        assert_eq!(settled_card_height_on(1191, 1219, 0), 1219 - CARD_VERTICAL_OUTER_MARGIN);
+
+        // A different monitor size is honoured rather than assumed.
+        assert_eq!(settled_card_height_on(0, 0, 1440), 1440 - CARD_VERTICAL_OUTER_MARGIN);
     }
 
     #[test]

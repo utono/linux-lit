@@ -1781,6 +1781,46 @@ When a half line clips at the bottom edge of a scrolled surface:
       the constant. It is a PRE-EXISTING `overlay_clipping` failure that a
       one-run comparison during harness flux mis-attributed to the edit.
 
+25. **ANY OVERLAY CARD — no top/bottom padding on the FIRST open, correct on
+    the second.** Tell: the card sits ~5px from the screen edge instead of
+    `CARD_MARGIN_TOP`'s 14, and an Escape + reopen fixes it. Pixel-measure
+    before believing it: on a 1920x1200 screen the correct card is **1172**
+    (`1200 - CARD_VERTICAL_OUTER_MARGIN`), the bad one **1191** — 19px too
+    tall, which is exactly the missing 9+10px of gap.
+
+    Root cause: `main_card_rect` derives the height from inputs that are BOTH
+    stale during the compositor's settle. This bug has now been fixed three
+    times at successively deeper layers, so check them in order:
+
+    - **The allocation is stale.** `content_hbox.height()` left over from
+      before a resize is still `> 0`, so "`alloc_h > 0`" is not "settled"
+      (measured: alloc 692 while the window was already 1236).
+    - **The tolerance was too loose.** Accepting the allocation when within
+      `CARD_VERTICAL_OUTER_MARGIN` (28px) of the window-derived height let the
+      SAME bug back in at a different geometry: 1191 vs 1172 is only 19px off,
+      inside 28. The tolerance was the very quantity being subtracted, so it
+      could not tell "settled" from "one resize behind". Both inputs express
+      the same quantity, so the check must be **equality**, not proximity.
+    - **The WINDOW is stale too.** This is the one that finally explains a
+      first-vs-second-open difference. Under the equality rule, 1191 is
+      *unreachable* at `window_h = 1200` (every allocation yields 1172), which
+      proves `window.height()` itself reported **1219** on the first call. The
+      resize tick names the cause in `app/mod.rs`: "first open before dwl
+      applies the final tile geometry." No rule over `(alloc, window)` can
+      recover the right answer when both are pre-settle.
+
+    Fix: the **monitor** height is the outermost authority
+    (`settled_card_height_on` / `monitor_height` in `app/layout.rs`) — it is a
+    property of the output, not of a window still being configured, so it does
+    not fluctuate mid-settle. `monitor_h <= 0` means "unknown" and falls back
+    to the window/allocation rule.
+
+    Generalizable lesson: **a first-open/second-open difference means an input
+    is pre-settle, and the fix is to find an input that cannot be** — not to
+    widen a tolerance around the fluctuating one. Tolerances hide this class of
+    bug rather than fixing it; each widening here bought one geometry and
+    failed at the next.
+
 ## The CLIP_WARN tripwire (grep this FIRST)
 
 A debug-gated, on-by-default detector logs `CLIP_WARN` when a surface's clip
