@@ -383,11 +383,54 @@ pub fn prose_layout_fingerprint(state: &crate::app::AppState) -> String {
 ///
 /// Cheap (one pass over the pages, no GTK calls — `heights` is already built)
 /// and debug-gated, so it can stay in permanently as a tripwire.
+/// The INK a stored page charges against the fill budget, in px.
+///
+/// Whole lines `[start_line ..= end]`, less the part of the first line
+/// scrolled off the top, less the unrendered tail of a mid-paragraph last
+/// line. Mirrors `exact_page_content_height` + `prose_bottom_head_for`
+/// (which yields `None` when `end_off == 0`) — with ONE deliberate
+/// difference, which is the whole point of this function:
+///
+/// **When the page ends ON a paragraph boundary (`end_off == 0`), the last
+/// line's box carries its trailing `pixels_below_lines` spacing, and that
+/// spacing paints no ink.** Charging it against `usable` counts blank space
+/// as fill, and reports a page as over-budget when its last GLYPH row fits
+/// perfectly.
+///
+/// Measured on BH (2026-08-11, at both 1920x1200 and 1920x1236): all 62
+/// pages the census called over-budget had `end_off == 0`, and every
+/// overshoot was 1..=6px — bounded by exactly one `pixels_below_lines`
+/// (6px at `line_spacing` 6). None was a mid-paragraph straddle, so no page
+/// held a partial row of ink. Production already accepted every one of them
+/// (`validate_prose_pages` tolerates `usable + fit_slack`, 14px here); only
+/// this census, comparing against bare `usable`, called them overfull.
+///
+/// A page that genuinely carries INK past the budget still counts: the
+/// straddle branch (`end_off > 0`) charges the on-page head in full, and a
+/// whole-paragraph page only sheds its trailing gap, never a glyph row.
+fn page_ink_charge(p: &ProsePage, heights: &[i32], end: usize, below_spacing: i32) -> i64 {
+    let mut px: i64 = heights[p.start_line..=end].iter().map(|&h| h as i64).sum();
+    px -= p.start_off as i64;
+    if p.end_off > 0 {
+        // Last line straddles: only its first `end_off` px are on-page. That
+        // head is ink up to the boundary, so it is charged in full.
+        px -= (heights[end] - p.end_off).max(0) as i64;
+    } else {
+        // Whole-paragraph end: shed the trailing ink-free gap only.
+        px -= below_spacing.min(heights[end]) as i64;
+    }
+    px
+}
+
 fn log_generation_height_drift(
     pages: &[ProsePage],
     heights: &[i32],
     usable: i32,
     fit_slack: i32,
+    // `pixels_below_lines` at generation layout: the trailing, ink-free
+    // spacing carried by every line box. Deducted from a page that ends ON a
+    // paragraph boundary — see the `end_off == 0` branch below.
+    below_spacing: i32,
 ) {
     if !crate::logging::debug_mode() {
         return;
@@ -405,12 +448,7 @@ fn log_generation_height_drift(
         if p.start_line > end {
             continue;
         }
-        let mut px: i64 = heights[p.start_line..=end].iter().map(|&h| h as i64).sum();
-        px -= p.start_off as i64;
-        if p.end_off > 0 {
-            // Last line straddles: only its first `end_off` px are on-page.
-            px -= (heights[end] - p.end_off).max(0) as i64;
-        }
+        let px = page_ink_charge(p, heights, end, below_spacing);
         if px > usable as i64 {
             over += 1;
             if px - usable as i64 > worst.1 - usable as i64 || worst.1 == 0 {
@@ -1232,7 +1270,13 @@ fn generate_and_store_prose_inner(state: &mut crate::app::AppState, fp: String) 
         crate::logging::log(&format!("PAGES_PROSE: VALIDATE_FAIL {e}"));
         return;
     }
-    log_generation_height_drift(&pages, &heights, usable, ctx.fit_slack);
+    log_generation_height_drift(
+        &pages,
+        &heights,
+        usable,
+        ctx.fit_slack,
+        gtk4::prelude::TextViewExt::pixels_below_lines(&state.text_view),
+    );
     // Citation mapping: BOUNDARY LINES ONLY (start_line / end_line of each
     // page). A boundary line with no line_mapping id is a hard failure — do NOT
     // snap (snapping would break the exact page-to-page adjacency the no-text-
@@ -1653,6 +1697,49 @@ mod tests {
     /// computed target 935 — inside the stored page — but the geometric check
     /// said "not visible", so `keep_jump_if_on_page` reverted 935 -> 934 and
     /// `q` did nothing, forever.
+    /// The census must measure INK against the fill budget, not box height.
+    ///
+    /// A page ending on a paragraph boundary carries the last line's trailing
+    /// `pixels_below_lines`, which paints nothing. Charging it reported 62 BH
+    /// pages as over-budget whose last glyph row fit exactly (overshoot
+    /// 1..=6px == one `pixels_below_lines`), while production accepted them
+    /// all. But the deduction must NOT hide a page that really does carry ink
+    /// past the budget — that is the regression this pins.
+    #[test]
+    fn page_ink_charge_sheds_trailing_gap_but_never_ink() {
+        let below = 6;
+        // Three 100px line boxes; each box = 94px ink + 6px trailing gap.
+        let heights = [100, 100, 100];
+
+        // Whole-paragraph end: (0,0)..(2,0) renders lines 0..=1. Box height is
+        // 200, but the last line's 6px trailing gap is blank — the ink charge
+        // is 194. With a 195px budget this page FITS; charging the box would
+        // have called it 5px over.
+        let whole = ProsePage { start_line: 0, start_off: 0, end_line: 2, end_off: 0 };
+        let end = last_rendered_line(&whole);
+        assert_eq!(end, 1, "end_off == 0 means end_line starts the NEXT page");
+        assert_eq!(page_ink_charge(&whole, &heights, end, below), 194);
+
+        // Straddle: (0,0)..(1,80) renders lines 0..=1, with only the first
+        // 80px of line 1 on-page. That head is ink and is charged in FULL —
+        // no gap deduction — so a genuinely over-packed page still trips.
+        let straddle = ProsePage { start_line: 0, start_off: 0, end_line: 1, end_off: 80 };
+        let send = last_rendered_line(&straddle);
+        assert_eq!(send, 1);
+        assert_eq!(
+            page_ink_charge(&straddle, &heights, send, below),
+            180,
+            "a straddling page is charged its on-page ink head, never reduced \
+             by the trailing gap — otherwise real overflow would be masked"
+        );
+
+        // The deduction is bounded by the line's own height, so a line box
+        // shorter than the spacing can never drive the charge negative.
+        let tiny = [4];
+        let p = ProsePage { start_line: 0, start_off: 0, end_line: 1, end_off: 0 };
+        assert_eq!(page_ink_charge(&p, &tiny, 0, below), 0);
+    }
+
     #[test]
     fn line_within_stored_page_is_on_page_even_when_page_overflows() {
         // (931,0)..(936,80): end_off > 0, so 936 is the last RENDERED line.

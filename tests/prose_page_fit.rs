@@ -535,8 +535,16 @@ fn prose_generation_is_deterministic_across_runs() {
 /// The slack exists to let a boundary advance past a fully-fitting row into
 /// the following ink-free gap (`prose_fit_slack`'s doc comment). Spending it on
 /// ink is what produces the flush page, so the invariant is stated against the
-/// fill budget `usable` — NOT `usable + slack`: a page whose content exceeds
+/// fill budget `usable` — NOT `usable + slack`: a page whose INK exceeds
 /// `usable` has, by definition, consumed space the fill decision reserved.
+///
+/// INK is the operative word, and it is the whole subtlety (2026-08-11). The
+/// census this asserts on charges `page_ink_charge`, which sheds the last
+/// line's trailing `pixels_below_lines` when the page ends on a paragraph
+/// boundary — that spacing paints nothing, and charging it reported 62 BH
+/// pages as over-budget whose last glyph row fit exactly. A page that really
+/// does carry ink past the budget (a straddle, `end_off > 0`) is still
+/// charged in full and still trips this assertion.
 #[test]
 #[ignore = "needs cage + grim + wtype; run with --ignored"]
 fn prose_pages_keep_bottom_breathing_room() {
@@ -564,12 +572,23 @@ fn prose_pages_keep_bottom_breathing_room() {
          (worst: page {} at {}px, {}px over). Those pages render with the final \
          paragraph flush against the card's bottom rule and no breathing room — \
          the reader sees text touching the edge.\n\n\
-         `prose_fit_slack` ({}px) exists so a boundary may advance past a fully-\
-         fitting row into the following INK-FREE inter-paragraph gap; the \
-         validator's `usable + slack` tolerance assumes that overshoot carries no \
-         ink. When the overshoot is real text instead, the page is genuinely \
-         overfull and the clip shrinks to nothing. Fix the boundary decision so \
-         the slack is only spent on blank space, not the tolerance that hides it.",
+         `prose_fit_slack` is {}px.\n\n\
+         DIAGNOSE BEFORE TOUCHING BOUNDARY CODE — this message used to say \
+         \"fix the boundary decision\", and in 2026-08-11 that was wrong: the \
+         census was charging each page its last line's FULL BOX height, \
+         including the trailing `pixels_below_lines` that paints no ink. \
+         Moving boundaries to satisfy it would have pulled a fitting glyph row \
+         off 62 pages. Check the `PAGES_PROSE_DRIFT: over page N (a,b)..(c,d)` \
+         lines first:\n\
+         - if every `d` (end_off) is 0, no page holds a partial row of INK;\n\
+         - if every overshoot is smaller than one text row, it cannot be an \
+         extra row of text;\n\
+         - if `validate_prose_pages` passed, production already accepts them.\n\
+         All three together mean the MEASUREMENT is wrong (see \
+         `page_ink_charge`), not the boundary. Only when the overshoot is real \
+         text — a straddle, `end_off > 0`, at least one row tall — is the page \
+         genuinely overfull and the boundary decision at fault. \
+         docs/troubleshooting/clip-prevention.md has the full write-up.",
         s.over_usable, s.pages, s.usable, s.worst_page, s.worst_px,
         s.worst_px - s.usable, s.slack
     );

@@ -1903,6 +1903,47 @@ same stored row. If `page_px` fits `usable` but `total` does not, the bug is in
 the RENDER-side measurement, not the page table. Chasing the table instead
 costs a session — that is exactly what happened here.
 
+#### The same class again: BOX height vs INK (2026-08-11)
+
+`prose_pages_keep_bottom_breathing_room` failed with "41 of 779 stored prose
+pages are packed past the fill budget usable=1071px ... the reader sees text
+touching the edge," and its own message prescribed fixing the boundary
+decision in `prose_next_boundary`. **Both the diagnosis and the prescription
+were wrong**, in the same way as the case above: the page was measured wrong,
+not packed wrong.
+
+The tells, all three cheap to check before touching any boundary code:
+
+- **Every over-budget page had `end_off == 0`** (read it straight off the
+  `PAGES_PROSE_DRIFT: over page N (a,b)..(c,d)` lines — `d` is `end_off`).
+  `end_off == 0` means the page ends ON a paragraph boundary, so NO page held
+  a partial row of ink. A genuine over-pack shows straddles.
+- **Every overshoot was 1..=6px** — exactly one `pixels_below_lines` at
+  `line_spacing` 6. An overshoot smaller than one text row (here 38px minimum)
+  cannot be an extra row of text.
+- **Production accepted every one of them.** `validate_prose_pages` tolerates
+  `usable + fit_slack` (14px here) and passed. Only the census, comparing
+  against bare `usable`, called them overfull.
+
+Root cause: `log_generation_height_drift` charged the page its last line's
+FULL box height, including the trailing `pixels_below_lines` that paints no
+ink. `fit_slack`'s own doc already says the tolerated excess is
+"trailing/leading spacing only, never glyph ink" — the census just wasn't
+honouring it. Fix: `page_ink_charge` sheds that trailing gap when
+`end_off == 0`, while the straddle branch still charges its on-page head in
+full so real overflow still trips. Guarded by
+`page_ink_charge_sheds_trailing_gap_but_never_ink`.
+
+**Generalisation:** when a fit check fails by LESS than one row height, suspect
+the measurement's treatment of spacing before suspecting the boundary. Moving
+boundaries to satisfy a box-height measurement would have pulled a perfectly
+fitting glyph row off 62 pages — a real regression, produced by "fixing" a
+non-bug.
+
+**Beware a failing test's prescription.** This test's assertion message named
+the wrong subsystem with total confidence. An assertion message is a hypothesis
+written when the test was authored, not a diagnosis of the run in front of you.
+
 ### A SILENT clip-class failure the tripwire cannot catch
 
 `CLIP_WARN` only fires when clip MATH diverges. An off-grid landing (#20) has
