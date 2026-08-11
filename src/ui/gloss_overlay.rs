@@ -3033,6 +3033,18 @@ impl GlossOverlay {
             .collect();
         self.cursor_block.set(0);
 
+        // This render is NOT paginated: it is the whole gloss in one page, and
+        // its cursor stops live in `blocks` (above), not in `all_blocks` —
+        // which `gloss_blocks` left EMPTY, since that is what routed us here.
+        // `show_gloss_with_color` sets `paginated` before branching, so leaving
+        // it set sends `j`/`k` and `gg`/`G` into `step_full_cursor` /
+        // `full_cursor_to_end`, both of which return immediately on
+        // `all_blocks.len() == 0` — block nav was dead on vocab-word cards.
+        // Clearing it routes them back to the page-local `blocks` path, and
+        // makes `cursor_on_first_block` (Escape's position-restore) read the
+        // page-local `cursor_block` that this path actually moves.
+        self.paginated.set(false);
+
         // Re-pin the scroll to the height `size_scroll` set for this card.
         // The tagged path renders a PAGE already measured to fit; this path
         // renders the WHOLE gloss, so the TextView's natural height reflects
