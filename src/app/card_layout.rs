@@ -112,8 +112,35 @@ mod imp {
             let mut child = widget.first_child();
             while let Some(c) = child {
                 if c.is_visible() {
+                    // Never measure a child for a width it has already said it
+                    // cannot accept. We advertise ADVERTISED_MIN_WIDTH (64)
+                    // horizontally so the window can tile narrow, and GTK takes
+                    // that literally: it calls the vertical measure with
+                    // for_size = 64, which `effective_width` passes straight
+                    // down. But two-column mode hard-sets a 760px width_request
+                    // on `scrolled_overlay`, so the subtree's real minimum is
+                    // far above 64. Measuring it at 64 makes GTK emit
+                    // "Trying to measure GtkOverlay for width of 64, but it
+                    // needs at least N" and re-measure the subtree — ~400
+                    // warnings per cage run, gone entirely with this clamp.
+                    //
+                    // Scope, measured rather than assumed: this is wasted
+                    // re-measure work and log noise, NOT a hang. The app runs
+                    // to completion with or without the clamp (both builds
+                    // reached 81s and 223 log lines under the same drive), so
+                    // do not cite this as the cause of an unresponsive UI.
+                    //
+                    // Clamping to the child's OWN reported horizontal minimum
+                    // keeps the advertised 64 intact (that number is the whole
+                    // point of this manager — raising it re-breaks the niri
+                    // tile-shrink guard) while asking the subtree only for
+                    // widths it can actually satisfy.
+                    let for_child = child_for_size.map(|w| {
+                        let (cmin_w, _, _, _) = c.measure(Orientation::Horizontal, -1);
+                        w.max(cmin_w)
+                    });
                     let (cmin, cnat, _, _) =
-                        c.measure(orientation, child_for_size.unwrap_or(-1));
+                        c.measure(orientation, for_child.unwrap_or(-1));
                     min = min.max(cmin);
                     nat = nat.max(cnat);
                 }
