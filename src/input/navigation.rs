@@ -2126,7 +2126,13 @@ pub fn jump_to_prev_division(state: &mut AppState) {
                 state.is_prose(),
                 &stage_lookup,
             );
-            if let Some(d) = first {
+            // On prose the boundary line IS the unit's first paragraph, so it is
+            // the landing target; on a play it is chrome and `first` is. Same
+            // resolution as the forward jump — see `division_landing_line`.
+            let marker_is_content =
+                is_dialogue_line(&state.buffer, bl, state.is_prose(), &stage_lookup)
+                    && !state.translation_lines.get(bl).copied().unwrap_or(false);
+            if let Some(d) = division_landing_line(bl, first, marker_is_content) {
                 if d < state.current_line {
                     marker = Some(bl);
                     cursor = Some(d);
@@ -2588,8 +2594,16 @@ pub fn jump_to_next_division(state: &mut AppState) {
                 .and_then(|wi| state.current_work.as_ref()?.lines.get(wi))
                 .map(|l| l.sub_line)
         };
+        // The boundary line is the unit's own first paragraph on prose (no
+        // chrome), but a header on a play — see `division_landing_line`.
         let cursor = marker.and_then(|m| {
-            next_dialogue_line(&state.buffer, &state.translation_lines, m, line_count, state.is_prose(), &stage_lookup)
+            let first = next_dialogue_line(
+                &state.buffer, &state.translation_lines, m, line_count, state.is_prose(), &stage_lookup,
+            );
+            let marker_is_content =
+                is_dialogue_line(&state.buffer, m, state.is_prose(), &stage_lookup)
+                    && !state.translation_lines.get(m).copied().unwrap_or(false);
+            division_landing_line(m, first, marker_is_content)
         });
         (marker, cursor)
     };
@@ -2618,6 +2632,35 @@ pub fn jump_to_next_division(state: &mut AppState) {
             }
         }
         after_page_change(state, PageChangeReason::Division);
+    }
+}
+
+/// The line a division jump should land the cursor on, given the division's
+/// boundary line `marker` and the first dialogue line at/after it.
+///
+/// On a PLAY the boundary is a chrome line — the `Scene 2` / `=====` stacked
+/// title — so the cursor must step past it to the scene's first spoken line
+/// (`first_dialogue`, which `next_dialogue_line` finds strictly after the
+/// marker). On PROSE with units there is usually no chrome at all: the
+/// boundary line resolves to the unit's own first paragraph (LoJ unit 3 starts
+/// at its content line `Of one thing I am certain…`), and stepping past it
+/// lands on the SECOND segment. So when the marker line is itself content,
+/// land on the marker.
+///
+/// `marker_is_content` is the caller's `is_dialogue_line(marker)` — the same
+/// predicate that decides what `next_dialogue_line` would accept, so the two
+/// stay consistent by construction. A prose unit that DOES open with chrome
+/// (a `* * * * *` separator) fails that predicate and keeps the step-past
+/// behaviour, which is what the separator case wants.
+pub(crate) fn division_landing_line(
+    marker: usize,
+    first_dialogue: Option<usize>,
+    marker_is_content: bool,
+) -> Option<usize> {
+    if marker_is_content {
+        Some(marker)
+    } else {
+        first_dialogue
     }
 }
 
@@ -5002,6 +5045,49 @@ mod unit_routing_tests {
     fn a_play_with_non_zero_div2_has_no_units() {
         let lines = vec![line(1, 1), line(1, 2), line(2, 1)];
         assert!(!work_has_units("play", &lines));
+    }
+
+    /// LoJ's `[` / `{` landed on the unit's SECOND segment: on prose the
+    /// division boundary line is the unit's own first paragraph (LoJ unit 3
+    /// opens at its content line, no header), but the jump used
+    /// `next_dialogue_line`, which searches STRICTLY AFTER the marker and so
+    /// stepped over it. The landing must be the marker line itself.
+    #[test]
+    fn prose_division_lands_on_the_boundary_line_itself() {
+        // marker=386 is LoJ unit 3's first paragraph; next_dialogue_line
+        // returned 387, the second segment.
+        assert_eq!(
+            super::division_landing_line(386, Some(387), true),
+            Some(386)
+        );
+    }
+
+    /// A PLAY's boundary is a `Scene 2` / `=====` chrome line, which is not a
+    /// dialogue line — the cursor must still step past it to the first spoken
+    /// line, exactly as before this fix.
+    #[test]
+    fn play_division_still_steps_past_the_scene_header() {
+        assert_eq!(
+            super::division_landing_line(1700, Some(1706), false),
+            Some(1706)
+        );
+    }
+
+    /// A prose unit that DOES open with chrome (a `* * * * *` separator) is not
+    /// content, so it keeps the step-past behaviour.
+    #[test]
+    fn prose_division_opening_on_a_separator_steps_past_it() {
+        assert_eq!(
+            super::division_landing_line(389, Some(390), false),
+            Some(390)
+        );
+    }
+
+    /// No dialogue after a chrome marker (end of work) stays a no-op — the
+    /// caller's `if let (Some, Some)` guard must not fire.
+    #[test]
+    fn a_chrome_marker_with_no_following_dialogue_is_a_no_op() {
+        assert_eq!(super::division_landing_line(5000, None, false), None);
     }
 
     /// Non-prose, non-play work types (poem, bible_book, anthology) must also
