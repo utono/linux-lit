@@ -291,19 +291,30 @@ LIT_NO_MPV=1 GSK_RENDERER=cairo WLR_BACKENDS=headless WLR_RENDERER=pixman \
 - Cage opens a fresh socket (`ls /run/user/1000/wayland-*`); export
   `WAYLAND_DISPLAY` to it. Default output is 1280×720 — resize to production
   geometry when pagination matters:
-  `wlr-randr --output HEADLESS-1 --custom-mode 1920x1236`.
-  **1236, not 1200** — pagination keys on the TEXT VIEW height, and only 1236
-  reproduces production's `text_view.height = 1098` (1200 gives 1062, a 36px
-  miss that changes the page grid and can hide the bug entirely). Verify with
-  `RESIZE_TICK: text_view.height changed … -> 1098` in the log.
-  **Do not confuse this MONITOR mode with the WINDOW size in the layout
-  fingerprint, which reads `1920x1200`** — the fingerprint embeds the window,
-  and `prose_pages`' `REAL_GEOMETRY` gate keys on that literal, so a cage run
-  at the 1236 monitor mode still produces a cacheable `1920x1200`
-  fingerprint. Two numbers, one setup. Measured 2026-08-11: the observed
-  height at the 1200 monitor mode was 1106, not the 1062 stated above — if
-  you are chasing an exact page grid, trust the log's `RESIZE_TICK` over
-  these figures and re-measure. The resize
+  `wlr-randr --output HEADLESS-1 --custom-mode 1920x1200`.
+  **1200, not 1236** (corrected 2026-08-11 — this bullet said the opposite,
+  and the old advice silently disabled pinned pagination in every headless
+  run). The layout fingerprint embeds the WINDOW size, and `prose_pages`'
+  `REAL_GEOMETRY` gate stores/loads only the literal `1920x1200`. A cage run
+  at the 1236 monitor mode fingerprints as `1920x1236`, so the stored table
+  never loads and the fresh one is refused:
+  `PAGES_PROSE: not caching <WORK> — geometry is not 1920x1200`. There is no
+  "two numbers, one setup" — the monitor mode IS what lands in the
+  fingerprint.
+  Verify the run is on the pinned grid with
+  `PAGES_PROSE: table hit (N pages)` in the log; `RESIZE_TICK:
+  text_view.height changed … -> 1106` confirms the geometry.
+  Measured, not assumed: at the 1200 mode `text_view.height` is **1106**, and
+  every one of the 14 cached prose tables in lit.db stores the window as
+  `1920x1200` (the height/`uh` fields vary with font size — most are
+  `1106|uh1071`, TT is `1062|uh1035`). The figures this bullet used to quote
+  (1098 at 1236, 1062 at 1200) were both wrong — 1062 is TT's height at a
+  different font size, not a mode difference.
+  Expect the cage `uh` to read ~1107 against a stored `uh1071`: the kiosk
+  surface has no titlebar chrome. Only the `1920x1200` window literal gates
+  caching, so that difference is harmless — but it means a cage-GENERATED
+  table is not byte-identical to the real one. Trust the log and the stored
+  fingerprints over any number written here. The resize
   lands after the app maps, so the first page table is built at 720p and
   dropped — wait for the settled-layout hook to regenerate before driving, or
   the run has no table and table-mode bugs cannot reproduce.
