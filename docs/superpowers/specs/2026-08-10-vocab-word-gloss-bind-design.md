@@ -1,6 +1,17 @@
-# Vocab-word gloss bind (Ctrl+Shift+g)
+# Vocab-word gloss bind (Ctrl+Alt+r)
 
-_2026-08-10. Status: approved, implementing._
+_2026-08-10. Status: SHIPPED (`acdd57d7`)._
+
+> **Amended during implementation.** This spec was approved naming
+> **Ctrl+Shift+g**, on the reasoning that the bind belonged on the `g` gloss
+> hub. That cap turned out to be FULL — plain/Shift (PendingG/JumpToEnd),
+> Ctrl (ToggleGlossOverlay), Alt (OpenGlossPicker), Ctrl+Shift
+> (**OpenLastGloss**), Ctrl+Alt (ToggleAnnotationTint) — so the proposed
+> bind would have collided with OpenLastGloss. It shipped on **Ctrl+Alt+r**,
+> the `r` VOCAB hub, which was explicitly free and is arguably the better
+> home: a vocab-word gloss is a vocab concept first. The "Keybind" section
+> below is corrected; the rest of the design shipped as written apart from
+> the two upstream defects recorded at the end.
 
 Open the gloss overlay filtered to `vocab-word` glosses for the passage
 covering the reader cursor line.
@@ -70,15 +81,18 @@ The gloss overlay itself needs no changes — it renders whatever
 
 ### Keybind
 
-`Ctrl+Shift+g` -> `Action::ShowVocabGloss`, keeping the whole concept on
-the `g` gloss hub:
+`Ctrl+Alt+r` -> `Action::ShowVocabGloss`, on the `r` VOCAB hub:
 
-- `Ctrl+g` — `ToggleGlossOverlay`
-- `Alt+g` — `OpenGlossPicker`
-- `Ctrl+Shift+g` — `ShowVocabGloss` (new)
+- `r` — `VocabPopupTap`
+- `Ctrl+r` — `AddVocabWord`
+- `Ctrl+Shift+r` — `VocabJournalAsk`
+- `Alt+r` — `ToggleVocabHighlight`
+- `Ctrl+Alt+r` — `ShowVocabGloss` (new; was documented as free)
 
-RPD-verified: `g` sits on `<AD07>` as `[ g, G ]`, so `g` is level 1
-(unshifted) and Ctrl vs Ctrl+Shift are distinct chords on that cap.
+The `g` gloss hub was the first choice but is fully occupied — see the
+amendment note at the top. `keymap_config.rs` also records a load-bearing
+RPD fact for that cap: Ctrl+Shift+g emits key_name `"g"` with `shift=true`,
+NOT `"G"`, so a `"G"`-only bind there would never have matched regardless.
 
 ### Surfaces updated in the same change
 
@@ -107,6 +121,28 @@ legend:
 - **Headless (cage):** land on a LoJ `solicitude` passage and confirm the
   overlay actually PAINTS. A green build does not prove the overlay opens
   — acceptance must exercise the visible surface, per the #13 lesson.
+
+## Found during implementation (both shipped in `acdd57d7`)
+
+The design assumed the surrounding machinery already worked for these
+glosses. It did not, in two independent ways — each invisible to the build
+and to the log, each caught only by pixel-checking the headless capture.
+Full write-up: `docs/troubleshooting/gloss-overlay-blank-body.md`.
+
+1. **`parse_citation` could not parse 3-part PROSE citations.** Prose elides
+   the always-zero div2, so `LoJ.1.2207` fed `"LoJ"` to `parse::<i64>()` and
+   returned `None` — making every prose passage INVISIBLE to
+   `passage_covers` rather than non-matching. This is the real reason prose
+   vocab glosses were unreachable. Fixed in `db/models.rs` with a regression
+   test for both shapes.
+
+2. **The overlay rendered these glosses BLANK.** vocab-word glosses are
+   stored as plain Markdown, but `render_gloss_page` assumes the tagged
+   form; `gloss_blocks` yields nothing, `repaginate` clears `pages`, and the
+   render returns early — footer counter intact, body empty. Untagged
+   glosses now render through the journal overlay's Markdown pipeline,
+   detected by CONTENT (`footer_gloss_type` is still `None` at render time,
+   so keying on the type silently never fired).
 
 ## Out of scope
 

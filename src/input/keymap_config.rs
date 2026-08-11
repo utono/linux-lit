@@ -326,9 +326,18 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_shift("r"), Action::VocabJournalAsk),
         (KeyCombo::ctrl_shift("R"), Action::VocabJournalAsk),
         (KeyCombo::alt("r"), Action::ToggleVocabHighlight),
+        // Ctrl+Alt+r: open the gloss overlay on the `vocab-word` gloss covering
+        // the cursor line (e.g. "solicitude" in LoJ), toasting when there is
+        // none. Lands on the `r` VOCAB hub rather than the `g` gloss hub
+        // because the whole `g` cap is already taken — plain/Shift (PendingG/
+        // JumpToEnd), Ctrl (ToggleGlossOverlay), Alt (OpenGlossPicker),
+        // Ctrl+Shift (OpenLastGloss), Ctrl+Alt (ToggleAnnotationTint) — and a
+        // vocab-word gloss is a vocab concept first.
+        (KeyCombo::ctrl_alt("r"), Action::ShowVocabGloss),
         // Word-copy family lives on the `-` (minus) cap — see app_bindings.
-        // Shift+r / Ctrl+Alt+r are unbound here (word-copy moved off them
-        // 2026-07-23 when the chat panel binds were disabled and `-` freed).
+        // Shift+r is unbound here (word-copy moved off it 2026-07-23 when the
+        // chat panel binds were disabled and `-` freed); Ctrl+Alt+r took the
+        // vocab-word gloss above.
         // Ctrl+Shift+g: on RPD this physical key emits key_name "g" (lowercase)
         // with shift=true under Ctrl+Shift — NOT "G" — so the "G" bind alone
         // never matched and the reader scrolled instead (confirmed from the
@@ -348,6 +357,9 @@ fn vocab_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl("z"), Action::OpenConcordanceWordPicker),
         (KeyCombo::alt("z"), Action::OpenConcordanceWorksPicker),
         (KeyCombo::ctrl_shift("Z"), Action::OpenConcordanceListPicker),
+        // `g` is the gloss hub: Ctrl = the overlay for the cursor line, Alt =
+        // the picker, Ctrl+Shift = the vocab-word gloss for the cursor line,
+        // Ctrl+Alt = the segment tint.
         (KeyCombo::ctrl("g"), Action::ToggleGlossOverlay),
         (KeyCombo::alt("g"), Action::OpenGlossPicker),
         // Ctrl+Alt+g: toggle the reader-gloss/journal segment tint on the
@@ -683,6 +695,29 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl_alt("i")), None);
     }
 
+    /// Ctrl+Alt+r opens the cursor line's vocab-word gloss, and the binds it
+    /// sits between are untouched. The `g` gloss hub is asserted full here so a
+    /// future "just put it on Ctrl+Shift+g" move has to confront the collision
+    /// with OpenLastGloss rather than silently shadowing it.
+    #[test]
+    fn vocab_word_gloss_is_on_ctrl_alt_r() {
+        let km = Keymap::default();
+        assert_eq!(
+            km.lookup("r", true, false, true),
+            Some(Action::ShowVocabGloss)
+        );
+        // Neighbours on the vocab hub keep their meanings.
+        assert_eq!(km.lookup("r", false, false, false), Some(Action::VocabPopupTap));
+        assert_eq!(km.lookup("r", true, false, false), Some(Action::AddVocabWord));
+        assert_eq!(km.lookup("r", false, false, true), Some(Action::ToggleVocabHighlight));
+        assert_eq!(km.lookup("r", true, true, false), Some(Action::VocabJournalAsk));
+        // The whole `g` cap is occupied — this is why the bind is not there.
+        assert_eq!(km.lookup("g", true, false, false), Some(Action::ToggleGlossOverlay));
+        assert_eq!(km.lookup("g", false, false, true), Some(Action::OpenGlossPicker));
+        assert_eq!(km.lookup("g", true, true, false), Some(Action::OpenLastGloss));
+        assert_eq!(km.lookup("g", true, false, true), Some(Action::ToggleAnnotationTint));
+    }
+
     #[test]
     fn r_is_the_vocab_hub() {
         let m = default_reader_bindings();
@@ -692,7 +727,8 @@ mod tests {
         // — `-` next word, Shift+- prev word, Alt+- collect line, Ctrl+- next
         // sentence. The `r` key stays the vocab hub: Ctrl+r adds a vocab word,
         // Ctrl+Shift+r asks the vocab journal Q&A, Alt+r toggles the per-work
-        // vocab highlight. Shift+r / Ctrl+Alt+r are now unbound.
+        // vocab highlight, Ctrl+Alt+r opens the cursor line's vocab-word gloss.
+        // Shift+r is unbound.
         assert_eq!(
             m.get(&KeyCombo::plain("minus")),
             Some(&Action::WordCycleCopy)
@@ -719,7 +755,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("r")), Some(&Action::AddVocabWord));
         // Shift+r / Ctrl+Alt+r are unbound (word-copy moved to the `-` cap).
         assert_eq!(m.get(&KeyCombo::plain("R")), None);
-        assert_eq!(m.get(&KeyCombo::ctrl_alt("r")), None);
+        // Ctrl+Alt+r is the vocab-word gloss (took this previously-free slot).
+        assert_eq!(m.get(&KeyCombo::ctrl_alt("r")), Some(&Action::ShowVocabGloss));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("r")), Some(&Action::VocabJournalAsk));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("R")), Some(&Action::VocabJournalAsk));
         assert_eq!(m.get(&KeyCombo::alt("r")), Some(&Action::ToggleVocabHighlight));

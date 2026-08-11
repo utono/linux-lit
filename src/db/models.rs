@@ -6,13 +6,32 @@ pub fn citation(abbrev: &str, div1: i64, div2: i64, line_in_div: i64) -> String 
 
 /// Parse a citation address back to `(div1, div2, line_in_div)`. The abbrev
 /// prefix (including `-Amb`-style suffixes) is irrelevant — only the trailing
-/// three numbers matter. Inverse of [`citation`].
+/// numbers matter. Inverse of [`citation`].
+///
+/// Handles BOTH stored shapes:
+///
+/// - 4-part `ABBR.div1.div2.line` (plays: `Ham.3.1.56`) -> `(3, 1, 56)`.
+/// - 3-part `ABBR.div1.line` (PROSE, where div2 is always 0 and is elided when
+///   the citation is written: `LoJ.1.2207`, `PL.1.417`) -> `(1, 0, 2207)`.
+///
+/// The 3-part shape was previously unparseable — `"LoJ".parse::<i64>()` failed
+/// for div1 and the whole citation returned `None`, so every consumer silently
+/// treated prose passages as non-existent rather than as non-matching. That is
+/// how `vocab-word` glosses on prose works (12 in `LoJ`, 3 in `PL`) were
+/// unreachable: `find_glossed_passages` returned them and `passage_covers` was
+/// never reached to compare them. Confirmed against `line_mapping`, where every
+/// `LoJ` row stores `div2 = 0`.
 pub fn parse_citation(cite: &str) -> Option<(i64, i64, i64)> {
     let mut parts = cite.rsplitn(4, '.');
     let line = parts.next()?.parse().ok()?;
-    let div2 = parts.next()?.parse().ok()?;
-    let div1 = parts.next()?.parse().ok()?;
-    Some((div1, div2, line))
+    let div2_part = parts.next()?;
+    match parts.next().map(|p| p.parse::<i64>()) {
+        // 4-part: the third-from-last part is numeric -> a real div1.
+        Some(Ok(div1)) => Some((div1, div2_part.parse().ok()?, line)),
+        // 3-part: the third-from-last part is the ABBREV (or absent), so what
+        // looked like div2 is really div1 and div2 is the elided 0.
+        _ => Some((div2_part.parse().ok()?, 0, line)),
+    }
 }
 
 #[derive(Debug, Clone)]

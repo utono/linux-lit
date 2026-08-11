@@ -58,7 +58,7 @@ const UPPER_ROW: &[KeyDef] = &[
     key("f", "F", "term filter", "cycle font", &[("C-S-F", "cycle font back"), ("M-f", "font info"), ("C-f", "corpus search")]),
     key("g", "G", "", "G: go to end", &[("C-g", "gloss tog"), ("S-C-g", "last gloss"), ("M-g", "gloss pick"), ("C-M-g", "annot tint")]),
     key("c", "C", "toggle ch start", "C: show chapter", &[("C-c", "prev work")]),
-    key("r", "R", "vocab tap", "", &[("C-r", "add vocab"), ("S-C-r", "vocab Q&A"), ("M-r", "vocab hi")]),
+    key("r", "R", "vocab tap", "", &[("C-r", "add vocab"), ("S-C-r", "vocab Q&A"), ("M-r", "vocab hi"), ("C-M-r", "vocab gloss")]),
     key("l", "L", "toggle signs", "", &[("S-C-l", "save+quit")]),
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker")]),
@@ -347,6 +347,9 @@ loads the entry's edition + MPV media and opens the journal overlay on it) \
 — src/input/actions/concordance.rs",
         "vocab hi" => "Action::ToggleVocabHighlight — src/app.rs",
         "add vocab" => "Action::AddVocabWord — src/input/actions/vocab_add.rs",
+        "vocab gloss" => "Action::ShowVocabGloss (gloss overlay on the \
+vocab-word gloss covering the cursor line; per-occurrence, so the LINE picks \
+which one; toasts when none) — src/input/actions/gloss.rs",
         "vocab tap" => "Action::VocabPopupTap (visible: next word; rr: \
 show/hide via ChordState::PendingR) — src/input/keymap.rs",
         "vocab Q&A" => "Action::VocabJournalAsk (popup visible + vocab word \
@@ -540,6 +543,7 @@ fn expand_action(label: &str) -> String {
         "Shx echo turns" => "Shakespeare echo turns picker",
         "vocab hi" => "toggle vocab highlight",
         "add vocab" => "add vocab word",
+        "vocab gloss" => "vocab-word gloss for this line",
         "toggle signs" => "toggle sign column",
         "chat side" => "flip chat panel column (disabled)",
         "toggle sync" => "toggle playback sync",

@@ -5922,6 +5922,24 @@ mod reader_gloss_range_tests {
         assert_eq!(parse_citation("garbage"), None);
     }
 
+    /// PROSE citations elide the always-zero div2, so they arrive 3-part
+    /// (`LoJ.1.2207`) rather than 4-part. These used to parse as None — the
+    /// abbrev was fed to `"LoJ".parse::<i64>()` for div1 — which made every
+    /// prose passage invisible to `passage_covers` and left the 12 `LoJ` /
+    /// 3 `PL` vocab-word glosses unreachable.
+    #[test]
+    fn parse_citation_accepts_three_part_prose_citations() {
+        assert_eq!(parse_citation("LoJ.1.2207"), Some((1, 0, 2207)));
+        assert_eq!(parse_citation("PL.1.417"), Some((1, 0, 417)));
+        // The 4-part shape is unchanged, including a genuine zero div2.
+        assert_eq!(parse_citation("Err.1.1.1"), Some((1, 1, 1)));
+        assert_eq!(parse_citation("LoJ.1.0.2207"), Some((1, 0, 2207)));
+        // Still rejects non-numeric trailing parts rather than guessing.
+        assert_eq!(parse_citation("LoJ.one.2207"), None);
+        assert_eq!(parse_citation("garbage"), None);
+        assert_eq!(parse_citation("LoJ"), None);
+    }
+
     #[test]
     fn line_matches_only_inside_a_passage_range_in_same_division() {
         // One glossed passage: 2H6 1.4.43–50.

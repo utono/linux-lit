@@ -3725,6 +3725,96 @@ pub(crate) fn try_open_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
     true
 }
 
+/// Open the gloss overlay filtered to `vocab-word`, for the passage covering
+/// the reader cursor line (reader Ctrl+Shift+g / `Action::ShowVocabGloss`).
+///
+/// A vocab-word gloss is PER-OCCURRENCE, not per-word: all 12 in `LoJ` gloss
+/// the single word "solicitude", each attached to a different passage
+/// (`LoJ.1.2207`, `LoJ.4.14043`, …). So the cursor line — not the word under
+/// it — is what selects which gloss opens, and the bind fires anywhere inside
+/// the glossed span rather than only on the word token.
+///
+/// Deliberately does NOT carry the displayed-passage overlap fallback that
+/// `try_open_syntax_gloss_at_cursor` has below. That fallback exists so the
+/// `\` cycle can reach a narrow syntax passage while a wider reader-gloss
+/// overlay is up; this bind opens straight from the reader cursor, where a
+/// strict cursor-line match is the predictable rule. Wire that fallback in
+/// only if vocab ever becomes a `\` stop.
+///
+/// Returns false (opening nothing) when no vocab-word gloss covers the cursor;
+/// `open_vocab_gloss_at_cursor` turns that into a toast.
+pub(crate) fn try_open_vocab_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> bool {
+    const GLOSS_TYPES: &[&str] = &["vocab-word"];
+
+    let (work_abbrev, cur_triple) = {
+        let s = state.borrow();
+        let work = match s.current_work.as_ref() {
+            Some(w) => w,
+            None => return false,
+        };
+        let wl = match s.work_line_for_buffer(s.current_line) {
+            Some(wl) => wl,
+            None => return false,
+        };
+        let line = match work.lines.get(wl) {
+            Some(l) => l,
+            None => return false,
+        };
+        (
+            // Glosses are STORED under the canonical base abbrev — look them up
+            // the same way or a variant edition (-Amb/-BBC) misses its own.
+            work.canonical_abbrev.clone(),
+            (line.div1, line.div2, line.line_in_div),
+        )
+    };
+
+    // All read-only DB work happens before any state mutation.
+    let conn = match crate::db::queries::open_db() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let passages = crate::db::queries::find_glossed_passages(&conn, &work_abbrev, GLOSS_TYPES)
+        .unwrap_or_default();
+
+    let covering = passages.iter().enumerate().find(|(_, p)| {
+        match (crate::app::parse_citation(&p.start_citation), crate::app::parse_citation(&p.end_citation)) {
+            (Some(start), Some(end)) => passage_covers(start, end, cur_triple),
+            _ => false,
+        }
+    });
+    let (passage_index, passage) = match covering {
+        Some((i, p)) => (i, p.clone()),
+        None => return false,
+    };
+
+    let all_glosses = crate::db::queries::find_glosses_by_start(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+        GLOSS_TYPES,
+    )
+    .unwrap_or_default();
+
+    if all_glosses.is_empty() {
+        return false;
+    }
+
+    let mut s = state.borrow_mut();
+    // Remember the reader page so Escape returns here.
+    s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
+    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
+    true
+}
+
+/// Reader Ctrl+Shift+g: open the cursor line's vocab-word gloss, or toast when
+/// there is none. The toast fires AFTER `try_open_vocab_gloss_at_cursor` has
+/// dropped its borrow — `show_tts_toast` borrows state again.
+pub(crate) fn open_vocab_gloss_at_cursor(state: &Rc<RefCell<AppState>>) {
+    if !try_open_vocab_gloss_at_cursor(state) {
+        show_tts_toast(state, "No vocab gloss on this line");
+    }
+}
+
 /// Open the gloss overlay filtered to `syntax-gloss`, for the passage
 /// covering the reader cursor line — the syntax stop of the `\` segment-
 /// overlay cycle (`cycle_from_journal` in `overlay_cycle.rs`). A parallel of

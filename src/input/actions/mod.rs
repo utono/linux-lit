@@ -158,6 +158,11 @@ pub enum Action {
     /// vocab-onto-`r` consolidation).
     AddVocabWord,
     ToggleGlossOverlay,
+    /// Ctrl+Shift+g: open the gloss overlay filtered to the `vocab-word` gloss
+    /// covering the cursor line. Passage-scoped, not token-scoped — vocab-word
+    /// glosses are per-occurrence, so the cursor line selects which one opens.
+    /// Toasts when the line has none.
+    ShowVocabGloss,
     ToggleJournalOverlay,
     /// Ctrl+Alt+g: toggle the main-card tint on lines covered by a
     /// reader-gloss or journal passage Q&A. Persisted in config
@@ -373,6 +378,7 @@ impl Action {
             | Action::ToggleVocabHighlight
             | Action::AddVocabWord
             | Action::ToggleGlossOverlay
+            | Action::ShowVocabGloss
             | Action::ToggleJournalOverlay
             | Action::ToggleAnnotationTint
             | Action::ToggleLastOverlay
@@ -532,6 +538,7 @@ impl Action {
             Action::ToggleVocabHighlight => "ToggleVocabHighlight",
             Action::AddVocabWord => "AddVocabWord",
             Action::ToggleGlossOverlay => "ToggleGlossOverlay",
+            Action::ShowVocabGloss => "ShowVocabGloss",
             Action::ToggleJournalOverlay => "ToggleJournalOverlay",
             Action::ToggleAnnotationTint => "ToggleAnnotationTint",
             Action::ToggleLastOverlay => "ToggleLastOverlay",
