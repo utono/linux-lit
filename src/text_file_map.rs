@@ -736,16 +736,27 @@ fn find_skip_target(nf: &str, norm_db: &[String], wi: usize, n_work: usize) -> O
 ///
 /// Returns an all-`false` vec for single-`(div1,div2)` works (prose / single
 /// scene), which the pagination predicate treats as "no boundaries".
-/// Set `is_chapter = true` on the first line of each div1 boundary, clearing it
-/// elsewhere (idempotent — safe to re-call on already-flagged lines).
+/// Mark chapter starts in place, clearing the flag elsewhere (idempotent —
+/// safe to re-call on already-flagged lines).
 ///
-/// Prose: each `div1 > 0` (front matter `div1 == 0` is not a chapter).
+/// Prose WITHOUT units: each `div1 > 0` (front matter `div1 == 0` is not a
+/// chapter). Prose WITH units (any non-zero `div2`): each `(div1, div2)`
+/// boundary, so the `▸` gutter marker and the chapter-synopsis path follow to
+/// unit granularity. Volume-level `▸` is deliberately lost — two competing
+/// "division" concepts in one work is the confusion units exist to remove.
+///
 /// Non-prose (plays/verse): no line is marked. Plays use the authoritative
 /// `(div1,div2)` section bitmap for `[`/`{` scene navigation; `is_chapter` is a
 /// prose-only concept (it drives the chapter synopsis path and the `▸` gutter
 /// marker, both of which are gated to prose). Marking act starts here only put a
 /// stray `▸` on each act's first line — usually an entrance stage direction —
 /// and powered the `(`/`&` act-jump, which plays don't use.
+///
+/// The "has units" test here (`any div2 != 0`) is the same predicate as
+/// `work_has_units` in `input/navigation.rs` (gated there additionally on
+/// `is_prose_work`, which the `is_prose` bool callers pass in already covers)
+/// — keep the two in sync; a mismatch would make navigation and the gutter
+/// marker disagree about where a unit starts.
 ///
 /// `lines` MUST be in canonical (div1, div2, line_in_div, sub_line) order — the
 /// same order `load_work` SELECTs them in.
@@ -757,12 +768,20 @@ pub(crate) fn mark_chapter_starts(lines: &mut [crate::db::models::Line], is_pros
         }
         return;
     }
-    let mut prev_div1: Option<i64> = None;
+    // Units are enabled by DATA, not by abbrev: a work with any non-zero div2
+    // marks unit starts, one with a uniformly zero div2 marks volume/div1 starts.
+    let has_units = lines.iter().any(|l| l.div2 != 0);
+    let mut prev: Option<(i64, i64)> = None;
     for line in lines.iter_mut() {
-        // A new div1 boundary where div1 > 0; front matter (0) never counts.
-        let is_start = line.div1 > 0 && Some(line.div1) != prev_div1;
+        let key = if has_units {
+            (line.div1, line.div2)
+        } else {
+            (line.div1, 0)
+        };
+        // A new boundary where div1 > 0; front matter (0) never counts.
+        let is_start = line.div1 > 0 && Some(key) != prev;
         line.is_chapter = is_start;
-        prev_div1 = Some(line.div1);
+        prev = Some(key);
     }
 }
 
@@ -2403,6 +2422,50 @@ mod mark_chapter_starts_tests {
 
     fn flags(lines: &[Line]) -> Vec<bool> {
         lines.iter().map(|l| l.is_chapter).collect()
+    }
+
+    /// Minimal Line with div1 and div2 set; everything else defaulted.
+    fn ln(div1: i64, div2: i64) -> Line {
+        Line {
+            div2,
+            ..line(div1)
+        }
+    }
+
+    /// Prose WITHOUT units keeps marking each div1 — BH, PP, TWWLN are
+    /// unchanged by this work.
+    #[test]
+    fn prose_without_units_marks_each_div1() {
+        let mut l = vec![ln(0, 0), ln(1, 0), ln(1, 0), ln(2, 0)];
+        mark_chapter_starts(&mut l, true);
+        assert_eq!(flags(&l), vec![false, true, false, true]);
+    }
+
+    /// Prose WITH units marks each UNIT start instead — the `▸` gutter marker
+    /// and the chapter-synopsis path follow to unit granularity. Volume-level
+    /// `▸` is deliberately lost.
+    #[test]
+    fn prose_with_units_marks_each_unit_start() {
+        let mut l = vec![ln(1, 1), ln(1, 1), ln(1, 2), ln(2, 1), ln(2, 1)];
+        mark_chapter_starts(&mut l, true);
+        assert_eq!(flags(&l), vec![true, false, true, true, false]);
+    }
+
+    /// Front matter (div1 == 0) is never a chapter, units or not.
+    #[test]
+    fn front_matter_is_never_marked_even_with_units() {
+        let mut l = vec![ln(0, 0), ln(0, 0), ln(1, 1)];
+        mark_chapter_starts(&mut l, true);
+        assert_eq!(flags(&l), vec![false, false, true]);
+    }
+
+    /// Plays/verse still mark nothing, and stale flags are cleared.
+    #[test]
+    fn non_prose_marks_nothing_and_clears_stale_flags() {
+        let mut l = vec![ln(1, 1), ln(1, 2)];
+        l[0].is_chapter = true;
+        mark_chapter_starts(&mut l, false);
+        assert!(l.iter().all(|x| !x.is_chapter));
     }
 
     #[test]
