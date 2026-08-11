@@ -2140,8 +2140,16 @@ impl GlossOverlay {
         // Fixed-scroll-height: echoes mode hides the title but shows the source
         // header + rule ABOVE the scroll (they stay put while the "A add" ask card
         // is open). The footer below is hidden on open (handled by size_scroll).
+        // Margins included for the same reason as `footer_pref_h` —
+        // `preferred_size()` excludes them but they cost the box real vertical
+        // space, and this is subtracted from a FIXED card height. `echo_rule`
+        // carries `set_margin_top(16)`, which an unmargined sum silently drops.
         let echo_chrome = self.echo_header_view.preferred_size().1.height()
-            + self.echo_rule.preferred_size().1.height();
+            + self.echo_header_view.margin_top()
+            + self.echo_header_view.margin_bottom()
+            + self.echo_rule.preferred_size().1.height()
+            + self.echo_rule.margin_top()
+            + self.echo_rule.margin_bottom();
         self.size_scroll(card_height, echo_chrome);
         self.reset_scroll_top();
     }
@@ -2375,29 +2383,57 @@ impl GlossOverlay {
         // preferred sizes only) do NOT include — without subtracting them the
         // container overran `card_height` by exactly that 44px. Account for the
         // scroll-overlay margins so title + (margins + scroll) + footer == card.
-        const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
-        let scroll_h =
-            (card_height - above_chrome_h - footer_h - SCROLL_OVERLAY_MARGINS).max(80);
+        let scroll_h = fixed_scroll_height(card_height, above_chrome_h, footer_h);
         self.gloss_scrolled.set_height_request(scroll_h);
         self.gloss_scrolled.set_max_content_height(scroll_h);
         self.gloss_scrolled.set_min_content_height(scroll_h);
         self.gloss_scrolled.queue_resize();
     }
 
-    /// Preferred height of the title row (0 when hidden). Used for the
-    /// fixed-scroll-height accounting.
+    /// Preferred height of the title row (0 when hidden), INCLUDING its own
+    /// top/bottom margins. Used for the fixed-scroll-height accounting.
+    ///
+    /// Margins are included for the same reason as [`Self::footer_pref_h`] —
+    /// `preferred_size()` excludes them, but they cost the parent box real
+    /// vertical space, and this value is subtracted from a FIXED card height.
+    /// The title's margins vary by show mode (`set_margin_top(24)` plus a
+    /// mode-dependent bottom), so measuring them beats assuming they are zero.
     fn title_pref_h(&self) -> i32 {
         if self.title.is_visible() {
             self.title.preferred_size().1.height()
+                + self.title.margin_top()
+                + self.title.margin_bottom()
         } else {
             0
         }
     }
 
-    /// Preferred height of the footer row (citation label + page counter). It is
-    /// the host's TOGGLED footer — hidden while the ask card is open.
+    /// Preferred height of the footer row (citation label + page counter),
+    /// INCLUDING its own top/bottom margins. It is the host's TOGGLED footer —
+    /// hidden while the ask card is open.
+    ///
+    /// The margins are not optional bookkeeping. GTK4's `preferred_size()`
+    /// reports a widget's own size and EXCLUDES its margins, but the vertical
+    /// space the widget costs its parent box includes them. `size_scroll`
+    /// subtracts this value from a FIXED card height to size the scroll, so an
+    /// under-count is handed straight to the scroll and the `valign=Center`
+    /// container overflows by exactly the omitted amount.
+    ///
+    /// That shipped the "gloss overlay has no top/bottom padding on FIRST open,
+    /// correct after Escape + reopen" bug. Measured on a 1920x1200 screen with
+    /// every input already settled (`alloc=1172 window=1200 monitor=1200`, and
+    /// the overlay correctly told `card_h=1172`): the footer's margins are
+    /// 12 + 24 = 36px, of which the old bare `preferred_size()` counted none of
+    /// the 18px label's surroundings, so the container allocated 1190 against a
+    /// 1172 request. `valign=Center` split the 18px overflow evenly, leaving a
+    /// 5px screen gap top and bottom instead of 14 — the reported symptom.
+    ///
+    /// The second open looked correct only because the reopen re-ran the
+    /// arithmetic against a scroll already capped by `max_content_height`.
     fn footer_pref_h(&self) -> i32 {
         self.footer_box.preferred_size().1.height()
+            + self.footer_box.margin_top()
+            + self.footer_box.margin_bottom()
     }
 
     /// Map a pre-built block list to buffer-line spans (shared by the gloss path,
@@ -3932,6 +3968,29 @@ const SPEAKER_BLOCK_OVERHEAD: i32 = 72;
 /// this stays clip-safe.
 const SPEAKERLESS_SOURCE_PAD: i32 = 8;
 
+/// Top+bottom margins on `gloss_scroll_overlay`, the scroll's own parent. These
+/// are NOT reported by any child's `preferred_size()`, so the fixed-height
+/// arithmetic must subtract them explicitly or the container overruns the card
+/// by exactly this much.
+const SCROLL_OVERLAY_MARGINS: i32 = 24 + 20;
+
+/// Height to pin the display scroll to, given the card height and the measured
+/// chrome above and below it.
+///
+/// Pure so the accounting is testable without a realized widget tree — the
+/// bugs this arithmetic produces are invisible to a green build and only show
+/// up as a few pixels of lost screen padding.
+///
+/// EVERY term must be a FULL vertical cost including margins. `size_scroll`
+/// hands the result to a scroll inside a `valign=Center` container that is
+/// pinned to `card_height`, so any under-counted chrome is added back as
+/// overflow, split evenly, and eats the card's top and bottom screen margins.
+/// See [`GlossOverlay::footer_pref_h`] for the 18px instance of this that
+/// shipped.
+fn fixed_scroll_height(card_height: i32, above_chrome_h: i32, footer_h: i32) -> i32 {
+    (card_height - above_chrome_h - footer_h - SCROLL_OVERLAY_MARGINS).max(80)
+}
+
 fn block_height_overhead(is_source: bool, has_speaker: bool, text_h: i32, line_h: i32) -> i32 {
     if is_source && has_speaker {
         // The speaker label + its gap, and nothing else. The former extra
@@ -4148,6 +4207,82 @@ mod apply_font_priority_tests {
             stage.priority(),
             font.priority(),
         );
+    }
+}
+
+#[cfg(test)]
+mod fixed_scroll_height_tests {
+    use super::{fixed_scroll_height, SCROLL_OVERLAY_MARGINS};
+
+    /// The overlay's children must sum to EXACTLY the card height. The container
+    /// is `valign=Center` and pinned to `card_height`, so an under-counted chrome
+    /// term becomes overflow that splits evenly and eats the card's top/bottom
+    /// screen margins.
+    ///
+    /// Numbers measured live at 1920x1200 (2026-08-11), first `Ctrl+Alt+r` on
+    /// `LoJ`, with every sizing input already settled (`alloc=1172 window=1200
+    /// monitor=1200`, overlay correctly told `card_h=1172`):
+    ///
+    /// | child            | own h | margins | real cost |
+    /// |------------------|-------|---------|-----------|
+    /// | title row        |    54 |   0 + 0 |        54 |
+    /// | scroll overlay   |  1038 | 24 + 20 |      1082 |
+    /// | footer box       |    18 | 12 + 24 |        54 |
+    /// |                  |       |         |  **1190** |
+    ///
+    /// The old `footer_pref_h` returned the box's bare `preferred_size()` of
+    /// **36** (logged: `footer=36`) while the footer's real cost is 54 — GTK4's
+    /// `preferred_size()` excludes margins, dropping 18 of the 36. The container
+    /// therefore allocated 1190 against a 1172 request: an 18px overflow,
+    /// halved by `valign=Center` into a 5px screen gap instead of 14. That is
+    /// the whole bug; nothing about it was stale, which is why three successive
+    /// "trust a different sizing input" fixes never touched it.
+    #[test]
+    fn children_sum_to_the_card_height_when_chrome_includes_margins() {
+        let card_h = 1172;
+        let title_row = 54; // no margins of its own
+        // The footer as it is actually laid out: 18px of label plus the shared
+        // footer helper's FOOTER_MARGIN_TOP(12) / FOOTER_MARGIN_BOTTOM(24).
+        let footer_real = 18 + 12 + 24;
+        assert_eq!(footer_real, 54);
+
+        let scroll_h = fixed_scroll_height(card_h, title_row, footer_real);
+
+        // The invariant: title + (scroll + its overlay margins) + footer == card.
+        assert_eq!(
+            title_row + scroll_h + SCROLL_OVERLAY_MARGINS + footer_real,
+            card_h,
+            "the overlay's children must sum to exactly the card height"
+        );
+    }
+
+    /// The pre-fix arithmetic, pinned so the regression cannot return quietly.
+    /// The old `footer_pref_h` fed a value 18px short of what the footer costs,
+    /// and the container overshot the card by exactly that.
+    #[test]
+    fn undercounting_the_footer_overflows_the_card_by_exactly_that_much() {
+        let card_h = 1172;
+        let title_row = 54;
+        let footer_measured = 36; // the logged pre-fix footer_pref_h
+        let footer_real = 18 + 12 + 24; // what the footer actually occupies
+        let dropped = footer_real - footer_measured;
+        assert_eq!(dropped, 18);
+
+        // Sized against the short value, but the footer still COSTS the real one.
+        let scroll_h = fixed_scroll_height(card_h, title_row, footer_measured);
+        let allocated = title_row + scroll_h + SCROLL_OVERLAY_MARGINS + footer_real;
+
+        assert_eq!(allocated, 1190, "the height the container actually took");
+        assert_eq!(allocated - card_h, dropped, "overflow == the undercount");
+        // valign=Center halves the overflow into each screen gap: 14 - 9 = 5.
+        assert_eq!(14 - (allocated - card_h) / 2, 5, "the reported 5px gap");
+    }
+
+    /// A short card must not drive the scroll to zero or negative.
+    #[test]
+    fn scroll_height_has_a_floor() {
+        assert_eq!(fixed_scroll_height(100, 54, 54), 80);
+        assert_eq!(fixed_scroll_height(0, 0, 0), 80);
     }
 }
 

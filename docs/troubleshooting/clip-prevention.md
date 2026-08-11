@@ -1785,41 +1785,72 @@ When a half line clips at the bottom edge of a scrolled surface:
     the second.** Tell: the card sits ~5px from the screen edge instead of
     `CARD_MARGIN_TOP`'s 14, and an Escape + reopen fixes it. Pixel-measure
     before believing it: on a 1920x1200 screen the correct card is **1172**
-    (`1200 - CARD_VERTICAL_OUTER_MARGIN`), the bad one **1191** — 19px too
-    tall, which is exactly the missing 9+10px of gap.
+    (`1200 - CARD_VERTICAL_OUTER_MARGIN`); the bad one measured **1190** on
+    2026-08-11 (and 1191 in the earlier reports) — ~18px too tall, which is
+    exactly the missing gap, doubled by `valign=Center`.
 
-    Root cause: `main_card_rect` derives the height from inputs that are BOTH
-    stale during the compositor's settle. This bug has now been fixed three
-    times at successively deeper layers, so check them in order:
+    **ACTUAL root cause (2026-08-11, measured): the overlay's own chrome
+    accounting drops widget MARGINS. It has nothing to do with stale sizing
+    inputs.** Three fixes chased staleness and none of them touched the bug.
 
-    - **The allocation is stale.** `content_hbox.height()` left over from
-      before a resize is still `> 0`, so "`alloc_h > 0`" is not "settled"
-      (measured: alloc 692 while the window was already 1236).
-    - **The tolerance was too loose.** Accepting the allocation when within
-      `CARD_VERTICAL_OUTER_MARGIN` (28px) of the window-derived height let the
-      SAME bug back in at a different geometry: 1191 vs 1172 is only 19px off,
-      inside 28. The tolerance was the very quantity being subtracted, so it
-      could not tell "settled" from "one resize behind". Both inputs express
-      the same quantity, so the check must be **equality**, not proximity.
-    - **The WINDOW is stale too.** This is the one that finally explains a
-      first-vs-second-open difference. Under the equality rule, 1191 is
-      *unreachable* at `window_h = 1200` (every allocation yields 1172), which
-      proves `window.height()` itself reported **1219** on the first call. The
-      resize tick names the cause in `app/mod.rs`: "first open before dwl
-      applies the final tile geometry." No rule over `(alloc, window)` can
-      recover the right answer when both are pre-settle.
+    `GlossOverlay::size_scroll` sizes the display scroll as
+    `card_height - above_chrome_h - footer_h - SCROLL_OVERLAY_MARGINS`, inside a
+    `valign=Center` container pinned to `card_height`. **GTK4's
+    `preferred_size()` reports a widget's own size and EXCLUDES its margins**,
+    but the space the widget costs its parent box includes them. So any chrome
+    term measured with a bare `preferred_size()` is short by its margins, the
+    scroll is handed the difference, and the container overflows by exactly
+    that much. `valign=Center` halves the overflow into each screen gap.
 
-    Fix: the **monitor** height is the outermost authority
-    (`settled_card_height_on` / `monitor_height` in `app/layout.rs`) — it is a
-    property of the output, not of a window still being configured, so it does
-    not fluctuate mid-settle. `monitor_h <= 0` means "unknown" and falls back
-    to the window/allocation rule.
+    Measured live at 1920x1200, first `Ctrl+Alt+r` on `LoJ`, with **every
+    sizing input already settled** (`alloc=1172 window=1200 monitor=1200`, and
+    the overlay correctly told `card_h=1172`):
 
-    Generalizable lesson: **a first-open/second-open difference means an input
-    is pre-settle, and the fix is to find an input that cannot be** — not to
-    widen a tolerance around the fluctuating one. Tolerances hide this class of
-    bug rather than fixing it; each widening here bought one geometry and
-    failed at the next.
+    | child          | own h | margins | real cost |
+    |----------------|-------|---------|-----------|
+    | title row      |    54 |   0 + 0 |        54 |
+    | scroll overlay |  1038 | 24 + 20 |      1082 |
+    | footer box     |    18 | 12 + 24 |        54 |
+    |                |       |         |  **1190** |
+
+    1190 against a 1172 request = 18px overflow → 9px off each gap → the 5px
+    the user sees instead of 14. `footer_pref_h` returned 36 where the footer
+    costs 54; the shared helper sets `FOOTER_MARGIN_TOP(12)` /
+    `FOOTER_MARGIN_BOTTOM(24)` on the box (`ui/footer.rs`), and neither reached
+    the arithmetic.
+
+    Fix: every chrome term includes its own margins — `footer_pref_h`,
+    `title_pref_h`, and the echoes path's `echo_chrome` (whose `echo_rule`
+    carries `margin_top(16)`). The arithmetic is now the pure, unit-tested
+    `fixed_scroll_height()`; `SCROLL_OVERLAY_MARGINS` was already there for the
+    same reason, which was the clue — that constant is this exact bug, fixed
+    once for one widget and never generalized.
+
+    Why the second open looked fine: the reopen re-runs the arithmetic against
+    a scroll already capped by `max_content_height`, so the overflow does not
+    recur. **A first-vs-second-open difference does NOT imply a pre-settle
+    input** — that inference is what sent three fixes into the sizing layer.
+
+    Diagnostic that ends this in one step: log the requested `card_h` next to
+    the container's *actual* `height()` after layout, plus each visible child's
+    `height()`/`margin_top()`/`margin_bottom()`. If the inputs are right and the
+    container is still too tall, the defect is in the chrome sum, not the
+    sizing. Do this BEFORE touching `settled_card_height_on`.
+
+    Generalizable lesson: **`height_request` is only a MINIMUM.** When a
+    container must not exceed a fixed height, subtracting measured chrome only
+    works if every term is the FULL vertical cost — `preferred_size() +
+    margin_top() + margin_bottom()`. And when a fix at one layer doesn't hold,
+    re-measure at the layer below before deepening the same theory: the three
+    superseded attempts below were each internally consistent and all wrong.
+
+    Superseded (kept so they are not re-tried): the allocation being `> 0` is
+    not "settled"; tightening the alloc-vs-window tolerance to equality; and
+    making the monitor the outermost authority. `settled_card_height_on` still
+    holds the monitor rule and is fine — it simply was never the bug. Note the
+    old claim that `window.height()` "must have reported 1219" was an inference
+    from the equality rule, never a measurement; the instrumented run shows the
+    window reporting a correct 1200.
 
 ## The CLIP_WARN tripwire (grep this FIRST)
 
