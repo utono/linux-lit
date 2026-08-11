@@ -2992,7 +2992,59 @@ impl GlossOverlay {
     /// line-number gutter are correct (`populate_gloss_buffer` rebuilds them at
     /// scroll 0). Source blocks were over-measured so a speaker label is never
     /// clipped at a page top.
+    /// Render a plain-Markdown gloss (`vocab-word`) through the same pipeline
+    /// the journal overlay uses, rather than the `<segment>`-tag path that the
+    /// other gloss types take. Called only from `render_gloss_page`'s
+    /// vocab-word branch.
+    ///
+    /// Pagination for these is the whole body in one page: a vocab-word gloss
+    /// is a few hundred words, well under a card, and the tag-based `pages`
+    /// table is empty for untagged text anyway. If a long one ever shows a
+    /// page marker without turning, that is the thing to revisit.
+    fn render_markdown_gloss_page(&self) {
+        use gtk4::prelude::*;
+
+        let gloss = self.current_gloss.borrow().clone();
+        let buffer = self.gloss_view.buffer();
+        buffer.set_text("");
+
+        // Idempotent: returns the tags already registered in `new`.
+        let tags = crate::ui::markdown::MarkdownTags::register(&buffer);
+        let blocks = crate::ui::markdown::plan_markdown_blocks(&gloss);
+        crate::ui::markdown::render_markdown_blocks(&buffer, &blocks, &tags);
+
+        // No source bar, no verse numbers, no synopsis labels on this path.
+        self.bar_ranges.borrow_mut().clear();
+        self.line_numbers.borrow_mut().clear();
+        self.synopsis_label_ranges.borrow_mut().clear();
+        self.hi_ranges.borrow_mut().clear();
+        // Single page: hide the ⌄/• page marker.
+        self.update_page_marker(0, 1);
+    }
+
     fn render_gloss_page(&self) {
+        // `vocab-word` glosses are stored as PLAIN MARKDOWN — no
+        // `<speaker>`/`<segment>`/`<gloss>` tags, unlike every other gloss type.
+        // `gloss_blocks` only emits blocks for TAGGED elements, so this text
+        // yields none, `repaginate` clears `pages`, and the page slice below
+        // returns early leaving the card BLANK (footer counter intact, body
+        // empty — exactly what the first headless captures of Ctrl+Alt+r
+        // showed). Must be the FIRST statement: everything below is keyed to
+        // the block/page tables that are empty on this path.
+        //
+        // Detect by CONTENT (no tagged blocks), not by gloss_type: at this
+        // point in the show path `footer_gloss_type` is still None —
+        // `record_last_gloss` sets it AFTER the first render, so keying on it
+        // silently never fired (measured: `footer_type=None gloss_len=2200`).
+        // Keying on the text also makes any future untagged gloss type render
+        // correctly for free.
+        if !self.current_gloss.borrow().is_empty()
+            && crate::ui::gloss_block::gloss_blocks(&self.current_gloss.borrow()).is_empty()
+        {
+            self.render_markdown_gloss_page();
+            return;
+        }
+
         let bar_left = *self.bar_x.borrow();
         let line_numbers = self.gloss_source_line_numbers.borrow().clone();
 

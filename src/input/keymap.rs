@@ -4664,6 +4664,7 @@ fn dispatch_action(
             ));
         }
         ToggleGlossOverlay => crate::input::actions::gloss::toggle_overlay(state),
+        ShowVocabGloss => crate::input::actions::gloss::open_vocab_gloss_at_cursor(state),
         ToggleJournalOverlay => crate::input::actions::journal::toggle_overlay(state),
         ToggleLastOverlay => {
             let panel_open = state.borrow().chat_layout_open;
