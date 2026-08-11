@@ -103,13 +103,27 @@ pub fn store_pages(
     rows: &[ProsePageRow],
 ) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
+    // ONE table per work. The delete used to match `work_abbrev AND
+    // layout_fingerprint`, which replaces a table only when the fingerprint is
+    // UNCHANGED — but a fingerprint change is exactly what forces
+    // regeneration, so every geometry/font/`pv` change ORPHANED its
+    // predecessor and nothing ever collected it. Measured 2026-08-11 before
+    // this fix: 129 stored tables of which 113 were unreachable (80,262 of
+    // 94,614 page rows, ~85%, ~6.8 MB); `BH-Barrett` alone had 52.
+    //
+    // Deleting by `work_abbrev` alone means a genuine geometry switch (dock a
+    // monitor, change font size) re-paginates instead of restoring a cached
+    // table. That is the deliberate trade: this reader runs at one geometry,
+    // and an unbounded cache of dead tables costs more than an occasional
+    // regeneration. `prose_pages` is a CACHE — losing a row costs time, never
+    // data.
     tx.execute(
-        "DELETE FROM prose_pages WHERE work_abbrev = ?1 AND layout_fingerprint = ?2",
-        params![abbrev, meta.layout_fingerprint],
+        "DELETE FROM prose_pages WHERE work_abbrev = ?1",
+        params![abbrev],
     )?;
     tx.execute(
-        "DELETE FROM prose_pages_meta WHERE work_abbrev = ?1 AND layout_fingerprint = ?2",
-        params![abbrev, meta.layout_fingerprint],
+        "DELETE FROM prose_pages_meta WHERE work_abbrev = ?1",
+        params![abbrev],
     )?;
     for r in rows {
         tx.execute(
@@ -194,5 +208,48 @@ mod tests {
         store_pages(&mut conn, "BH", &sample_meta(), &sample_rows()).unwrap();
         conn.execute("UPDATE prose_pages_meta SET page_count = 3", []).unwrap();
         assert!(load_pages(&conn, "BH", "v1|abc").unwrap().is_none());
+    }
+
+    /// ONE table per work. Storing under a NEW fingerprint must evict the old
+    /// one, not accumulate beside it. The delete used to match on
+    /// `layout_fingerprint` too, so a fingerprint change — the very thing that
+    /// forces regeneration — orphaned its predecessor forever: 113 of 129
+    /// stored tables were unreachable when this was measured.
+    #[test]
+    fn a_new_fingerprint_evicts_the_old_table() {
+        let mut conn = mem();
+        store_pages(&mut conn, "BH", &sample_meta(), &sample_rows()).unwrap();
+
+        let mut newer = sample_meta();
+        newer.layout_fingerprint = "v1|NEWER".to_string();
+        store_pages(&mut conn, "BH", &newer, &sample_rows()).unwrap();
+
+        let tables: i64 = conn
+            .query_row("SELECT COUNT(*) FROM prose_pages_meta WHERE work_abbrev='BH'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tables, 1, "the old table must be evicted, not orphaned");
+        assert!(load_pages(&conn, "BH", "v1|NEWER").unwrap().is_some());
+        assert!(load_pages(&conn, "BH", "v1|abc").unwrap().is_none(), "old fingerprint is gone");
+
+        // ...and its PAGE rows go with it, not just the meta row.
+        let orphaned: i64 = conn
+            .query_row("SELECT COUNT(*) FROM prose_pages WHERE layout_fingerprint='v1|abc'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(orphaned, 0, "orphaned page rows must be deleted too");
+    }
+
+    /// Eviction is per WORK: re-paginating one work must not drop another's.
+    #[test]
+    fn evicting_one_work_leaves_another_intact() {
+        let mut conn = mem();
+        store_pages(&mut conn, "BH", &sample_meta(), &sample_rows()).unwrap();
+        store_pages(&mut conn, "DC", &sample_meta(), &sample_rows()).unwrap();
+
+        let mut newer = sample_meta();
+        newer.layout_fingerprint = "v1|NEWER".to_string();
+        store_pages(&mut conn, "BH", &newer, &sample_rows()).unwrap();
+
+        assert!(load_pages(&conn, "DC", "v1|abc").unwrap().is_some(), "DC untouched");
+        assert!(load_pages(&conn, "BH", "v1|NEWER").unwrap().is_some());
     }
 }

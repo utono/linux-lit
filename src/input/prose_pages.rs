@@ -12,6 +12,13 @@ use crate::input::page_top::PageTop;
 /// hang the app if some source stays permanently ready.
 const MAX_LAYOUT_SPINS: usize = 256;
 
+/// The only geometry whose page tables are worth caching — this reader's real
+/// display. Everything else is a headless `cage` run (`1280x720`), whose
+/// tables no session ever reads and which, under the one-table-per-work rule
+/// in `db::prose_pages::store_pages`, would evict the real table on every
+/// test. Appears inside `layout_fingerprint` as the window-size component.
+const REAL_GEOMETRY: &str = "1920x1200";
+
 /// DIAGNOSTIC: dump every tag applied across a buffer line, plus its text and
 /// its measured height, so the SAME line can be compared at generation and at
 /// render. `LIT_TRACE_TAGS=<first>:<last>` selects the window; `phase` names
@@ -1258,6 +1265,19 @@ fn generate_and_store_prose_inner(state: &mut crate::app::AppState, fp: String) 
         generated_at: epoch_timestamp(),
         validated: true,
     };
+    // Only the real display geometry is worth caching. Half the stored tables
+    // measured on 2026-08-11 (65 of 129) were `1280x720` — the headless `cage`
+    // test geometry, never read by an actual session, and with ONE table per
+    // work they would now EVICT the real one every test run. Storing is
+    // skipped rather than the rows pruned afterwards: a table that is never
+    // written cannot go stale.
+    if !fp.contains(REAL_GEOMETRY) {
+        crate::logging::log(&format!(
+            "PAGES_PROSE: not caching {} — geometry is not {REAL_GEOMETRY} (fp {fp})",
+            work.abbrev
+        ));
+        return;
+    }
     match crate::db::queries::open_db_rw() {
         Ok(mut conn) => {
             if let Err(e) = crate::db::prose_pages::ensure_schema(&conn)
