@@ -2621,14 +2621,30 @@ pub fn jump_to_next_division(state: &mut AppState) {
     }
 }
 
-/// Jump to the next structural section: scene marker for plays, chapter
-/// for prose. Encapsulates the work_type routing so the dispatch table
-/// stays clean.
+/// Whether this work carries vocab units on `div2`.
+///
+/// The enabling condition for unit stepping is DATA, not the abbrev — but
+/// data alone is not sufficient either: `div2` means SCENE on a play (and is
+/// non-zero for essentially every Shakespeare play), so the predicate must
+/// also gate on the work being prose. A prose work with any non-zero `div2`
+/// (LoJ today, 482 units across its 6 volumes) gets `[`/`{` unit stepping; a
+/// prose work whose `div2` is uniformly 0 (BH, PP, TWWLN) keeps chapter
+/// stepping unchanged; a play never reaches this path regardless of its
+/// `div2`. Adopting units for another prose work is therefore a data change,
+/// never a code change.
+pub(crate) fn work_has_units(work_type: &str, lines: &[crate::db::models::Line]) -> bool {
+    crate::db::line_types::is_prose_work(work_type) && lines.iter().any(|l| l.div2 != 0)
+}
+
+/// Jump to the next structural section: scene marker for plays, vocab unit
+/// for a prose work that has them, chapter for prose that does not.
 pub fn jump_to_next_section(state: &mut AppState) {
-    let is_play = state.current_work.as_ref()
-        .map(|w| w.work_type == "play")
+    let by_division = state
+        .current_work
+        .as_ref()
+        .map(|w| w.work_type == "play" || work_has_units(&w.work_type, &w.lines))
         .unwrap_or(false);
-    if is_play {
+    if by_division {
         jump_to_next_division(state);
     } else {
         jump_to_next_chapter(state);
@@ -2649,13 +2665,15 @@ pub(crate) fn surface_current_division_toast(state: &mut AppState) {
     let _ = state;
 }
 
-/// Jump to the previous structural section: scene marker for plays,
-/// chapter for prose.
+/// Jump to the previous structural section: scene marker for plays, vocab
+/// unit for a prose work that has them, chapter for prose that does not.
 pub fn jump_to_prev_section(state: &mut AppState) {
-    let is_play = state.current_work.as_ref()
-        .map(|w| w.work_type == "play")
+    let by_division = state
+        .current_work
+        .as_ref()
+        .map(|w| w.work_type == "play" || work_has_units(&w.work_type, &w.lines))
         .unwrap_or(false);
-    if is_play {
+    if by_division {
         jump_to_prev_division(state);
     } else {
         jump_to_prev_chapter(state);
@@ -4917,5 +4935,83 @@ mod speaker_turn_tests {
         // Also None when the line is dialogue=true but has no speaker.
         let p = fixture(&[("", true), ("", true)]);
         assert_eq!(block_first(&p, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod unit_routing_tests {
+    use super::work_has_units;
+    use crate::db::models::Line;
+
+    /// Construct a Line with only div1/div2 set to what the test cares about;
+    /// Line has no Default, so every field is spelled out explicitly.
+    fn line(div1: i64, div2: i64) -> Line {
+        Line {
+            id: 0,
+            citation: String::new(),
+            text: String::new(),
+            normalized: String::new(),
+            speaker: None,
+            is_dialogue: false,
+            timestamp: None,
+            div1,
+            div2,
+            line_in_div: 0,
+            sub_line: 0,
+            is_chapter: false,
+            is_spoken: None,
+            block_type: String::new(),
+        }
+    }
+
+    /// A prose work whose div2 is uniformly 0 has no units: BH, PP, TWWLN
+    /// must keep chapter stepping exactly as today.
+    #[test]
+    fn a_prose_work_with_uniform_zero_div2_has_no_units() {
+        let lines = vec![line(1, 0), line(2, 0), line(67, 0)];
+        assert!(!work_has_units("prose_book", &lines));
+    }
+
+    /// LoJ after the migration: div2 carries the unit number, work_type is
+    /// prose_book.
+    #[test]
+    fn a_prose_work_with_any_non_zero_div2_has_units() {
+        let lines = vec![line(1, 1), line(1, 2), line(2, 1)];
+        assert!(work_has_units("prose_book", &lines));
+    }
+
+    /// The enabling condition is DATA, not the abbrev — a single unitised
+    /// row is enough, so adopting units later is a data change not a code one.
+    #[test]
+    fn one_unitised_row_is_enough() {
+        let lines = vec![line(1, 0), line(1, 0), line(1, 3)];
+        assert!(work_has_units("prose_book", &lines));
+    }
+
+    #[test]
+    fn an_empty_work_has_no_units() {
+        assert!(!work_has_units("prose_book", &[]));
+    }
+
+    /// Regression guard: a PLAY's div2 means SCENE, not vocab unit. 199 plays
+    /// in the live DB have non-zero div2 today — none of them may route
+    /// through the unit path. Measured 2026-08-11: 202 works have non-zero
+    /// div2, 201 of which are NOT vocab-unitised (199 play, 1 bible_book, 1
+    /// anthology).
+    #[test]
+    fn a_play_with_non_zero_div2_has_no_units() {
+        let lines = vec![line(1, 1), line(1, 2), line(2, 1)];
+        assert!(!work_has_units("play", &lines));
+    }
+
+    /// Non-prose, non-play work types (poem, bible_book, anthology) must also
+    /// not route through the unit path even with non-zero div2 — the
+    /// predicate is prose-gated, not just play-excluded.
+    #[test]
+    fn a_non_prose_work_with_non_zero_div2_has_no_units() {
+        let lines = vec![line(1, 1), line(1, 2)];
+        assert!(!work_has_units("bible_book", &lines));
+        assert!(!work_has_units("anthology", &lines));
+        assert!(!work_has_units("poem", &lines));
     }
 }
