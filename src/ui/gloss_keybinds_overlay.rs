@@ -16,7 +16,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
     ("Ctrl+w", "begin_rewrite: Claude rewrite of this gloss"),
     ("Ctrl+Shift+r", "browse_restore: the viewed revision"),
     ("Ctrl+Shift+n / Ctrl+Shift+p", "browse_step: rewrite_revisions (view-only)"),
-    ("r", "vocab_popup (rr toggles · r next word)"),
+    ("r / R", "vocab_popup (rr toggles · r next word · R prev)"),
     ("Alt+g", "gloss_picker"),
     ("\\", "cycle overlays: → journal Q&A → syntax → back here (skips empty; Esc exits)"),
 ]);

@@ -2761,9 +2761,18 @@ fn handle_gloss_key(
             crate::input::actions::gloss::begin_edit(state);
             true
         }
-        // R: vocab R reserved unbound, mirrors main card. The ask-Claude
-        // rewrite moved to Ctrl+r (handled in the is_ctrl block above).
-        "R" => true,
+        // R: previous vocab word — the backward partner of `r`, so a block with
+        // several vocab words steps both ways instead of only wrapping forward
+        // (matches the `-` / `Shift+-` next/prev shape in the word-copy family).
+        // Deliberately does NOT arm the `rr` chord: only `r` toggles the popup.
+        // The ask-Claude rewrite moved to Ctrl+r (handled in the is_ctrl block).
+        "R" => {
+            if state.borrow().vocab_popup.popup.is_visible() {
+                let mut s = state.borrow_mut();
+                crate::app::vocab_popup::vocab_popup_prev(&mut s);
+            }
+            true
+        }
         // `w`: re-flash the last rewrite diff for another fade window. Sits on
         // the rewrite cap (Ctrl+w rewrites here) so "w = what the rewrite
         // changed" reads the same on every overlay.
