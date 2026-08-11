@@ -36,8 +36,9 @@ pub struct LineMap {
     /// from the DB's div columns, not inferred from buffer text. The boundary is
     /// attributed to the first synthesized chrome line (ACT/===/Scene marker) of
     /// the transition run, so a page that opens on that chrome owns its heading
-    /// while a later boundary inside a range clamps. Empty (`false` everywhere)
-    /// for prose / single-column works. See `build_section_starts`.
+    /// while a later boundary inside a range clamps. Populated by every builder
+    /// (plays, prose, block-aware works) — a prose work with uniform `div2`
+    /// still gets a boundary at each `div1` change. See `build_section_starts`.
     pub section_starts: Vec<bool>,
 }
 
@@ -286,13 +287,20 @@ pub fn build_line_map_blocks(
         }
     }
 
+    // section_starts: same authoritative (div1,div2)-change logic the other
+    // builders use (see `build_section_starts`). `buffer_to_work` here has the
+    // identical per-buffer-line "which work row" shape those builders rely on,
+    // so it slots in directly. Compute before the struct literal, since
+    // `buffer_to_work` is moved into it below.
+    let section_starts = build_section_starts(file_lines, &buffer_to_work, work_lines);
+
     LineMap {
         buffer_to_work,
         work_to_buffer,
         dialogue_buffer_lines,
         sentence_groups: Vec::new(),
         chapter_breaks,
-        section_starts: vec![false; n_split],
+        section_starts,
     }
 }
 
@@ -2281,8 +2289,61 @@ mod tests {
         // work-row count (n_work=4) — a future edit that sources this vec's
         // length from n_work instead would silently under/over-allocate.
         assert_eq!(m.section_starts.len(), 7, "section_starts must be sized to buffer lines, not work rows");
-        assert!(m.section_starts.iter().all(|&b| !b), "build_line_map_blocks never marks section starts");
+        // All 4 work rows share (div1=1, div2=0): no div CHANGE anywhere, so the
+        // only boundary is the work's opening section (build_section_starts always
+        // marks the first mapped line). No stray boundaries elsewhere — this is
+        // the "no div change -> no extra marks" half of the fix for
+        // build_line_map_blocks previously hardcoding section_starts to all-false
+        // (which made `[`/`{` section-jump a dead no-op on block-aware works like
+        // LoJ). See `build_line_map_blocks_marks_div_change_boundary` for the
+        // "div DOES change -> boundary marked" half.
+        assert_eq!(
+            m.section_starts,
+            vec![true, false, false, false, false, false, false],
+            "build_line_map_blocks marks only the opening-section boundary when div never changes"
+        );
         assert!(m.sentence_groups.is_empty(), "sentence_groups is prose-only; blocks builder never populates it");
+    }
+
+    #[test]
+    fn build_line_map_blocks_marks_div_change_boundary() {
+        // Regression test for the section-jump ([ / {) dead-no-op bug on
+        // block-aware works (e.g. LoJ, which renders through this builder
+        // because it has verse/heading rows): build_line_map_blocks used to
+        // hardcode `section_starts: vec![false; n_split]` unconditionally, so
+        // JumpToNextDivision/JumpToPrevDivision never found a boundary. Two
+        // work rows here span two divisions (div1 1 -> div1 2); the boundary
+        // must land on the buffer line where the new division's row first maps.
+        let mk = |bt: &str, txt: &str, div1: i64| Line {
+            id: 0, citation: String::new(), text: txt.into(), normalized: String::new(),
+            speaker: None, is_dialogue: false, timestamp: None, div1, div2: 0,
+            line_in_div: 1, sub_line: 0, is_chapter: false, is_spoken: None,
+            block_type: bt.into(),
+        };
+        let work = vec![
+            mk("heading", "CHAPTER I.", 1),
+            mk("prose", "First chapter text.", 1),
+            mk("heading", "CHAPTER II.", 2),
+            mk("prose", "Second chapter text.", 2),
+        ];
+        let file_lines: Vec<String> = vec![
+            "CHAPTER I.".into(),
+            "First chapter text.".into(),
+            "CHAPTER II.".into(),
+            "Second chapter text.".into(),
+        ];
+        let source_index: Vec<usize> = vec![0, 1, 2, 3];
+
+        let m = build_line_map_blocks(&file_lines, &source_index, &work);
+
+        assert_eq!(m.section_starts.len(), 4);
+        // Opening boundary on the first row (CHAPTER I.), and a second boundary
+        // where div1 changes from 1 to 2 (CHAPTER II.) — no stray marks elsewhere.
+        assert_eq!(
+            m.section_starts,
+            vec![true, false, true, false],
+            "build_line_map_blocks must mark a boundary where (div1,div2) changes"
+        );
     }
 
     #[test]
