@@ -679,12 +679,22 @@ pub(crate) fn computed_card_width(
 /// open, correct after Escape + reopen" bug. The second open was fine only
 /// because the allocation had caught up by then.
 ///
-/// Both inputs express the same quantity, so a disagreement larger than the
-/// outer margin means one is stale; the window is the authority then. Pure so
-/// the rule is testable without a realized widget tree.
+/// Both inputs express the same quantity, so a correct allocation EQUALS
+/// `window_h - CARD_VERTICAL_OUTER_MARGIN` exactly — there is no rounding to
+/// absorb, and any difference at all means the allocation is stale.
+///
+/// An earlier version allowed a `<= CARD_VERTICAL_OUTER_MARGIN` (28px) slop,
+/// which let the same bug back in at a different geometry: on a 1200px window
+/// the correct card is 1172, so a stale 1191 sat only 19px off — inside the
+/// tolerance — and was trusted, again rendering the card 19px too tall with a
+/// 5px screen gap. The tolerance was the very quantity being subtracted, so it
+/// could not distinguish "settled" from "one resize behind". Comparing for
+/// equality removes the ambiguity; the allocation is now a tie-breaker only
+/// when it confirms the window, which is the only case it adds anything.
+/// Pure so the rule is testable without a realized widget tree.
 pub(crate) fn settled_card_height(alloc_h: i32, window_h: i32) -> i32 {
     let window_card_h = (window_h - CARD_VERTICAL_OUTER_MARGIN).max(0);
-    if alloc_h > 0 && (alloc_h - window_card_h).abs() <= CARD_VERTICAL_OUTER_MARGIN {
+    if alloc_h > 0 && alloc_h == window_card_h {
         alloc_h
     } else if window_card_h > 0 {
         window_card_h
@@ -1076,6 +1086,34 @@ mod card_width_tests {
 
         // No window either: nothing to go on, and never negative.
         assert_eq!(settled_card_height(0, 0), 0);
+    }
+
+    /// The first fix's tolerance was `<= CARD_VERTICAL_OUTER_MARGIN` (28px),
+    /// which let the SAME bug back in at a different geometry: on a 1200px
+    /// window the correct card is 1172, but a stale 1191 allocation is only
+    /// 19px off — inside 28 — so it was accepted and the card rendered 19px
+    /// too tall, sitting 5px from the screen edge instead of 14 (measured off
+    /// the user's 1920x1200 screenshots: bad 5/4, good 14/14).
+    ///
+    /// Both inputs express the SAME quantity, so a correct allocation equals
+    /// `window_h - CARD_VERTICAL_OUTER_MARGIN` exactly; there is no rounding
+    /// to absorb. Anything else is stale.
+    #[test]
+    fn allocation_off_by_less_than_the_margin_is_still_stale() {
+        use super::{settled_card_height, CARD_VERTICAL_OUTER_MARGIN};
+
+        let correct = 1200 - CARD_VERTICAL_OUTER_MARGIN; // 1172
+        assert_eq!(correct, 1172);
+
+        // The reported regression: 19px too tall, previously accepted.
+        assert_eq!(settled_card_height(1191, 1200), correct);
+
+        // Off by a single pixel in either direction is stale too.
+        assert_eq!(settled_card_height(correct + 1, 1200), correct);
+        assert_eq!(settled_card_height(correct - 1, 1200), correct);
+
+        // Exact agreement is still preferred.
+        assert_eq!(settled_card_height(correct, 1200), correct);
     }
 
     #[test]

@@ -22,16 +22,31 @@ const MIN_FLOAT_WIDTH: i32 = 200;
 /// a cap, so it cannot hold the card on its own.
 ///
 /// Calibrated by MEASURING the rendered card, not estimated — the per-char
-/// width at the popup's 16px body font is ~8.4px, well off a naive estimate.
-/// Successive headless measurements on the long `solemn` definition:
-/// 56 chars ⇒ 507px, 46 ⇒ 437px, **44 ⇒ 425px** (the ~5px over `FLOAT_WIDTH`
-/// is the card's border/padding, matching the 418px the user measured on the
-/// real renderer).
+/// width at the popup's body font is well off a naive estimate.
 ///
-/// Undershooting is safe — the card holds at `FLOAT_WIDTH` and simply wraps
-/// sooner. Overshooting is what stretched the card past its width_request.
-/// Re-measure this if the popup's font size changes.
-const BODY_WRAP_CHARS: i32 = 44;
+/// At the ORIGINAL 16px body (~8.4px/char), successive headless measurements
+/// on the long `solemn` definition gave: 56 chars ⇒ 507px, 46 ⇒ 437px,
+/// **44 ⇒ 425px** (the ~5px over `FLOAT_WIDTH` is the card's border/padding,
+/// matching the 418px the user measured on the real renderer).
+///
+/// The body is now **18px** (`.vocab-popup .definition-word`/`-text` in
+/// `theme.rs`). The naive scaling — 44 × 16/18 ≈ 39 — is WRONG: re-measuring
+/// the same `solemn` definition in a headless GTK harness showed the wrap
+/// points quantize, and 39 still overshoots.
+///
+/// Harness widths (its default font renders ~1.12× wider than the app, so the
+/// RATIO to the 16px/44 baseline is what transfers, not the absolute):
+///
+/// | wrap | harness | ÷ baseline → app-equivalent |
+/// |------|---------|-----------------------------|
+/// | 44 @ 16px | 477px | 425px (the old baseline) |
+/// | 39 @ 18px | 496px | ~442px — OVER `FLOAT_WIDTH` |
+/// | 38 @ 18px | 447px | ~398px — under, correct |
+///
+/// So **38**. Undershooting is safe — the card holds at `FLOAT_WIDTH` and
+/// simply wraps sooner. Overshooting is what stretched the card past its
+/// width_request. Re-measure this if the popup's font size changes.
+const BODY_WRAP_CHARS: i32 = 38;
 
 /// Bound a wrapping label's natural width so it wraps INSIDE the card instead
 /// of stretching it. Apply to every `wrap(true)` body label.

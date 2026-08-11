@@ -1387,8 +1387,12 @@ pub fn generate_css(
            padding: 6px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30); }} \
          .vocab-popup .definition-header {{ font-size: 11px; color: {vocab_popup_dim}; \
            letter-spacing: 2px; font-weight: bold; }} \
-         .vocab-popup .definition-word {{ font-size: 16px; color: {vocab_popup_fg}; }} \
-         .vocab-popup .definition-text {{ font-size: 16px; color: {vocab_popup_fg}; }} \
+         /* 18px (was 16): the popup's body text reads small against the \
+            reader card beside it. `BODY_WRAP_CHARS` in ui/vocab_popup.rs is \
+            calibrated to THIS size — change both together or the card wraps \
+            wrong. */ \
+         .vocab-popup .definition-word {{ font-size: 18px; color: {vocab_popup_fg}; }} \
+         .vocab-popup .definition-text {{ font-size: 18px; color: {vocab_popup_fg}; }} \
          .vocab-popup .definition-etymology {{ opacity: 0.7; font-size: 12px; color: {vocab_popup_fg}; }} \
          .vocab-popup .definition-gloss {{ opacity: 0.7; font-size: 12px; color: {vocab_popup_fg}; }} \
          .vocab-popup .definition-hint {{ font-size: 11px; color: {vocab_popup_dim}; \
