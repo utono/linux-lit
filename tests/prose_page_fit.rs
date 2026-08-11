@@ -213,15 +213,24 @@ fn drive_forward_from(turns: usize, start_scene: Option<&str>) -> String {
     // cage defaults to 1280x720, which yields a ~591px text view and a
     // COMPLETELY different page grid. Both bugs this test guards reproduce only
     // at the real card height (`widget_h=1128`, `usable=1071`): a 720p run
-    // paginates fine and passes vacuously. CLAUDE.md requires 1236 (not 1200)
-    // so the text view lands at production's height; the resize must happen
-    // BEFORE waiting on generation, so the table is built at this geometry.
+    // paginates fine and passes vacuously. The resize must happen BEFORE
+    // waiting on generation, so the table is built at this geometry.
+    //
+    // 1200, not 1236 (corrected 2026-08-11). This comment used to cite
+    // CLAUDE.md's "1236 (not 1200)" rule, which was itself wrong and has since
+    // been corrected. Measured on BH, same build, generation env:
+    //   1920x1236 -> text_view 1142, usable=1107
+    //   1920x1200 -> text_view 1106, usable=1071  <- the target above
+    // So 1236 ran this suite 36px off its OWN documented target, on a page
+    // grid no real session ever sees. 1200 also matches BH's stored
+    // fingerprint (v5|...|1920x1200|...|1106|uh1071), which is the grid the
+    // reader actually loads.
     let resized = h
-        .set_output_size(1920, 1236)
+        .set_output_size(1920, 1200)
         .expect("wlr-randr resize must run");
     assert!(
         resized,
-        "wlr-randr could not set 1920x1236 — without production geometry this \
+        "wlr-randr could not set 1920x1200 — without production geometry this \
          test passes vacuously (720p paginates fine). Refusing to run."
     );
     h.settle(Duration::from_secs(1));
@@ -244,7 +253,7 @@ fn drive_forward_from(turns: usize, start_scene: Option<&str>) -> String {
     if let Some(wh) = widget_h {
         assert!(
             wh > 900,
-            "text view is only {wh}px tall — the 1920x1236 resize did not take \
+            "text view is only {wh}px tall — the 1920x1200 resize did not take \
              effect, so this run cannot reproduce the production page grid"
         );
     }
@@ -500,7 +509,11 @@ fn parse_generated_page_count(log: &str) -> Option<usize> {
 fn prose_generation_is_deterministic_across_runs() {
     let mut counts = Vec::new();
     for _ in 0..3 {
-        let log = generate_table_at(1920, 1236, "BH", Some("37.0"));
+        // 1200 to match the rest of the suite (see the geometry note in
+        // `run_fit_census`). Determinism only needs the geometry held CONSTANT
+        // across the three runs, but there is no reason to measure it on a
+        // grid no session ever renders.
+        let log = generate_table_at(1920, 1200, "BH", Some("37.0"));
         counts.push(
             parse_generated_page_count(&log)
                 .unwrap_or_else(|| panic!("PAGES_PROSE: generated N pages must appear; full log:\n{log}")),
