@@ -2160,6 +2160,95 @@ pub fn find_vocab_headwords_by_start(
     rows.collect()
 }
 
+/// Vocab-word glosses on ONE citation line (one prose paragraph), gathered
+/// across every passage that carries them.
+///
+/// Passages overlap by a line and a paragraph's words are split between
+/// siblings (LoJ 366: `eminent` in the 365-366 passage, `desultory` in the
+/// 366-367 one), so passage-scoped loading cannot return a paragraph's full
+/// set. `glosses.line_in_div` records each word's own line, making the
+/// paragraph directly selectable.
+///
+/// Rows with NULL `line_in_div` are excluded -- callers fall back to the
+/// passage-scoped `find_glosses_by_start` for those (verse, and any word that
+/// could not be uniquely located).
+///
+/// Ordered by the headword's position in the LINE's own text
+/// (`line_mapping.canonical_text`), never the passage's.
+///
+/// Ordering by `instr` over `p.source_text` is WRONG here and was the
+/// original draft's bug: this query spans passages, so each row's offset
+/// would be measured in a DIFFERENT string. Real data, LoJ line 366:
+/// `desultory` sits at 445 in passage 23594 while `eminent` sits at 553 in
+/// passage 23592, so passage-relative offsets order them backwards --
+/// re-introducing the very defect commit `330513e3` fixed.
+///
+/// `canonical_text` is one string per line, so every word on a paragraph is
+/// measured against the same text. The join is safe by construction: the
+/// backfill resolved `line_in_div` BY finding the headword in
+/// `canonical_text`, so every non-NULL row is guaranteed to match
+/// (verified: 177/177).
+const VOCAB_LINE_ORDER_SQL: &str =
+    "COALESCE(NULLIF(instr(lower(lm.canonical_text), lower(v.word)), 0), 1000000) ASC, g.id ASC";
+
+pub fn find_vocab_glosses_by_line(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+) -> Result<Vec<SavedGloss>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type, \
+                p.start_citation, p.end_citation \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         LEFT JOIN vocab_words v ON v.id = g.word_id \
+         JOIN line_mapping lm ON lm.work_abbrev = p.work_abbrev \
+              AND lm.div1 = p.div1 AND lm.div2 = p.div2 \
+              AND lm.line_in_div = g.line_in_div AND lm.sub_line = 0 \
+         WHERE p.work_abbrev = ?1 AND p.div1 = ?2 AND p.div2 = ?3 \
+           AND g.line_in_div = ?4 \
+           AND g.gloss_type = 'vocab-word' \
+         ORDER BY {VOCAB_LINE_ORDER_SQL}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params![work_abbrev, div1, div2, line_in_div],
+        row_to_saved_gloss,
+    )?;
+    rows.collect()
+}
+
+/// Headwords matching `find_vocab_glosses_by_line` index-for-index.
+pub fn find_vocab_headwords_by_line(
+    conn: &Connection,
+    work_abbrev: &str,
+    div1: i64,
+    div2: i64,
+    line_in_div: i64,
+) -> Result<Vec<String>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT COALESCE(v.word, '') \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         LEFT JOIN vocab_words v ON v.id = g.word_id \
+         JOIN line_mapping lm ON lm.work_abbrev = p.work_abbrev \
+              AND lm.div1 = p.div1 AND lm.div2 = p.div2 \
+              AND lm.line_in_div = g.line_in_div AND lm.sub_line = 0 \
+         WHERE p.work_abbrev = ?1 AND p.div1 = ?2 AND p.div2 = ?3 \
+           AND g.line_in_div = ?4 \
+           AND g.gloss_type = 'vocab-word' \
+         ORDER BY {VOCAB_LINE_ORDER_SQL}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params![work_abbrev, div1, div2, line_in_div],
+        |r| r.get::<_, String>(0),
+    )?;
+    rows.collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct GlossedPassage {
     pub passage_id: i64,
@@ -4390,6 +4479,110 @@ mod gloss_ordering_tests {
         let gs = find_glosses_by_start(&conn, "LoJ", "LoJ.1.2.1", &["vocab-word"]).unwrap();
         let order: Vec<&str> = gs.iter().map(|g| g.gloss_text.as_str()).collect();
         assert_eq!(order, vec!["diligent", "absent-word"]);
+    }
+
+    /// Vocab glosses group by the PARAGRAPH (line_in_div), across passages.
+    ///
+    /// Mirrors LoJ.1.1: passages overlap (365-366 and 366-367), so paragraph
+    /// 366's words live in two different passage rows. Passage-scoped loading
+    /// can never return both; only line-scoped loading can.
+    #[test]
+    fn vocab_glosses_group_by_line_across_passages() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER,
+                claude_model TEXT, timestamp TEXT, line_in_div INTEGER
+             );
+             CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY, word TEXT, definition TEXT
+             );
+             CREATE TABLE line_mapping (
+                id INTEGER PRIMARY KEY, work_abbrev TEXT NOT NULL,
+                div1 INTEGER, div2 INTEGER, line_in_div INTEGER NOT NULL,
+                sub_line INTEGER NOT NULL DEFAULT 0,
+                canonical_text TEXT NOT NULL, normalized_text TEXT NOT NULL
+             );
+             -- One row per LINE (= one prose paragraph). Ordering measures
+             -- these strings, so a paragraph's words share one text.
+             INSERT INTO line_mapping
+                (work_abbrev, div1, div2, line_in_div, canonical_text, normalized_text)
+             VALUES ('LoJ',1,1,365,'To write the Life is an arduous and presumptuous task.',''),
+                    ('LoJ',1,1,366,'He embalmed so many eminent persons, in a desultory manner.','');
+             -- Passages OVERLAP and each holds TWO paragraphs, so the same
+             -- word has different offsets in different passages -- which is
+             -- why ordering must not use p.source_text.
+             INSERT INTO passages (id, work_abbrev, start_citation, end_citation, div1, div2, source_text)
+                VALUES (1,'LoJ','LoJ.1.1.365','LoJ.1.1.366',1,1,
+                        'To write the Life is an arduous and presumptuous task. He embalmed so many eminent persons.'),
+                       (2,'LoJ','LoJ.1.1.366','LoJ.1.1.367',1,1,
+                        'He embalmed so many eminent persons, in a desultory manner. As I had the honour.');
+             INSERT INTO vocab_words (id, word, definition) VALUES
+                (1,'arduous','d'), (2,'presumptuous','d'), (3,'eminent','d'), (4,'desultory','d');
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp, line_in_div)
+                VALUES (1,1,'vocab-word','arduous','complete',1,'m','2026-08-11 10:00:00',365),
+                       (2,1,'vocab-word','presumptuous','complete',2,'m','2026-08-11 10:00:01',365),
+                       (3,1,'vocab-word','eminent','complete',3,'m','2026-08-11 10:00:02',366),
+                       (4,2,'vocab-word','desultory','complete',4,'m','2026-08-11 10:00:03',366);",
+        ).unwrap();
+
+        let p365 = find_vocab_glosses_by_line(&conn, "LoJ", 1, 1, 365).unwrap();
+        let w365: Vec<&str> = p365.iter().map(|g| g.gloss_text.as_str()).collect();
+        assert_eq!(w365, vec!["arduous", "presumptuous"]);
+
+        // 366 spans TWO passages -- this is what passage scoping cannot do.
+        let p366 = find_vocab_glosses_by_line(&conn, "LoJ", 1, 1, 366).unwrap();
+        let w366: Vec<&str> = p366.iter().map(|g| g.gloss_text.as_str()).collect();
+        assert_eq!(w366, vec!["eminent", "desultory"]);
+
+        let h366 = find_vocab_headwords_by_line(&conn, "LoJ", 1, 1, 366).unwrap();
+        assert_eq!(h366, vec!["eminent", "desultory"]);
+    }
+
+    /// Rows with NULL line_in_div (verse, unresolvable) are never returned by
+    /// the line query -- the caller falls back to passage scope for them.
+    #[test]
+    fn vocab_glosses_with_null_line_are_not_returned() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER,
+                claude_model TEXT, timestamp TEXT, line_in_div INTEGER
+             );
+             CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY, word TEXT, definition TEXT
+             );
+             CREATE TABLE line_mapping (
+                id INTEGER PRIMARY KEY, work_abbrev TEXT NOT NULL,
+                div1 INTEGER, div2 INTEGER, line_in_div INTEGER NOT NULL,
+                sub_line INTEGER NOT NULL DEFAULT 0,
+                canonical_text TEXT NOT NULL, normalized_text TEXT NOT NULL
+             );
+             INSERT INTO line_mapping
+                (work_abbrev, div1, div2, line_in_div, canonical_text, normalized_text)
+             VALUES ('Err',2,2,1,'The gold I gave to Dromio at the Centaur.',''),
+                    ('Err',2,2,2,'Safe at the Centaur, and the heedful slave.','');
+             INSERT INTO passages (id, work_abbrev, start_citation, end_citation, div1, div2, source_text)
+                VALUES (1,'Err','Err.2.2.1','Err.2.2.2',2,2,'The gold at the Centaur. Safe at the Centaur.');
+             INSERT INTO vocab_words (id, word, definition) VALUES (1,'centaur','d');
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp, line_in_div)
+                VALUES (1,1,'vocab-word','centaur','complete',1,'m','2026-08-11 10:00:00',NULL);",
+        ).unwrap();
+
+        let rows = find_vocab_glosses_by_line(&conn, "Err", 2, 2, 1).unwrap();
+        assert!(rows.is_empty());
     }
 }
 

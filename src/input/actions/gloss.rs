@@ -3815,26 +3815,39 @@ pub(crate) fn try_open_vocab_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> b
         None => return false,
     };
 
-    let all_glosses = crate::db::queries::find_glosses_by_start(
-        &conn,
-        &passage.work_abbrev,
-        &passage.start_citation,
-        GLOSS_TYPES,
+    // Paragraph scope first: vocab glosses on the cursor's OWN line, gathered
+    // across passages. A prose passage spans two paragraphs and a paragraph's
+    // words are split between sibling passages, so passage scope is wrong in
+    // both directions. Falls back to passage scope when the line yields
+    // nothing -- verse, and any row whose word could not be uniquely located,
+    // have NULL line_in_div.
+    let (div1, div2, line_in_div) = cur_triple;
+    let by_line = crate::db::queries::find_vocab_glosses_by_line(
+        &conn, &work_abbrev, div1, div2, line_in_div,
     )
     .unwrap_or_default();
+
+    let (all_glosses, headwords) = if by_line.is_empty() {
+        let g = crate::db::queries::find_glosses_by_start(
+            &conn, &passage.work_abbrev, &passage.start_citation, GLOSS_TYPES,
+        )
+        .unwrap_or_default();
+        let h = crate::db::queries::find_vocab_headwords_by_start(
+            &conn, &passage.work_abbrev, &passage.start_citation,
+        )
+        .unwrap_or_default();
+        (g, h)
+    } else {
+        let h = crate::db::queries::find_vocab_headwords_by_line(
+            &conn, &work_abbrev, div1, div2, line_in_div,
+        )
+        .unwrap_or_default();
+        (by_line, h)
+    };
 
     if all_glosses.is_empty() {
         return false;
     }
-
-    // Headwords in the SAME order as `all_glosses`, so a match here is an index
-    // there. Empty on error — the landing simply falls back to index 0.
-    let headwords = crate::db::queries::find_vocab_headwords_by_start(
-        &conn,
-        &passage.work_abbrev,
-        &passage.start_citation,
-    )
-    .unwrap_or_default();
 
     let mut s = state.borrow_mut();
 
