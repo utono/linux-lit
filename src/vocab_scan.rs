@@ -18,27 +18,38 @@ pub struct VocabSpan {
     pub char_end: usize,
 }
 
+/// A multi-word phrase: its lowercase token list (for matching) alongside
+/// the original stored string (for emitting/lookup round-trip).
+#[derive(Debug, Clone)]
+pub struct Phrase {
+    pub tokens: Vec<String>,
+    pub stored: String,
+}
+
 /// Single words plus multi-word phrases, indexed by first token.
 #[derive(Debug, Clone, Default)]
 pub struct VocabSet {
     pub words: HashSet<String>,
-    /// first token (lowercase) -> phrases, each as its token list.
-    pub phrases: HashMap<String, Vec<Vec<String>>>,
+    /// first token (lowercase) -> phrases, each carrying its stored form.
+    pub phrases: HashMap<String, Vec<Phrase>>,
 }
 
 impl VocabSet {
     pub fn new(words: HashSet<String>, phrase_strings: Vec<String>) -> Self {
-        let mut phrases: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+        let mut phrases: HashMap<String, Vec<Phrase>> = HashMap::new();
         for p in phrase_strings {
             let toks: Vec<String> = tokenize(&p.to_lowercase());
             if toks.len() < 2 {
                 continue; // single tokens belong in `words`
             }
-            phrases.entry(toks[0].clone()).or_default().push(toks);
+            phrases
+                .entry(toks[0].clone())
+                .or_default()
+                .push(Phrase { tokens: toks, stored: p });
         }
         // Longest first, so a longer phrase wins over a shorter prefix.
         for v in phrases.values_mut() {
-            v.sort_by(|a, b| b.len().cmp(&a.len()));
+            v.sort_by(|a, b| b.tokens.len().cmp(&a.tokens.len()));
         }
         VocabSet { words, phrases }
     }
@@ -117,14 +128,15 @@ pub fn scan_line(text: &str, line_index: usize, set: &VocabSet, out: &mut Vec<Vo
         while i < tokens.len() {
             let mut matched = false;
             if let Some(cands) = set.phrases.get(&tokens[i].0) {
-                for toks in cands {
+                for phrase in cands {
+                    let toks = &phrase.tokens;
                     if i + toks.len() > tokens.len() {
                         continue;
                     }
                     if (0..toks.len()).all(|k| tokens[i + k].0 == toks[k]) {
                         let start = tokens[i].1;
                         let end = tokens[i + toks.len() - 1].2;
-                        phrase_spans.push((start, end, toks.join(" ")));
+                        phrase_spans.push((start, end, phrase.stored.clone()));
                         i += toks.len();
                         matched = true;
                         break;
@@ -263,7 +275,10 @@ mod tests {
             false,
         );
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].word, "dulce et decorum est pro patria mori");
+        // Stored form's case is preserved on emit (see
+        // phrase_emits_stored_case_exactly); matching itself stays
+        // case-insensitive, which is what "longest wins" is testing here.
+        assert_eq!(spans[0].word, "Dulce et decorum est pro patria mori");
     }
 
     #[test]
@@ -308,6 +323,50 @@ mod tests {
         assert_eq!(spans[0].char_start, 7);
         assert_eq!(spans[0].char_end, 14);
         assert_eq!(spans[1].word, "lovely");
+    }
+
+    #[test]
+    fn phrase_emits_stored_form_with_internal_punctuation() {
+        // REGRESSION: load_vocab_definition looks up by exact string (after
+        // LOWER()). If the scanner emits the rejoined tokens instead of the
+        // stored headword, punctuation is dropped and the lookup misses.
+        let stored = "falsum in uno, falsum in omnibus";
+        let spans = scan_lines(
+            [(0usize, "they say falsum in uno, falsum in omnibus, indeed")].into_iter(),
+            &set(&[], &[stored]),
+            false,
+        );
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].word, stored);
+    }
+
+    #[test]
+    fn phrase_emits_stored_case_exactly() {
+        // The emitted word must round-trip to the stored row exactly as
+        // given to VocabSet::new — load_vocab_definition applies LOWER() to
+        // both sides so case need not match for lookup, but the emitted
+        // string itself must not be silently lowercased by the scanner.
+        let stored = "Dulce et decorum est";
+        let spans = scan_lines(
+            [(0usize, "he quoted Dulce et decorum est pro patria")].into_iter(),
+            &set(&[], &[stored]),
+            false,
+        );
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].word, stored);
+    }
+
+    #[test]
+    fn phrase_matching_still_tolerates_buffer_punctuation() {
+        // Matching stays punctuation-insensitive on the BUFFER side even
+        // though the emitted word is now the exact stored string.
+        let spans = scan_lines(
+            [(0usize, "for my natale solum, nay,")].into_iter(),
+            &set(&[], &["natale solum"]),
+            false,
+        );
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].word, "natale solum");
     }
 
     #[test]
