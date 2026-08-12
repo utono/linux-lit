@@ -27,7 +27,7 @@ pub const MRU: super::keybinds_legend::Group = ("MRU", &[
 pub const GROUPS: &[super::keybinds_legend::Group] = &[
     ("Navigation", &[
         ("Ctrl+n / Ctrl+p", "navigate_gloss_passage: next / prev"),
-        ("Alt+n / Alt+p", "navigate_gloss: prev / next"),
+        ("Alt+n / Alt+p", "navigate_gloss: next / prev"),
         ("Shift+V", "visual select (y yank → clipboard)"),
     ]),
     // L (pick_source_voice), v (voice_picker), Ctrl+v (cycle_active_voice)

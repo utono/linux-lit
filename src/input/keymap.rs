@@ -2594,15 +2594,20 @@ fn handle_gloss_key(
     }
     if is_alt {
         match key_name {
+            // Alt+n = next, Alt+p = previous, matching the mnemonic. These used
+            // to be inverted (n stepped -1) to read forward through a list that
+            // `find_glosses_by_start` returned newest-first; now that vocab-word
+            // rows come back in text order, +1 IS forward and the inversion
+            // would read the segment backwards.
             "n" => {
                 // Silence audio on gloss nav (pause MPV + stop TTS), like j/k.
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
-                crate::input::actions::gloss::navigate_gloss(state, -1);
+                crate::input::actions::gloss::navigate_gloss(state, 1);
                 return true;
             }
             "p" => {
                 crate::input::actions::gloss::stop_all_gloss_audio(state);
-                crate::input::actions::gloss::navigate_gloss(state, 1);
+                crate::input::actions::gloss::navigate_gloss(state, -1);
                 return true;
             }
             "g" => {

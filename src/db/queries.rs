@@ -2051,9 +2051,36 @@ pub fn find_all_glosses(
     rows.collect()
 }
 
+/// The ORDER BY shared by `find_glosses_by_start` and
+/// `find_vocab_headwords_by_start`, so a gloss and its headword can never be
+/// listed in different orders. Requires `g`/`p` aliases plus a
+/// `LEFT JOIN vocab_words v ON v.id = g.word_id`.
+///
+/// Non-vocab rows keep the historical reader-gloss-first-then-recency order:
+/// the vocab-only CASE arms collapse to constants for them, so their relative
+/// order is byte-for-byte what it was before positional sorting existed
+/// (verified against all 7,472 non-vocab rows: zero changed position).
+const VOCAB_ORDER_SQL: &str = "(g.gloss_type = 'reader-gloss') DESC, \
+     CASE WHEN g.gloss_type = 'vocab-word' \
+          THEN COALESCE(NULLIF(instr(lower(p.source_text), lower(v.word)), 0), 1000000) \
+          ELSE 0 END ASC, \
+     CASE WHEN g.gloss_type = 'vocab-word' THEN 0 ELSE g.timestamp END DESC, \
+     CASE WHEN g.gloss_type = 'vocab-word' THEN -g.id ELSE g.id END DESC";
+
 /// Like `find_all_glosses` but matches on START citation only (any end/span),
 /// so glosses anchored to different-length passages that share a first line
 /// co-list and cycle together. Reader-gloss rows sort first, then by recency.
+///
+/// EXCEPT vocab-word rows, which sort by the headword's POSITION in the
+/// passage text (first-to-last as read), not by recency. A vocab gloss is
+/// per-occurrence and the overlay presents the segment's words as a sequence,
+/// so recency order read the segment backwards whenever the glosses were
+/// generated in text order — which the batch generator does. `word_id` joins
+/// to the headword and `instr` locates it; a row that somehow has no word_id
+/// or no match sorts last (position 0 -> a large sentinel) rather than
+/// silently jumping to the front. Ties fall back to `g.id` so the order is
+/// total. Audited 2026-08-11: all 152 vocab-word rows have a word_id, all
+/// match their passage text, and no two share a position.
 pub fn find_glosses_by_start(
     conn: &Connection,
     work_abbrev: &str,
@@ -2070,10 +2097,11 @@ pub fn find_glosses_by_start(
         "SELECT g.id, g.gloss_text, g.timestamp, p.id, g.gloss_type, p.start_citation, p.end_citation \
          FROM glosses g \
          JOIN passages p ON g.passage_id = p.id \
+         LEFT JOIN vocab_words v ON v.id = g.word_id \
          WHERE p.work_abbrev = ?1 \
            AND p.start_citation = ?2 \
            AND g.gloss_type IN ({}) \
-         ORDER BY (g.gloss_type = 'reader-gloss') DESC, g.timestamp DESC, g.id DESC",
+         ORDER BY {VOCAB_ORDER_SQL}",
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -2086,6 +2114,37 @@ pub fn find_glosses_by_start(
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         params.iter().map(|p| p.as_ref()).collect();
     let rows = stmt.query_map(param_refs.as_slice(), row_to_saved_gloss)?;
+    rows.collect()
+}
+
+/// The `vocab-word` headwords for one passage, in the SAME order
+/// `find_glosses_by_start` returns their glosses — so index N here is index N
+/// there. `SavedGloss` carries no headword, and widening it would touch every
+/// gloss path for a need only the vocab entry point has; this keeps the extra
+/// column local to that path.
+///
+/// Ordered by position in the passage text (see `find_glosses_by_start`); the
+/// shared `VOCAB_ORDER_SQL` is the single source of that ordering so the two
+/// queries cannot drift apart.
+pub fn find_vocab_headwords_by_start(
+    conn: &Connection,
+    work_abbrev: &str,
+    start_citation: &str,
+) -> Result<Vec<String>, rusqlite::Error> {
+    let sql = format!(
+        "SELECT COALESCE(v.word, '') \
+         FROM glosses g \
+         JOIN passages p ON g.passage_id = p.id \
+         LEFT JOIN vocab_words v ON v.id = g.word_id \
+         WHERE p.work_abbrev = ?1 \
+           AND p.start_citation = ?2 \
+           AND g.gloss_type = 'vocab-word' \
+         ORDER BY {VOCAB_ORDER_SQL}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![work_abbrev, start_citation], |r| {
+        r.get::<_, String>(0)
+    })?;
     rows.collect()
 }
 
@@ -4181,6 +4240,11 @@ mod gloss_ordering_tests {
                 gloss_text TEXT, status TEXT, word_id INTEGER,
                 claude_model TEXT, timestamp TEXT
              );
+             -- find_glosses_by_start LEFT JOINs this for the vocab-word
+             -- positional sort; needed even by all-reader-gloss fixtures.
+             CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY, word TEXT, definition TEXT
+             );
              INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
                 VALUES (1, 'h', 'Err', 'Err.2.2.1', 'Err.2.2.12', 2, 2, 'Antipholus', 'text');
              INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
@@ -4211,6 +4275,11 @@ mod gloss_ordering_tests {
                 gloss_text TEXT, status TEXT, word_id INTEGER,
                 claude_model TEXT, timestamp TEXT
              );
+             -- find_glosses_by_start LEFT JOINs this for the vocab-word
+             -- positional sort; needed even by all-reader-gloss fixtures.
+             CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY, word TEXT, definition TEXT
+             );
              INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
                 VALUES (1, 'h', 'Err', 'Err.2.2.1', 'Err.2.2.12', 2, 2, 'Antipholus', 'text');
              INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
@@ -4227,6 +4296,88 @@ mod gloss_ordering_tests {
         assert_eq!(gs[0].gloss_text, "new-reader");
         assert_eq!(gs[1].gloss_text, "old-reader");
         assert_eq!(gs[2].gloss_text, "teacher");
+    }
+
+    /// Vocab-word glosses list in TEXT order, not by recency.
+    ///
+    /// Mirrors the real LoJ.1.2.373 defect: the batch generator writes one row
+    /// per word in reading order, so `timestamp DESC` returned the segment
+    /// exactly BACKWARDS — "ardent" opened as "Vocab-word 1 of 3" and stepping
+    /// forward reached "conceive" last. Timestamps here ascend with text
+    /// position (as generation does), so a recency sort fails this red.
+    #[test]
+    fn vocab_word_glosses_order_by_position_in_passage() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER,
+                claude_model TEXT, timestamp TEXT
+             );
+             CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY, word TEXT, definition TEXT
+             );
+             INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
+                VALUES (1, 'h', 'LoJ', 'LoJ.1.2.373', 'LoJ.1.2.374', 1, 2, NULL,
+                        'Indeed I cannot conceive a more perfect mode. Had his other friends been as diligent and ardent as I was.');
+             INSERT INTO vocab_words (id, word, definition) VALUES
+                (256, 'conceive', 'd'), (412, 'diligent', 'd'), (104, 'ardent', 'd');
+             -- Inserted newest-first so a recency sort returns them reversed.
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
+                VALUES (29246, 1, 'vocab-word', 'ardent', 'complete', 104, 'm', '2026-08-11 23:46:30'),
+                       (29245, 1, 'vocab-word', 'diligent', 'complete', 412, 'm', '2026-08-11 23:46:26'),
+                       (29244, 1, 'vocab-word', 'conceive', 'complete', 256, 'm', '2026-08-11 23:46:24');",
+        ).unwrap();
+
+        let gs = find_glosses_by_start(&conn, "LoJ", "LoJ.1.2.373", &["vocab-word"]).unwrap();
+        let order: Vec<&str> = gs.iter().map(|g| g.gloss_text.as_str()).collect();
+        assert_eq!(order, vec!["conceive", "diligent", "ardent"]);
+
+        // The headword list must align index-for-index with the gloss list, or
+        // the cursor-nearest landing picks the wrong word.
+        let words = find_vocab_headwords_by_start(&conn, "LoJ", "LoJ.1.2.373").unwrap();
+        assert_eq!(words, vec!["conceive", "diligent", "ardent"]);
+    }
+
+    /// A vocab row whose headword is absent from the passage text sorts LAST
+    /// rather than jumping to the front (position 0 -> sentinel), so a data
+    /// defect degrades the tail of the list instead of the landing word.
+    #[test]
+    fn vocab_word_with_unmatched_headword_sorts_last() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE passages (
+                id INTEGER PRIMARY KEY, hash TEXT, work_abbrev TEXT,
+                start_citation TEXT, end_citation TEXT, div1 INTEGER, div2 INTEGER,
+                character TEXT, source_text TEXT
+             );
+             CREATE TABLE glosses (
+                id INTEGER PRIMARY KEY, passage_id INTEGER, gloss_type TEXT,
+                gloss_text TEXT, status TEXT, word_id INTEGER,
+                claude_model TEXT, timestamp TEXT
+             );
+             CREATE TABLE vocab_words (
+                id INTEGER PRIMARY KEY, word TEXT, definition TEXT
+             );
+             INSERT INTO passages (id, hash, work_abbrev, start_citation, end_citation, div1, div2, character, source_text)
+                VALUES (1, 'h', 'LoJ', 'LoJ.1.2.1', 'LoJ.1.2.2', 1, 2, NULL, 'only diligent appears here.');
+             INSERT INTO vocab_words (id, word, definition) VALUES
+                (412, 'diligent', 'd'), (999, 'absent', 'd');
+             -- The unmatched row is both NEWER and higher-id, so recency order
+             -- would put it first; only the position sentinel sends it last.
+             INSERT INTO glosses (id, passage_id, gloss_type, gloss_text, status, word_id, claude_model, timestamp)
+                VALUES (2, 1, 'vocab-word', 'absent-word', 'complete', 999, 'm', '2026-08-11 23:00:05'),
+                       (1, 1, 'vocab-word', 'diligent', 'complete', 412, 'm', '2026-08-11 23:00:01');",
+        ).unwrap();
+
+        let gs = find_glosses_by_start(&conn, "LoJ", "LoJ.1.2.1", &["vocab-word"]).unwrap();
+        let order: Vec<&str> = gs.iter().map(|g| g.gloss_text.as_str()).collect();
+        assert_eq!(order, vec!["diligent", "absent-word"]);
     }
 }
 
