@@ -158,7 +158,7 @@ pub fn scan_line(text: &str, line_index: usize, set: &VocabSet, out: &mut Vec<Vo
     for (start, end, word) in phrase_spans {
         out.push(VocabSpan { word, line_index, char_start: start, char_end: end });
     }
-    out.sort_by_key(|s| s.char_start);
+    out.sort_by_key(|s| (s.line_index, s.char_start));
 }
 
 #[cfg(test)]
@@ -309,4 +309,37 @@ mod tests {
         assert_eq!(spans[0].char_end, 14);
         assert_eq!(spans[1].word, "lovely");
     }
+
+    #[test]
+    fn scan_lines_preserves_buffer_order_across_lines() {
+        // REGRESSION GUARD: `out` is a shared accumulator across multiple
+        // scan_line calls (scan_lines, and chat_scope_words in keymap.rs).
+        // Sorting by char_start alone interleaves spans from different
+        // lines whenever a later line's match starts at a smaller
+        // char_start than an earlier line's match. Output must stay in
+        // (line_index, char_start) order — buffer order.
+        let spans = scan_lines(
+            [
+                (0usize, "aaaaaaaaaaaaaaaaaaaa censure"),
+                (1usize, "lovely bbb"),
+            ]
+            .into_iter(),
+            &set(&["censure", "lovely"], &[]),
+            false,
+        );
+        assert_eq!(spans.len(), 2);
+        assert_eq!(
+            (spans[0].line_index, spans[0].char_start),
+            (0, 21),
+            "expected line 0's match first, got {:?}",
+            spans
+        );
+        assert_eq!(
+            (spans[1].line_index, spans[1].char_start),
+            (1, 0),
+            "expected line 1's match second, got {:?}",
+            spans
+        );
+    }
 }
+
