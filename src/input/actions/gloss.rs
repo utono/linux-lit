@@ -3290,6 +3290,34 @@ pub(crate) fn open_gloss_overlay(
 ) {
     let types: Vec<&str> = all_glosses.iter().map(|g| g.gloss_type.as_str()).collect();
     let idx = start_gloss_idx(&types, desired_type);
+    open_gloss_overlay_at(
+        s,
+        passages,
+        passage_index,
+        passage,
+        all_glosses,
+        from_picker,
+        idx,
+        entry_open,
+    );
+}
+
+/// `open_gloss_overlay` with the starting index given outright instead of
+/// derived from a desired gloss TYPE. The vocab entry path picks its index by
+/// cursor position, which `desired_type` cannot express (every candidate is
+/// the same type). `start_idx` is clamped, so a stale index cannot panic.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn open_gloss_overlay_at(
+    s: &mut AppState,
+    passages: Vec<crate::db::queries::GlossedPassage>,
+    passage_index: usize,
+    passage: crate::db::queries::GlossedPassage,
+    all_glosses: Vec<crate::db::queries::SavedGloss>,
+    from_picker: bool,
+    start_idx: usize,
+    entry_open: bool,
+) {
+    let idx = start_idx.min(all_glosses.len().saturating_sub(1));
 
     let work_title = s
         .current_work
@@ -3799,11 +3827,73 @@ pub(crate) fn try_open_vocab_gloss_at_cursor(state: &Rc<RefCell<AppState>>) -> b
         return false;
     }
 
+    // Headwords in the SAME order as `all_glosses`, so a match here is an index
+    // there. Empty on error — the landing simply falls back to index 0.
+    let headwords = crate::db::queries::find_vocab_headwords_by_start(
+        &conn,
+        &passage.work_abbrev,
+        &passage.start_citation,
+    )
+    .unwrap_or_default();
+
     let mut s = state.borrow_mut();
+
+    // Land on the vocab word at the CURSOR rather than the segment's first: a
+    // vocab passage spans several reader lines, and opening at index 0 ignored
+    // which line the reader was actually on. Falls back to index 0 (now the
+    // segment's first word by text order) when the cursor line has no glossed
+    // word — the passage can start mid-line.
+    let start_idx = nearest_vocab_gloss_idx(&s, &headwords).unwrap_or(0);
+
     // Remember the reader page so Escape returns here.
     s.gloss_return_pos = Some((s.current_line, s.page_top.line(), s.page_top.offset()));
-    open_gloss_overlay(&mut s, passages, passage_index, passage, all_glosses, false, None, true);
+    open_gloss_overlay_at(
+        &mut s,
+        passages,
+        passage_index,
+        passage,
+        all_glosses,
+        false,
+        start_idx,
+        true,
+    );
     true
+}
+
+/// Index into the vocab gloss list of the word the reader cursor is on, or
+/// None when no glossed word sits on the cursor line.
+///
+/// The reader cursor is a LINE, not a character position (`AppState` has
+/// `current_line` and no column; navigation and the cursor highlight are both
+/// line-oriented), so "nearest the cursor" can only mean the cursor's own
+/// line. A vocab passage spans several lines, and opening at the passage's
+/// first word ignored which of those lines the reader was on — that is the
+/// part this fixes. Within one line the earliest glossed word wins, matching
+/// the left-to-right reading order the list is now sorted by.
+///
+/// `vocab_matches` is already built for the highlighter, keyed by BUFFER line
+/// — the same space as `current_line` — so this needs no extra query.
+/// Matching is case-insensitive: the stored headword is the lemma
+/// ("conceive") while the text may be capitalized at a sentence start.
+fn nearest_vocab_gloss_idx(s: &AppState, headwords: &[String]) -> Option<usize> {
+    if headwords.is_empty() {
+        return None;
+    }
+    // Collect then scan in column order: the earliest word on the line may be
+    // highlighted without having a gloss in THIS passage (the passage can start
+    // mid-line, and vocab highlighting is independent of gloss existence), so
+    // fall through to the next one rather than giving up on the first miss.
+    let mut on_line: Vec<&crate::app::VocabMatch> = s
+        .vocab_matches
+        .iter()
+        .filter(|m| m.line_index == s.current_line)
+        .collect();
+    on_line.sort_by_key(|m| m.char_start);
+    on_line.iter().find_map(|m| {
+        headwords
+            .iter()
+            .position(|h| h.eq_ignore_ascii_case(&m.word))
+    })
 }
 
 /// Reader Ctrl+Shift+g: open the cursor line's vocab-word gloss, or toast when
