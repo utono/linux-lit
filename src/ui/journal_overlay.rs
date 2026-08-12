@@ -1483,7 +1483,7 @@ impl JournalOverlay {
     /// Re-scan the CURRENT buffer text and tint vocab words. Idempotent per
     /// populate: remove-then-apply so page turns never stack stale tags.
     /// Mirrors `GlossOverlay::apply_vocab_tags`.
-    pub fn apply_vocab_tags(&self, words: &std::collections::HashSet<String>) {
+    pub fn apply_vocab_tags(&self, words: &crate::vocab_scan::VocabSet) {
         let buffer = self.view.buffer();
         let (start, end) = (buffer.start_iter(), buffer.end_iter());
         buffer.remove_tag(&self.vocab_tag, &start, &end);

@@ -558,14 +558,17 @@ pub fn synopsis_debug_info(
 }
 
 /// Load all vocab words + variants for matching against buffer text.
-/// Returns a HashSet of lowercase words (base words + variants).
+/// Single tokens go in `words`; multi-word `lang='la'` headwords become
+/// phrases matched by the scanner's second pass.
 pub fn load_vocab_words(
     conn: &Connection,
     _work_abbrev: &str,
-) -> Result<std::collections::HashSet<String>, rusqlite::Error> {
+) -> Result<crate::vocab_scan::VocabSet, rusqlite::Error> {
     let mut words = std::collections::HashSet::new();
 
-    let mut stmt = conn.prepare("SELECT LOWER(word) FROM vocab_words")?;
+    let mut stmt = conn.prepare(
+        "SELECT LOWER(word) FROM vocab_words WHERE word NOT LIKE '% %'",
+    )?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
     for row in rows {
         words.insert(row?);
@@ -577,7 +580,16 @@ pub fn load_vocab_words(
         words.insert(row?);
     }
 
-    Ok(words)
+    let mut stmt = conn.prepare(
+        "SELECT LOWER(word) FROM vocab_words WHERE word LIKE '% %'",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut phrases = Vec::new();
+    for row in rows {
+        phrases.push(row?);
+    }
+
+    Ok(crate::vocab_scan::VocabSet::new(words, phrases))
 }
 
 /// Load definition and sources for a vocab word.
@@ -686,7 +698,7 @@ pub fn load_vocab_word_list(
     for line in &lines {
         for token in line.split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '\u{2019}') {
             let lower = token.to_lowercase();
-            if vocab.contains(&lower) {
+            if vocab.words.contains(&lower) {
                 *counts.entry(lower).or_insert(0) += 1;
             }
         }
@@ -2981,7 +2993,7 @@ mod tests {
     fn test_load_vocab_definition() {
         let conn = open_db().unwrap();
         let words = load_vocab_words(&conn, "Ham").unwrap();
-        if let Some(word) = words.iter().next() {
+        if let Some(word) = words.words.iter().next() {
             let def = load_vocab_definition(&conn, word);
             let _ = def;
         }

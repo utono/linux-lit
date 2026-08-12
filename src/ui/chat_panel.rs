@@ -87,7 +87,7 @@ pub struct ChatPanel {
     /// Vocab-highlight word set + span color for transcript labels; empty
     /// set disables. Set by chat render paths from AppState (the panel has
     /// no state access of its own).
-    vocab_words: std::cell::RefCell<std::collections::HashSet<String>>,
+    vocab_words: std::cell::RefCell<crate::vocab_scan::VocabSet>,
     vocab_color: std::cell::RefCell<Option<String>>,
 }
 
@@ -182,7 +182,7 @@ impl ChatPanel {
             focus_rule,
             header_band,
             page_marker,
-            vocab_words: std::cell::RefCell::new(std::collections::HashSet::new()),
+            vocab_words: std::cell::RefCell::new(crate::vocab_scan::VocabSet::default()),
             vocab_color: std::cell::RefCell::new(None),
         }
     }
@@ -220,7 +220,7 @@ impl ChatPanel {
     /// `AppState.vocab_words`/`vocab_highlight_visible` before rebuilding.
     pub fn set_vocab_highlight(
         &self,
-        words: std::collections::HashSet<String>,
+        words: crate::vocab_scan::VocabSet,
         color: Option<String>,
     ) {
         *self.vocab_words.borrow_mut() = words;
@@ -694,7 +694,7 @@ impl ChatPanel {
 /// `accent` colors the quote/rule chrome; pass the surface's own accent so this
 /// stays theme-correct.
 pub(crate) fn block_markup(text: &str, accent: &str) -> Option<String> {
-    let no_words = std::collections::HashSet::new();
+    let no_words = crate::vocab_scan::VocabSet::default();
     let mut out = String::new();
     let mut any_block = false;
     let mut any_inline = false;
@@ -761,7 +761,7 @@ pub(crate) fn block_markup(text: &str, accent: &str) -> Option<String> {
 
 pub(crate) fn row_markup(
     text: &str,
-    words: &std::collections::HashSet<String>,
+    words: &crate::vocab_scan::VocabSet,
     color: Option<&str>,
 ) -> Option<String> {
     let (clean, emph) = crate::ui::gloss_block::strip_emphasis_spans(text);
@@ -1031,7 +1031,7 @@ mod vocab_markup_tests {
 
     #[test]
     fn row_markup_renders_emphasis_and_strips_markers() {
-        let words: std::collections::HashSet<String> = Default::default();
+        let words = crate::vocab_scan::VocabSet::default();
         let m = super::row_markup("the Dutch *Remonstrantie* here", &words, None).unwrap();
         assert_eq!(m, "the Dutch <i>Remonstrantie</i> here");
         let b = super::row_markup("**1610** — the Dutch", &words, None).unwrap();
@@ -1040,8 +1040,10 @@ mod vocab_markup_tests {
 
     #[test]
     fn row_markup_nests_a_vocab_hit_inside_emphasis() {
-        let words: std::collections::HashSet<String> =
-            ["censure".to_string()].into_iter().collect();
+        let words = crate::vocab_scan::VocabSet::new(
+            ["censure".to_string()].into_iter().collect(),
+            Vec::new(),
+        );
         let m = super::row_markup("a *grave censure* follows", &words, Some("#ffcc66")).unwrap();
         // Emphasis is the OUTER span; the vocab span nests inside it and both
         // close in the right order (invalid nesting makes Pango drop the row).
@@ -1053,7 +1055,7 @@ mod vocab_markup_tests {
 
     #[test]
     fn row_markup_escapes_and_returns_none_when_plain() {
-        let words: std::collections::HashSet<String> = Default::default();
+        let words = crate::vocab_scan::VocabSet::default();
         // Angle brackets must escape even on the emphasis path.
         let m = super::row_markup("*<thus>* said", &words, None).unwrap();
         assert_eq!(m, "<i>&lt;thus&gt;</i> said");
@@ -1068,8 +1070,10 @@ mod vocab_markup_tests {
     /// vocab-only path must still escape and wrap correctly with no emphasis
     /// anywhere in the row.
     fn vocab_only_path_escapes_and_wraps_matches() {
-        let words: std::collections::HashSet<String> =
-            ["censure".to_string()].into_iter().collect();
+        let words = crate::vocab_scan::VocabSet::new(
+            ["censure".to_string()].into_iter().collect(),
+            Vec::new(),
+        );
         let m = super::row_markup(
             "Should censure <thus> on gentlemen.",
             &words,

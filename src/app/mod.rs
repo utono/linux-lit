@@ -653,7 +653,7 @@ pub struct AppState {
     pub pending_echo_passage_doc: String,
     pub echo_overlay: crate::input::actions::echoes::EchoOverlayState,
     pub echo_session: Option<crate::input::actions::echoes::EchoSession>,
-    pub vocab_words: std::collections::HashSet<String>,
+    pub vocab_words: crate::vocab_scan::VocabSet,
     pub vocab_matches: Vec<VocabMatch>,
     pub vocab_loop: Option<crate::input::vocab_loop::VocabLoopState>,
     pub vocab_tag: gtk4::TextTag,
@@ -2509,7 +2509,7 @@ pub fn build_window(
         pending_echo_passage_doc: String::new(),
         echo_overlay: crate::input::actions::echoes::EchoOverlayState::default(),
         echo_session: None,
-        vocab_words: std::collections::HashSet::new(),
+        vocab_words: crate::vocab_scan::VocabSet::default(),
         vocab_matches: Vec::new(),
         vocab_loop: None,
         vocab_tag,
@@ -4225,7 +4225,7 @@ pub fn display_work_at_with_prepared(
                 .unwrap_or_default();
             crate::logging::log(&format!(
                 "VOCAB: loaded {} vocab words",
-                state.vocab_words.len(),
+                state.vocab_words.words.len(),
             ));
         }
     }
