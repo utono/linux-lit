@@ -1078,7 +1078,7 @@ fn sync_panel_vocab_highlight(s: &AppState) {
     let (words, color) = if s.vocab_highlight_visible {
         (s.vocab_words.clone(), Some(s.theme.vocab_fg.clone()))
     } else {
-        (std::collections::HashSet::new(), None)
+        (crate::vocab_scan::VocabSet::default(), None)
     };
     s.chat_panel.set_vocab_highlight(words, color);
 }
