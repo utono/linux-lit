@@ -4,6 +4,32 @@ Date: 2026-08-15
 From: `~/utono/ro`
 To: `~/utono/linux-lit`
 
+> **Status: IMPLEMENTED, with corrections — read this box before acting on
+> anything below.**
+>
+> Landed in linux-lit `40317014` on 2026-08-15. The original text is kept
+> intact as a record of what was believed; corrections are marked inline.
+> Four things changed:
+>
+> 1. **The threshold question was the wrong question.** Triage of the 67
+>    rows shows 88% are dramatic recordings where divergence is normal, so
+>    no threshold separates signal from noise. The answer was a change of
+>    WORDING, not a number — see "Correction: the threshold".
+> 2. **Do NOT align the constant with litdb's gate.** The handoff asks for
+>    this below; it is now explicitly rejected. They answer different
+>    questions at different costs — see the same section.
+> 3. **The toast must not say "stale".** litdb had to correct gate 6.7e for
+>    asserting which side was wrong (`b4ecd85`). The shipped wording
+>    observes only, and a unit test enforces it.
+> 4. **litdb's side has moved a long way.** Gates 6.7e/6.7f landed, three
+>    media were repaired, and the five-row diagnosis this handoff's sibling
+>    made turned out to be four different defects. See "Correction: what
+>    litdb landed".
+>
+> Diagnosis lessons from both sides are now consolidated in
+> `docs/troubleshooting/timestamp-diagnosis.md`. Read that before
+> diagnosing any wrong-start-time complaint.
+
 ## The ask, in one sentence
 
 When `b` (or `p`/`P`) writes a line's start time and that line has
@@ -106,6 +132,20 @@ const STALE_PHRASE_SECS: f64 = 1.0;
 // e.g. "start set — 6 phrase rows now stale (rebuild to fix karaoke)"
 ```
 
+> **Correction: that wording shipped changed.** It asserts the phrase rows
+> are the wrong side ("stale", "rebuild to fix"), which the toast cannot
+> know. litdb shipped exactly that claim in gate 6.7e and had to correct it
+> (`b4ecd85`): on LoJ the line was right, but that is a fact about LoJ, not
+> an invariant. The shipped wording observes instead:
+>
+> ```
+> 13 phrase rows disagree with this line by 11.3s
+> ```
+>
+> A unit test (`wording_observes_rather_than_diagnoses`) asserts "stale",
+> "wrong", "rebuild" and "fix" stay out of the string, so a future change
+> that helpfully reintroduces a diagnosis fails on purpose.
+
 The toast helpers are `show_chapter_toast(state, text)` and
 `show_chapter_toast_secs(state, text, secs)`
 (`src/input/navigation.rs:2849`, `:2922`). `timestamps.rs` already uses the
@@ -137,6 +177,98 @@ will actually read — and if `litdb` lands the consistency gate discussed
 below, align this constant with that gate's tolerance so the two never
 disagree about what "stale" means.
 
+### Correction: the threshold, and why not to align it (2026-08-15)
+
+**Shipped at `1.0 s`, and deliberately NOT aligned with litdb's gate.** Both
+halves of the advice above are superseded.
+
+litdb's spec `636dddc` does not pin a tolerance — it calls tolerance "the open
+question" and says the 67 rows need triage first. Blocking on it would mean
+waiting for work nobody has scheduled.
+
+That triage, run 2026-08-15, changes what the number means. Of the 67 manual
+rows drifting >0.5 s:
+
+| group | rows | >1.0s | >2.0s | worst |
+|---------------------|------|-------|-------|--------|
+| dramatic recordings | 59 | 37 | 13 | 25.04s |
+| prose / other | 7 | 6 | 6 | 86.62s |
+
+88% are dramatic recordings (Arkangel/Naxos/Amb/BBC/RSC) — the population
+litdb established diverges legitimately, where overlapping dialogue, music
+and effects make phrase/line divergence normal. That is why gate 6.7e gates
+on the phrase START rather than on the size of the gap.
+
+The per-media comparison is the useful part:
+
+| work | media | manual drifting | media drifting |
+|--------------|-------|-----------------|----------------|
+| 2H6-Arkangel | 15 | 12 | 960 |
+| Mac-Arkangel | 21 | 8 | 1001 |
+| TT | 56 | 3 | 4 |
+| BH-Barrett | 320 | 2 | 51 |
+
+On 2H6-Arkangel a manual edit is indistinguishable from the recording's own
+baseline. On TT/56, three drifting manual rows against a baseline of four is
+real signal.
+
+At a flat `1.0 s`, 37 of 44 firings land on media where drift is already
+normal — roughly a 6:1 false-positive ratio, enough to train someone to
+dismiss the toast. **No threshold fixes that**, because the discriminator is
+per-media baseline, not gap size.
+
+So the answer was not a number. It was the wording: the toast reports what it
+measured and leaves the judgement to the reader. A per-media baseline
+suppression is a known, cheap follow-up (one query) — deliberately not
+shipped, because tuning against 44 rows is premature.
+
+**Why not align with litdb's gate.** They answer different questions at
+different costs:
+
+- The toast asks *"did the edit I just made create a disagreement?"* It fires
+  on one row the user just touched, where a false positive costs a glance.
+- The gate asks *"does this corpus have drift worth fixing?"* It fires over a
+  whole wizard run, where false positives turn every run red and train
+  operators to ignore gate output.
+
+Different costs justify different numbers. Coupling them would force one of
+the two to accept the wrong error budget. This is recorded in the
+`STALE_PHRASE_SECS` doc comment so the coupling is not re-proposed.
+
+## Correction: what litdb landed (2026-08-15)
+
+The sibling handoff has been revised substantially since this one was
+written. Its current text lives at
+`~/utono/litdb/docs/handoffs/handoff-2026-08-15-phrase-line-timestamp-misalignment.md`
+(note: moved into `docs/handoffs/` in `76ec8fc`). What changed:
+
+- **The five intro-contamination rows were four different defects**, not one.
+  Only LoJ was straightforward. DC was a clean one-row DELETE; MND-Arkangel
+  needed a full REBUILD (all three of its first row's phrases were wrong);
+  Tmp-Arkangel/33 and TT/56 were deliberately NOT repaired and need their own
+  specs — a row-scoped fix there would move a reader from "wrong at second
+  zero" to "wrong somewhere less obvious", which is worse.
+- **Gates 6.7e and 6.7f landed** (`93781e1`, fixed in `4d76a48`, message
+  corrected in `b4ecd85`). 6.7e catches intro contamination; 6.7f reports
+  orphan phrase rows, advisory by default.
+- **The population is larger than reported here.** Any check anchored on
+  `line_timestamps` is blind to phrase rows on lines with no line timestamp:
+  **10,169 orphan rows across 73 media**. BH-Barrett passes the first-row
+  check while carrying 19 intro-region phrases.
+- **Three repairs shipped**: DC/325, MND-Arkangel/4, LoJ/233.
+- **The `updated_at`/`source` gate proposed in that handoff's §3 is
+  unwritable.** `phrase_timestamps` has no such columns. litdb's accepted
+  alternative is to gate on the invariant directly — which is the same check
+  this toast performs, one level up.
+
+**The most valuable thing in that revision is a diagnosis trap**, not a
+finding: a session read the cached whisperX JSON, found no intro, and
+concluded `line_timestamps` was the wrong side — the exact opposite of the
+truth. The JSON is the artefact the bad alignment was produced from, so
+diagnosing from it is circular. Re-transcribing the audio showed "This is
+Audible." at 0.537–13.143 s. Recorded as FAILURE MODE 1 in
+`docs/troubleshooting/timestamp-diagnosis.md`.
+
 ## What this does not do
 
 - It does not repair anything. The fix is
@@ -144,11 +276,36 @@ disagree about what "stale" means.
   affected work/media.
 - It does not detect drift that arose any other way — the aligner producing
   bad phrases in the first place is a `litdb` problem, and is the subject of
-  `~/utono/litdb/docs/handoff-2026-08-15-phrase-line-timestamp-misalignment.md`.
-  That handoff proposes a corpus-wide gate; a `litdb` session reviewing it has
+  `~/utono/litdb/docs/handoff-2026-08-15-phrase-line-timestamp-misalignment.md`
+  (**moved**: now `docs/handoffs/…`). That handoff proposes a corpus-wide
+  gate; a `litdb` session reviewing it has
   since found the population is broader than first diagnosed (10,169 orphan
   phrase rows with no line timestamp at all). Read it before assuming this
   toast is the whole story.
+
+## What shipped (linux-lit `40317014`, 2026-08-15)
+
+One file, `src/input/timestamps.rs`, +156 lines.
+
+- `stale_phrase_note(conn, line_mapping_id, media_id, written_start)` runs
+  after `upsert_start_time` succeeds in **both** paths — `set_start_time`
+  (`b`) and `nudge_start_time` (`p`/`P`), as this handoff asked.
+- The pure decision is split into `phrase_drift_note(count, min_start,
+  written_start)` so it is testable without a database.
+- Absolute difference, per this handoff. Verified against a real row that
+  drifts the other way: TT/56 line 1760897's phrases start **11.3 s after**
+  its line.
+- Silent when the line has no phrase rows; non-fatal on query failure (logs
+  and says nothing, since the write already succeeded).
+- Log line for diagnosis: `TS: phrase drift line=… media=… written=…
+  min_phrase=… diff=… n=…`.
+
+Seven unit tests use real corpus rows as fixtures — LoJ 1790843 pre-repair
+(phrases before the line), TT/56 1760897 (phrases after), TT/56 1760896
+(singular wording), plus threshold-boundary and no-phrase-rows silence.
+
+Not shipped, deliberately: per-media baseline suppression (premature at 44
+rows) and any handling of `Alt+b` end times (out of scope, as stated).
 
 ## Precedent in this repo
 
