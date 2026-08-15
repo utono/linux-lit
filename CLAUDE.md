@@ -53,6 +53,15 @@ queries (see the `debug-playback-sync` skill) against THAT abbrev. A common
 root cause is one corrupt out-of-order timestamp in the playing edition —
 a litdb/wizard defect fixed in lit.db, not in linux-lit code.
 
+**For a WRONG START TIME specifically, read
+`docs/troubleshooting/timestamp-diagnosis.md` first.** Its FAILURE MODE 1 is
+the trap that costs whole sessions: the cached whisperX JSON is the artefact
+the bad alignment was produced from, so diagnosing from it is circular and
+yields a confident, fully-evidenced, exactly-backwards answer. Re-transcribe
+the audio instead. The ledger also records that `line_timestamps` and
+`phrase_timestamps` never sync (no triggers; no `source`/`updated_at` on the
+phrase table), and that neither table is automatically the correct side.
+
 ## Clipping Bugs — read clip-prevention.md FIRST
 
 For ANY text-clipping or flush-to-the-edge bug, **read
@@ -104,8 +113,8 @@ translations path on a work with zero translations. Diagnostic source:
 ## Troubleshooting Ledgers
 
 The clip-prevention pattern generalizes: each recurring-bug domain
-keeps a frequency-ordered ledger in `docs/troubleshooting/` (clipping
-and page-turning exist; playback-sync is the next candidate). Trigger:
+keeps a frequency-ordered ledger in `docs/troubleshooting/` (clipping,
+page-turning, and timestamp-diagnosis exist). Trigger:
 if diagnosis took more than one session OR the root cause contradicted
 the first hypothesis, append the failure mode — tell, root cause, fix —
 in the same change. This is required, not optional.

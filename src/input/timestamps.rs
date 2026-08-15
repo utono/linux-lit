@@ -22,6 +22,93 @@ pub struct TimestampUndoState {
 const NUDGE_STEP: f64 = 0.2;
 const NOT_SPOKEN_TOAST: &str = "Not a spoken line — no timestamp set";
 
+/// How far a line's phrase rows may sit from its start before we mention it.
+///
+/// Deliberately NOT aligned with litdb's alignment gates, which answer a
+/// different question: a gate asks "does this corpus have drift worth fixing"
+/// and fires over a whole wizard run, where a false positive turns the run red.
+/// This fires on one row the user just edited, where a false positive costs a
+/// glance. Different costs, different numbers.
+const STALE_PHRASE_SECS: f64 = 1.0;
+
+/// Report phrase rows that disagree with a line's start time.
+///
+/// `b`/`p`/`P` write `line_timestamps` only. Nothing propagates that into
+/// `phrase_timestamps` — it has no triggers, and no code here writes it — so
+/// after a correction the karaoke sweep keeps driving off the old phrases.
+///
+/// This only OBSERVES the disagreement; it does not claim which side is wrong.
+/// litdb had to correct its own gate message for asserting `line_timestamps`
+/// was the right side (commit `b4ecd85`) — on LoJ the line was right, but the
+/// general case cuts both ways. The repair is `build_phrase_timestamps.py` in
+/// litdb, and it needs a human to decide what to rebuild.
+///
+/// Returns `None` when the line has no phrase rows (silence is correct there —
+/// many lines legitimately have none) or when they agree within tolerance.
+/// Non-fatal by construction: a query failure logs and yields `None`, because
+/// the timestamp write has already succeeded and must not be reported as failed.
+fn stale_phrase_note(
+    conn: &rusqlite::Connection,
+    line_mapping_id: i64,
+    media_id: i64,
+    written_start: f64,
+) -> Option<String> {
+    let row: rusqlite::Result<(i64, Option<f64>)> = conn.query_row(
+        "SELECT COUNT(*), MIN(start_time) FROM phrase_timestamps \
+         WHERE line_mapping_id = ?1 AND media_id = ?2",
+        rusqlite::params![line_mapping_id, media_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+
+    let (count, min_start) = match row {
+        Ok((n, Some(min))) if n > 0 => (n, min),
+        // No phrase rows on this line: nothing to say.
+        Ok(_) => return None,
+        Err(e) => {
+            crate::logging::log(&format!("TS: stale-phrase check failed: {}", e));
+            return None;
+        }
+    };
+
+    let note = phrase_drift_note(count, min_start, written_start);
+    if note.is_some() {
+        crate::logging::log(&format!(
+            "TS: phrase drift line={} media={} written={:.3} min_phrase={:.3} diff={:.3} n={}",
+            line_mapping_id,
+            media_id,
+            written_start,
+            min_start,
+            (min_start - written_start).abs(),
+            count
+        ));
+    }
+    note
+}
+
+/// The pure decision behind [`stale_phrase_note`]: given a line's phrase count
+/// and earliest phrase start, is the disagreement worth mentioning?
+fn phrase_drift_note(count: i64, min_start: f64, written_start: f64) -> Option<String> {
+    if count <= 0 {
+        return None;
+    }
+
+    // Absolute difference: drift runs both ways. Phrases can land after the
+    // corrected line as easily as before it (litdb row 1386687, and TT/56's
+    // 1760897 whose phrases start 11.3s AFTER its line).
+    let diff = (min_start - written_start).abs();
+    if diff <= STALE_PHRASE_SECS {
+        return None;
+    }
+
+    Some(format!(
+        "{} phrase row{} disagree{} with this line by {:.1}s",
+        count,
+        if count == 1 { "" } else { "s" },
+        if count == 1 { "s" } else { "" },
+        diff
+    ))
+}
+
 /// `u`/end-time are audio timestamps — meaningful only on a SPOKEN line. A stage
 /// direction (`sub_line > 0`) that is not marked spoken (`is_spoken != Some(true)`)
 /// must be rejected; dialogue lines (`sub_line == 0`) and spoken SDs pass.
@@ -45,6 +132,63 @@ mod timestamp_gate_tests {
     #[test]
     fn spoken_stage_direction_allowed() {
         assert!(timestamp_allowed(1, Some(true)));
+    }
+}
+
+#[cfg(test)]
+mod phrase_drift_tests {
+    use super::phrase_drift_note;
+
+    #[test]
+    fn silent_when_line_has_no_phrase_rows() {
+        // Many lines legitimately have none; a toast on every one would train
+        // the user to ignore it.
+        assert!(phrase_drift_note(0, 0.0, 42.0).is_none());
+    }
+
+    #[test]
+    fn silent_when_phrases_agree() {
+        assert!(phrase_drift_note(8, 16.325, 16.264).is_none());
+    }
+
+    #[test]
+    fn silent_at_exactly_the_threshold() {
+        assert!(phrase_drift_note(3, 11.0, 10.0).is_none());
+    }
+
+    #[test]
+    fn fires_when_phrases_precede_the_line() {
+        // LoJ row 1790843 before its repair: line 16.264, phrases from 0.594.
+        let note = phrase_drift_note(8, 0.594, 16.264).expect("should fire");
+        assert!(note.contains("8 phrase rows"), "{note}");
+        assert!(note.contains("15.7s"), "{note}");
+    }
+
+    #[test]
+    fn fires_when_phrases_follow_the_line() {
+        // TT/56 row 1760897: phrases start 11.3s AFTER the line. Drift runs
+        // both ways, so the check is on absolute difference.
+        let note = phrase_drift_note(13, 30.846, 19.505).expect("should fire");
+        assert!(note.contains("13 phrase rows"), "{note}");
+        assert!(note.contains("11.3s"), "{note}");
+    }
+
+    #[test]
+    fn singular_wording_for_one_row() {
+        // TT/56 row 1760896: a single phrase row, 15.976s adrift.
+        let note = phrase_drift_note(1, 1.355, 17.331).expect("should fire");
+        assert!(note.contains("1 phrase row disagrees"), "{note}");
+        assert!(!note.contains("rows"), "{note}");
+    }
+
+    #[test]
+    fn wording_observes_rather_than_diagnoses() {
+        // The toast cannot know which side is wrong. litdb had to correct gate
+        // 6.7e's message for asserting line_timestamps was right (b4ecd85).
+        let note = phrase_drift_note(4, 0.6, 20.0).expect("should fire");
+        for claim in ["stale", "wrong", "rebuild", "fix"] {
+            assert!(!note.contains(claim), "{note} should not claim {claim}");
+        }
     }
 }
 
@@ -178,6 +322,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         next_end
     };
 
+    let stale_note;
     {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -190,6 +335,7 @@ pub fn set_start_time(state: &mut AppState) -> bool {
             crate::logging::log(&format!("TS: upsert_start_time failed: {}", e));
             return false;
         }
+        stale_note = stale_phrase_note(&conn, line.id, media_id, time_pos);
         if let Err(e) = crate::db::queries::upsert_spoken_status(&conn, line.id, media_id, true) {
             // Non-fatal: the timestamp is already written; just log.
             crate::logging::log(&format!("TS: upsert_spoken_status failed: {}", e));
@@ -217,6 +363,9 @@ pub fn set_start_time(state: &mut AppState) -> bool {
         }
     }
     crate::logging::log(&format!("TS: set start={:.2} end={:.2} line={}", time_pos, end_time, line_idx));
+    if let Some(note) = stale_note {
+        crate::input::navigation::show_chapter_toast(state, &note);
+    }
 
     resync_mpv_timestamps(state);
 
@@ -553,6 +702,7 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
 
     capture_undo_snapshot(state, line_id, media_id);
 
+    let stale_note;
     let new_start = {
         let work = match &mut state.current_work {
             Some(w) => w,
@@ -573,12 +723,18 @@ pub fn nudge_start_time(state: &mut AppState, delta: f64) -> bool {
             crate::logging::log(&format!("TS: nudge upsert failed: {}", e));
             return false;
         }
+        // A single ±0.2s nudge rarely crosses the threshold on its own, but
+        // repeated nudges accumulate and should eventually warn.
+        stale_note = stale_phrase_note(&conn, line.id, media_id, new_start);
 
         // Update in-memory
         line.timestamp.as_mut().unwrap().start = new_start;
         new_start
     };
     crate::logging::log(&format!("TS: nudge start_time={:.2} delta={:.1} line={}", new_start, delta, line_idx));
+    if let Some(note) = stale_note {
+        crate::input::navigation::show_chapter_toast(state, &note);
+    }
 
     resync_mpv_timestamps(state);
 
