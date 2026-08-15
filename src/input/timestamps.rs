@@ -43,25 +43,53 @@ const STALE_PHRASE_SECS: f64 = 1.0;
 /// general case cuts both ways. The repair is `build_phrase_timestamps.py` in
 /// litdb, and it needs a human to decide what to rebuild.
 ///
+/// Two different defects share the "phrases and line disagree" symptom, and
+/// they need different repairs, so the note names which one it found:
+///
+/// - **A gap** — the line's opening characters have NO phrase row at all
+///   (`MIN(start_char) > 0`). Karaoke simply never starts; the existing rows
+///   are usually fine. Observed on TT/56 line 1760897, where coverage begins
+///   at char 192 and the first 192 characters are dark.
+/// - **A shift** — coverage starts at char 0, but the times disagree with the
+///   line's own start.
+///
 /// Returns `None` when the line has no phrase rows (silence is correct there —
-/// many lines legitimately have none) or when they agree within tolerance.
-/// Non-fatal by construction: a query failure logs and yields `None`, because
-/// the timestamp write has already succeeded and must not be reported as failed.
+/// many lines legitimately have none) or when coverage is complete and the
+/// times agree within tolerance. Non-fatal by construction: a query failure
+/// logs and yields `None`, because the timestamp write has already succeeded
+/// and must not be reported as failed.
 fn stale_phrase_note(
     conn: &rusqlite::Connection,
     line_mapping_id: i64,
     media_id: i64,
     written_start: f64,
 ) -> Option<String> {
-    let row: rusqlite::Result<(i64, Option<f64>)> = conn.query_row(
-        "SELECT COUNT(*), MIN(start_time) FROM phrase_timestamps \
+    let row: rusqlite::Result<(i64, Option<f64>, Option<i64>)> = conn.query_row(
+        "SELECT COUNT(*), MIN(start_time), MIN(start_char) FROM phrase_timestamps \
          WHERE line_mapping_id = ?1 AND media_id = ?2",
         rusqlite::params![line_mapping_id, media_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     );
 
+    // A leading gap is its own defect and outranks any time comparison: the
+    // times that ARE present may be perfectly correct.
+    if let Ok((n, _, Some(first_char))) = row {
+        if n > 0 && first_char > 0 {
+            crate::logging::log(&format!(
+                "TS: phrase gap line={} media={} first_char={} n={}",
+                line_mapping_id, media_id, first_char, n
+            ));
+            return Some(format!(
+                "phrase coverage starts {} chars into this line ({} row{})",
+                first_char,
+                n,
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+    }
+
     let (count, min_start) = match row {
-        Ok((n, Some(min))) if n > 0 => (n, min),
+        Ok((n, Some(min), _)) if n > 0 => (n, min),
         // No phrase rows on this line: nothing to say.
         Ok(_) => return None,
         Err(e) => {
@@ -189,6 +217,107 @@ mod phrase_drift_tests {
         for claim in ["stale", "wrong", "rebuild", "fix"] {
             assert!(!note.contains(claim), "{note} should not claim {claim}");
         }
+    }
+
+    #[test]
+    fn drift_wording_does_not_describe_a_gap() {
+        // A gap and a shift need different repairs, so the drift wording must
+        // not be reused for coverage that never starts. The gap branch lives
+        // in stale_phrase_note (it needs start_char, which is a DB fact);
+        // this guards the two messages against converging.
+        let note = phrase_drift_note(13, 30.846, 18.008).expect("should fire");
+        assert!(!note.contains("coverage"), "{note}");
+        assert!(note.contains("disagree"), "{note}");
+    }
+}
+
+#[cfg(test)]
+mod phrase_gap_tests {
+    use super::stale_phrase_note;
+
+    /// `(start_char, end_char, start_time, end_time)` rows for line 1, media 1.
+    fn db_with(rows: &[(i64, i64, f64, f64)]) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE phrase_timestamps (
+                 id INTEGER PRIMARY KEY,
+                 line_mapping_id INTEGER NOT NULL,
+                 media_id INTEGER NOT NULL,
+                 start_time REAL NOT NULL,
+                 end_time REAL NOT NULL,
+                 start_char INTEGER NOT NULL,
+                 end_char INTEGER NOT NULL);",
+        )
+        .expect("schema");
+        for (sc, ec, st, et) in rows {
+            conn.execute(
+                "INSERT INTO phrase_timestamps
+                   (line_mapping_id, media_id, start_time, end_time, start_char, end_char)
+                 VALUES (1, 1, ?1, ?2, ?3, ?4)",
+                rusqlite::params![st, et, sc, ec],
+            )
+            .expect("insert");
+        }
+        conn
+    }
+
+    #[test]
+    fn reports_a_leading_gap_by_character_offset() {
+        // TT/56 line 1760897 as it stands today: 13 rows, all internally
+        // consistent, but coverage begins at char 192. The first 192 chars
+        // ("Though the author has written a large Dedication ... I can
+        // observe,") render with no karaoke at all.
+        let conn = db_with(&[(192, 256, 30.846, 34.047), (257, 362, 35.268, 41.110)]);
+        let note = stale_phrase_note(&conn, 1, 1, 18.008).expect("should fire");
+        assert!(note.contains("starts 192 chars into this line"), "{note}");
+        assert!(note.contains("2 rows"), "{note}");
+    }
+
+    #[test]
+    fn a_gap_outranks_the_time_comparison() {
+        // The times present may be perfectly correct; the defect is the
+        // missing opening, and it needs a different repair. Naming the drift
+        // here would point at rows that are fine.
+        let conn = db_with(&[(128, 138, 15756.331, 15757.972)]);
+        let note = stale_phrase_note(&conn, 1, 1, 15756.0).expect("should fire");
+        assert!(note.contains("chars into this line"), "{note}");
+        assert!(!note.contains("disagree"), "{note}");
+    }
+
+    #[test]
+    fn singular_row_wording_in_the_gap_message() {
+        // TT/56 line 1761156: one 10-char row on a 162-char editorial bracket.
+        let conn = db_with(&[(128, 138, 15756.331, 15757.972)]);
+        let note = stale_phrase_note(&conn, 1, 1, 15756.0).expect("should fire");
+        assert!(note.contains("(1 row)"), "{note}");
+    }
+
+    #[test]
+    fn complete_coverage_with_agreeing_times_is_silent() {
+        let conn = db_with(&[(0, 40, 12.0, 14.0), (41, 90, 14.2, 17.0)]);
+        assert!(stale_phrase_note(&conn, 1, 1, 12.0).is_none());
+    }
+
+    #[test]
+    fn complete_coverage_with_drifting_times_reports_drift() {
+        // Coverage starts at char 0, so this is a shift, not a gap.
+        let conn = db_with(&[(0, 40, 30.0, 34.0), (41, 90, 34.2, 38.0)]);
+        let note = stale_phrase_note(&conn, 1, 1, 12.0).expect("should fire");
+        assert!(note.contains("disagree"), "{note}");
+        assert!(!note.contains("chars into"), "{note}");
+    }
+
+    #[test]
+    fn no_phrase_rows_is_silent() {
+        let conn = db_with(&[]);
+        assert!(stale_phrase_note(&conn, 1, 1, 12.0).is_none());
+    }
+
+    #[test]
+    fn a_missing_table_is_non_fatal() {
+        // The write has already succeeded; a broken query must not surface.
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        assert!(stale_phrase_note(&conn, 1, 1, 12.0).is_none());
     }
 }
 

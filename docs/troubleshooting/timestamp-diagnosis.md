@@ -81,7 +81,54 @@ have shipped as a line-timestamp "repair."
 
 ---
 
-### FAILURE MODE 2 — assuming a shared signature means a shared defect (2026-08-15)
+### FAILURE MODE 2 — reading a coverage GAP as a time shift (2026-08-15)
+
+**Tell:** karaoke goes dark for a stretch of a line and resumes
+**mid-sentence**, and a time-based check reports a large disagreement.
+
+A time comparison (`MIN(phrase_timestamps.start_time)` vs the line start)
+cannot tell these apart:
+
+- **A shift** — coverage is complete, but the times are wrong.
+- **A gap** — the opening characters have NO phrase row at all, so
+  `MIN(start_time)` is the time of the first *surviving* row. The rows that
+  exist are often perfectly correct.
+
+They need different repairs, so naming the wrong one sends the next session
+at rows that are fine.
+
+**The case.** TT/56 line 1760897 reported "13 phrase rows disagree with this
+line by 12.8s". All 13 rows were monotonic in char and time, non-overlapping,
+and closed the line exactly at `end_char 965`. The defect was that coverage
+began at `start_char = 192`: chars 0–191 (`Though the author has written a
+large Dedication ... as far as I can observe,`) had no row at all. On screen,
+that span was dark and the highlight resumed at char 192 — `not at all
+regarded...` — exactly as the data predicted.
+
+**Diagnose by character coverage, not by time:**
+
+```sql
+SELECT MIN(start_char) AS first_char, MAX(end_char) AS last_char, COUNT(*)
+FROM phrase_timestamps
+WHERE line_mapping_id = ? AND media_id = ?;
+```
+
+`first_char > 0` is a leading gap. Compare `last_char` against
+`length(canonical_text)` for a trailing shortfall, and use `LEAD(start_char)
+- end_char` for interior holes.
+
+**Handled since `d339ad9f`:** the toast checks `MIN(start_char)` first and
+reports "phrase coverage starts N chars into this line", logged as `TS: phrase
+gap` (distinct from `TS: phrase drift`). Interior gaps are deliberately not
+detected — that is a gate's job, not a toast's.
+
+**Repair is upstream and NOT a backfill on TT/56** — that media carries
+shipped smear repairs a rebuild would discard. See
+`docs/handoff-2026-08-15-tt56-phrase-coverage-gaps.md`.
+
+---
+
+### FAILURE MODE 3 — assuming a shared signature means a shared defect (2026-08-15)
 
 **Tell:** several media match one query, and a fix is planned for "the N
 rows" as a batch.
@@ -107,7 +154,7 @@ obvious", which is **worse**, because it stops looking like a bug.
 
 ---
 
-### FAILURE MODE 3 — a gate anchored on the wrong table (2026-08-15)
+### FAILURE MODE 4 — a gate anchored on the wrong table (2026-08-15)
 
 **Tell:** a detection query inner-JOINs from `line_timestamps` and reports a
 clean corpus.
@@ -128,7 +175,7 @@ turn every wizard run red before the class is specified.
 
 ---
 
-### FAILURE MODE 4 — treating all phrase/line divergence as broken (2026-08-15)
+### FAILURE MODE 5 — treating all phrase/line divergence as broken (2026-08-15)
 
 **Tell:** a query returns thousands of rows and the instinct is to fix them.
 
@@ -149,7 +196,7 @@ gate 6.7e gates on the phrase start rather than on the size of the gap.
 
 ---
 
-### FAILURE MODE 5 — expecting `b` to cascade (2026-08-15)
+### FAILURE MODE 6 — expecting `b` to cascade (2026-08-15)
 
 **Tell:** a start time was corrected in the reader and the karaoke sweep
 still drifts.
@@ -162,10 +209,11 @@ in this repo writes that table outside test fixtures.
 So after a correction the line and its phrases disagree by exactly the amount
 corrected, silently.
 
-**Mitigation shipped here (`40317014`):** `b` and `p`/`P` now toast when the
-line's phrase rows disagree with the written start by more than
-`STALE_PHRASE_SECS` (1.0 s). It **observes only** — see FAILURE MODE 6.
-Repair remains litdb's `build_phrase_timestamps.py`.
+**Mitigation shipped here (`40317014`, extended in `d339ad9f`):** `b` and
+`p`/`P` now toast when the line's phrase rows disagree with the written start
+by more than `STALE_PHRASE_SECS` (1.0 s), or when coverage does not start at
+char 0 (FAILURE MODE 2). It **observes only** — see FAILURE MODE 7. Repair
+remains litdb's `build_phrase_timestamps.py`.
 
 **Do NOT make `b` fix it.** Considered and rejected, recorded so it is not
 re-proposed:
@@ -183,7 +231,7 @@ display problem. The floor is a defence, not a fix.
 
 ---
 
-### FAILURE MODE 6 — asserting which side of a disagreement is wrong (2026-08-15)
+### FAILURE MODE 7 — asserting which side of a disagreement is wrong (2026-08-15)
 
 **Tell:** a warning message, comment, or commit says the phrases are stale /
 the line is right (or the reverse).
@@ -193,11 +241,14 @@ had to correct the message (`b4ecd85`). On LoJ the line *was* right — but
 that is a fact about LoJ, not an invariant. FAILURE MODE 1 is the case where
 believing it cost a session.
 
-**Applies to this repo's toast.** The wording is deliberately observational —
-`"N phrase rows disagree with this line by X.Xs"` — with a unit test
+**Applies to this repo's toast.** Both messages are deliberately
+observational — `"N phrase rows disagree with this line by X.Xs"` and
+`"phrase coverage starts N chars into this line"` — with a unit test
 (`wording_observes_rather_than_diagnoses`) asserting the words "stale",
-"wrong", "rebuild" and "fix" stay out of it. If a future change reintroduces
-a diagnosis, that test fails on purpose.
+"wrong", "rebuild" and "fix" stay out of them. If a future change
+reintroduces a diagnosis, that test fails on purpose. A second test
+(`drift_wording_does_not_describe_a_gap`) keeps the two messages from
+converging, since they route to different repairs.
 
 ---
 
