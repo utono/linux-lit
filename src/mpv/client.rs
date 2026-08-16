@@ -421,7 +421,9 @@ fn find_line_for_time(
     line_id_to_index: &HashMap<i64, usize>,
     last_synced_work_idx: Option<usize>,
 ) -> Option<usize> {
-    use crate::input::navigation::{SYNC_GAP_PREROLL, SYNC_GAP_THRESHOLD, SYNC_PREROLL};
+    use crate::input::navigation::{
+        SYNC_ASSUMED_LINE_SPAN, SYNC_GAP_PREROLL, SYNC_GAP_THRESHOLD, SYNC_PREROLL,
+    };
 
     let effective_time = time_pos + SYNC_PREROLL;
     let idx = timestamps.partition_point(|ts| ts.1 <= effective_time);
@@ -435,8 +437,11 @@ fn find_line_for_time(
     // lead before B is spoken). Anchoring on B.start rather than A.end keeps
     // the lead correct even when A's end_time overshoots the actual speech
     // (trailing silence / stage business baked into the timestamp). When A has
-    // no usable end_time the gap can't be measured, so apply the same lead
-    // unconditionally. Promotes by exactly one line, so a line is never skipped.
+    // no usable end_time (start-only row) the gap can't be measured: infer one
+    // only if the start-to-start distance is longer than a line could plausibly
+    // run plus the threshold — never assume a gap between consecutive short
+    // lines, or the lead eats most of each one. Promotes by exactly one line,
+    // so a line is never skipped.
     let mut active = idx - 1;
     if let Some(&(_, b_start, _)) = timestamps.get(idx) {
         let (_, a_start, a_end) = timestamps[idx - 1];
@@ -444,7 +449,7 @@ fn find_line_for_time(
         let qualifies = if a_end > a_start {
             b_start - a_end > SYNC_GAP_THRESHOLD
         } else {
-            true
+            b_start - a_start > SYNC_ASSUMED_LINE_SPAN + SYNC_GAP_THRESHOLD
         };
         // Compare in EFFECTIVE time (same clock as the base mapping above):
         // with a non-zero SYNC_PREROLL the whole sync surface leads the audio
@@ -615,11 +620,36 @@ mod tests {
         assert_eq!(find_line_for_time(t(2.5), &nogap, &map, None), Some(0));
         assert_eq!(find_line_for_time(t(3.0), &nogap, &map, None), Some(1));
 
-        // Invalid A.end (end == start): gap unknown -> apply the lead anyway,
-        // B.start - 1.5 = 4.5.
-        let badend = vec![(10, 1.0, 1.0), (20, 6.0, 7.0)];
-        assert_eq!(find_line_for_time(t(4.4), &badend, &map, None), Some(0));
-        assert_eq!(find_line_for_time(t(4.5), &badend, &map, None), Some(1));
+        // Invalid A.end (end == start) with B far away (start-to-start 20s):
+        // the gap is unmeasurable but a line cannot plausibly run 20s, so a
+        // real gap is inferred and the lead still applies at B.start - 1.5.
+        let badend = vec![(10, 1.0, 1.0), (20, 21.0, 22.0)];
+        assert_eq!(find_line_for_time(t(19.4), &badend, &map, None), Some(0));
+        assert_eq!(find_line_for_time(t(19.5), &badend, &map, None), Some(1));
+    }
+
+    #[test]
+    fn start_only_consecutive_lines_do_not_lead() {
+        // R2-Arkangel 3.3.1-4 (2026-08-16): `b` stamped start-only rows
+        // (end NULL -> 0.0) on consecutive ~2.3s verse lines. The old
+        // "unmeasurable gap => assume a gap" branch fired the 1.5s lead on
+        // every one, so the highlight moved on with most of each line still
+        // unspoken. Start-to-start here is 2.3s, far below what a line plus a
+        // real gap would need, so B must NOT become active before its start.
+        let rows = vec![
+            (1, 5667.54, 0.0),
+            (2, 5669.29, 0.0),
+            (3, 5671.67, 0.0),
+            (4, 5674.20, 5677.09),
+        ];
+        let map: HashMap<i64, usize> = [(1, 0), (2, 1), (3, 2), (4, 3)].into();
+        // 5671.67 - 1.5 = 5670.17: the old code jumped to line 3 here.
+        assert_eq!(find_line_for_time(t(5670.2), &rows, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(5671.6), &rows, &map, None), Some(1));
+        assert_eq!(find_line_for_time(t(5671.67), &rows, &map, None), Some(2));
+        // 5674.20 - 1.5 = 5672.70: likewise must stay on line 3.
+        assert_eq!(find_line_for_time(t(5672.8), &rows, &map, None), Some(2));
+        assert_eq!(find_line_for_time(t(5674.20), &rows, &map, None), Some(3));
     }
 
     #[test]

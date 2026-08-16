@@ -90,6 +90,17 @@ pub const SYNC_GAP_THRESHOLD: f64 = 1.5;
 /// even when the previous line's end_time overshoots the actual speech.
 pub const SYNC_GAP_PREROLL: f64 = 1.5;
 
+/// Longest span a single spoken line is assumed to occupy, used ONLY when the
+/// current line has no usable end_time (a start-only row, e.g. stamped with
+/// `b` before the next line existed). The gap to the next line cannot be
+/// measured then, so a gap is inferred only when the start-to-start distance
+/// exceeds this allowance plus SYNC_GAP_THRESHOLD. Consecutive ~2s verse
+/// lines stay on normal timing; a start-only line before a scene break still
+/// gets the early lead. (R2-Arkangel 3.3.1-4, 2026-08-16: the old
+/// "unmeasurable => assume a gap" rule fired the 1.5s lead on every
+/// start-only line, advancing the highlight with most of the line unspoken.)
+pub const SYNC_ASSUMED_LINE_SPAN: f64 = 6.0;
+
 /// Brief window during which playback-sync is suppressed while MPV processes a
 /// seek, so the highlight doesn't fight the in-flight seek. Used at every
 /// manual-seek site (search, timestamp set, gamepad, echo/concordance jumps).
