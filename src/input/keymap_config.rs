@@ -426,10 +426,11 @@ fn display_bindings() -> Vec<(KeyCombo, Action)> {
         // physical cap with and without Shift, one keysym each.
         (KeyCombo::ctrl("dollar"), Action::RootVariantNext),
         (KeyCombo::ctrl("asciitilde"), Action::RootVariantPrev),
-        // `b` sets the start time (plain `u`/`i` no longer do — `i` opens the
-        // translation overlay). The old modifier families stay put
-        // (Shift+U undo ts, Alt+u scansion; Ctrl+i image, Alt+i end ts).
-        (KeyCombo::plain("b"), Action::SetStartTime),
+        // `d` sets the start time (moved off plain `b` 2026-08-16; before
+        // that plain `u`/`i` — `i` opens the translation overlay). The old
+        // modifier families stay put (Shift+B undo ts, Alt+b end ts, Alt+u
+        // scansion; Ctrl+i image).
+        (KeyCombo::plain("d"), Action::SetStartTime),
         (KeyCombo::alt("bracketleft"), Action::ToggleColumnLayout),
         // Authorship moved off Ctrl+a (now CloseChatLayout). plain("A") is the
         // shifted `a` (cf. plain("G") normalization above).
@@ -512,8 +513,9 @@ fn timestamp_bindings() -> Vec<(KeyCombo, Action)> {
         // see display_bindings, where the whole `i` cap became the `-` cap's
         // underline-family twin.)
         (KeyCombo::plain("Right"), Action::SetStartTime),
-        // Alt+b sets the end time (moved off Alt+i 2026-07-22, pairing with
-        // plain `b` = SetStartTime on the same cap).
+        // Alt+b sets the end time (moved off Alt+i 2026-07-22; it paired with
+        // plain `b` = SetStartTime until that moved to `d` on 2026-08-16 —
+        // Shift+B undo and Alt+b end stay on the `b` cap).
         (KeyCombo::alt("b"), Action::SetEndTime),
         (KeyCombo::plain("c"), Action::ToggleChapterStart),
         // BackSpace is overloaded (Action::DeleteTimestampTap): single tap
@@ -675,7 +677,8 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::ctrl("a")), None);
         assert_eq!(m.get(&KeyCombo::plain("A")), Some(&Action::ToggleAuthorship));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("A")), Some(&Action::PickAttributionSet));
-        assert_eq!(m.get(&KeyCombo::plain("b")), Some(&Action::SetStartTime));
+        assert_eq!(m.get(&KeyCombo::plain("d")), Some(&Action::SetStartTime));
+        assert_eq!(m.get(&KeyCombo::plain("b")), None, "plain b moved to d 2026-08-16");
         assert_eq!(m.get(&KeyCombo::alt("u")), Some(&Action::CycleScansion));
         assert_eq!(m.get(&KeyCombo::alt("b")), Some(&Action::SetEndTime));
         // The whole `i` cap is the `-` cap's underline-family twin, on EVERY
@@ -1072,8 +1075,9 @@ mod tests {
         assert_eq!(km.lookup("B", false, true, false), Some(Action::UndoTimestamp));
         assert_eq!(km.lookup("B", false, false, false), Some(Action::UndoTimestamp));
         assert_eq!(km.lookup("b", true, false, false), None, "Ctrl+b retired");
-        // The rest of the `b` timestamp family is untouched.
-        assert_eq!(km.lookup("b", false, false, false), Some(Action::SetStartTime));
+        // The rest of the `b` timestamp family is untouched (plain `b` itself
+        // moved to `d` on 2026-08-16).
+        assert_eq!(km.lookup("d", false, false, false), Some(Action::SetStartTime));
         assert_eq!(km.lookup("b", false, false, true), Some(Action::SetEndTime));
     }
 

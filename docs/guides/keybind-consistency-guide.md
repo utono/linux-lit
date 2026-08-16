@@ -348,5 +348,12 @@ Record each deliberate consistency move here so future sweeps know the intent.
   funnel (Ctrl+=), and the word-copy family comments (family-wide wording
   instead of `-`/`_`).
 
+- **2026-08-16 — `SetStartTime` moved plain `b` → plain `d`** (`Right`
+  unchanged). Plain `d` was free. Deliberately NOT moved: `Shift+B` undo ts
+  and `Alt+b` end ts, so the timestamp family is now split across the `b`
+  and `d` caps — flagged below.
+
 **Open candidates** (flagged, not yet scheduled): consolidate the echoes
-concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2).
+concept onto one key (#5 above); disambiguate bare `e` (#1) and bare `c` (#2);
+reunite the timestamp family (`d` start vs `B` undo / `M-b` end — `M-d` is
+taken by dim, so a clean move needs a home for end-time first).
