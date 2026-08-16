@@ -252,6 +252,38 @@ converging, since they route to different repairs.
 
 ---
 
+### FAILURE MODE 8 — start-only rows read as a silent gap (2026-08-16)
+
+**Tell:** during playback the highlight advances to the next line while the
+current line is still being spoken — by a fixed ~1.5 s, on every line of a
+run — and those lines were just stamped with `b`. Log signature: after
+`TS: set start=… end=0.00 line=N` for consecutive lines, `CURSOR_SYNC:`
+lands on line N+1 at `next.start - 1.5`. (R2-Arkangel 3.3.1-4; the user
+deleted and re-stamped the four lines twice before reporting.)
+
+**Root cause (two halves).** (1) `b` filled the cursor line's `end_time`
+only from the NEXT dialogue line's existing start, so stamping top-to-bottom
+left every line but the last with `end_time` NULL (loads as `0.0`).
+`p`/`P` touch only `start`, so nudging cannot repair it. (2) The sync
+engine's gap early-jump (`find_line_for_time`, `src/mpv/client.rs`)
+treated an unusable `a_end` as "gap unmeasurable, assume a gap" and applied
+`SYNC_GAP_PREROLL` (1.5 s) unconditionally — most of a ~2.2 s verse line.
+
+**Fix (this repo, `fix/start-only-sync-lead`).** (1) `set_start_time` now
+also backfills the PREVIOUS dialogue line's end (`prev_end_backfill`: only
+when it is missing and that line was stamped < 10 s ago; a good end is never
+overwritten). (2) With `a_end` unusable the early jump fires only when
+`b.start - a.start > SYNC_ASSUMED_LINE_SPAN (6 s) + SYNC_GAP_THRESHOLD` — a
+start-only line before a scene break keeps its lead; consecutive lines do
+not. Unit tests: `start_only_consecutive_lines_do_not_lead`,
+`prev_end_backfill_tests`.
+
+Rows stamped before the fix stay start-only in lit.db (harmless now for
+sync; `b` on the next line down still backfills them if within 10 s). This
+is reader-side data shape, not a litdb defect — no upstream routing.
+
+---
+
 ## Diagnostic order for "the audio starts in the wrong place"
 
 1. **Identify the PLAYING edition first** (`Cym` vs `Cym-Amb` vs `Cym-BBC`).

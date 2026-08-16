@@ -163,6 +163,60 @@ mod timestamp_gate_tests {
     }
 }
 
+/// End time to write on the PREVIOUS dialogue line when the cursor line is
+/// stamped at `time_pos` (`b`). Only fills a MISSING end (`prev_end <=
+/// prev_start` — NULL loads as 0.0) and only when the previous line was
+/// stamped less than 10s ago, mirroring the forward rule that fills the
+/// cursor line's end from the next line's start. A good end is never
+/// overwritten. Without this, tapping `b` down a speech leaves every line but
+/// the last start-only, and the sync engine treats each as an unmeasurable
+/// gap (R2-Arkangel 3.3.1-4, 2026-08-16).
+fn prev_end_backfill(prev_start: f64, prev_end: f64, time_pos: f64) -> Option<f64> {
+    if prev_end > prev_start {
+        return None;
+    }
+    if time_pos <= prev_start || time_pos - prev_start > 10.0 {
+        return None;
+    }
+    Some((time_pos - 0.2).max(prev_start))
+}
+
+#[cfg(test)]
+mod prev_end_backfill_tests {
+    use super::prev_end_backfill;
+
+    #[test]
+    fn fills_missing_end_from_next_stamp() {
+        // Line 1 stamped at 5667.54 (end NULL); line 2 stamped at 5669.29.
+        assert_eq!(prev_end_backfill(5667.54, 0.0, 5669.29), Some(5669.09));
+    }
+
+    #[test]
+    fn never_overwrites_a_good_end() {
+        assert_eq!(prev_end_backfill(10.0, 12.0, 13.0), None);
+    }
+
+    #[test]
+    fn skips_when_previous_stamp_is_too_old() {
+        // >10s ago: a scene break or a re-stamp far downstream, not a
+        // consecutive line.
+        assert_eq!(prev_end_backfill(10.0, 0.0, 20.5), None);
+        assert_eq!(prev_end_backfill(10.0, 0.0, 20.0), Some(19.8));
+    }
+
+    #[test]
+    fn skips_when_time_pos_is_not_after_prev_start() {
+        assert_eq!(prev_end_backfill(10.0, 0.0, 10.0), None);
+        assert_eq!(prev_end_backfill(10.0, 0.0, 9.0), None);
+    }
+
+    #[test]
+    fn end_never_precedes_prev_start() {
+        // Two stamps 0.1s apart: clamp rather than write end < start.
+        assert_eq!(prev_end_backfill(10.0, 0.0, 10.1), Some(10.0));
+    }
+}
+
 #[cfg(test)]
 mod phrase_drift_tests {
     use super::phrase_drift_note;
@@ -401,7 +455,7 @@ fn capture_undo_snapshot(state: &mut AppState, line_mapping_id: i64, media_id: i
     });
 }
 
-/// Set start time on current line from MPV position (u / Right).
+/// Set start time on current line from MPV position (b / Right).
 pub fn set_start_time(state: &mut AppState) -> bool {
     let media_id = match state.media_id {
         Some(id) => id,
@@ -489,6 +543,31 @@ pub fn set_start_time(state: &mut AppState) -> bool {
 
         if end_time > 0.0 {
             let _ = crate::db::queries::update_end_time(&conn, line.id, media_id, end_time);
+        }
+
+        // Backfill the PREVIOUS dialogue line's end when it is start-only and
+        // was stamped just before this one (the `b`-down-a-speech workflow).
+        // See prev_end_backfill for the rule and the bug it closes.
+        let prev = (0..line_idx)
+            .rev()
+            .find(|&i| work.lines[i].is_dialogue)
+            .and_then(|i| work.lines[i].timestamp.as_ref().map(|t| (i, t.start, t.end)));
+        if let Some((prev_idx, prev_start, prev_end)) = prev {
+            if let Some(new_end) = prev_end_backfill(prev_start, prev_end, time_pos) {
+                let prev_line = &mut work.lines[prev_idx];
+                match crate::db::queries::update_end_time(&conn, prev_line.id, media_id, new_end) {
+                    Ok(()) => {
+                        if let Some(ts) = prev_line.timestamp.as_mut() {
+                            ts.end = new_end;
+                        }
+                        crate::logging::log(&format!(
+                            "TS: backfilled prev end={:.2} line={} (start-only before this stamp)",
+                            new_end, prev_idx
+                        ));
+                    }
+                    Err(e) => crate::logging::log(&format!("TS: backfill prev end failed: {}", e)),
+                }
+            }
         }
     }
     crate::logging::log(&format!("TS: set start={:.2} end={:.2} line={}", time_pos, end_time, line_idx));
