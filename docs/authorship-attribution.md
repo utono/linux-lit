@@ -36,7 +36,7 @@ These plays were revised by another playwright after Shakespeare's death (1616),
 
 These plays have been proposed as collaborative but lack the broad consensus of the cases above.
 
-**Edward III** (c. 1593) — **collaborator unknown**. The play was attributed to Shakespeare on external grounds and included in the NOS (2016). Shakespeare is generally credited with the Countess of Salisbury scenes (Acts 1-2), based on stylistic parallels with the Sonnets and other early plays. The remaining acts involve military campaigns in France and are stylistically distinct, but the collaborator has not been convincingly identified. Edward III is not currently in the lit.db `works` table.
+**Edward III** (c. 1592-93) — **collaborator unidentified**. Published anonymously (Q1 1596), added to the canon by the Oxford Shakespeare (2005) and the NOS (2016). Every attribution study gives Shakespeare the Countess of Salisbury episode (1.2, 2.1, 2.2), and most add the Prince/Audley scene before Poitiers (4.4); the NOS "confidently" attributes the Countess scenes and says Shakespeare "may or may not" have written some or all of the battle sequence 4.4-4.9 (its scenes 12-17). The rest is "definitely not" Shakespeare. Vickers (2014) names **Thomas Kyd** (~60% of the play) on trigram/collocation evidence, supported by Freebury-Jones (2022) and — from a different direction — Kernot, Bossomaier & Bradbury (2017); the NOS rejects Vickers's method, and Marlowe (Merriam), Peele and Greene have also been proposed. Imported 2026-08-18 as `E3` from the Internet Shakespeare Editions modern text (Lidster & Massai) with the Riverside/Melchiori 19-scene numbering imposed (`~/utono/literature/shakespeare-william/edward-iii/`). Two sets: `nos-2017` (secondary `anonymous`) and `vickers-2014` (secondary `kyd`) — Sets 9 and 10 below.
 
 **The Spanish Tragedy additions** (c. 1602) — possibly **Shakespeare**. Ben Jonson was paid for additions to Thomas Kyd's play, but some scholars have attributed the 1602 additions to Shakespeare instead. The evidence is inconclusive. Not in lit.db.
 
@@ -208,6 +208,30 @@ Examples: `H8.0.0.1` (Prologue line 1), `TNK.3.6.100` (Act 3 Scene 6 line 100), 
 
 **Shakespeare scenes:** all others
 
+### Set 9: Edward III (E3) — NOS (2017)
+
+**Source:** Gary Taylor & Rory Loughnane, "The Canon and Chronology of Shakespeare's Works," *The New Oxford Shakespeare: Authorship Companion* (2017), pp. 503-6.
+
+**Collaborator:** anonymous (`secondary_author = 'anonymous'` — the column is NOT NULL and the NOS names no one)
+
+**Anonymous scenes:** 1.1, 3.1-3.5, 4.1-4.3, 4.5-4.9, 5.1
+
+**Shakespeare scenes:** 1.2, 2.1, 2.2 (the Countess episode — "confidently"), 4.4 (NOS scene 12, "widely judged Shakespearean")
+
+**Note:** The NOS leaves the battle sequence 4.4-4.9 (its scenes 12-17) open — Shakespeare "may or may not also be responsible for some or all" of it — so the 4.5-4.9 rows carry `confidence = 0.5` with a note; 4.4 is left to Shakespeare. Scene numbering is Riverside / New Cambridge (Melchiori) / RSC: the ISE text's 16 continuous scenes are split at 8.16 (-> 3.5), 14.20 (-> 4.7) and 14.59 (-> 4.8); the NOS numbers 18 scenes continuously (Countess = 2-3, 4.4 = 12, battle = 13-17). Data: `edward-iii/authorship/nos-2017.csv`, applied by `litdb/scripts/apply_attribution_csv.py`.
+
+### Set 10: Edward III (E3) — Vickers (2014)
+
+**Source:** Brian Vickers, "The Two Authors of Edward III," *Shakespeare Survey* 67 (2014): 102-18; scene table via Kernot, Bossomaier & Bradbury (2017), Table 3.
+
+**Collaborator:** Thomas Kyd
+
+**Kyd scenes:** 1.1, 3.1-3.5, 4.1-4.3, 4.5-4.9, 5.1 (4.7 and 4.9 unassigned by Vickers per the Kernot table — stored as Kyd at `confidence = 0.5` rather than defaulting to Shakespeare)
+
+**Shakespeare scenes:** 1.2, 2.1, 2.2, 4.4 (~40%)
+
+**Note:** Same scene split as Set 9 — the two sets differ only in who the collaborator is and in the 4.5-4.9 confidence. Kyd's candidacy is contested: the NOS (2017) chapters by Egan, Jackson, Pruitt and Taylor reject Vickers's anti-plagiarism-software method; Freebury-Jones (*Shakespeare's Tutor*, 2022) supports Kyd; Kernot et al. (2017) reach Kyd by a different route but also give Kyd the four traditional Shakespeare scenes (an outlier, not stored). Data: `edward-iii/authorship/vickers-2014.csv`.
+
 ## How Attribution Displays in linux-lit
 
 - On work load, linux-lit queries `attribution_sets` for the work's `work_abbrev`
@@ -249,23 +273,36 @@ WHERE work_abbrev = 'H8'
 
 ### Adding a new co-authored work
 
+Preferred: a scene-level CSV (`act,scene,author,confidence,notes` — the
+SECONDARY author's scenes only) applied with
+`~/utono/litdb/scripts/apply_attribution_csv.py`, which creates the set,
+expands each scene to its `line_mapping` rows, and is idempotent (re-running
+replaces the set's rows). This is how E3's two sets were built:
+
+```bash
+python ~/utono/litdb/scripts/apply_attribution_csv.py E3 nos-2017 --display-name "NOS (2017)" --secondary anonymous --description "..." --citation "..." --csv ~/utono/literature/shakespeare-william/edward-iii/authorship/nos-2017.csv
+```
+
+`secondary_author` is NOT NULL — use `anonymous` when the collaborator is
+unidentified. The work must already be in `line_mapping` (for a play with no
+Folger XML, `~/utono/litdb/scripts/import_play_txt.py` imports a
+Folger-convention .txt). The equivalent raw SQL:
+
 ```sql
 -- 1. Create the attribution set
 INSERT INTO attribution_sets
   (work_abbrev, name, display_name, primary_author, secondary_author, description, source_citation)
 VALUES
-  ('E3', 'nos-2016', 'NOS (2016)', 'shakespeare', 'unknown',
-   'Shakespeare attributed Acts 1-2 (Countess scenes)',
-   'Gary Taylor, New Oxford Shakespeare (2016)');
+  ('STM', 'jowett-2011', 'Jowett (2011)', 'shakespeare', 'munday', '...', '...');
 
 -- 2. Get the set ID
-SELECT id FROM attribution_sets WHERE work_abbrev = 'E3' AND name = 'nos-2016';
+SELECT id FROM attribution_sets WHERE work_abbrev = 'STM' AND name = 'jowett-2011';
 
 -- 3. Insert line attributions for non-Shakespeare scenes
 INSERT INTO line_authorship (attribution_set_id, citation, author)
-SELECT <set_id>, 'E3.' || div1 || '.' || div2 || '.' || line_in_div, 'unknown'
+SELECT <set_id>, 'STM.' || div1 || '.' || div2 || '.' || line_in_div, 'munday'
 FROM line_mapping
-WHERE work_abbrev = 'E3'
+WHERE work_abbrev = 'STM'
   AND (div1, div2) IN (...);
 ```
 
@@ -342,6 +379,10 @@ The current data was rebuilt from scratch using scene-level attributions (May 20
 - **Hammond (2010):** Brean Hammond, ed., *Double Falsehood*, Arden Shakespeare (Methuen Drama, 2010).
 - **Jowett (2013):** John Jowett, "Middleton and Macbeth," in *Thomas Middleton in Context* (Cambridge University Press, 2013).
 - **Segarra et al. (2016):** Santiago Segarra et al., "Attributing the Authorship of the Henry VI Plays by Word Adjacency," *Shakespeare Quarterly* 67.2 (2016): 232-56.
+- **Vickers (2014):** Brian Vickers, "The Two Authors of Edward III," *Shakespeare Survey* 67 (2014): 102-18.
+- **Kernot, Bossomaier & Bradbury (2017):** David Kernot, Terry Bossomaier & Roger Bradbury, "Did William Shakespeare and Thomas Kyd Write Edward III?" *International Journal on Natural Language Computing* 6.6 (2017); arXiv:1801.04017.
+- **Taylor & Loughnane (2017):** Gary Taylor & Rory Loughnane, "The Canon and Chronology of Shakespeare's Works," in *The New Oxford Shakespeare: Authorship Companion*, ed. Gary Taylor & Gabriel Egan (Oxford University Press, 2017), Edward III at pp. 503-6.
+- **Freebury-Jones (2022):** Darren Freebury-Jones, *Shakespeare's Tutor: The Influence of Thomas Kyd* (Manchester University Press, 2022).
 - **Taylor & Loughnane (2016):** Gary Taylor & Rory Loughnane, "The Canon and Chronology of Shakespeare's Works," in *The New Oxford Shakespeare: Authorship Companion* (Oxford University Press, 2016).
 
 ## Known Limitations
@@ -351,4 +392,6 @@ The current data was rebuilt from scratch using scene-level attributions (May 20
 - **Mac Act 4 Scene 1** contains Middleton interpolations (Hecate speeches, ~10 lines) within a Shakespeare scene. Only scene 3.5 is attributed at scene granularity.
 - **MM** attribution is the most controversial of the NOS claims. Only 1.2 is attributed; other Middleton contributions are scattered line-level insertions.
 - **1H6** scenes not attributed to Nashe or Shakespeare may have additional anonymous collaborators (possibly Marlowe or Peele). Only the Nashe attribution (Act 1) has strong consensus.
-- Only one attribution set per work exists. The picker supports multiple sets if scholars disagree on attribution boundaries.
+- **E3** is the first work with two sets (`nos-2017`, `vickers-2014`); the library picker's `+Collaborator` label shows the first set inserted (`+Anonymous`). Only the collaborator's identity and the 4.5-4.9 confidence differ between the two; a Kernot-style set that reassigns the Countess scenes is deliberately not stored.
+- **E3 4.4** is left to Shakespeare in both sets although the NOS lists it among the uncertain battle scenes (12-17); Kirwan (2015) challenges its authorship. Flip it in the CSVs and re-run `apply_attribution_csv.py` if the consensus moves.
+- **E3 line_authorship notes/confidence** are the first non-NULL uses of those columns; linux-lit does not yet read them (all attributed lines render the same italic).
