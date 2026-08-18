@@ -63,8 +63,11 @@ const UPPER_ROW: &[KeyDef] = &[
     key("/", "?", "search", "?: search back", &[("C-/", "keybinds")]),
     key("\\", "#", "cycle overlays", "", &[("C-\\", "lib picker")]),
 ];
-// Tab is unbound in reader mode (chat panel disabled 2026-07-23).
-const TAB_KEY: KeyDef = bare("Tab", "", "");
+// Plain Tab is unbound in reader mode (chat panel disabled 2026-07-23);
+// Ctrl+Tab mirrors Ctrl+c (prev work) and Alt+Tab mirrors Ctrl+\\
+// (lib picker) — both added 2026-08-18.
+const TAB_KEY: KeyDef =
+    key("Tab", "", "", "", &[("C-Tab", "prev work"), ("M-Tab", "lib picker")]);
 
 const HOME_ROW: &[KeyDef] = &[
     key("a", "A", "play/pause", "A: authorship", &[("S-C-a", "attr set")]),
