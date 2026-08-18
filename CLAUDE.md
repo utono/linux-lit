@@ -386,19 +386,33 @@ assertion. Tests are `#[ignore]`d so bare `cargo test` stays green.
 ./scripts/e2e-env.sh cargo test --test line_clipping -- --ignored --nocapture
 ```
 
-Design notes: cage (not bare dwl/sway) because the app needs a configured,
+Design notes: cage (not a bare tiling WM) because the app needs a configured,
 focused, fullscreen surface; MPV is skipped under `LIT_HEADLESS_TEST=1`; the
 app logs `TEST_VIEWPORT_RECT` for the pixel detector's `--region` (no AT-SPI
 text interface). Scope is the main reading card only.
 
-### niri harness (the real WM)
+### niri harness (a real tiling WM — NOT the one you run)
 
-**niri is the current window manager** (`~/utono/niri-mlj`); dwl is the
-predecessor. `tests/harness/niri.rs` + `tests/niri_smoke.rs` +
-`tests/harness/niri-test.kdl` run the app under REAL niri, for anything
-where the WM's own behavior matters — decorations, tiling geometry —
-which cage's kiosk force-fullscreen hides. Cage stays the DEFAULT for the
-rest of the suite.
+**The daily-driver WM is mangowm** (`~/.config/mango/cfg/`); niri
+(`~/utono/niri-mlj`) and dwl are both predecessors. Do NOT reason about the
+user's live session from this section — for anything about what the user
+actually sees, or which chords reach the app, read the mango config. Its
+keybinds live in `keybinds.conf` (e.g. it binds `SUPER+ALT,Tab`, leaving
+plain `Alt+Tab` free for the app).
+
+niri survives here purely as a TEST rig: `tests/harness/niri.rs` +
+`tests/niri_smoke.rs` + `tests/harness/niri-test.kdl` run the app under a
+REAL tiling WM, for anything where the WM's own behavior matters —
+decorations, tiling geometry — which cage's kiosk force-fullscreen hides.
+Cage stays the DEFAULT for the rest of the suite.
+
+**Why the rig did not move to mango when the session did:** the harness
+drives and interrogates the WM (`niri msg --json windows`, fullscreen
+toggles, output resize). mango has no IPC or query interface at all — its
+whole CLI is `-v/-d/-c/-s/-p` — so there is nothing to drive it with and no
+way to ask it what it did. Porting is not a small job; until someone does
+it, a real-WM assertion is a niri assertion. niri must stay installed for
+these tests to run.
 
 ```bash
 ./scripts/e2e-env.sh cargo test --test niri_smoke -- --ignored --nocapture
