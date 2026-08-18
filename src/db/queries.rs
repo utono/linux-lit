@@ -53,6 +53,15 @@ pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error
     //    recording is only reachable through the base. Base = abbrev before the
     //    first '-'. Result on current lit.db: only AWW is hidden by rule 2;
     //    Rom/MND (bundle) and Cym (has a base-only file) remain.
+    //
+    // 3. EXCEPTION to rule 1 — a TEXT-ONLY PLAY: a play with a display
+    //    `text_file` but no media AND no editions (no `abbrev-*` rows) is
+    //    readable in the two-column reader without audio and would otherwise
+    //    be unreachable from the picker. Today that is exactly Edward III
+    //    (`E3`, no recording exists); the 10 Ibsen plays have no text_file and
+    //    the media-less bible books are not plays, so neither is added. Base
+    //    Shakespeare rows (Ham, 2H6, ...) HAVE editions or media and are still
+    //    governed by rules 1-2.
     let mut stmt = conn.prepare(
         "WITH bundle AS ( \
              SELECT media_id FROM ( \
@@ -64,7 +73,13 @@ pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error
              ) GROUP BY media_id HAVING COUNT(DISTINCT base) > 1 \
          ) \
          SELECT abbrev, title, author, work_type FROM works w \
-         WHERE EXISTS ( \
+         WHERE ( \
+                 w.work_type = 'play' AND w.text_file IS NOT NULL \
+                 AND NOT EXISTS (SELECT 1 FROM work_media_associations wma WHERE wma.work_abbrev = w.abbrev) \
+                 AND NOT EXISTS (SELECT 1 FROM works e WHERE e.abbrev LIKE w.abbrev || '-%') \
+             ) \
+             OR ( \
+             EXISTS ( \
                  SELECT 1 FROM work_media_associations wma WHERE wma.work_abbrev = w.abbrev \
              ) \
              AND NOT ( \
@@ -83,6 +98,7 @@ pub fn list_works(conn: &Connection) -> Result<Vec<WorkSummary>, rusqlite::Error
                            WHERE wma2.media_id = wma.media_id AND e.abbrev LIKE w.abbrev || '-%' \
                        ) \
                  ) \
+             ) \
              ) \
          ORDER BY title",
     )?;
@@ -2896,9 +2912,10 @@ mod tests {
         );
 
         // Every listed work must have at least one associated media file — the
-        // picker filters out media-less works. Verify none of the listed works
-        // lacks a work_media_associations row, and that a known media-less work
-        // (2H6, which has text but no audio) is excluded.
+        // picker filters out media-less works — EXCEPT a text-only play (rule
+        // 3: a play with a text_file, no media, no editions). Verify every
+        // listed work is one or the other, and that a known media-less work
+        // (2H6, which has text but no audio AND has editions) is excluded.
         for w in &works {
             let has_media: bool = conn
                 .query_row(
@@ -2907,11 +2924,30 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert!(has_media, "listed work {} has no media association", w.abbrev);
+            let text_only_play: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM works w WHERE w.abbrev = ?1 \
+                       AND w.work_type = 'play' AND w.text_file IS NOT NULL \
+                       AND NOT EXISTS (SELECT 1 FROM works e WHERE e.abbrev LIKE w.abbrev || '-%'))",
+                    [&w.abbrev],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                has_media || text_only_play,
+                "listed work {} has no media association and is not a text-only play",
+                w.abbrev
+            );
         }
         assert!(
             !works.iter().any(|w| w.abbrev == "2H6"),
             "media-less work 2H6 should be filtered out of the picker"
+        );
+        // Rule 3: Edward III has a text_file, no recording and no editions —
+        // the one text-only play — and must be reachable from the picker.
+        assert!(
+            works.iter().any(|w| w.abbrev == "E3"),
+            "text-only play E3 (text_file, no media, no editions) should be listed"
         );
 
         // Edition-leak: a base work (AWW) whose only media is a single-play file
