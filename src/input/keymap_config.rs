@@ -267,6 +267,10 @@ fn nav_bindings() -> Vec<(KeyCombo, Action)> {
         // each work's exact cursor line + its MPV media (A<->B). SetChapter moved
         // to Ctrl+[ to free this cap.
         (KeyCombo::ctrl("c"), Action::TogglePreviousWork),
+        // Ctrl+Tab mirrors Ctrl+c (2026-08-18) — same A<->B toggle between the
+        // current work and the MRU one. The reader's plain-Tab chat-focus
+        // branch is guarded on `!is_ctrl`, so this chord is not shadowed.
+        (KeyCombo::ctrl("Tab"), Action::TogglePreviousWork),
         (KeyCombo::ctrl("e"), Action::ShowEchoesBcp),
         (KeyCombo::ctrl("period"), Action::OpenBookmarkPicker),
     ]
@@ -545,6 +549,10 @@ fn app_bindings() -> Vec<(KeyCombo, Action)> {
         (KeyCombo::ctrl_alt("n"), Action::ToggleNavTest),
         (KeyCombo::ctrl_shift("E"), Action::ReopenEchoesBcp),
         (KeyCombo::ctrl("backslash"), Action::OpenLibraryPicker),
+        // Alt+Tab mirrors Ctrl+\\ (2026-08-18) — the compositor binds
+        // Super+Alt+Tab, not plain Alt+Tab, so the chord reaches the app.
+        // Plain/Ctrl+Tab stay unbound (the chat panel owns them).
+        (KeyCombo::alt("Tab"), Action::OpenLibraryPicker),
         // Ctrl+u was a duplicate of Ctrl+\ (2026-07-26); dropped 2026-08-01.
         // It briefly freed the chord for UndoTimestamp, which went to Ctrl+b
         // and then to Shift+b (2026-08-03), so Ctrl+u is simply unbound now.
@@ -664,9 +672,17 @@ mod tests {
         assert_eq!(m.get(&KeyCombo::plain("y")), Some(&Action::PageBackward));
         assert_eq!(m.get(&KeyCombo::ctrl("m")), Some(&Action::OpenMediaPicker));
         assert_eq!(m.get(&KeyCombo::ctrl_shift("L")), Some(&Action::SaveAndQuit));
-        // The reader table binds no Tab caps (chat panel disabled 2026-07-23).
-        assert_eq!(m.get(&KeyCombo::ctrl("Tab")), None);
+        // Plain Tab stays unbound (chat panel disabled 2026-07-23); Alt+Tab
+        // mirrors Ctrl+\\ (library picker) and Ctrl+Tab mirrors Ctrl+c
+        // (previous-work toggle).
         assert_eq!(m.get(&KeyCombo::plain("Tab")), None);
+        assert_eq!(m.get(&KeyCombo::ctrl("Tab")), Some(&Action::TogglePreviousWork));
+        assert_eq!(m.get(&KeyCombo::ctrl("Tab")), m.get(&KeyCombo::ctrl("c")));
+        assert_eq!(m.get(&KeyCombo::alt("Tab")), Some(&Action::OpenLibraryPicker));
+        assert_eq!(
+            m.get(&KeyCombo::alt("Tab")),
+            m.get(&KeyCombo::ctrl("backslash")),
+        );
         // Ctrl+o (ToggleLastOverlay) dropped from the defaults.
         assert_eq!(m.get(&KeyCombo::ctrl("o")), None);
         // `j` = journal (2026-07-23 reshuffle): Ctrl+j = work-wide journal Q&A
@@ -1033,8 +1049,8 @@ mod tests {
         let km = Keymap::default();
         // The `a` cap: plain = TogglePause; Ctrl+a is now UNBOUND (its recent-Q&A
         // picker moved to Alt+j in the 2026-07-23 reshuffle), Ctrl+Shift+a is the
-        // attribution set. (Both Tab caps are unbound — the chat panel uses `-`
-        // and its own handlers.)
+        // attribution set. (Plain Tab is unbound — the chat panel uses `-`
+        // and its own handlers; Ctrl+Tab = previous work, Alt+Tab = library.)
         assert_eq!(km.lookup("a", true, false, false), None);
         assert_eq!(km.lookup("A", true, true, false), Some(Action::PickAttributionSet));
         // The `j` cap resolves its two modifiers to the two journal pickers:
@@ -1045,7 +1061,8 @@ mod tests {
         assert_eq!(j_ctrl, Some(Action::OpenJournalPicker));
         assert_eq!(j_alt, Some(Action::OpenRecentQaPicker));
         assert_eq!(km.lookup("Tab", false, false, false), None);
-        assert_eq!(km.lookup("Tab", true, false, false), None);
+        assert_eq!(km.lookup("Tab", true, false, false), Some(Action::TogglePreviousWork));
+        assert_eq!(km.lookup("Tab", false, false, true), Some(Action::OpenLibraryPicker));
         // Plain f opens the journal term filter (matching the journal overlay);
         // Shift+F cycles the font forward and Ctrl+Shift+F cycles it back;
         // Ctrl+f is the corpus search.
