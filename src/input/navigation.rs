@@ -1740,7 +1740,7 @@ pub fn cursor_next_dialogue_no_seek(state: &mut AppState) {
 
 /// Move cursor to previous dialogue line and seek media to it.
 ///
-/// Reader binds: `;` / `Up`. (The translation overlay's own `k` also routes
+/// Reader binds: `k` / `Up`. (The translation overlay's own `k` also routes
 /// here via `overlay_nav` — an overlay bind hardcoded in keymap.rs, unrelated
 /// to the reader keymap.)
 ///
@@ -1795,7 +1795,7 @@ pub fn cursor_prev_dialogue(state: &mut AppState) {
 
 /// Move cursor to next dialogue line and seek media to it.
 ///
-/// Reader binds: `'` / `Down`. (The translation overlay's own `j` also routes
+/// Reader binds: `j` / `Down`. (The translation overlay's own `j` also routes
 /// here via `overlay_nav` — an overlay bind hardcoded in keymap.rs, unrelated
 /// to the reader keymap.) Forward counterpart of `cursor_prev_dialogue`, with
 /// the same prose and translation-overlay branches.
