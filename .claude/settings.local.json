@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(~/.local/bin/bin-mlj/mr/mr-sync-config.sh 2>&1)",
+      "Bash(/home/mlj/utono/litdb/.venv/bin/python3 /home/mlj/utono/litdb/scripts/fix_sentence_boundaries.py BH --dry-run)",
+      "Bash(git push:*)",
+      "Bash(git:*)",
+      "Bash(pkill -f \"target/debug/linux-lit\")",
+      "Bash(pkill -f \"linux-lit\")",
+      "Bash(pkg-config:*)",
+      "WebSearch",
+      "mcp__context7__query-docs",
+      "WebFetch(domain:docs.gtk.org)",
+      "WebFetch(domain:gitlab.gnome.org)",
+      "Bash(~/.claude/plugins/cache/superpowers-marketplace/superpowers/5.0.7/scripts/start-server.sh:*)",
+      "Bash(cargo test:*)",
+      "Bash(litecli:*)",
+      "Bash(cargo clippy *)",
+      "Bash(./scripts/land-on.sh BH-Barrett 4.0)",
+      "Bash(export XDG_RUNTIME_DIR=/tmp/tmp.xMODfbdwhP WAYLAND_DISPLAY=wayland-0)",
+      "Bash(wtype -M ctrl -k j -m ctrl)",
+      "Bash(sleep 2)",
+      "Bash(wtype \"remonstrate\")",
+      "Bash(sleep 1.5)",
+      "Bash(wtype -k x)",
+      "Bash(grim __TRACKED_VAR__/61-page2.png)",
+      "Bash(stat -c%s __TRACKED_VAR__/61-page2.png)",
+      "Bash(grim __TRACKED_VAR__/62-page3-question.png)",
+      "Bash(stat -c%s __TRACKED_VAR__/62-page3-question.png)",
+      "Bash(wtype -k Escape)",
+      "Bash(wtype \"Alexander\")",
+      "Bash(sleep 1.2)",
+      "Bash(wtype -k Return)",
+      "Bash(sleep 2.5)",
+      "Bash(pkill -f \"cage -- ./target/debug/linux-lit\")"
+    ]
+  }
+}
