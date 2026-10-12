@@ -9,10 +9,8 @@ target/
 # do not commit. See scripts/build_embeddings.py header for the download URL.
 scripts/data/NRC-VAD-Lexicon.txt
 
-# Claude Code session transcripts & auto-memory (local, not project source)
-.claude/projects/
-# Claude Code runtime lock (per-process scheduled-tasks lock; not source)
-.claude/scheduled_tasks.lock
+# Claude Code worktrees
+.claude/worktrees/
 CLAUDE-activeContext.md
 # Running list of reader bugs / feature requests (local, not project source)
 docs/to-do/to-do.md
