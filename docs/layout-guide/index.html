@@ -24,17 +24,32 @@
     --page-note-strong: var(--theme-strong, #9fe0b8);
     --page-warn-bg: var(--theme-surface, #2e261d);
     --page-warn-strong: var(--theme-strong, #e8c98a);
-    --card: #faf4e8;       /* the reader card background */
-    --ink: #36486b;        /* reader text color */
-    --accent: #b08d57;     /* highlight word / root color */
-    --cursor: #c9d9c4;     /* cursor-line highlight */
     --dim: var(--theme-muted, #8a93a8);
-    --left: #cfe0ea;
-    --leftbox: #d7e4dd;
-    --rightbox: #e4d7d7;
-    --leftover: #f0d7d1;
-    --divider: #c4b89a;
+  }
+  /* The diagrams mock the reader, which follows the desktop theme: every
+     mock colour is built on these tokens (fallbacks rose-pine-dawn's). The
+     region bands keep their hues (the captions name them), mixed into the
+     card so they read in light and dark. */
+  figure svg {
+    --m-root: var(--theme-root, #e7e1db);
+    --m-card: var(--theme-bg, #faf4ed);
+    --m-ink: var(--theme-fg, #575279);
+    --m-cursor: var(--theme-selection, #dfdad9);
+    --m-accent: var(--theme-accent, #907aa9);
+    --card: var(--m-card);                                        /* the reader card background */
+    --ink: var(--m-ink);                                          /* reader text color */
+    --accent: var(--m-accent);                                    /* highlight word / root color */
+    --cursor: var(--m-cursor);                                    /* cursor-line highlight */
+    --mdim: color-mix(in srgb, var(--m-ink) 72%, var(--m-card));  /* diagram labels */
+    --speaker: color-mix(in srgb, var(--m-ink) 55%, var(--m-card));
+    --divider: color-mix(in srgb, var(--m-ink) 41%, var(--m-card));
+    --toast: color-mix(in srgb, var(--m-ink) 12%, var(--m-card));
+    --left: color-mix(in srgb, #3f86b0 40%, var(--m-card));
+    --leftbox: color-mix(in srgb, #4f9a72 22%, var(--m-card));
+    --rightbox: color-mix(in srgb, #a85a5a 18%, var(--m-card));
+    --leftover: color-mix(in srgb, #d0604a 28%, var(--m-card));
     --gutter: #b08d57;
+    color: var(--m-ink);
   }
   * { box-sizing: border-box; }
   body {
@@ -62,9 +77,9 @@
   .note { background: var(--page-note-bg); border: 1px solid #356046; border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
   .warn { background: var(--page-warn-bg); border: 1px solid #60502a; border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
   .note strong { color: var(--page-note-strong); } .warn strong { color: var(--page-warn-strong); }
-  .whitetxt { fill: #2a3a52; font: 600 13px -apple-system, sans-serif; }
-  .smalltxt { fill: #2a3a52; font: 12px ui-monospace, monospace; }
-  .dimtxt { fill: #6b7a90; font: 11px ui-monospace, monospace; }
+  .whitetxt { fill: var(--ink); font: 600 13px -apple-system, sans-serif; }
+  .smalltxt { fill: var(--ink); font: 12px ui-monospace, monospace; }
+  .dimtxt { fill: var(--mdim); font: 11px ui-monospace, monospace; }
   .arrowlbl { fill: #e8c98a; font: 700 13px ui-monospace, monospace; }
   .arrow { stroke: #e8c98a; stroke-width: 1.5; }
   ul.kicker { columns: 2; gap: 36px; padding-left: 18px; }
@@ -103,7 +118,7 @@ toasts/notifications appear in the bottom-left and bottom-right corners of the w
 
 <figure>
 <svg viewBox="0 0 920 270" role="img" aria-label="card plus floating UI in margins">
-  <rect x="0" y="0" width="920" height="270" fill="#1d2b3a"/>
+  <rect x="0" y="0" width="920" height="270" fill="var(--m-root)"/>
   <text x="14" y="22" class="dimtxt">window / wallpaper</text>
   <!-- card -->
   <rect x="150" y="36" width="500" height="196" rx="16" fill="var(--card)"/>
@@ -114,18 +129,18 @@ toasts/notifications appear in the bottom-left and bottom-right corners of the w
   <text x="220" y="162" class="smalltxt">Made glorious summer by this sun of York;</text>
 
   <!-- vocab popup in the RIGHT leftover -->
-  <rect x="668" y="70" width="220" height="96" rx="10" fill="#b08d57"/>
-  <text x="778" y="92" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="#2a1d0e">DEFINITION (vocab)</text>
-  <text x="682" y="116" font-family="ui-monospace,monospace" font-size="11" fill="#2a1d0e">discontent — n.</text>
-  <text x="682" y="134" font-family="ui-monospace,monospace" font-size="11" fill="#2a1d0e">restless dissatisfaction;</text>
-  <text x="682" y="150" font-family="ui-monospace,monospace" font-size="11" fill="#2a1d0e">lack of contentment.</text>
+  <rect x="668" y="70" width="220" height="96" rx="10" fill="var(--m-accent)"/>
+  <text x="778" y="92" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="var(--theme-on-accent, #faf4ed)">DEFINITION (vocab)</text>
+  <text x="682" y="116" font-family="ui-monospace,monospace" font-size="11" fill="var(--theme-on-accent, #faf4ed)">discontent — n.</text>
+  <text x="682" y="134" font-family="ui-monospace,monospace" font-size="11" fill="var(--theme-on-accent, #faf4ed)">restless dissatisfaction;</text>
+  <text x="682" y="150" font-family="ui-monospace,monospace" font-size="11" fill="var(--theme-on-accent, #faf4ed)">lack of contentment.</text>
   <text x="778" y="182" text-anchor="middle" class="dimtxt">right leftover</text>
 
   <!-- toasts in the bottom corners -->
-  <rect x="22" y="232" width="120" height="22" rx="6" fill="#25384b"/>
-  <text x="82" y="247" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" fill="#cfe0ea">Sync: off</text>
-  <rect x="700" y="232" width="120" height="22" rx="6" fill="#25384b"/>
-  <text x="760" y="247" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" fill="#cfe0ea">Sync: on</text>
+  <rect x="22" y="232" width="120" height="22" rx="6" fill="var(--toast)"/>
+  <text x="82" y="247" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" fill="var(--ink)">Sync: off</text>
+  <rect x="700" y="232" width="120" height="22" rx="6" fill="var(--toast)"/>
+  <text x="760" y="247" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" fill="var(--ink)">Sync: on</text>
   <text x="82" y="226" text-anchor="middle" class="dimtxt">bottom-left toast</text>
   <text x="760" y="226" text-anchor="middle" class="dimtxt">bottom-right toast</text>
 </svg>
@@ -178,19 +193,19 @@ type styles. They’re applied as GTK <code>TextTag</code>s in <code>apply_dialo
 <svg viewBox="0 0 920 280" role="img" aria-label="line styling">
   <rect x="20" y="20" width="880" height="240" rx="12" fill="var(--card)"/>
   <!-- act/scene -->
-  <text x="60" y="58" font-family="Georgia, serif" font-weight="700" font-size="16" fill="#36486b">Act 1, Scene 1</text>
-  <rect x="60" y="68" width="120" height="2" fill="#c4b89a"/>
+  <text x="60" y="58" font-family="Georgia, serif" font-weight="700" font-size="16" fill="var(--ink)">Act 1, Scene 1</text>
+  <rect x="60" y="68" width="120" height="2" fill="var(--divider)"/>
   <!-- speaker -->
-  <text x="60" y="104" font-family="Georgia, serif" font-size="11" letter-spacing="2" fill="#8a93a8">SATURNINUS</text>
+  <text x="60" y="104" font-family="Georgia, serif" font-size="11" letter-spacing="2" fill="var(--speaker)">SATURNINUS</text>
   <!-- sign + dialogue -->
-  <circle cx="66" cy="130" r="3" fill="#b08d57"/>
-  <text x="92" y="135" font-family="Georgia, serif" font-size="16" fill="#36486b">Titus Andronicus, for thy favors done</text>
+  <circle cx="66" cy="130" r="3" fill="var(--accent)"/>
+  <text x="92" y="135" font-family="Georgia, serif" font-size="16" fill="var(--ink)">Titus Andronicus, for thy favors done</text>
   <!-- cursor highlight line -->
   <rect x="50" y="148" width="700" height="26" rx="3" fill="var(--cursor)"/>
-  <circle cx="66" cy="161" r="3" fill="#b08d57"/>
-  <text x="92" y="166" font-family="Georgia, serif" font-size="16" fill="#36486b">To us in our election this <tspan fill="#b08d57">day</tspan>,</text>
+  <circle cx="66" cy="161" r="3" fill="var(--accent)"/>
+  <text x="92" y="166" font-family="Georgia, serif" font-size="16" fill="var(--ink)">To us in our election this <tspan fill="var(--accent)">day</tspan>,</text>
   <!-- stage direction -->
-  <text x="92" y="200" font-family="Georgia, serif" font-style="italic" font-size="16" fill="#36486b">[A long flourish till Saturninus comes down.]</text>
+  <text x="92" y="200" font-family="Georgia, serif" font-style="italic" font-size="16" fill="var(--ink)">[A long flourish till Saturninus comes down.]</text>
   <!-- labels -->
   <text x="800" y="58" class="dimtxt">act-scene-header</text>
   <text x="800" y="104" class="dimtxt">speaker (caps, dim)</text>
@@ -222,9 +237,9 @@ form a <strong>block that is centered in the card</strong>. Each column is a <em
   <!-- left col -->
   <rect x="100" y="64" width="350" height="190" rx="6" fill="var(--leftbox)"/>
   <rect x="100" y="64" width="30" height="190" fill="var(--gutter)" opacity="0.28"/>
-  <circle cx="115" cy="100" r="3" fill="#36486b"/>
+  <circle cx="115" cy="100" r="3" fill="var(--ink)"/>
   <text x="142" y="105" class="smalltxt">Titus Andronicus, for thy...</text>
-  <circle cx="115" cy="124" r="3" fill="#36486b"/>
+  <circle cx="115" cy="124" r="3" fill="var(--ink)"/>
   <text x="142" y="129" class="smalltxt">To us in our election this day,</text>
   <rect x="372" y="76" width="68" height="166" fill="var(--leftover)" opacity="0.7"/>
   <!-- divider -->
@@ -232,9 +247,9 @@ form a <strong>block that is centered in the card</strong>. Each column is a <em
   <!-- right col -->
   <rect x="468" y="64" width="350" height="190" rx="6" fill="var(--rightbox)"/>
   <rect x="468" y="64" width="30" height="190" fill="var(--gutter)" opacity="0.28"/>
-  <circle cx="483" cy="100" r="3" fill="#36486b"/>
+  <circle cx="483" cy="100" r="3" fill="var(--ink)"/>
   <text x="510" y="105" class="smalltxt">That I would choose, were I...</text>
-  <circle cx="483" cy="124" r="3" fill="#36486b"/>
+  <circle cx="483" cy="124" r="3" fill="var(--ink)"/>
   <text x="510" y="129" class="smalltxt">Clear up, fair queen, that...</text>
   <rect x="740" y="76" width="68" height="166" fill="var(--leftover)" opacity="0.7"/>
   <!-- outer margin A -->
