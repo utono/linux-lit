@@ -69,6 +69,9 @@
   .arrow { stroke: #e8c98a; stroke-width: 1.5; }
   ul.kicker { columns: 2; gap: 36px; padding-left: 18px; }
   ul.kicker li { margin-bottom: 4px; }
+  /* One centred reading column for the prose; figures keep the wider frame. */
+  header > h1, header > p, h2, h3, .wrap > p, .wrap > ul, .note, .warn { max-width: 42rem; width: 100%; margin-inline: auto; box-sizing: border-box; }
+  .wrap > table { margin-inline: auto; }
 </style>
 </head>
 <body>
